@@ -1,0 +1,229 @@
+# Writing a module
+
+A module is one class with an `__init__` and a `build`. There is nothing to register, no class
+variables to declare, and no hooks to override.
+
+```python
+import pypulseq as pp
+import seqcraft as sc
+
+
+class VelocityEncode(sc.Module):
+    """A bipolar gradient pair that encodes velocity along one axis."""
+
+    def __init__(self, system, *, venc_cm_s, axis='y', regime='default'):
+        super().__init__(system, regime=regime)
+        self.venc_cm_s = float(venc_cm_s)
+        self.axis = axis
+        # A phase of pi at the target velocity needs m1 = 1 / (2 v), in s/m.
+        self.m1_s_per_m = 1.0 / (2.0 * self.venc_cm_s / 100.0)
+        self.lobe = pp.make_trapezoid(channel=axis, area=self._area(), system=self.opts)
+
+    @property
+    def duration(self):
+        return 2.0 * float(pp.calc_duration(self.lobe))
+
+    def build(self, *, sign=1.0):
+        first = _scaled(self.lobe, sign)
+        second = _scaled(self.lobe, -sign)
+        out = sc.LogicBlock('venc')
+        out.add(0.0, first)
+        out.add(float(pp.calc_duration(first)), second)
+        return out
+
+
+def _scaled(grad, factor):
+    return sc.events.derive(
+        grad,
+        amplitude=float(grad.amplitude) * factor,
+        area=float(grad.area) * factor,
+        flat_area=float(grad.flat_area) * factor,
+    )
+```
+
+Then:
+
+```python
+venc = VelocityEncode(system, venc_cm_s=50)
+sc.testing.assert_all(venc)      # the same contract checks the built-in modules get
+```
+
+---
+
+## The three conventions
+
+### `__init__` designs, `build` assembles
+
+Waveforms are created in `__init__` and stored on `self`, the way `nn.Conv2d` allocates its weights
+there. `build` is cheap and returns a value, so a 30-direction diffusion encoding costs **one**
+design and thirty cheap builds.
+
+`build` must not mutate the module or the events stored on it. It is called once per TR; a module
+that mutates itself makes TR 500 differ from TR 1, and the difference is usually a sign flip that
+produces a plausible but wrong image. Derive modified events with `sc.events.derive` — never assign
+to them.
+
+> `sc.events.derive` shallow-copies and strips pypulseq's registration state. Never `deepcopy` an
+> event: `set_block` caches on it keyed by `id(sequence)`, and a stale key can silently
+> mis-attribute the event to a different `Sequence` that lands at the same address.
+
+### `build`'s arguments select the variant
+
+`part='pre'`, `line=17`, `interleaf=3`, `slice_offset_m=z`. Ordinary keyword arguments with ordinary
+defaults, and Python reports a typo as a `TypeError`.
+
+**A build argument must not change the block's duration.** That is the one hard rule, and it exists
+because callers place the *next* thing using the module's timing properties — which cannot see the
+build argument. When `CartesianLine.build` accepted `prephase=False` it silently invalidated
+`time_to_echo` and moved the echo 280 µs early. Anything that changes the duration belongs on
+`__init__`:
+
+```python
+ro = sc.modules.CartesianLine(system, ..., prephase=False)   # right
+ro.build(prephase=False)                                     # was wrong; no longer exists
+```
+
+### Timing a caller needs is a property
+
+`exc.isodelay`, `readout.time_to_echo`, `diff.lobe_duration`. The module has the domain knowledge, so
+the module answers.
+
+The block does not, and cannot: it does not know where it sits. Pinning the answer into it would also
+stop the same block being reused elsewhere — which is why `LogicBlock` has no marks or anchors.
+
+A property has to be honest about what it points at:
+
+- **`duration`** — at least as long as the block `build` returns. It may exceed it (padding to the
+  raster); it may never fall short, or whatever is placed next silently overlaps.
+- **`isodelay`** — start of the block to the RF's effective centre. Read it from `rf.center`, not by
+  recomputing a centre of mass: the two differ for asymmetric and minimum-phase pulses, and the
+  designed value is the one timing needs.
+- **`time_to_echo`** — start of the block to k=0. **For a spiral that is the first sample**, not the
+  middle of the window; conflating the two shifts the diffusion weighting rather than the image.
+
+---
+
+## Nesting needs no mechanism
+
+A module that contains modules just nests their blocks:
+
+```python
+class FatSat(sc.Module):
+    def __init__(self, system, *, voxel_mm):
+        super().__init__(system)
+        self.pulse = sc.modules.GaussSaturation(system, flip_deg=90, duration_us=8000, ...)
+        self.spoiler = sc.modules.Spoiler(system, twists=4, voxel_mm=voxel_mm)
+
+    @property
+    def duration(self):
+        return self.pulse.duration + self.spoiler.duration
+
+    def build(self):
+        pulse = self.pulse.build()
+        return sc.LogicBlock('fatsat').add(0.0, pulse).add(pulse.duration, self.spoiler.build())
+```
+
+`sc.flatten` then reports the whole path — `('gre', 'fatsat', 'spoil')` — so provenance is the tree
+and needs no bookkeeping.
+
+---
+
+## Overlap is free
+
+Do not arrange your module so its gradients avoid other modules'. Place them where they belong and
+let the compiler deal with it:
+
+```python
+seq.add(t, exc.rephaser())          # z
+seq.add(t, pe.build(line=k))        # y   } one block, no coordination,
+seq.add(t, ro.prephaser_block())    # x   } and no warning
+```
+
+Different axes are silent. The same axis is summed with a warning naming both sources. Two RF or two
+ADC events overlapping is an error. See [`compiler.md`](compiler.md).
+
+---
+
+## Units are checked for you
+
+Suffix a float attribute with its unit — `_mm`, `_us`, `_deg`, `_per_m`, `_s_per_mm2` — and
+`sc.validate.check_units` rejects an implausible value when the constructor returns, with a hint:
+
+```
+UnitSanityError: M.slice_thickness_mm = 0.005 is outside the plausible range 0.01 .. 1000 mm.
+  got  : 0.005
+  hint : 0.005 looks like m. Did you mean slice_thickness_mm=5?
+  note : seqcraft never auto-converts - a wrong unit is a wrong sequence.
+```
+
+The band comes from the suffix alone, so it is generous by design: `_mm` is checked against
+0.01–1000 mm, which catches metres on a slice thickness but not on a field of view. Where a tighter
+band is meaningful, state it — `require_in_range(self, 'fov_ro_mm', 0.5, 2000)`.
+
+Public parameters use researcher-natural units (`fov_mm`, `te_ms`, `flip_deg`, `b_value_s_per_mm2`);
+anything derived is strict SI with an SI suffix (`fov_m`, `te_s`, `flip_rad`). Convert exactly once,
+and never auto-convert.
+
+---
+
+## Errors should name what to change
+
+When you refuse a configuration, say which parameter fixes it and what value would work:
+
+```python
+msg = format_error(
+    f'a {flip:g} degree pulse in {duration:g} us needs {needed:.1f} uT, '
+    f'above the {limit:.1f} uT limit.',
+    {'flip_deg': flip, 'duration_us': duration, 'max_b1_uT': limit},
+    [
+        f'lengthen the pulse to at least {shortest:.0f} us',
+        'reduce flip_deg',
+        'use an adiabatic pulse, which inverts at lower peak B1',
+    ],
+)
+raise ConfigurationError(msg)
+```
+
+pypulseq's own message for that case is `Amplitude violation (117%)`, which does not say which of the
+three parameters to change. That difference is most of what a module is for.
+
+---
+
+## What to assert in your tests
+
+`sc.testing.assert_all(module)` covers purity, determinism, an honest duration, timing properties
+inside the block, per-axis limits, raster alignment, and that the module compiles cleanly alone.
+
+Add the **known values** yourself, because those are the ones that catch physics errors:
+
+```python
+def test_venc_encodes_the_right_velocity(system):
+    venc = VelocityEncode(system, venc_cm_s=50)
+    raster = system.grad_raster_s
+    m1 = 0.0
+    for node in venc.build():
+        tt, wf = sc.events.waveform_of(node.item, raster)
+        m1 += float(sc.events.trapz(wf * (tt + node.start), tt))
+    assert m1 == pytest.approx(venc.m1_s_per_m, rel=1e-3)
+```
+
+**Measure from the waveform, not from the parameter.** The built-in diffusion module's b-value is
+checked that way against numerical integration to 0.5 %, and it is what caught a published ramp
+correction being used with the wrong `delta` convention — a 2–4 % b-value error that would have
+biased every diffusivity by the same amount, invisibly.
+
+Two more that are worth writing for any module with a refocusing pulse:
+
+- **Where does k end up at the echo?** `out.kspace()['k_adc'][:, 0]` should be zero on every axis you
+  meant to refocus. This is what catches a missing slice rewinder: a spin-echo spiral starts at k=0
+  in x and y, which makes it tempting to think nothing needs rephasing on z — but the excitation's
+  slice-select gradient leaves through-slice dephasing equal to its own tail, and the refocusing
+  pulse does *not* undo it. Without the rewinder `k_z` is −525 1/m, which is 2.1 cycles across a 4 mm
+  slice and about 95 % of the signal, and nothing else in the sequence looks wrong.
+- **Does the scan take as long as it should?** TR is the time between exciting the *same* slice, so
+  every slice belongs inside one TR period. Getting that wrong does not produce a wrong image — it
+  produces a correct one that takes `n_slices` times longer.
+
+Use `calculate_kspacePP` as the oracle for the first, rather than writing your own integrator: it
+handles the refocusing conjugation itself. Mine got the sign convention wrong twice before I gave up
+and asked pypulseq.

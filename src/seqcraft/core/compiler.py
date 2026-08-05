@@ -1,0 +1,1813 @@
+"""
+The compiler: a logic-block tree in, legal pulseq blocks out.
+
+This is a scheduling problem.  A logic block lets anything overlap anything; a pulseq block
+holds **at most one RF, one ADC and one gradient per axis**, must last a whole number of block
+rasters, must leave the RF dead time before a pulse and the ringdown after it, and must have
+gradients that join continuously across its boundaries.  The compiler's job is to find block
+boundaries satisfying all of that, and to combine whatever lands inside each one.
+
+How boundaries are chosen
+-------------------------
+From two independent properties of an event, which the reservation model keeps apart.
+
+**Indivisible** -- no boundary may fall strictly inside it.  An RF's dead time and ringdown, an
+ADC's window and trailing dead time, a trigger's pulse: each is one hardware action rather than a
+waveform, so splitting it is meaningless.
+
+**Exclusive** -- a block may hold at most one, so a boundary is *required* between two.  RF and
+ADC only.  Triggers are ``TRIGGERS`` extensions and pulseq accepts several per block, so treating
+them as exclusive would invent a constraint the hardware does not have.
+
+Putting a boundary somewhere in the gap between each pair of consecutive *exclusive* reservations
+guarantees at most one RF and one ADC per block **by construction**, with nothing left to check.
+Gradients constrain nothing -- they follow wherever the boundaries turn out to be, split and
+summed as needed -- and labels are retimed onto the block holding the ADC they address, so a
+boundary cannot change which readout sees them.
+
+If two exclusive reservations overlap, the sequence is physically impossible and compilation
+stops.  If nothing in the gap between two of them can be cut, that is impossible too, and the
+error names what is in the way.
+
+Three rules on overlap, each chosen deliberately
+------------------------------------------------
+**Gradients on different axes: silent.**  A phase-encode blip beside a slice rewinder beside a
+readout prephaser is the normal way to build a sequence, not a problem.  Warning about it would
+only teach people to ignore warnings.
+
+**Gradients on the same axis: warned, then summed.**  Summing is almost always what was meant --
+a rewinder sharing time with a prephaser -- so it happens automatically.  But it is the one
+place the compiler changes a waveform, so it says so.
+
+**Two RF or two ADC events overlapping: an error.**  You cannot transmit twice at once, sample
+twice at once, or transmit and receive at once.
+
+Limits are checked *after* summing
+----------------------------------
+Two individually legal gradients on one axis can sum to an illegal one, and no module can see
+that in isolation: adding an area-100 and an area-200 trapezoid on a 40 mT/m, 150 T/m/s system
+reaches 93 % of the amplitude limit but **189 %** of the slew limit.  So amplitude and slew are
+measured on the compiled waveform, which is the only place the truth is visible.
+
+Examples
+--------
+>>> import pypulseq as pp
+>>> import seqcraft as sc
+>>> system = sc.System.preset('generic_3t')
+>>> o = system.default
+>>> gentle = {'area': 100.0, 'duration': 2e-3, 'rise_time': 200e-6, 'system': o}
+>>> lb = sc.LogicBlock('demo')
+>>> _ = lb.add(0.0, pp.make_trapezoid('x', **gentle))
+>>> _ = lb.add(0.0, pp.make_trapezoid('y', **gentle))   # different axis: nothing to report
+>>> out = sc.compile(lb, system)
+>>> out.report.ok, len(out.report.warnings)
+(True, 0)
+>>> out.n_blocks
+1
+"""
+
+from __future__ import annotations
+
+import bisect
+import math
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import pypulseq as pp
+
+from . import events as ev
+from .errors import CompileError, DefinitionConflict, format_error
+from .logic import BARRIER, flatten
+from .raster import EPS, ceil_to, floor_to, on_raster, round_to, sub_exact
+from .report import Issue, Report
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Sequence
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from pypulseq.opts import Opts
+
+    from .geometry import Geometry
+    from .logic import LogicBlock
+    from .system import System
+
+__all__ = ['CompiledSequence', 'WriteResult', 'compile_sequence']
+
+#: Event types carrying a gradient on an axis.
+_GRAD = frozenset({'trap', 'grad'})
+#: Event types attached to whichever block contains their start.
+_POINT = frozenset({'labelset', 'labelinc', 'trigger', 'output'})
+#: Event types no block boundary may fall inside.
+#:
+#: Each is a single hardware action rather than a waveform, so splitting one is meaningless: an
+#: RF with its dead time and ringdown, an ADC with its window and trailing dead time, a trigger
+#: pulse.  Gradients are deliberately absent -- they split exactly and are put back together by
+#: :func:`_axis_gradient`.
+_INDIVISIBLE = frozenset({'rf', 'adc', 'trigger', 'output'})
+#: Event types of which a block may hold at most one, so a boundary is *required* between two.
+#:
+#: Only RF and ADC.  Triggers are ``TRIGGERS`` extensions and pulseq accepts several in one
+#: block, so treating them as exclusive would invent a constraint the hardware does not have and
+#: reject sequences that are perfectly legal.
+_EXCLUSIVE = frozenset({'rf', 'adc'})
+#: Types that carry a k-space address rather than occupying time.  Retimed onto the block holding
+#: the ADC they are meant to affect; see :func:`_label_targets`.
+_LABEL = frozenset({'labelset', 'labelinc'})
+#: Every event type the compiler places and emits.
+#:
+#: Checked rather than assumed, because an unhandled type used to match none of the branches
+#: below and disappear: :func:`_place` gave it a zero-width reservation and the assembly loop
+#: never collected it, so a tree carrying a rotation extension compiled clean, reported nothing,
+#: and played unrotated.  A whitelist turns that class of silence into an error, and makes a new
+#: pulseq event type fail loudly here instead of vanishing.
+_HANDLED = frozenset({
+    BARRIER, 'adc', 'delay', 'grad', 'labelinc', 'labelset', 'output', 'rf', 'trap', 'trigger',
+})
+#: Types pypulseq 1.5 can produce that seqcraft recognises but does not emit, each with what it
+#: is and the way round.  Kept apart from "never heard of it" because the remedy differs
+#: completely -- these have one, an unknown type is a bug or a version skew.
+_UNSUPPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
+    'rot3D': (
+        'the pulseq rotation extension',
+        (
+            'seqcraft bakes rotations into the waveform instead of emitting the extension, so '
+            'that limits, moments and k-space all describe what actually plays',
+            'rotate at build time, the way SpiralVDS rotates its interleaves and the diffusion '
+            'modules resolve a direction',
+            'for a one-off, pypulseq.rotate() / rotate_3d() return rotated gradient events that '
+            'can be added to a LogicBlock directly',
+        ),
+    ),
+    'soft_delay': (
+        'the pulseq soft-delay extension',
+        (
+            'a soft delay must occupy a block containing no other events, which the compiler '
+            'does not yet arrange',
+            'use a plain delay event (pp.make_delay) if the duration is fixed at compile time',
+        ),
+    ),
+    'rf_shim': (
+        'the pulseq RF-shim extension',
+        ('not yet emitted; leave it out, or open an issue with the sequence that needs it',),
+    ),
+}
+#: Axis order, matching pulseq's block layout.
+_AXES = ('x', 'y', 'z')
+#: Label keys that together form a k-space address.
+_ADDRESS_KEYS = ('SLC', 'LIN', 'PAR', 'AVG', 'REP', 'SEG', 'ECO', 'SET')
+
+
+# --------------------------------------------------------------------------------- placing
+@dataclass(frozen=True)
+class _Placed:
+    """
+    One leaf event resolved to absolute time.
+
+    Attributes
+    ----------
+    node_t
+        The time the tree assigned, *before* the event's own ``delay``.
+    start, end
+        When the event is physically active: the waveform, the pulse, or the sampling window.
+    res_start, res_end
+        The interval the event reserves exclusively.  For an RF that is `node_t` -- which
+        already contains the transmit dead time, because pypulseq puts it in ``rf.delay`` --
+        through the end of ringdown.  For an ADC it is `node_t` through the post-sampling dead
+        time.  Equal to ``(start, end)`` for everything else.
+    """
+
+    node_t: float
+    start: float
+    end: float
+    res_start: float
+    res_end: float
+    event: SimpleNamespace
+    path: tuple[str, ...]
+
+    @property
+    def kind(self) -> str:
+        """The pulseq event ``type``."""
+        return str(getattr(self.event, 'type', '?'))
+
+    @property
+    def where(self) -> str:
+        """A human label: the tag path, or the event type when the tree was untagged."""
+        return '.'.join(self.path) if self.path else self.kind
+
+
+def _intrinsic_duration(event: SimpleNamespace) -> float:
+    """Return how long an event is active, excluding its own leading delay."""
+    kind = getattr(event, 'type', None)
+    if kind == 'trap':
+        return float(event.rise_time) + float(event.flat_time) + float(event.fall_time)
+    if kind == 'grad':
+        shape = getattr(event, 'shape_dur', None)
+        return float(shape) if shape is not None else float(event.tt[-1])
+    if kind == 'rf':
+        return float(event.shape_dur)
+    if kind == 'adc':
+        return float(event.num_samples) * float(event.dwell)
+    if kind in ('trigger', 'output'):
+        # pypulseq builds scanner inputs as 'trigger' and scanner outputs as 'output', and both
+        # hold their block open for the length of the pulse.
+        return float(getattr(event, 'duration', 0.0) or 0.0)
+    return 0.0
+
+
+def _unsupported(kind: str | None, path: tuple[str, ...], node_t: float) -> CompileError:
+    """Build the error for an event type the compiler will not emit."""
+    where = '.'.join(path) if path else '(untagged)'
+    if kind in _UNSUPPORTED:
+        what, hints = _UNSUPPORTED[kind]
+        return CompileError(format_error(
+            f'{what} ({kind!r}) is not supported by the compiler.',
+            {'from': where, 'at': f'{node_t * 1e6:.1f} us'},
+            list(hints),
+        ))
+    return CompileError(format_error(
+        f'unknown event type {kind!r}.',
+        {'from': where, 'at': f'{node_t * 1e6:.1f} us', 'handled': ', '.join(sorted(_HANDLED))},
+        [
+            'LogicBlock.add() accepts any object with a .type attribute, so a typo or a '
+            'hand-built namespace reaches the compiler unchecked',
+            'if this is a real pulseq event from a newer pypulseq, seqcraft needs updating -- '
+            'please open an issue naming the type',
+        ],
+    ))
+
+
+def _place(root: LogicBlock, opts: Opts) -> list[_Placed]:
+    """
+    Flatten `root` and resolve every event to absolute times and reservations.
+
+    A ``delay`` event is the one special case: pypulseq stores its length in ``delay`` and it
+    has no waveform, so it occupies ``[t, t + delay]`` rather than starting after its own
+    delay.  It exists to hold a block open -- a b=0 diffusion volume that must fill the same
+    slot as an encoded one.
+
+    Raises
+    ------
+    CompileError
+        If any leaf carries a type the compiler does not emit.  Rejecting here is the point:
+        every branch below is a positive match, so an unrecognised type would otherwise be
+        placed with a zero-width reservation, collected by nothing, and silently lost.
+    """
+    out: list[_Placed] = []
+    for node_t, event, path in flatten(root):
+        kind = getattr(event, 'type', None)
+        if kind not in _HANDLED:
+            raise _unsupported(kind, path, node_t)
+        if kind == BARRIER:
+            out.append(_Placed(node_t, node_t, node_t, node_t, node_t, event, path))
+            continue
+        delay = float(getattr(event, 'delay', 0.0) or 0.0)
+        if kind == 'delay':
+            out.append(_Placed(node_t, node_t, node_t + delay, node_t, node_t + delay, event, path))
+            continue
+
+        start = node_t + delay
+        end = start + _intrinsic_duration(event)
+        if kind == 'rf':
+            ring = float(getattr(event, 'ringdown_time', opts.rf_ringdown_time) or 0.0)
+            res_start, res_end = node_t, end + ring
+        elif kind == 'adc':
+            dead = float(getattr(event, 'dead_time', opts.adc_dead_time) or 0.0)
+            res_start, res_end = node_t, end + dead
+        else:
+            res_start, res_end = start, end
+        out.append(_Placed(node_t, start, end, res_start, res_end, event, path))
+    return out
+
+
+def _check_exclusive(placed: Sequence[_Placed]) -> None:
+    """
+    Raise if two RF or ADC reservations overlap.
+
+    Checked before any scheduling, because it is the one class of conflict no choice of block
+    boundaries can fix: the sequence is asking the hardware to do two things it physically
+    cannot do at once.  The message names both tag paths and the overlap -- information
+    pypulseq cannot give, since it would fail much later, on a block index, with
+    ``Multiple ADC events were specified``.
+    """
+    exclusive = sorted(
+        (p for p in placed if p.kind in ('rf', 'adc')),
+        key=lambda p: (p.res_start, p.res_end),
+    )
+    for a, b in zip(exclusive, exclusive[1:]):
+        if b.res_start < a.res_end - EPS:
+            overlap = min(a.res_end, b.res_end) - b.res_start
+            pair = f'{a.kind.upper()} and {b.kind.upper()}'
+            reason = {
+                'RF and RF': 'the transmitter cannot play two pulses at once',
+                'ADC and ADC': 'the receiver cannot open two sampling windows at once',
+            }.get(pair, 'the coil cannot transmit and receive at the same time')
+            msg = format_error(
+                f'{pair} overlap by {overlap * 1e6:.1f} us -- {reason}.',
+                {
+                    f'{a.kind} at {a.start * 1e6:.1f} us': a.where,
+                    'reserves': f'{a.res_start * 1e6:.1f} .. {a.res_end * 1e6:.1f} us',
+                    f'{b.kind} at {b.start * 1e6:.1f} us': b.where,
+                    'reserves ': f'{b.res_start * 1e6:.1f} .. {b.res_end * 1e6:.1f} us',
+                },
+                [
+                    f'move one of them by at least {overlap * 1e6:.1f} us',
+                    'a reservation includes the RF dead time and ringdown, and the ADC dead '
+                    'time before and after sampling -- so two events can conflict while their '
+                    'waveforms do not visibly touch',
+                ],
+            )
+            raise CompileError(msg)
+
+
+# ---------------------------------------------------------------------------- boundaries
+class _Spans:
+    """
+    A sorted set of intervals, answering "is this time strictly inside one of them?" in log time.
+
+    Built once per compile.  With 1700 TRs there are half a million spans and a boundary
+    candidate for each, so a linear test per candidate would be quadratic.
+    """
+
+    def __init__(self, spans: Iterable[tuple[float, float]]) -> None:
+        pairs = [(lo, hi) for lo, hi in spans if hi > lo + EPS]
+        self._starts = sorted(lo for lo, _ in pairs)
+        self._ends = sorted(hi for _, hi in pairs)
+
+    def contains_strictly(self, t: float) -> bool:
+        """``True`` if some span ``(lo, hi)`` satisfies ``lo < t < hi``."""
+        started = bisect.bisect_left(self._starts, t - EPS)
+        finished = bisect.bisect_right(self._ends, t + EPS)
+        return started > finished
+
+
+def _label_targets(placed: Sequence[_Placed]) -> dict[int, float]:
+    """
+    Return, per label, the time it should be *assigned* at -- its target ADC's reservation start.
+
+    A pulseq label is a running register, not an instant.  The interpreter applies a block's
+    labels when it reaches that block, and an ADC in the same block then samples the state:
+    pypulseq's ``evaluate_labels`` applies the labels first and records afterwards.  So a label
+    may live in **any** block strictly after the previous ADC's and at or before its target
+    ADC's, with identical results.
+
+    That freedom means the compiler has to *choose*, and choosing by containment is wrong.  A
+    boundary pushed later than the ADC's reservation end -- which is what the gap-midpoint
+    fallback does whenever a gradient covers the natural candidates -- puts a label placed
+    comfortably after one readout into that readout's own block, silently overwriting its
+    k-space address.  Measured: two ADCs, a label between them, both ending up with the same
+    LIN.
+
+    Assigning instead to the block holding the **first ADC at or after the label's own time**
+    makes the outcome independent of where boundaries land, which is the property worth having.
+    A label with no ADC after it keeps containment assignment -- there is nothing for it to
+    address, so there is nothing to get wrong.
+
+    A **barrier is never crossed**.  A barrier is an explicit request for a seam at that instant,
+    so moving a label over one would override the one instruction the user gave about block
+    structure.  It is also what makes a barrier a working remedy for the order-dependent case in
+    :func:`_label_order_conflict`: separated into different blocks, two labels are applied in
+    block order, which pulseq does define.
+
+    Returns
+    -------
+    dict
+        Index into `placed` -> assignment time.  Labels absent from the mapping keep their own
+        ``res_start``: either there is no ADC after them, or a barrier stands in the way.
+    """
+    adc_starts = sorted(p.res_start for p in placed if p.kind == 'adc')
+    barriers = sorted(p.node_t for p in placed if p.kind == BARRIER)
+    out: dict[int, float] = {}
+    if not adc_starts:
+        return out
+    for i, p in enumerate(placed):
+        if p.kind not in _LABEL:
+            continue
+        j = bisect.bisect_left(adc_starts, p.res_start - EPS)
+        if j >= len(adc_starts):
+            continue
+        target = adc_starts[j]
+        k = bisect.bisect_right(barriers, p.res_start + EPS)
+        if k < len(barriers) and barriers[k] < target - EPS:
+            continue
+        out[i] = target
+    return out
+
+
+def _label_order_conflict(
+    placed: Sequence[_Placed],
+    targets: dict[int, float],
+) -> CompileError | None:
+    """
+    Return an error if two labels would share a block but their order matters.
+
+    **pypulseq discards the order labels were added in.**  ``Sequence/block.py`` sorts a block's
+    extensions by their library reference id -- "we rely on the sorting of the extension IDs" --
+    so ``add_block(set, inc)`` and ``add_block(inc, set)`` produce the same block and the same
+    result.  Verified: both give ``LIN = 10``, never 13.
+
+    Only order-*independent* groups are therefore expressible within one block:
+
+    * labels on **different** keys -- they do not interact;
+    * several ``labelinc`` on one key -- addition commutes.
+
+    A ``labelset`` sharing a key with anything else does not commute, so pulseq cannot express
+    the intent and guessing would silently pick one of two different k-space addressings.  This
+    is not new with target assignment -- containment could already put two such labels in one
+    block -- but grouping by target makes it reachable on purpose, so it has to be detected.
+    """
+    groups: dict[tuple[float, str], list[_Placed]] = {}
+    for i, p in enumerate(placed):
+        if p.kind not in _LABEL:
+            continue
+        key = (targets.get(i, p.res_start), str(getattr(p.event, 'label', '?')))
+        groups.setdefault(key, []).append(p)
+
+    for (_, label_key), members in sorted(groups.items()):
+        if len(members) < 2 or all(m.kind == 'labelinc' for m in members):
+            continue
+        kinds = ', '.join(f'{m.kind}={getattr(m.event, "value", "?")} from {m.where}'
+                          for m in members)
+        return CompileError(format_error(
+            f'{len(members)} labels set or increment {label_key!r} for the same readout, and '
+            f'their order cannot be expressed.',
+            {
+                'labels': kinds,
+                'times': ', '.join(f'{m.res_start * 1e6:.1f} us' for m in members),
+            },
+            [
+                'pypulseq sorts a block\'s extensions by library id, so the order they are '
+                'added in is discarded -- only labels on different keys, or several labelinc '
+                'on one key, are order-independent',
+                'put a barrier between them so they land in separate blocks, where block order '
+                'does determine the order',
+                'or combine them into the single label the readout should actually see',
+            ],
+        ))
+    return None
+
+
+def _grad_knots(event: SimpleNamespace, t0: float) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return the exact piecewise-linear knots of a gradient event, in absolute time.
+
+    Every pulseq gradient *is* a PWL function, so this loses nothing -- and it is the only
+    representation in which a moment can be computed exactly.
+
+    The subtlety is ``grad``: its samples sit at raster **centres** when it came from
+    ``make_arbitrary_grad``, and the amplitudes at the two edges live outside the sample array in
+    ``first`` and ``last``.  Omitting them truncates the waveform by half a raster at each end.
+    For an extended trapezoid ``tt`` already reaches both edges, so they coincide with existing
+    knots and are skipped.
+    """
+    kind = getattr(event, 'type', None)
+    delay = float(getattr(event, 'delay', 0.0) or 0.0)
+    start = t0 + delay
+    if kind == 'trap':
+        rise = float(event.rise_time)
+        flat = float(event.flat_time)
+        fall = float(event.fall_time)
+        amp = float(event.amplitude)
+        if flat > 0:
+            return (
+                np.array([start, start + rise, start + rise + flat, start + rise + flat + fall]),
+                np.array([0.0, amp, amp, 0.0]),
+            )
+        return (
+            np.array([start, start + rise, start + rise + fall]),
+            np.array([0.0, amp, 0.0]),
+        )
+
+    tt = np.asarray(event.tt, dtype=float)
+    wf = np.asarray(event.waveform, dtype=float)
+    shape_dur = float(getattr(event, 'shape_dur', tt[-1] if len(tt) else 0.0))
+    times = [start + t for t in tt]
+    amps = list(wf)
+    first = getattr(event, 'first', None)
+    last = getattr(event, 'last', None)
+    if first is not None and len(tt) and tt[0] > EPS:
+        times.insert(0, start)
+        amps.insert(0, float(first))
+    if last is not None and len(tt) and shape_dur - tt[-1] > EPS:
+        times.append(start + shape_dur)
+        amps.append(float(last))
+    return np.asarray(times, dtype=float), np.asarray(amps, dtype=float)
+
+
+def _pwl_m1(times: np.ndarray, amps: np.ndarray) -> float:
+    """
+    Return the exact first moment ``integral g(t) * t dt`` of a PWL waveform.
+
+    Closed form, not quadrature.  ``g(t) * t`` is *quadratic* between two knots, so the
+    trapezoidal rule is wrong there by an amount that depends on the knot spacing -- which makes
+    a trapz-based m1 useless as an invariant: the tree side (sampled on the raster) and the
+    compiled side (sampled at knots) would disagree by ~0.1 % on nothing more than a split.
+
+    Over one segment, with ``h = t1 - t0`` and ``g`` running from ``g0`` to ``g1``, substituting
+    ``t = t0 + s*h`` gives ``h * (g0*t0 + g0*h/2 + (g1-g0)*t0/2 + (g1-g0)*h/3)``.
+    """
+    if len(times) < 2:
+        return 0.0
+    t0, t1 = times[:-1], times[1:]
+    g0, g1 = amps[:-1], amps[1:]
+    h = t1 - t0
+    dg = g1 - g0
+    return float(np.sum(h * (g0 * t0 + g0 * h / 2.0 + dg * t0 / 2.0 + dg * h / 3.0)))
+
+
+def _expected_addresses(
+    placed: Sequence[_Placed],
+    targets: dict[int, float],
+) -> list[dict[str, int]]:
+    """
+    Fold the tree's labels the way the interpreter will, giving the address of each ADC.
+
+    Mirrors ``Sequence.evaluate_labels(evolution='adc')``: labels are applied in assignment
+    order, and the running state is recorded at every ADC.  Comparing the two is what makes
+    label placement checkable rather than merely intended -- and it catches the failure the
+    duplicate-address check cannot see, an addressing shifted by one but still unique.
+    """
+    adcs = sorted((p for p in placed if p.kind == 'adc'), key=lambda p: p.res_start)
+    labels = sorted(
+        (
+            (targets.get(i, p.res_start), p.res_start, p)
+            for i, p in enumerate(placed)
+            if p.kind in _LABEL
+        ),
+        key=lambda item: (item[0], item[1]),
+    )
+    state: dict[str, int] = {}
+    out: list[dict[str, int]] = []
+    cursor = 0
+    for adc in adcs:
+        while cursor < len(labels) and labels[cursor][0] <= adc.res_start + EPS:
+            _, _, p = labels[cursor]
+            cursor += 1
+            key = str(getattr(p.event, 'label', '?'))
+            value = int(getattr(p.event, 'value', 0))
+            state[key] = state.get(key, 0) + value if p.kind == 'labelinc' else value
+        out.append(dict(state))
+    return out
+
+
+def _orphan_label_issues(
+    placed: Sequence[_Placed],
+    targets: dict[int, float],
+) -> list[Issue]:
+    """
+    Report labels with no ADC after them.
+
+    Such a label addresses nothing, so it is placed by containment -- and containment can put it
+    in the *last* ADC's block, changing that readout's address.  Rather than guess, say so: the
+    fix is always to move the label before the readout it was meant for.
+    """
+    out: list[Issue] = []
+    for i, p in enumerate(placed):
+        if p.kind in _LABEL and i not in targets:
+            out.append(Issue(
+                'label',
+                p.where,
+                f'label {getattr(p.event, "label", "?")} at {p.res_start * 1e6:.1f} us has no '
+                f'ADC after it, so it addresses no readout; it may land in the preceding '
+                f'readout\'s block and change that address',
+                'warning',
+            ))
+    return out
+
+
+def _covering(placed: Sequence[_Placed], t: float) -> _Placed | None:
+    """Return an indivisible event whose reservation strictly contains `t`, for error messages."""
+    for p in placed:
+        if p.kind in _INDIVISIBLE and p.res_start + EPS < t < p.res_end - EPS:
+            return p
+    return None
+
+
+def _barrier_conflict(
+    barrier: _Placed,
+    at: float,
+    placed: Sequence[_Placed],
+) -> CompileError:
+    """Build the error for a barrier that would split an indivisible event."""
+    blocker = _covering(placed, at)
+    detail = {'barrier': barrier.where, 'at': f'{at * 1e6:.1f} us'}
+    if blocker is not None:
+        detail[f'would split {blocker.kind}'] = blocker.where
+        detail['which reserves'] = (
+            f'{blocker.res_start * 1e6:.1f} .. {blocker.res_end * 1e6:.1f} us'
+        )
+    return CompileError(format_error(
+        'a barrier falls inside an event that cannot be split.',
+        detail,
+        [
+            'an RF reserves its dead time and ringdown, an ADC its window and trailing dead '
+            'time, and a trigger its whole pulse -- a boundary inside any of them has no '
+            'meaning, since each is one hardware action rather than a waveform',
+            'move the barrier outside that span, or drop it and let the compiler choose',
+        ],
+    ))
+
+
+def _gap_boundary(
+    a_end: float,
+    b_start: float,
+    raster: float,
+    cuttable: Callable[[float], bool],
+) -> float | None:
+    """
+    Return a legal boundary strictly between two exclusive reservations, or ``None``.
+
+    The midpoint is tried first because for an EPI train it is the middle of the blip, which is
+    the natural place to split the readout gradient.  The two edges are the fallbacks for a gap
+    that something indivisible partly covers.
+    """
+    options = (
+        ceil_to(0.5 * (a_end + b_start), raster),
+        ceil_to(a_end, raster),
+        floor_to(b_start, raster),
+    )
+    for t in options:
+        if a_end - EPS <= t <= b_start + EPS and cuttable(t):
+            return t
+    return None
+
+
+def _gap_blocked(a_end: float, b_start: float, placed: Sequence[_Placed]) -> CompileError:
+    """Build the error for a mandatory gap that nothing may be cut in."""
+    mid = 0.5 * (a_end + b_start)
+    blocker = _covering(placed, mid)
+    detail = {'gap': f'{a_end * 1e6:.1f} .. {b_start * 1e6:.1f} us'}
+    if blocker is not None:
+        detail[f'covered by {blocker.kind}'] = blocker.where
+        detail['which reserves'] = (
+            f'{blocker.res_start * 1e6:.1f} .. {blocker.res_end * 1e6:.1f} us'
+        )
+    return CompileError(format_error(
+        'two RF/ADC events need a block boundary between them, but nothing in the gap can be '
+        'cut.',
+        detail,
+        [
+            'pulseq holds one RF and one ADC per block, so consecutive ones must be separated -- '
+            'and the only times available are outside every indivisible span',
+            'usually a trigger stretched across the gap: shorten it, or move it so it sits '
+            'wholly within one of the two blocks',
+        ],
+    ))
+
+
+def _boundaries(
+    placed: Sequence[_Placed],
+    total: float,
+    raster: float,
+    max_block: float,
+) -> list[float]:
+    """
+    Return the sorted block boundaries.
+
+    Two independent properties decide where a boundary may and must go, and keeping them apart
+    is what makes triggers work.  An event is
+
+    **indivisible** when no boundary may fall strictly inside its span -- an RF's dead time and
+    ringdown, an ADC's window and trailing dead time, a trigger's pulse.  Splitting any of them
+    is meaningless: they are single hardware actions, not waveforms.
+
+    **exclusive** when a block may hold at most one -- RF and ADC, because pulseq stores one of
+    each per block.  Triggers are *not* exclusive: they are TRIGGERS extensions and pulseq
+    accepts several in one block, so demanding a boundary between two of them would invent a
+    constraint the hardware does not have.
+
+    From those, three rules produce boundaries:
+
+    **Mandatory.**  One boundary somewhere in the gap between each pair of consecutive
+    *exclusive* reservations, which guarantees at most one RF and one ADC per block by
+    construction.  Zero and the total duration are boundaries too, as are explicit barriers.
+
+    **Opportunistic.**  Every gradient edge and reservation edge is a *candidate*, accepted only
+    if it falls strictly inside neither a gradient nor an indivisible span.  That is what keeps a
+    trapezoid a trapezoid: a slice rephaser on z overlapping a phase blip on y stays two clean
+    events in one block, rather than being cut where the blip happens to end.  It is also why a
+    readout gradient survives whole -- its own edges are candidates, and nothing else's edge
+    lands inside it.
+
+    **Forced.**  Intervals longer than `max_block` are subdivided, since pulseq stores a block
+    duration in a fixed-width field.
+
+    Raises
+    ------
+    CompileError
+        If a barrier sits inside an indivisible span, or if a mandatory gap contains no legal
+        boundary at all because something indivisible covers the whole of it.
+    """
+    exclusive = sorted(
+        ((p.res_start, p.res_end) for p in placed if p.kind in _EXCLUSIVE),
+        key=lambda s: s[0],
+    )
+    grad_spans = _Spans((p.start, p.end) for p in placed if p.kind in _GRAD)
+    indivisible = _Spans(
+        (p.res_start, p.res_end) for p in placed if p.kind in _INDIVISIBLE
+    )
+
+    def cuttable(t: float) -> bool:
+        """Hard requirement on *every* boundary: it may not split a single hardware action."""
+        return not indivisible.contains_strictly(t)
+
+    def acceptable(t: float) -> bool:
+        """Additionally leaves every gradient whole -- a preference, not a requirement."""
+        return cuttable(t) and not grad_spans.contains_strictly(t)
+
+    marks = {0.0, total}
+    for p in placed:
+        if p.kind != BARRIER:
+            continue
+        at = round_to(p.node_t, raster)
+        if not cuttable(at):
+            raise _barrier_conflict(p, at, placed)
+        marks.add(at)
+
+    # Snap the start of anything **down** and the end of anything **up**, so a block only ever
+    # grows to fit its contents.  Nearest-rounding an end is a real bug: an ADC whose window plus
+    # trailing dead time lands 4 us past a raster edge would get a block 6 us too short, which
+    # pypulseq reports as an unaligned duration rather than as the missing microseconds it is.
+    candidates: set[float] = set()
+    for p in placed:
+        if p.kind in _GRAD:
+            candidates.add(floor_to(p.start, raster))
+            candidates.add(ceil_to(p.end, raster))
+        elif p.kind in _INDIVISIBLE:
+            candidates.add(floor_to(p.res_start, raster))
+            candidates.add(ceil_to(p.res_end, raster))
+    marks.update(t for t in candidates if acceptable(t))
+
+    # Guarantee one boundary per reservation gap.  Anything in the gap will do -- the gap is by
+    # definition outside every reservation -- so prefer a point already chosen, then a gradient
+    # edge inside the gap, and fall back to the midpoint, which for an EPI train is the middle
+    # of the blip and therefore the natural place to split the readout gradient.
+    #
+    # Gaps are disjoint and ordered, so `cursor` only ever moves forward and one scan answers
+    # every gap.  Re-sorting `marks` after each added midpoint instead is quadratic, and it fires
+    # on precisely the case this fallback exists for: in an EPI train a continuous readout
+    # gradient makes both natural candidates unacceptable, so *every* echo lands here.  A midpoint
+    # can only fall inside its own gap, so no later gap can need to see it.
+    #
+    # The chosen point must be `cuttable`, not merely inside the gap.  Being outside every
+    # *exclusive* reservation is guaranteed by construction, but something indivisible and
+    # non-exclusive -- a trigger -- can still cover part or all of a gap, and cutting it would be
+    # meaningless.  Cutting a *gradient* here is fine and expected: for an EPI train the midpoint
+    # is the middle of the blip, which is the natural place to split the readout.
+    chosen = sorted(marks)
+    cursor = 0
+    extra: list[float] = []
+    for (_, a_end), (b_start, _) in zip(exclusive, exclusive[1:]):
+        while cursor < len(chosen) and chosen[cursor] < a_end - EPS:
+            cursor += 1
+        if cursor < len(chosen) and chosen[cursor] <= b_start + EPS:
+            continue
+        at = _gap_boundary(a_end, b_start, raster, cuttable)
+        if at is None:
+            raise _gap_blocked(a_end, b_start, placed)
+        extra.append(at)
+    marks.update(extra)
+
+    snapped = sorted({round_to(min(max(0.0, t), total), raster) for t in marks})
+
+    out: list[float] = []
+    for a, b in zip(snapped, snapped[1:]):
+        out.append(a)
+        n_extra = int(math.ceil((b - a) / max_block)) - 1
+        if n_extra > 0:
+            step = round_to((b - a) / (n_extra + 1), raster)
+            out.extend(a + step * (k + 1) for k in range(n_extra) if a + step * (k + 1) < b - EPS)
+    out.append(snapped[-1])
+    return sorted(set(out))
+
+
+# ------------------------------------------------------------------------------ gradients
+def _sample(p: _Placed, grid: np.ndarray) -> np.ndarray:
+    """
+    Sample a gradient event onto absolute times `grid`, zero outside its own span.
+
+    Trapezoids are interpolated through their four corners, which is exact.  ``grad`` events
+    are interpolated through ``tt``; for an extended trapezoid that is exact too, and for an
+    arbitrary waveform (a spiral) it is a resampling -- which is why the caller avoids this
+    path whenever a gradient sits alone inside its interval.
+    """
+    e = p.event
+    if e.type == 'trap':
+        rise, flat, fall = float(e.rise_time), float(e.flat_time), float(e.fall_time)
+        tt = np.array([0.0, rise, rise + flat, rise + flat + fall])
+        wf = np.array([0.0, float(e.amplitude), float(e.amplitude), 0.0])
+    else:
+        tt = np.asarray(e.tt, dtype=float)
+        wf = np.asarray(e.waveform, dtype=float)
+    return np.interp(grid - p.start, tt, wf, left=0.0, right=0.0)
+
+
+def _reduce_corners(
+    times: np.ndarray,
+    amps: np.ndarray,
+    tol: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Drop points lying on the straight line between their neighbours.
+
+    A summed trapezoid sampled on the raster is hundreds of collinear points, and pulseq would
+    store every one as a shape sample.  Reducing to corners first keeps a merged trapezoid a
+    four-point shape, so merging costs file size only where the waveform genuinely is curved.
+    """
+    if len(times) < 3:
+        return times, amps
+    keep = [0]
+    for i in range(1, len(times) - 1):
+        t0, a0 = times[keep[-1]], amps[keep[-1]]
+        t1, a1 = times[i + 1], amps[i + 1]
+        predicted = a0 if t1 == t0 else a0 + (a1 - a0) * (times[i] - t0) / (t1 - t0)
+        if abs(predicted - amps[i]) > tol:
+            keep.append(i)
+    keep.append(len(times) - 1)
+    return times[keep], amps[keep]
+
+
+def _axis_gradient(
+    axis: str,
+    pieces: Sequence[_Placed],
+    a: float,
+    b: float,
+    opts: Opts,
+    issues: list[Issue],
+    block_index: int,
+) -> SimpleNamespace | None:
+    """
+    Return the single gradient event for `axis` over the interval ``[a, b)``, or ``None``.
+
+    Fast path -- one gradient, entirely inside the interval -- passes through untouched apart
+    from its in-block delay.  No resampling and no new shape, so a spiral readout or a long
+    diffusion lobe costs exactly what it did before compilation.
+
+    Slow path sums every piece on the gradient raster and rebuilds one event.  Splitting and
+    merging both happen there, uniformly, so there is one code path to get right rather than
+    one per combination.
+    """
+    if not pieces:
+        return None
+
+    if len(pieces) == 1:
+        p = pieces[0]
+        if p.start >= a - EPS and p.end <= b + EPS:
+            return ev.derive(p.event, delay=_in_block_delay(p, a, opts))
+
+    if len(pieces) > 1:
+        issues.append(
+            Issue(
+                'grad_merge',
+                f'block {block_index}',
+                f'{len(pieces)} gradients overlap on axis {axis} over '
+                f'{a * 1e6:.1f}..{b * 1e6:.1f} us and were summed: '
+                + ', '.join(sorted({p.where for p in pieces})),
+                'warning',
+            )
+        )
+
+    raster = float(opts.grad_raster_time)
+    n = int(round((b - a) / raster))
+    grid = a + np.arange(n + 1) * raster
+    total = np.zeros_like(grid)
+    for p in pieces:
+        total += _sample(p, grid)
+
+    if not np.any(total):
+        return None
+
+    # Snap negligible endpoints to exactly zero.  Resampling a trapezoid whose corners do not fall
+    # on the grid leaves the ends at ~1e-6 Hz/m -- a millionth of a millionth of the amplifier's
+    # range, and physically zero.  pypulseq nonetheless tests ``first != 0`` *exactly*, then demands
+    # the previous block continue it, so without this a rounding artifact becomes a continuity
+    # error hundreds of blocks away from anything that looks wrong.
+    negligible = 1e-6 * float(opts.max_grad)
+    for edge in (0, -1):
+        if abs(total[edge]) < negligible:
+            total[edge] = 0.0
+
+    times, amps = _reduce_corners(grid - a, total, tol=1e-9 * float(opts.max_grad))
+    # The interval edges are block boundaries, so a non-zero value at either end has to be
+    # carried by first/last with delay 0: pypulseq rejects a delayed gradient that starts away
+    # from zero, and checks the join against the neighbouring block.
+    grad = pp.make_extended_trapezoid(
+        channel=axis,
+        times=times,
+        amplitudes=amps,
+        system=opts,
+        skip_check=True,
+    )
+    grad.delay = 0.0
+    return grad
+
+
+def _in_block_delay(p: _Placed, block_start: float, opts: Opts) -> float:
+    """
+    Return an event's delay within its block, quantised onto that event's own raster.
+
+    Two reasons this cannot be a plain subtraction.  The absolute times come from arithmetic over
+    a sequence that may run for minutes, so by the last TR the float resolution is coarser than a
+    picosecond and ``p.start - block_start`` drifts -- pypulseq then reports an RF delay of
+    ``129.9999999986us`` and rejects the block.  And pulseq requires each event's delay to sit on
+    its own raster: 1 us for RF, 100 ns for ADC, 10 us for gradients.  Subtracting in integer
+    picoseconds and then snapping satisfies both.
+    """
+    dt = max(0.0, sub_exact(p.start, block_start))
+    raster = {
+        'rf': float(opts.rf_raster_time),
+        'adc': float(opts.adc_raster_time),
+    }.get(p.kind, float(opts.grad_raster_time))
+    return round_to(dt, raster)
+
+
+def _required_duration(events: Sequence[SimpleNamespace], opts: Opts) -> float:
+    """
+    Return the shortest block that can hold `events`, by pulseq's own rules.
+
+    Mirrors what ``set_block`` computes: an RF needs its delay, shape and ringdown; an ADC needs
+    its delay, window and *trailing* dead time; a gradient needs its delay and extent.
+    """
+    out = 0.0
+    for e in events:
+        kind = getattr(e, 'type', None)
+        delay = float(getattr(e, 'delay', 0.0) or 0.0)
+        if kind == 'rf':
+            ring = float(getattr(e, 'ringdown_time', opts.rf_ringdown_time) or 0.0)
+            out = max(out, delay + float(e.shape_dur) + ring)
+        elif kind == 'adc':
+            dead = float(getattr(e, 'dead_time', opts.adc_dead_time) or 0.0)
+            out = max(out, delay + float(e.num_samples) * float(e.dwell) + dead)
+        elif kind == BARRIER:
+            continue
+        else:
+            out = max(out, float(pp.calc_duration(e)))
+    return out
+
+
+def _adc_conflict(edge: float, adcs: Sequence[_Placed]) -> _Placed | None:
+    """
+    Return an ADC whose sampling window the boundary `edge` falls strictly inside.
+
+    A safety net rather than an expected condition: :func:`_boundaries` only accepts times
+    outside every reservation, and a reservation contains its ADC's window.  If this ever fires
+    it is a compiler bug, and it fires with the information needed to find it rather than letting
+    a silently-split readout reach the scanner.
+    """
+    for adc in adcs:
+        if adc.start + EPS < edge < adc.end - EPS:
+            return adc
+    return None
+
+
+# --------------------------------------------------------------------------------- limits
+def _limit_issues(
+    events: Iterable[SimpleNamespace],
+    opts: Opts,
+    block_index: int,
+    origin: str,
+) -> list[Issue]:
+    """
+    Measure amplitude and slew on a compiled block and describe any violation.
+
+    Reported rather than raised so a run surfaces every violation at once; one mistimed module
+    usually produces a run of them, and stopping at the first hides the pattern.
+
+    The vector norm across simultaneous axes is a warning, not an error: two axes ramping
+    together reach ``sqrt(2)`` times the per-axis slew in vector magnitude, which real
+    amplifiers permit.  It becomes a hard limit only once a rotation can concentrate the whole
+    vector onto one physical axis.
+    """
+    out: list[Issue] = []
+    raster = float(opts.grad_raster_time)
+    for kind, where, achieved, limit in ev.check_limits(events, opts, raster):
+        if kind.startswith('grad'):
+            unit, scale = 'mT/m', 1e3 / opts.gamma
+        else:
+            unit, scale = 'T/m/s', 1.0 / opts.gamma
+        out.append(
+            Issue(
+                f'{kind}_limit',
+                f'block {block_index}',
+                f'{kind.replace("_", " ")} on {where} reaches {achieved * scale:.1f} {unit}, '
+                f'limit {limit * scale:.1f} {unit} ({achieved / limit * 100:.0f}%); from {origin}',
+                'warning' if kind.endswith('_norm') else 'error',
+            )
+        )
+    return out
+
+
+# ------------------------------------------------------------------------------- the pass
+def compile_sequence(  # noqa: C901, PLR0912, PLR0915
+    root: LogicBlock,
+    system: System,
+    *,
+    geometry: Geometry | None = None,
+    name: str = '',
+    regime: str = 'default',
+    definitions: dict[str, Any] | None = None,
+) -> CompiledSequence:
+    """
+    Turn a logic-block tree into a :class:`pypulseq.Sequence`.
+
+    Parameters
+    ----------
+    root
+        The tree to compile.  Usually built by adding module outputs to one
+        :class:`~seqcraft.core.logic.LogicBlock`.
+    system
+        The scanner: rasters, dead times and limits.
+    geometry
+        Optional; contributes ``[DEFINITIONS]`` to the written file.
+    name
+        Sequence name for the definitions.  Defaults to ``root.tag``.
+    regime
+        Which of `system`'s named limit regimes to validate against.  Modules may design
+        against a derated regime individually; this is the ceiling the *combined* waveform
+        has to respect.
+    definitions
+        Extra ``[DEFINITIONS]`` entries, merged with a collision check so two sources claiming
+        the same key with different values raises rather than one silently winning.
+
+    Returns
+    -------
+    CompiledSequence
+        The pypulseq sequence, the compile report, and per-block provenance.
+
+    Raises
+    ------
+    CompileError
+        Two RF or ADC events overlap in time, an absolute start is negative, or a block
+        boundary would have to fall inside a gradient an ADC is sampling.
+
+    Notes
+    -----
+    Amplitude and slew violations are *reported*, not raised.  Call
+    :meth:`CompiledSequence.check` then
+    :meth:`~seqcraft.core.report.Report.raise_if_failed` to stop on them.
+
+    Examples
+    --------
+    >>> import pypulseq as pp
+    >>> import seqcraft as sc
+    >>> system = sc.System.preset('generic_3t')
+    >>> lb = sc.LogicBlock('t').add(0.0, pp.make_delay(1e-3))
+    >>> out = compile_sequence(lb, system)
+    >>> round(out.duration_s * 1e3, 1)
+    1.0
+    """
+    opts = system.limits(regime)
+    raster = system.block_raster_s
+    placed = _place(root, opts)
+
+    negative = [p for p in placed if p.res_start < -EPS]
+    if negative:
+        worst = min(negative, key=lambda p: p.res_start)
+        msg = format_error(
+            f'event starts at {worst.res_start * 1e6:.1f} us, before the start of the sequence.',
+            {'event': worst.kind, 'from': worst.where},
+            [
+                'a negative start usually means a module was placed at '
+                '"te - module.time_to_echo" with a TE shorter than the module needs',
+                'increase TE, or shift the whole tree later',
+            ],
+        )
+        raise CompileError(msg)
+
+    _check_exclusive(placed)
+
+    # Ceiling, not nearest: rounding the total *down* truncates the final block below what its
+    # events need, which surfaces later as an unaligned block duration rather than as the four
+    # microseconds it actually is.
+    total = ceil_to(max((p.res_end for p in placed), default=0.0), raster)
+    if total <= 0.0:
+        msg = format_error(
+            'nothing to compile: the tree contains no events that occupy time.',
+            {'tag': root.tag or '(untagged)', 'nodes': len(root)},
+        )
+        raise CompileError(msg)
+
+    issues: list[Issue] = [
+        Issue('raster', p.where, f'start {p.res_start * 1e6:.4f} us snapped to '
+              f'{round_to(p.res_start, raster) * 1e6:.1f} us', 'warning')
+        for p in placed
+        if p.kind in ('rf', 'adc') and not on_raster(p.res_start, raster)
+    ]
+
+    max_block = float(opts.block_duration_raster) * 2**24
+    edges = _boundaries(placed, total, raster, max_block)
+
+    seq = pp.Sequence(system=opts)
+    origins: list[tuple[str, ...]] = []
+
+    # Sort once per axis so each interval is served by a sweep rather than a rescan: 1700 TRs
+    # is ~500k events, and rescanning per interval would be quadratic.
+    grads: dict[str, list[_Placed]] = {}
+    for p in placed:
+        if p.kind in _GRAD:
+            grads.setdefault(p.event.channel, []).append(p)
+    for pieces in grads.values():
+        pieces.sort(key=lambda p: p.start)
+    cursor = dict.fromkeys(grads, 0)
+    active: dict[str, list[_Placed]] = {ax: [] for ax in grads}
+
+    # Labels are assigned at their *target ADC's* time rather than their own, so a boundary
+    # landing between a label and the readout it addresses cannot change which ADC sees it.
+    # Everything else is assigned where it sits.
+    #
+    # The secondary sort key is the event's own time, which keeps the emitted order intuitive --
+    # but it is presentation only: pypulseq sorts a block's extensions by library id, so
+    # intra-block label order carries no meaning.  _label_order_conflict rejects the groups where
+    # that would matter, so nothing here depends on it.
+    targets = _label_targets(placed)
+    conflict = _label_order_conflict(placed, targets)
+    if conflict is not None:
+        raise conflict
+    issues.extend(_orphan_label_issues(placed, targets))
+    schedule = sorted(
+        (
+            (targets.get(i, p.res_start), p.res_start, p)
+            for i, p in enumerate(placed)
+            if p.kind in _EXCLUSIVE or p.kind in _POINT
+        ),
+        key=lambda item: (item[0], item[1]),
+    )
+    assign_at = [t for t, _, _ in schedule]
+    singles = [p for _, _, p in schedule]
+    single_cursor = 0
+    adcs = [p for p in placed if p.kind == 'adc']
+
+    for index, (a, b) in enumerate(zip(edges, edges[1:])):
+        block: list[SimpleNamespace] = []
+        paths: list[tuple[str, ...]] = []
+
+        while single_cursor < len(singles) and assign_at[single_cursor] < b - EPS:
+            p = singles[single_cursor]
+            single_cursor += 1
+            if p.kind in _POINT and not hasattr(p.event, 'delay'):
+                block.append(p.event)
+            else:
+                block.append(ev.derive(p.event, delay=_in_block_delay(p, a, opts)))
+            paths.append(p.path)
+
+        for axis, pieces in grads.items():
+            while cursor[axis] < len(pieces) and pieces[cursor[axis]].start < b - EPS:
+                active[axis].append(pieces[cursor[axis]])
+                cursor[axis] += 1
+            active[axis] = [p for p in active[axis] if p.end > a + EPS]
+            here = [p for p in active[axis] if p.start < b - EPS]
+            if not here:
+                continue
+            crossing = [p for p in here if p.start < a - EPS or p.end > b + EPS]
+            for edge in (a, b) if crossing else ():
+                blocked = _adc_conflict(edge, adcs)
+                if blocked is not None:
+                    msg = format_error(
+                        f'a block boundary at {edge * 1e6:.1f} us falls inside a gradient on axis '
+                        f'{axis} that an ADC is sampling.',
+                        {
+                            'gradient from': ', '.join(sorted({p.where for p in crossing})),
+                            'adc from': blocked.where,
+                            'adc window': f'{blocked.start * 1e6:.1f} .. {blocked.end * 1e6:.1f} us',
+                        },
+                        [
+                            'a readout gradient must stay one event -- ramp sampling and vendor '
+                            'gridding both depend on that, so the compiler will not split it',
+                            'the boundary comes from an explicit barrier, or this is a compiler '
+                            'bug; please report it with the tree that produced it',
+                        ],
+                    )
+                    raise CompileError(msg)
+            grad = _axis_gradient(axis, here, a, b, opts, issues, index)
+            if grad is not None:
+                block.append(grad)
+                paths.extend(p.path for p in here)
+
+        duration = round_to(b - a, raster)
+        origins.append(_common_path(paths))
+        if not block:
+            seq.add_block(pp.make_delay(duration))
+            continue
+
+        origin = ', '.join(sorted({'.'.join(p) for p in paths if p})) or '?'
+        issues.extend(_limit_issues(block, opts, index, origin))
+        # pypulseq takes a block's duration as the max over its events, so an interval shorter
+        # than its contents silently produces an off-raster block instead of an error.  Catch it
+        # here, where the boundary that caused it can still be named.
+        needed = _required_duration(block, opts)
+        if needed > duration + EPS:
+            msg = format_error(
+                f'block {index} spans {duration * 1e6:.1f} us but its events need '
+                f'{needed * 1e6:.1f} us.',
+                {'from': origin, 'shortfall_us': round((needed - duration) * 1e6, 3)},
+                [
+                    'usually an ADC whose trailing dead time, or an RF whose ringdown, extends '
+                    'past the interval -- the module should report a longer duration',
+                    'this is a compiler bug if the module\'s duration property is correct; '
+                    'please report it with the tree that produced it',
+                ],
+            )
+            raise CompileError(msg)
+        # add_block() takes no duration argument; a delay event is how pulseq states an explicit
+        # block length, and `set_block` takes the max of it and the event extents.
+        try:
+            seq.add_block(*block, pp.make_delay(duration))
+        except (ValueError, RuntimeError) as err:
+            msg = format_error(
+                f'pypulseq rejected block {index} at {a * 1e6:.1f} us: {err}',
+                {
+                    'duration_us': f'{duration * 1e6:.1f}',
+                    'events': ', '.join(getattr(e, 'type', '?') for e in block),
+                    'from': origin,
+                },
+                ['this is a compiler bug unless the tree contains raw events built against '
+                 'a different System -- please report it with the tree that produced it'],
+            )
+            raise CompileError(msg) from err
+
+    defs: dict[str, Any] = {'Name': name or root.tag or 'seqcraft'}
+    if geometry is not None:
+        defs.update(geometry.definitions())
+    for key, value in (definitions or {}).items():
+        if key in defs and not _same(defs[key], value):
+            msg = format_error(
+                f'two sources set the definition {key!r} to different values.',
+                {'already': defs[key], 'also': value},
+                ['pass the value in one place only, or make the two agree'],
+            )
+            raise DefinitionConflict(msg)
+        defs[key] = value
+
+    out = CompiledSequence(
+        seq=seq,
+        system=system,
+        regime=regime,
+        report=Report(tuple(issues), subject=defs['Name']),
+        origins=tuple(origins),
+        definitions=defs,
+        tree_duration_s=total,
+        geometry=geometry,
+    )
+    out._verify(placed, targets)
+    return out
+
+
+def _common_path(paths: Sequence[tuple[str, ...]]) -> tuple[str, ...]:
+    """
+    Return the longest tag path common to everything in a block.
+
+    A block built from one module gets that module's full path; a block where three modules
+    overlap gets their shared ancestor, which is the honest answer to "where did this come
+    from" -- the alternative, picking one arbitrarily, would be misleading.
+    """
+    real = [p for p in paths if p]
+    if not real:
+        return ()
+    common = list(real[0])
+    for path in real[1:]:
+        keep = 0
+        for x, y in zip(common, path):
+            if x != y:
+                break
+            keep += 1
+        common = common[:keep]
+        if not common:
+            break
+    return tuple(common)
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Compare two definition values, tolerating list/tuple and numpy differences."""
+    if isinstance(a, (list, tuple, np.ndarray)) or isinstance(b, (list, tuple, np.ndarray)):
+        return np.array_equal(np.asarray(a, dtype=float), np.asarray(b, dtype=float))
+    return bool(a == b)
+
+
+# ------------------------------------------------------------------------------ the result
+@dataclass(frozen=True)
+class WriteResult:
+    """What :meth:`CompiledSequence.write` produced."""
+
+    path: Path
+    sha256: str
+    n_blocks: int
+    duration_s: float
+    sidecar: Path | None = None
+
+
+@dataclass
+class CompiledSequence:
+    """
+    A compiled sequence: the pypulseq object, the compile report, and provenance.
+
+    Attributes
+    ----------
+    seq
+        The :class:`pypulseq.Sequence`.  Yours to use directly; seqcraft never hides it.
+    report
+        Everything the compile found: every same-axis merge, every limit violation, every
+        snapped time.
+    origins
+        One tag path per compiled block, so a block index traces back to the module that
+        produced it.
+    """
+
+    seq: Any
+    system: System
+    regime: str
+    report: Report
+    origins: tuple[tuple[str, ...], ...]
+    definitions: dict[str, Any]
+    tree_duration_s: float
+    geometry: Geometry | None = None
+    _checked: Report | None = field(default=None, repr=False)
+
+    # ------------------------------------------------------------------------ properties
+    @property
+    def n_blocks(self) -> int:
+        """Number of pulseq blocks."""
+        return len(self.seq.block_events)
+
+    @property
+    def duration_s(self) -> float:
+        """Total duration, seconds.  ``Sequence.duration()`` returns a tuple; this does not."""
+        return float(self.seq.duration()[0])
+
+    def origin(self, block_index: int) -> tuple[str, ...]:
+        """
+        Return the tag path of the module that produced block `block_index`.
+
+        Examples
+        --------
+        >>> import pypulseq as pp
+        >>> import seqcraft as sc
+        >>> system = sc.System.preset('generic_3t')
+        >>> inner = sc.LogicBlock('spoiler')
+        >>> _ = inner.add(0.0, pp.make_trapezoid('z', area=500.0, system=system.default))
+        >>> out = sc.compile(sc.LogicBlock('tr').add(0.0, inner), system)
+        >>> out.origin(0)
+        ('tr', 'spoiler')
+        """
+        return self.origins[block_index]
+
+    def __repr__(self) -> str:
+        """One line: name, block count, duration, error and warning counts."""
+        return (
+            f'CompiledSequence({self.definitions.get("Name", "?")}, {self.n_blocks} blocks, '
+            f'{self.duration_s:.3f} s, {len(self.report.errors)} errors, '
+            f'{len(self.report.warnings)} warnings)'
+        )
+
+    # -------------------------------------------------------------------------- checking
+    def _verify(
+        self,
+        placed: Sequence[_Placed],
+        targets: dict[int, float] | None = None,
+    ) -> None:
+        """
+        Assert the compile preserved what the tree meant.
+
+        Four invariants, all cheap, each catching a class of compiler bug no individual test case
+        would:
+
+        **Total duration** must match the tree's.  Guards a boundary merge that dropped time
+        rather than dropping a cut.
+
+        **Zeroth moment (m0)** per axis must match the sum over the flattened events.  A split
+        that lost a tail, or a merge that dropped a piece, changes it.
+
+        **First moment (m1)** per axis, referenced to the start of the sequence.  m0 is exactly
+        the quantity that survives a *time shift* -- an event moved by a whole raster leaves it
+        untouched -- so m0 alone cannot see a gradient that plays at the wrong moment.  m1 can,
+        because a piece of area ``A`` displaced by ``dt`` changes it by ``A * dt``.
+
+        **Label addresses** must match the fold of the tree's labels.  The duplicate-address
+        check in :meth:`check` only fires when two addresses *collide*; an addressing shifted by
+        one but still unique passes it, which is exactly how mis-retimed labels used to escape.
+        Skipped when a label has no ADC after it, since its placement is then reported as a
+        warning rather than defined.
+        """
+        extra: list[Issue] = []
+        got = self.duration_s
+        # Tolerance scales with the total, because it has to: float64 resolves about 4 ns at
+        # 20 000 s, so demanding nanosecond agreement on a long acquisition would flag every
+        # sequence over an hour -- and print two identical-looking numbers while doing it.
+        tolerance = max(EPS, 1e-12 * self.tree_duration_s)
+        if abs(got - self.tree_duration_s) > tolerance:
+            extra.append(
+                Issue(
+                    'duration',
+                    'sequence',
+                    f'compiled duration {got * 1e6:.1f} us differs from the tree total '
+                    f'{self.tree_duration_s * 1e6:.1f} us',
+                    'error',
+                )
+            )
+
+        raster = self.system.grad_raster_s
+        want: dict[str, float] = {}
+        # Tolerance is scaled by the total area *traversed*, not by the net.  A readout and its
+        # prephaser very nearly cancel, so a relative tolerance on the net would demand exactness
+        # that numerical integration of an arbitrary waveform cannot deliver -- while a tolerance
+        # on the total still catches a whole lost lobe, which is what this is for.
+        magnitude: dict[str, float] = {}
+        for p in placed:
+            if p.kind in _GRAD:
+                channel = p.event.channel
+                area = ev.moment_of(p.event, raster, 0)
+                want[channel] = want.get(channel, 0.0) + area
+                magnitude[channel] = magnitude.get(channel, 0.0) + abs(area)
+        # m1 referenced to the start of the sequence, computed **exactly** on both sides.
+        #
+        # Both are sums of per-piece moments, which is legitimate because a moment is linear in
+        # the waveform: the moment of a sum is the sum of the moments, whether the pieces overlap
+        # (the tree, where they superpose) or abut (the compiled blocks, where they concatenate).
+        # No union of knots needs building.
+        want_m1: dict[str, float] = {}
+        for p in placed:
+            if p.kind in _GRAD:
+                want_m1[p.event.channel] = want_m1.get(p.event.channel, 0.0) + _pwl_m1(
+                    *_grad_knots(p.event, p.node_t)
+                )
+        actual_m1: dict[str, float] = dict.fromkeys(_AXES, 0.0)
+        t_block = 0.0
+        for index in sorted(self.seq.block_events):
+            block = self.seq.get_block(index)
+            for axis in _AXES:
+                grad = getattr(block, f'g{axis}', None)
+                if grad is not None:
+                    actual_m1[axis] += _pwl_m1(*_grad_knots(grad, t_block))
+            t_block += float(self.seq.block_durations[index])
+
+        if want:
+            actual = self.moments()
+            for axis, expected in want.items():
+                scale = max(magnitude[axis], 1.0)
+                if abs(actual.get(axis, 0.0) - expected) > 1e-6 * scale:
+                    extra.append(
+                        Issue(
+                            'moment',
+                            f'axis {axis}',
+                            f'compiled m0 {actual.get(axis, 0.0):.6g} 1/m differs from the tree '
+                            f'sum {expected:.6g} 1/m -- a split or a merge lost area',
+                            'error',
+                        )
+                    )
+                # Both sides are exact closed forms, so the only error is float summation over the
+                # pieces.  Scaled by area *traversed* times the horizon, for the same reason m0's
+                # is scaled by area traversed: a readout and its prephaser nearly cancel, so a
+                # tolerance on the net would demand more than float64 can carry.  A lobe displaced
+                # by one raster changes m1 by area * 10 us, comfortably above this.
+                m1_scale = max(scale * max(self.tree_duration_s, 1e-3), 1.0)
+                if abs(actual_m1.get(axis, 0.0) - want_m1.get(axis, 0.0)) > 1e-9 * m1_scale:
+                    extra.append(
+                        Issue(
+                            'moment',
+                            f'axis {axis}',
+                            f'compiled m1 {actual_m1.get(axis, 0.0):.6g} s/m differs from the '
+                            f'tree sum {want_m1.get(axis, 0.0):.6g} s/m -- a gradient plays at '
+                            f'the wrong time, which m0 cannot see',
+                            'error',
+                        )
+                    )
+
+        extra.extend(self._address_issues(placed, targets))
+        if extra:
+            object.__setattr__(self, 'report', Report(
+                (*self.report.issues, *extra), subject=self.report.subject
+            ))
+
+    def _address_issues(
+        self,
+        placed: Sequence[_Placed],
+        targets: dict[int, float] | None,
+    ) -> list[Issue]:
+        """
+        Check every ADC's compiled label state against the fold of the tree's labels.
+
+        The check the duplicate-address test cannot do.  A labelling shifted by one readout stays
+        unique, so ``_label_issues`` sees nothing wrong -- and that is precisely the shape of the
+        bug retiming exists to prevent, so it needs an invariant of its own rather than trust.
+        """
+        if targets is None:
+            return []
+        n_labels = sum(1 for p in placed if p.kind in _LABEL)
+        if not n_labels:
+            return []
+        # An orphan label's placement is reported as a warning rather than defined, so its effect
+        # is not predictable from a time fold and this check would be comparing against a guess.
+        if any(i for i, p in enumerate(placed) if p.kind in _LABEL and i not in targets):
+            return []
+
+        expected = _expected_addresses(placed, targets)
+        try:
+            got = self.seq.evaluate_labels(evolution='adc')
+        except (AttributeError, ValueError, IndexError):  # pragma: no cover - older pypulseq
+            return []
+        if not got or not expected:
+            return []
+
+        out: list[Issue] = []
+        for key in sorted({k for state in expected for k in state}):
+            series = np.atleast_1d(np.asarray(got.get(key, 0)))
+            series = np.resize(series, len(expected)) if series.size else np.zeros(len(expected))
+            for index, state in enumerate(expected):
+                if int(series[index]) != int(state.get(key, 0)):
+                    out.append(Issue(
+                        'address',
+                        f'adc {index}',
+                        f'label {key} is {int(series[index])} on readout {index} but the tree '
+                        f'implies {int(state.get(key, 0))} -- a label reached the wrong readout',
+                        'error',
+                    ))
+                    break       # one report per key; a shift corrupts every later readout too
+        return out
+
+    def moments(self, order: int = 0) -> dict[str, float]:
+        """
+        Return the whole-sequence gradient moment per axis, integrated from the compiled blocks.
+
+        Parameters
+        ----------
+        order
+            ``0`` for area in 1/m, ``1`` for s/m, ``2`` for s^2/m.  Referenced to the start of
+            the sequence.
+        """
+        raster = self.system.grad_raster_s
+        out: dict[str, float] = dict.fromkeys(_AXES, 0.0)
+        t = 0.0
+        # Block IDs are 1-based, and block_durations is a dict keyed by them, not a list.
+        for index in sorted(self.seq.block_events):
+            block = self.seq.get_block(index)
+            for axis in _AXES:
+                grad = getattr(block, f'g{axis}', None)
+                if grad is None:
+                    continue
+                tt, wf = ev.waveform_of(grad, raster)
+                out[axis] += (
+                    float(ev.trapz(wf * (tt + t) ** order, tt)) if order else float(ev.trapz(wf, tt))
+                )
+            t += float(self.seq.block_durations[index])
+        return out
+
+    def check(self, *, allow_timing: Sequence[str] = ('TotalDuration',)) -> Report:
+        """
+        Run every post-compile check and return one report.
+
+        Combines the compile report with ``Sequence.check_timing`` and label-address
+        uniqueness.
+
+        Parameters
+        ----------
+        allow_timing
+            Substrings of ``check_timing`` messages to downgrade to information.  Defaults to
+            the ``TotalDuration`` float-equality artifact, which pypulseq emits even on
+            pulseq's own approved reference files.
+
+        Examples
+        --------
+        >>> import pypulseq as pp
+        >>> import seqcraft as sc
+        >>> system = sc.System.preset('generic_3t')
+        >>> lb = sc.LogicBlock('t')
+        >>> _ = lb.add(0.0, pp.make_trapezoid('x', area=100.0, system=system.default))
+        >>> sc.compile(lb, system).check().ok
+        True
+        """
+        if self._checked is not None:
+            return self._checked
+        issues = list(self.report.issues)
+        ok, errors = self.seq.check_timing()
+        if not ok:
+            for line in errors:
+                text = str(line).strip()
+                allowed = any(token in text for token in allow_timing)
+                issues.append(Issue('timing', 'sequence', text, 'info' if allowed else 'error'))
+        issues.extend(self._label_issues())
+        issues.extend(self._event_size_issues())
+        out = Report(tuple(issues), subject=self.report.subject, values={
+            'n_blocks': self.n_blocks,
+            'duration_s': self.duration_s,
+        })
+        object.__setattr__(self, '_checked', out)
+        return out
+
+    def _event_size_issues(self) -> list[Issue]:
+        """
+        Check every ADC and RF event against the interpreter's per-event sample limits.
+
+        These limits live in ``Opts`` as ``adc_samples_limit`` and ``rf_samples_limit`` and default
+        to ``0``, pypulseq's "no limit".  Nothing checked them until a 67 388-sample spiral readout
+        reached a scanner, which refused the block with ``fRTEBFinish() failed for block type:
+        ArbX ArbY ADC`` -- a message that names the block type and says nothing about samples.
+
+        The limit is the vendor interpreter's, not the amplifier's, so it has to be set from the
+        installation: ``System.preset`` puts 8192 on the Siemens entries, which is the common value.
+        A readout longer than one event's worth has to be split into several ADCs, at the cost of
+        ``adc_dead_time`` between them.
+        """
+        out: list[Issue] = []
+        limits = self.system.limits(self.regime)
+        for kind, attribute, count in (
+            ('adc', 'adc_samples_limit', lambda block: int(block.adc.num_samples)),
+            ('rf', 'rf_samples_limit', lambda block: int(np.size(block.rf.signal))),
+        ):
+            limit = int(getattr(limits, attribute, 0) or 0)
+            if limit <= 0:
+                continue
+            worst = 0
+            where = ''
+            for index in sorted(self.seq.block_events):
+                block = self.seq.get_block(index)
+                if getattr(block, kind, None) is None:
+                    continue
+                samples = count(block)
+                if samples > worst:
+                    worst, where = samples, f'block {index} ({self.origin(index)})'
+            if worst > limit:
+                out.append(Issue(
+                    f'{kind}_samples_limit',
+                    where,
+                    f'{worst} {kind.upper()} samples in one event, above the {limit} the '
+                    f'interpreter accepts; split it into '
+                    f'{-(-worst // limit)} events or lengthen the dwell',
+                    'error',
+                ))
+        return out
+
+    def _label_issues(self) -> list[Issue]:
+        """
+        Check that no two imaging ADCs write the same k-space address.
+
+        The highest-value check available on a finished sequence: a duplicate address means two
+        readouts landing in the same place, which catches a wrong slice order, an off-by-one
+        partial-Fourier start and a mis-nested loop from one assertion.
+        """
+        try:
+            labels = self.seq.evaluate_labels(evolution='adc')
+        except (AttributeError, ValueError, IndexError):  # pragma: no cover - older pypulseq
+            return []
+        keys = [k for k in _ADDRESS_KEYS if k in labels]
+        if not keys:
+            return []
+        arrays = [np.atleast_1d(np.asarray(labels[k])) for k in keys]
+        n = max(len(a) for a in arrays)
+        arrays = [np.resize(a, n) for a in arrays]
+        skip = np.zeros(n, dtype=bool)
+        for flag in ('NOISE', 'REF', 'NAV'):
+            if flag in labels:
+                skip |= np.resize(np.atleast_1d(np.asarray(labels[flag])).astype(bool), n)
+        addresses = [tuple(int(a[i]) for a in arrays) for i in range(n) if not skip[i]]
+        duplicates = len(addresses) - len(set(addresses))
+        if not duplicates:
+            return []
+        seen: set[tuple[int, ...]] = set()
+        first: tuple[int, ...] = ()
+        for address in addresses:
+            if address in seen:
+                first = address
+                break
+            seen.add(address)
+        return [
+            Issue(
+                'label',
+                'sequence',
+                f'{duplicates} imaging ADC(s) repeat a k-space address; first repeat is '
+                f'{dict(zip(keys, first))} -- two readouts are writing the same location',
+                'error',
+            )
+        ]
+
+    # ---------------------------------------------------------------------------- output
+    def kspace(self) -> dict[str, np.ndarray]:
+        """
+        Return the k-space trajectory, in 1/m.
+
+        Returns
+        -------
+        dict
+            ``k_adc`` (3 x n_samples, at the ADC sample times), ``t_adc``, ``k`` (dense),
+            ``t_k``, ``t_excitation``, ``t_refocusing``.
+
+        Notes
+        -----
+        ``calculate_kspacePP`` returns its tuple in a different order from
+        ``calculate_kspace``; getting that wrong silently swaps the trajectory for its
+        timebase.
+        """
+        k_adc, t_adc, k, t_k, t_exc, t_refoc = self.seq.calculate_kspacePP()[:6]
+        return {
+            'k_adc': np.asarray(k_adc),
+            't_adc': np.asarray(t_adc),
+            'k': np.asarray(k),
+            't_k': np.asarray(t_k),
+            't_excitation': np.asarray(t_exc),
+            't_refocusing': np.asarray(t_refoc),
+        }
+
+    def pns(self, hardware: SimpleNamespace | None = None) -> Report:
+        """
+        Predict peripheral nerve stimulation against a gradient hardware model.
+
+        Parameters
+        ----------
+        hardware
+            Defaults to the model attached to the :class:`~seqcraft.core.system.System`.
+            :func:`~seqcraft.core.system.synthetic_hardware` provides a vendor-free stand-in
+            for CI; it is **not** a real scanner and must never be used to clear a sequence for
+            human scanning.
+        """
+        model = hardware if hardware is not None else self.system.hardware
+        if model is None:
+            return Report((
+                Issue(
+                    'pns',
+                    'sequence',
+                    'no gradient hardware model attached; call System.with_hardware() with '
+                    'load_hardware() or synthetic_hardware()',
+                    'info',
+                ),
+            ))
+        ok, pns_norm, _components, _t = self.seq.calculate_pns(model, do_plots=False)
+        peak = float(np.max(pns_norm)) if np.size(pns_norm) else 0.0
+        note = (
+            ' (synthetic model -- not valid for clearing a human scan)'
+            if getattr(model, 'is_synthetic', False)
+            else ''
+        )
+        return Report(
+            (
+                Issue(
+                    'pns',
+                    'sequence',
+                    f'peak PNS {peak * 100:.0f}% of the stimulation limit{note}',
+                    'info' if ok else 'error',
+                ),
+            ),
+            values={'peak_pns_fraction': peak},
+        )
+
+    def write(self, path: str | Path, *, sidecar: bool = True) -> WriteResult:
+        """
+        Write the ``.seq`` file, and by default a JSON provenance sidecar beside it.
+
+        Takes no geometry, matrix or FOV arguments: everything written comes from what was
+        compiled, so the file's metadata cannot disagree with what it plays.
+
+        Parameters
+        ----------
+        path
+            Destination ``.seq`` path.
+        sidecar
+            Also write ``<path>.json`` recording versions, git state, the definitions, the
+            achieved duration and the file's sha256.
+        """
+        import hashlib  # noqa: PLC0415
+        from pathlib import Path as _Path  # noqa: PLC0415
+
+        target = _Path(path)
+        for key, value in self.definitions.items():
+            self.seq.set_definition(key, value)
+        self.seq.set_definition('TotalDuration', self.duration_s)
+        self.seq.write(str(target))
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+
+        side: _Path | None = None
+        if sidecar:
+            from .provenance import write_sidecar  # noqa: PLC0415
+
+            side = write_sidecar(
+                target,
+                {
+                    'definitions': {k: _jsonable(v) for k, v in self.definitions.items()},
+                    'system': self.system.params(),
+                    'regime': self.regime,
+                    'n_blocks': self.n_blocks,
+                    'duration_s': self.duration_s,
+                    'sha256': digest,
+                    'issues': [
+                        {'kind': i.kind, 'where': i.where, 'message': i.message,
+                         'severity': i.severity}
+                        for i in self.report.issues
+                    ],
+                },
+            )
+        return WriteResult(
+            path=target,
+            sha256=digest,
+            n_blocks=self.n_blocks,
+            duration_s=self.duration_s,
+            sidecar=side,
+        )
+
+
+def _jsonable(value: Any) -> Any:
+    """Convert numpy scalars and arrays to plain Python, for the sidecar."""
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value

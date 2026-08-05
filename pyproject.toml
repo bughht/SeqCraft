@@ -1,0 +1,109 @@
+[build-system]
+requires = ['hatchling>=1.24']
+build-backend = 'hatchling.build'
+
+[project]
+name = 'seqcraft'
+dynamic = ['version']
+description = 'Composable, verifiable MRI pulse sequence programming on top of pypulseq'
+readme = 'README.md'
+requires-python = '>=3.10'
+license = 'MIT'
+authors = [{ name = 'Haotian Hong', email = 'hhong6@mgh.harvard.edu' }]
+keywords = ['MRI', 'pulseq', 'pypulseq', 'diffusion', 'EPI', 'sequence programming']
+classifiers = [
+  'Development Status :: 3 - Alpha',
+  'Intended Audience :: Science/Research',
+  'License :: OSI Approved :: MIT License',
+  'Programming Language :: Python :: 3',
+  'Topic :: Scientific/Engineering :: Medical Science Apps.',
+]
+
+# NOTE: pypulseq is pinned '>=1.5.0', NOT '>=1.5.1'.  The git-master build in use here
+# reports __version__ == '1.5.1' but ships dist metadata '1.5.0.post1', so a >=1.5.1
+# requirement is unsatisfiable and pip would replace it with the PyPI wheel.  Actual
+# feature requirements are probed at runtime in seqcraft._compat.
+dependencies = ['pypulseq>=1.5.0', 'numpy>=1.24']
+
+[project.optional-dependencies]
+viz = ['matplotlib>=3.7', 'seqeyes-python>=0.2.9']
+rf = ['sigpy>=0.1.26']              # SLR pulse design, via pypulseq.make_slr_pulse
+# The affine argument VoxelGridPhantom requires arrived in MRzeroCore 1.0; without it the phantom
+# builds but its voxels land in the wrong place, which is scaled or shifted rather than an error.
+sim = ['MRzeroCore>=1.0', 'torch>=2.0']
+recon = ['sigpy>=0.1.26']           # the off-resonance-corrected reconstruction in examples/lib
+marcos = ['marga-pulseq>=0.2.2']
+dev = [
+  'pytest>=8',
+  'nbclient>=0.9',
+  'nbformat>=5',
+  'ipykernel>=6',
+  'pytest-cov>=5',
+  'pytest-xdist>=3',
+  'ruff>=0.6',
+  'mypy>=1.11',
+  'pre-commit>=3.7',
+  'nbstripout>=0.7',
+  'matplotlib>=3.7',
+]
+docs = ['mkdocs', 'mkdocs-material', 'mkdocs-jupyter', 'mkdocstrings-python', 'mkdocs-awesome-nav']
+all = ['seqcraft[viz,rf,sim,recon,marcos]']
+
+[project.scripts]
+seqcraft = 'seqcraft.cli:main'
+
+[project.urls]
+Homepage = 'https://github.com/cmr-group/seqcraft'
+Issues = 'https://github.com/cmr-group/seqcraft/issues'
+
+[tool.hatch.version]
+path = 'src/seqcraft/_version.py'
+
+[tool.hatch.build.targets.wheel]
+packages = ['src/seqcraft']
+
+[tool.pytest.ini_options]
+minversion = '8.0'
+testpaths = ['tests']
+addopts = '--strict-markers --strict-config -ra'
+doctest_optionflags = ['ELLIPSIS', 'IGNORE_EXCEPTION_DETAIL', 'NORMALIZE_WHITESPACE']
+markers = [
+  'slow: full-size builds; not run in the fast tier',
+  'bloch: needs MRzeroCore (seqcraft[sim])',
+  'crossval: needs an external parser or reference file',
+  'hardware: needs a vendor .asc file via SEQCRAFT_ASC_DIR (never committed)',
+  'viz: needs matplotlib/seqeyes (seqcraft[viz])',
+]
+filterwarnings = [
+  'ignore:CUDA path could not be detected:UserWarning',
+  'ignore:Importing cupy:UserWarning',
+]
+
+[tool.coverage.run]
+source = ['seqcraft']
+branch = true
+
+[tool.coverage.report]
+exclude_lines = ['pragma: no cover', 'if TYPE_CHECKING:', 'raise NotImplementedError']
+
+[tool.mypy]
+python_version = '3.10'
+disallow_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+# Strict only for the pure-arithmetic core.  pypulseq events are SimpleNamespace and
+# therefore structurally untypeable; do not attempt to type pypulseq itself.
+[[tool.mypy.overrides]]
+module = [
+  'seqcraft.core.raster',
+  'seqcraft.core.units',
+  'seqcraft.core.validate',
+  'seqcraft.core.geometry',
+  'seqcraft.core.ordering',
+]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ['pypulseq.*', 'MRzeroCore.*', 'seqeyes.*', 'marga_pulseq.*', 'sigpy.*', 'matplotlib.*']
+ignore_missing_imports = true

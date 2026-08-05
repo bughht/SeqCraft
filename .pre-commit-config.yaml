@@ -1,0 +1,30 @@
+# Fast hooks only.  A slow pre-commit gets --no-verify'd, and then it protects nothing;
+# mypy is CI-only for that reason.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-toml
+      - id: check-yaml
+      - id: check-merge-conflict
+      # Backstop against a multi-megabyte .seq landing in git; .gitignore is the first line.
+      - id: check-added-large-files
+        args: [--maxkb=512]
+
+  # Example notebooks are committed WITH their outputs on purpose: the whole point of a teaching
+  # notebook is that it reads on GitHub without being run.  They are small (a few hundred KB) and
+  # check-added-large-files above is the backstop.  Any notebook outside examples/ is stripped.
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.7.1
+    hooks:
+      - id: nbstripout
+        exclude: ^examples/

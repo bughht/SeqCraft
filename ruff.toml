@@ -1,0 +1,42 @@
+# Started from E:\MGH\gropt-dev\ruff.toml so the lab has one house style, with four
+# deliberate deltas (marked DELTA below) that encode failure modes observed in the
+# prior art this package replaces.
+line-length = 110
+
+[lint]
+select = ['ALL']
+
+ignore = [
+  # DELTA 1: 'ANN' (type annotations) is NOT ignored -- annotations are required in src/.
+  # DELTA 2: 'T201' (print) is NOT ignored -- the library must never print.
+  # DELTA 3: 'ERA001' (commented-out code) is NOT ignored.
+  # DELTA 4: 'TRY' (exception hygiene) is NOT ignored -- error messages are a headline feature.
+  'N',   # Uppercase/lowercase naming: required, since unit suffixes are _mT_m, _T_m_s, _Hz_per_m
+  'PTH', # Path linting; os.path is fine here
+
+  'RET504',  # Allow assignment before return (clearer for solved timing values)
+  'Q000',    # Single quotes
+  'PLR0913', # Any number of arguments
+  'D212',    # Docstring may start on the next line
+  'D100',    # No module-level docstring requirement conflict (we do write them)
+  'D104',    # No __init__.py docstring requirement conflict (we do write them)
+  'FBT002',  # Allow boolean defaults
+  'W293',    # White space on blank lines
+  'C901',    # Complexity
+  'PLR0912', # Branch count
+  'SIM108',  # Allow if..else over ternary
+  'COM812',  # Conflicts with the formatter
+  'ISC001',  # Conflicts with the formatter
+]
+
+[lint.per-file-ignores]
+'src/seqcraft/cli.py' = ['T201']              # the CLI is allowed to print
+'src/seqcraft/core/display.py' = ['PLC0415']  # lazy matplotlib import is the whole point
+'tests/**' = ['ANN', 'D', 'S101', 'PLR2004', 'T201', 'INP001', 'SLF001']
+'examples/**' = ['ALL']
+
+[format]
+quote-style = 'single'
+
+[lint.pydocstyle]
+convention = 'numpy'

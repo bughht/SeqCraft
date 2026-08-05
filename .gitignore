@@ -1,0 +1,105 @@
+# Working design/revision plans.  They are drafting notes that go stale against the code;
+# what survives a plan belongs in docs/ and CHANGELOG.md, which are tracked.
+PLAN*.md
+
+# ---------------------------------------------------------------------------
+# Vendor / site-confidential data -- NEVER commit.
+#
+# Siemens gradient-system descriptor files (.asc) carry vendor hardware
+# coefficients: the PNS/CNS response model and the forbidden acoustic-resonance
+# frequencies and bandwidths.  They are not redistributable.
+#
+# seqcraft locates them at run time via the SEQCRAFT_ASC_DIR environment
+# variable and never reads a path inside this repository.  Tests needing a real
+# hardware model are marked `hardware` and skip with an explicit message when
+# SEQCRAFT_ASC_DIR is unset; everything else uses the synthetic model in
+# seqcraft.verify.hardware.synthetic_hw(), which is checked in and contains no
+# vendor numbers.
+# ---------------------------------------------------------------------------
+*.asc
+*.ASC
+asc/
+**/asc/
+*.dsv
+*.coeff
+GradSys*
+*GradSys*
+*_GPA_*
+Measperm*
+
+# Scanner / scan data
+*.dat
+*.twix
+*.ima
+*.dcm
+*.rda
+*.mrd
+*.h5
+*.npz
+*.json
+
+# Generated sequences and sidecars.  Regenerate by running the notebooks.
+*.seq
+*.seq.json
+*.bseq
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.venv/
+venv/
+.pixi/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+junit*.xml
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Docs
+site/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Secrets / local environment.  SEQCRAFT_ASC_DIR points at vendor data, so a .env holding it
+# must never be committed -- see the vendor block above.
+.env
+.env.*
+!.env.example
+
+# Scratch
+scratch/
+tmp/
+*.log
+
+# ---------------------------------------------------------------------------
+# Example outputs are NOT tracked.
+#
+# The notebooks in examples/ write their .seq, .seq.json sidecar and .npz trajectory into
+# examples/seq/.  They are build products of the notebooks and they are large -- one spiral
+# DTI sequence is 326 kB of .seq plus 238 kB of trajectory, and every recompile rewrites
+# them, so tracking them puts a ~600 kB binary-ish diff in the history on each run.
+#
+# This means "the output did not change" is NOT checkable from git history.  What guards
+# against silent output change instead is the test suite: tests/compiler/fidelity.py proves
+# the compiled waveform equals the logic block at the union of their knots, and the
+# invariants in CompiledSequence._verify (duration, per-axis m0 and m1, label addresses)
+# run on every compile.
+# ---------------------------------------------------------------------------
+examples/seq/
