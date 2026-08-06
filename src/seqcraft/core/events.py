@@ -46,6 +46,10 @@ if TYPE_CHECKING:
 
     from pypulseq.opts import Opts
 
+#: Times closer than this are the same knot.  One nanosecond: 100x finer than the finest
+#: pulseq raster, and ~1e6x coarser than float64 resolution at millisecond magnitudes.
+_EDGE_EPS = 1e-9
+
 __all__ = [
     'Event',
     'GRAD_TYPES',
@@ -54,7 +58,9 @@ __all__ = [
     'derive',
     'duration_of',
     'kinds_of',
+    'knots_of',
     'moment_of',
+    'pwl_moment',
     'sanitise',
     'trapz',
     'waveform_of',
@@ -209,31 +215,136 @@ def waveform_of(event: Event, raster: float) -> tuple[np.ndarray, np.ndarray]:
     return t, g
 
 
-def moment_of(event: Event, raster: float, order: int = 0) -> float:
+def knots_of(event: Event, t0: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
     """
-    Return the `order`-th gradient moment of a single event.
+    Return the exact piecewise-linear knots of a gradient event, in absolute time.
+
+    Every pulseq gradient *is* a PWL function, so this loses nothing -- and it is the only
+    representation in which a moment, a split or a sum is exact.  :func:`waveform_of` samples
+    onto a uniform raster instead, which is what plotting wants and what arithmetic does not:
+    an arbitrary gradient's samples sit at raster *centres*, so they never land on the grid.
+
+    The subtlety is ``grad``: its samples sit at raster centres when it came from
+    ``make_arbitrary_grad``, and the amplitudes at the two edges live outside the sample array
+    in ``first`` and ``last``.  Omitting them truncates the waveform by half a raster at each
+    end.  For an extended trapezoid ``tt`` already reaches both edges, so they coincide with
+    existing knots and are skipped.
+
+    Parameters
+    ----------
+    event
+        A ``trap`` or ``grad`` event.
+    t0
+        Absolute time of the event's node.  The event's own ``delay`` is added to it.
+
+    Examples
+    --------
+    >>> import pypulseq as pp
+    >>> from pypulseq.opts import Opts
+    >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=170, slew_unit='T/m/s')
+    >>> flat = pp.make_trapezoid(channel='x', flat_area=100.0, flat_time=1e-3, system=o)
+    >>> t, a = knots_of(flat)
+    >>> len(t), float(a[0]), float(a[-1])           # up, along, down
+    (4, 0.0, 0.0)
+    >>> t, a = knots_of(pp.make_trapezoid(channel='x', area=100.0, system=o))
+    >>> len(t)                                      # no flat top: a triangle has three
+    3
+    """
+    kind = getattr(event, 'type', None)
+    start = t0 + float(getattr(event, 'delay', 0.0) or 0.0)
+    if kind == 'trap':
+        rise = float(event.rise_time)
+        flat = float(event.flat_time)
+        fall = float(event.fall_time)
+        amp = float(event.amplitude)
+        if flat > 0:
+            return (
+                np.array([start, start + rise, start + rise + flat, start + rise + flat + fall]),
+                np.array([0.0, amp, amp, 0.0]),
+            )
+        return (
+            np.array([start, start + rise, start + rise + fall]),
+            np.array([0.0, amp, 0.0]),
+        )
+    if kind != 'grad':
+        msg = f'not a gradient event: type={kind!r}'
+        raise ValueError(msg)
+
+    tt = np.asarray(event.tt, dtype=float)
+    wf = np.asarray(event.waveform, dtype=float)
+    shape_dur = float(getattr(event, 'shape_dur', tt[-1] if len(tt) else 0.0))
+    times = [start + t for t in tt]
+    amps = list(wf)
+    first = getattr(event, 'first', None)
+    last = getattr(event, 'last', None)
+    if first is not None and len(tt) and tt[0] > _EDGE_EPS:
+        times.insert(0, start)
+        amps.insert(0, float(first))
+    if last is not None and len(tt) and shape_dur - tt[-1] > _EDGE_EPS:
+        times.append(start + shape_dur)
+        amps.append(float(last))
+    return np.asarray(times, dtype=float), np.asarray(amps, dtype=float)
+
+
+def pwl_moment(times: np.ndarray, amps: np.ndarray, order: int = 0) -> float:
+    """
+    Return the exact ``integral g(t) * t**order dt`` of a piecewise-linear waveform.
+
+    Closed form, not quadrature of a sampled curve.  On one segment ``g(t) * t**order`` is a
+    polynomial of degree ``order + 1``, and `k`-node Gauss-Legendre is exact to degree
+    ``2k - 1`` -- so a handful of nodes integrates it with no discretisation error at all.
+
+    Why this matters rather than being a nicety: the trapezoidal rule on raster samples is
+    exact for ``order == 0`` and *only* then.  Using it for m1 made the tree side and the
+    compiled side disagree by ~0.1 % on nothing more than a split, because they were sampled
+    at different points -- useless as an invariant.  And using it for m0 on both sides made the
+    errors cancel, which is worse: the invariant then cannot see a resampling that moved the
+    waveform, which is exactly how a 2.5 % amplitude loss stayed hidden.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> t = np.array([0.0, 1.0, 2.0])
+    >>> g = np.array([0.0, 1.0, 0.0])
+    >>> round(pwl_moment(t, g, 0), 12)          # area of a unit triangle
+    1.0
+    >>> round(pwl_moment(t, g, 1), 12)          # centroid at t = 1
+    1.0
+    """
+    if len(times) < 2:
+        return 0.0
+    t0, t1 = times[:-1], times[1:]
+    g0, g1 = amps[:-1], amps[1:]
+    h = t1 - t0
+    nodes, weights = np.polynomial.legendre.leggauss(max(2, (order + 3) // 2))
+    total = 0.0
+    for x, w in zip(nodes, weights):
+        s = 0.5 * (x + 1.0)  # map the Gauss nodes from [-1, 1] onto the segment's [0, 1]
+        total += float(np.sum(w * 0.5 * h * (g0 + s * (g1 - g0)) * (t0 + s * h) ** order))
+    return total
+
+
+def moment_of(event: Event, raster: float = 0.0, order: int = 0) -> float:
+    """
+    Return the `order`-th gradient moment of a single event, exactly.
 
     Parameters
     ----------
     event
         A ``trap`` or ``grad`` event.
     raster
-        Gradient raster in seconds, used for trapezoid sampling.
+        Unused, and kept only so existing calls keep working.  The moment is computed from the
+        event's exact knots, which needs no raster -- passing one never made it more accurate,
+        only less.
     order
-        ``0`` for m0 (area, 1/m), ``1`` for m1 (s/m), ``2`` for m2 (s^2/m).  Moments are
-        referenced to the start of the event's block.
+        ``0`` for m0 (area, 1/m), ``1`` for m1 (s/m), ``2`` for m2 (s^2/m).  Referenced to the
+        start of the event's block, so an event's own ``delay`` counts toward orders above 0.
 
     Returns
     -------
     float
         The moment, in pulseq units (amplitudes are Hz/m, so m0 is already 1/m, i.e.
         k-space units, and no gamma appears anywhere).
-
-    Notes
-    -----
-    ``trap`` events are integrated analytically where possible via ``event.area``; higher
-    orders and arbitrary waveforms use the trapezoidal rule on the raster, which is exact
-    for piecewise-linear gradients when `order` is 0 and accurate to O(raster^2) above.
 
     Examples
     --------
@@ -244,10 +355,8 @@ def moment_of(event: Event, raster: float, order: int = 0) -> float:
     >>> round(moment_of(g, o.grad_raster_time, 0), 6)
     100.0
     """
-    if order == 0 and getattr(event, 'type', None) == 'trap':
-        return float(event.area)
-    t, g = waveform_of(event, raster)
-    return float(trapz(g * t**order, t)) if order else float(trapz(g, t))
+    del raster
+    return pwl_moment(*knots_of(event), order)
 
 
 def content_hash(event: Event) -> str:

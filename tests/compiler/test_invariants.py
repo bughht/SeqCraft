@@ -16,7 +16,14 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-from seqcraft.core.compiler import _grad_knots, _label_targets, _place, _pwl_m1
+from seqcraft.core.compiler import _label_targets, _place
+from seqcraft.core.events import knots_of as _grad_knots
+from seqcraft.core.events import pwl_moment
+
+
+def pwl_moment_m1(times, amps):
+    """m1 of a PWL waveform: the shape the compiler-private helper had before it moved."""
+    return pwl_moment(times, amps, 1)
 
 
 # ------------------------------------------------------------------- the exact PWL first moment
@@ -30,7 +37,7 @@ def test_pwl_m1_matches_the_closed_form_for_a_triangle() -> None:
     amp, h = 3.0, 2.0
     times = np.array([0.0, h, 2 * h])
     amps = np.array([0.0, amp, 0.0])
-    assert _pwl_m1(times, amps) == pytest.approx(amp * h**2, rel=1e-14)
+    assert pwl_moment_m1(times, amps) == pytest.approx(amp * h**2, rel=1e-14)
 
 
 def test_pwl_m1_is_exact_where_trapz_is_not() -> None:
@@ -42,7 +49,7 @@ def test_pwl_m1_is_exact_where_trapz_is_not() -> None:
     has no such cancellation, which is what exposes the difference.
     """
     amp, h = 3.0, 2.0
-    exact = _pwl_m1(np.array([0.0, h]), np.array([0.0, amp]))
+    exact = pwl_moment_m1(np.array([0.0, h]), np.array([0.0, amp]))
     assert exact == pytest.approx(amp * h**2 / 3.0, rel=1e-14), 'closed form for a ramp'
 
     errors = []
@@ -61,8 +68,8 @@ def test_pwl_m1_shifts_by_area_times_offset() -> None:
     amps = np.array([0.0, 1e4, 1e4, 0.0])
     m0 = float(np.trapezoid(amps, times))
     dt = 10e-6
-    before = _pwl_m1(times, amps)
-    after = _pwl_m1(times + dt, amps)
+    before = pwl_moment_m1(times, amps)
+    after = pwl_moment_m1(times + dt, amps)
     assert after - before == pytest.approx(m0 * dt, rel=1e-12)
 
 

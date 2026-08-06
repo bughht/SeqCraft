@@ -69,6 +69,7 @@ Examples
 from __future__ import annotations
 
 import bisect
+import functools
 import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -77,10 +78,12 @@ import numpy as np
 import pypulseq as pp
 
 from . import events as ev
-from .errors import CompileError, DefinitionConflict, format_error
+from . import units
+from .errors import CompileError, format_error
 from .logic import BARRIER, flatten
-from .raster import EPS, ceil_to, floor_to, on_raster, round_to, sub_exact
+from .raster import EPS, PS, ceil_to, floor_to, on_raster, picoseconds, round_to, sub_exact
 from .report import Issue, Report
+from .validate import merge_definitions
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -448,72 +451,6 @@ def _label_order_conflict(
     return None
 
 
-def _grad_knots(event: SimpleNamespace, t0: float) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Return the exact piecewise-linear knots of a gradient event, in absolute time.
-
-    Every pulseq gradient *is* a PWL function, so this loses nothing -- and it is the only
-    representation in which a moment can be computed exactly.
-
-    The subtlety is ``grad``: its samples sit at raster **centres** when it came from
-    ``make_arbitrary_grad``, and the amplitudes at the two edges live outside the sample array in
-    ``first`` and ``last``.  Omitting them truncates the waveform by half a raster at each end.
-    For an extended trapezoid ``tt`` already reaches both edges, so they coincide with existing
-    knots and are skipped.
-    """
-    kind = getattr(event, 'type', None)
-    delay = float(getattr(event, 'delay', 0.0) or 0.0)
-    start = t0 + delay
-    if kind == 'trap':
-        rise = float(event.rise_time)
-        flat = float(event.flat_time)
-        fall = float(event.fall_time)
-        amp = float(event.amplitude)
-        if flat > 0:
-            return (
-                np.array([start, start + rise, start + rise + flat, start + rise + flat + fall]),
-                np.array([0.0, amp, amp, 0.0]),
-            )
-        return (
-            np.array([start, start + rise, start + rise + fall]),
-            np.array([0.0, amp, 0.0]),
-        )
-
-    tt = np.asarray(event.tt, dtype=float)
-    wf = np.asarray(event.waveform, dtype=float)
-    shape_dur = float(getattr(event, 'shape_dur', tt[-1] if len(tt) else 0.0))
-    times = [start + t for t in tt]
-    amps = list(wf)
-    first = getattr(event, 'first', None)
-    last = getattr(event, 'last', None)
-    if first is not None and len(tt) and tt[0] > EPS:
-        times.insert(0, start)
-        amps.insert(0, float(first))
-    if last is not None and len(tt) and shape_dur - tt[-1] > EPS:
-        times.append(start + shape_dur)
-        amps.append(float(last))
-    return np.asarray(times, dtype=float), np.asarray(amps, dtype=float)
-
-
-def _pwl_m1(times: np.ndarray, amps: np.ndarray) -> float:
-    """
-    Return the exact first moment ``integral g(t) * t dt`` of a PWL waveform.
-
-    Closed form, not quadrature.  ``g(t) * t`` is *quadratic* between two knots, so the
-    trapezoidal rule is wrong there by an amount that depends on the knot spacing -- which makes
-    a trapz-based m1 useless as an invariant: the tree side (sampled on the raster) and the
-    compiled side (sampled at knots) would disagree by ~0.1 % on nothing more than a split.
-
-    Over one segment, with ``h = t1 - t0`` and ``g`` running from ``g0`` to ``g1``, substituting
-    ``t = t0 + s*h`` gives ``h * (g0*t0 + g0*h/2 + (g1-g0)*t0/2 + (g1-g0)*h/3)``.
-    """
-    if len(times) < 2:
-        return 0.0
-    t0, t1 = times[:-1], times[1:]
-    g0, g1 = amps[:-1], amps[1:]
-    h = t1 - t0
-    dg = g1 - g0
-    return float(np.sum(h * (g0 * t0 + g0 * h / 2.0 + dg * t0 / 2.0 + dg * h / 3.0)))
 
 
 def _expected_addresses(
@@ -783,49 +720,80 @@ def _boundaries(
 
 
 # ------------------------------------------------------------------------------ gradients
-def _sample(p: _Placed, grid: np.ndarray) -> np.ndarray:
-    """
-    Sample a gradient event onto absolute times `grid`, zero outside its own span.
-
-    Trapezoids are interpolated through their four corners, which is exact.  ``grad`` events
-    are interpolated through ``tt``; for an extended trapezoid that is exact too, and for an
-    arbitrary waveform (a spiral) it is a resampling -- which is why the caller avoids this
-    path whenever a gradient sits alone inside its interval.
-    """
-    e = p.event
-    if e.type == 'trap':
-        rise, flat, fall = float(e.rise_time), float(e.flat_time), float(e.fall_time)
-        tt = np.array([0.0, rise, rise + flat, rise + flat + fall])
-        wf = np.array([0.0, float(e.amplitude), float(e.amplitude), 0.0])
-    else:
-        tt = np.asarray(e.tt, dtype=float)
-        wf = np.asarray(e.waveform, dtype=float)
-    return np.interp(grid - p.start, tt, wf, left=0.0, right=0.0)
-
-
-def _reduce_corners(
-    times: np.ndarray,
-    amps: np.ndarray,
-    tol: float,
+def _superpose(
+    pieces: Sequence[_Placed],
+    a: float,
+    b: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Drop points lying on the straight line between their neighbours.
+    Return the exact superposition of `pieces` restricted to ``[a, b]``, as PWL knots.
 
-    A summed trapezoid sampled on the raster is hundreds of collinear points, and pulseq would
-    store every one as a shape sample.  Reducing to corners first keeps a merged trapezoid a
-    four-point shape, so merging costs file size only where the waveform genuinely is curved.
+    Both things the compiler does to a gradient -- split one at a block boundary, sum several
+    that share an axis -- are *exact* on a piecewise-linear representation, and every pulseq
+    gradient is piecewise linear.  The sum of PWL functions is PWL with knots at the union of
+    theirs, so evaluating each piece on that union and adding reproduces it with no error.
+
+    This replaces sampling onto a uniform raster grid, which is exact only when every knot
+    happens to land on it.  An arbitrary gradient's samples sit at raster *centres*
+    (``make_arbitrary_grad`` sets ``tt = (arange(n) + 0.5) * raster``), so they never do, and a
+    uniform resample rounded the peaks off a spiral by 2.5 % while preserving its area exactly --
+    which is why the m0 invariant could not see it.
+
+    Times are carried as integer picoseconds so that a knot shared by two pieces is *the same*
+    knot after a sequence that has been running for minutes, rather than two knots a femtosecond
+    apart that then both survive into the shape.
+
+    Returns
+    -------
+    rel_ps, amps
+        Knot times in integer picoseconds from `a`, and amplitudes in Hz/m.
     """
-    if len(times) < 3:
-        return times, amps
-    keep = [0]
-    for i in range(1, len(times) - 1):
-        t0, a0 = times[keep[-1]], amps[keep[-1]]
-        t1, a1 = times[i + 1], amps[i + 1]
-        predicted = a0 if t1 == t0 else a0 + (a1 - a0) * (times[i] - t0) / (t1 - t0)
-        if abs(predicted - amps[i]) > tol:
-            keep.append(i)
-    keep.append(len(times) - 1)
-    return times[keep], amps[keep]
+    a_ps, b_ps = picoseconds(a), picoseconds(b)
+    marks = {a_ps, b_ps}
+    knots: list[tuple[np.ndarray, np.ndarray]] = []
+    for p in pieces:
+        times, amps = ev.knots_of(p.event, p.node_t)
+        t_ps = np.array([picoseconds(t) for t in times], dtype=np.int64)
+        marks.update(int(t) for t in t_ps if a_ps < t < b_ps)
+        knots.append((t_ps, amps))
+
+    grid_ps = np.array(sorted(marks), dtype=np.int64)
+    grid = grid_ps / PS
+    total = np.zeros(len(grid_ps), dtype=float)
+    for t_ps, amps in knots:
+        # left/right zero: outside its own span a gradient contributes nothing.  At its first and
+        # last knot np.interp returns the knot value, so `first` and `last` are carried exactly.
+        total += np.interp(grid, t_ps / PS, amps, left=0.0, right=0.0)
+    return grid_ps - a_ps, total
+
+
+def _as_arbitrary(
+    rel_ps: np.ndarray,
+    amps: np.ndarray,
+    raster_ps: int,
+) -> tuple[np.ndarray, float, float] | None:
+    """
+    Return ``(waveform, first, last)`` if these knots are exactly an arbitrary gradient's.
+
+    A gradient sampled at raster centres has knots at ``0, r/2, 3r/2, ..., (n - 1/2) r, n r`` --
+    the two edges carrying ``first`` and ``last``, the interior points being the samples.  Those
+    times are **not** on the gradient raster, so :func:`pypulseq.make_extended_trapezoid` rejects
+    them; recognising the pattern is what lets a split spiral stay a spiral instead of being
+    resampled onto raster edges.
+
+    Splitting works because a block boundary is on the raster: cutting there leaves each piece's
+    samples at the centres of *its own* raster intervals, with the seam amplitude becoming one
+    piece's ``last`` and the other's ``first``.
+    """
+    n = len(rel_ps) - 2
+    if n < 1 or raster_ps % 2:
+        return None
+    if int(rel_ps[0]) != 0 or int(rel_ps[-1]) != n * raster_ps:
+        return None
+    want = (np.arange(n, dtype=np.int64) * 2 + 1) * (raster_ps // 2)
+    if not np.array_equal(rel_ps[1:-1], want):
+        return None
+    return amps[1:-1], float(amps[0]), float(amps[-1])
 
 
 def _axis_gradient(
@@ -841,12 +809,14 @@ def _axis_gradient(
     Return the single gradient event for `axis` over the interval ``[a, b)``, or ``None``.
 
     Fast path -- one gradient, entirely inside the interval -- passes through untouched apart
-    from its in-block delay.  No resampling and no new shape, so a spiral readout or a long
-    diffusion lobe costs exactly what it did before compilation.
+    from its in-block delay.  No new shape, so a spiral readout or a long diffusion lobe costs
+    exactly what it did before compilation.
 
-    Slow path sums every piece on the gradient raster and rebuilds one event.  Splitting and
-    merging both happen there, uniformly, so there is one code path to get right rather than
-    one per combination.
+    Otherwise the pieces are superposed exactly (:func:`_superpose`) and the result is emitted in
+    whichever pulseq representation can hold those knots without moving them: an extended
+    trapezoid when they are all on the gradient raster, an arbitrary gradient when they are the
+    raster-centre pattern.  Only a waveform needing *both* -- a trapezoid summed with a spiral --
+    can be held by neither, and that one is resampled and reported rather than done quietly.
     """
     if not pieces:
         return None
@@ -868,34 +838,99 @@ def _axis_gradient(
             )
         )
 
-    raster = float(opts.grad_raster_time)
-    n = int(round((b - a) / raster))
-    grid = a + np.arange(n + 1) * raster
-    total = np.zeros_like(grid)
-    for p in pieces:
-        total += _sample(p, grid)
-
-    if not np.any(total):
+    rel_ps, amps = _superpose(pieces, a, b)
+    if not np.any(amps):
         return None
 
-    # Snap negligible endpoints to exactly zero.  Resampling a trapezoid whose corners do not fall
-    # on the grid leaves the ends at ~1e-6 Hz/m -- a millionth of a millionth of the amplifier's
-    # range, and physically zero.  pypulseq nonetheless tests ``first != 0`` *exactly*, then demands
-    # the previous block continue it, so without this a rounding artifact becomes a continuity
-    # error hundreds of blocks away from anything that looks wrong.
+    # Snap negligible endpoints to exactly zero.  Two pieces that cancel at a seam leave ~1e-12 of
+    # the amplifier's range rather than 0.0, and pypulseq tests ``first != 0`` *exactly* before
+    # demanding the previous block continue it -- so without this a rounding artifact becomes a
+    # continuity error hundreds of blocks away from anything that looks wrong.
     negligible = 1e-6 * float(opts.max_grad)
     for edge in (0, -1):
-        if abs(total[edge]) < negligible:
-            total[edge] = 0.0
+        if abs(amps[edge]) < negligible:
+            amps[edge] = 0.0
 
-    times, amps = _reduce_corners(grid - a, total, tol=1e-9 * float(opts.max_grad))
-    # The interval edges are block boundaries, so a non-zero value at either end has to be
-    # carried by first/last with delay 0: pypulseq rejects a delayed gradient that starts away
-    # from zero, and checks the join against the neighbouring block.
+    raster_ps = picoseconds(float(opts.grad_raster_time))
+    if np.all(rel_ps % raster_ps == 0):
+        # The interval edges are block boundaries, so a non-zero value at either end has to be
+        # carried by first/last with delay 0: pypulseq rejects a delayed gradient that starts away
+        # from zero, and checks the join against the neighbouring block.
+        grad = pp.make_extended_trapezoid(
+            channel=axis,
+            times=rel_ps / PS,
+            amplitudes=amps,
+            system=opts,
+            skip_check=True,
+        )
+        grad.delay = 0.0
+        return grad
+
+    centre = _as_arbitrary(rel_ps, amps, raster_ps)
+    if centre is not None:
+        waveform, first, last = centre
+        # Limits are measured on the compiled block by _limit_issues, which reports rather than
+        # raises; letting make_arbitrary_grad raise here would turn a reportable violation into a
+        # failed compile, and would do it before the waveform is complete.
+        return pp.make_arbitrary_grad(
+            channel=axis,
+            waveform=waveform,
+            first=first,
+            last=last,
+            delay=0.0,
+            max_grad=math.inf,
+            max_slew=math.inf,
+            system=opts,
+        )
+
+    return _resampled(axis, rel_ps, amps, opts, issues, block_index, pieces)
+
+
+def _resampled(
+    axis: str,
+    rel_ps: np.ndarray,
+    amps: np.ndarray,
+    opts: Opts,
+    issues: list[Issue],
+    block_index: int,
+    pieces: Sequence[_Placed],
+) -> SimpleNamespace:
+    """
+    Force knots onto the gradient raster, and say by how much the waveform moved.
+
+    The one case pulseq cannot represent exactly: a trapezoid's corners are on raster edges, an
+    arbitrary gradient's samples are at raster centres, and their sum bends at both.  Neither
+    event type has room for that, so something has to give -- but silently giving is how a 2.5 %
+    amplitude error reaches a scanner, so the error is measured and reported.
+
+    The bound is exact rather than estimated: two PWL functions differ most at a knot of one of
+    them, so comparing at the union of both knot sets *is* the supremum.
+    """
+    raster_ps = picoseconds(float(opts.grad_raster_time))
+    n = int(rel_ps[-1] // raster_ps)
+    grid_ps = np.arange(n + 1, dtype=np.int64) * raster_ps
+    grid_amps = np.interp(grid_ps / PS, rel_ps / PS, amps)
+
+    union = np.union1d(rel_ps, grid_ps) / PS
+    error = float(
+        np.max(np.abs(np.interp(union, rel_ps / PS, amps) - np.interp(union, grid_ps / PS, grid_amps)))
+    )
+    issues.append(
+        Issue(
+            'grad_resample',
+            f'block {block_index}',
+            f'axis {axis}: a trapezoid summed with a raster-centre waveform bends both on and '
+            f'off the gradient raster, which no pulseq gradient event can hold; resampled onto '
+            f'the raster, moving the waveform by at most '
+            f'{error / float(opts.max_grad) * 100:.2f} % of max_grad. From '
+            + ', '.join(sorted({p.where for p in pieces})),
+            'warning',
+        )
+    )
     grad = pp.make_extended_trapezoid(
         channel=axis,
-        times=times,
-        amplitudes=amps,
+        times=grid_ps / PS,
+        amplitudes=grid_amps,
         system=opts,
         skip_check=True,
     )
@@ -981,17 +1016,21 @@ def _limit_issues(
     """
     out: list[Issue] = []
     raster = float(opts.grad_raster_time)
+    gamma = float(opts.gamma)
     for kind, where, achieved, limit in ev.check_limits(events, opts, raster):
         if kind.startswith('grad'):
-            unit, scale = 'mT/m', 1e3 / opts.gamma
+            unit, to_display = 'mT/m', functools.partial(units.Hz_per_m_to_mT_per_m, gamma=gamma)
         else:
-            unit, scale = 'T/m/s', 1.0 / opts.gamma
+            unit, to_display = 'T/m/s', functools.partial(
+                units.Hz_per_m_per_s_to_T_per_m_per_s, gamma=gamma
+            )
         out.append(
             Issue(
                 f'{kind}_limit',
                 f'block {block_index}',
-                f'{kind.replace("_", " ")} on {where} reaches {achieved * scale:.1f} {unit}, '
-                f'limit {limit * scale:.1f} {unit} ({achieved / limit * 100:.0f}%); from {origin}',
+                f'{kind.replace("_", " ")} on {where} reaches {to_display(achieved):.1f} {unit}, '
+                f'limit {to_display(limit):.1f} {unit} '
+                f'({achieved / limit * 100:.0f}%); from {origin}',
                 'warning' if kind.endswith('_norm') else 'error',
             )
         )
@@ -1071,6 +1110,32 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
                 'a negative start usually means a module was placed at '
                 '"te - module.time_to_echo" with a TE shorter than the module needs',
                 'increase TE, or shift the whole tree later',
+            ],
+        )
+        raise CompileError(msg)
+
+    # A gradient off the gradient raster used to be snapped silently by _in_block_delay, moving it
+    # by up to half a raster -- a gradient asked for at 5 us played at 10 us, and m0 could not see
+    # it because area does not depend on when a lobe plays.  There is no correct snap to make: the
+    # tree asked for something the hardware cannot do, and only the caller knows which way to round.
+    off = [p for p in placed if p.kind in _GRAD and not on_raster(p.start, opts.grad_raster_time)]
+    if off:
+        worst = off[0]
+        grad_raster = float(opts.grad_raster_time)
+        msg = format_error(
+            f'gradient starts at {worst.start * 1e6:.3f} us, which is not a multiple of the '
+            f'{grad_raster * 1e6:.0f} us gradient raster.',
+            {
+                'from': worst.where,
+                'nearest below': f'{floor_to(worst.start, grad_raster) * 1e6:.1f} us',
+                'nearest above': f'{ceil_to(worst.start, grad_raster) * 1e6:.1f} us',
+                'others': len(off) - 1,
+            },
+            [
+                'round the start time where it is computed, with '
+                'seqcraft.core.raster.ceil_to(t, system.grad_raster_s)',
+                'a start derived from "te - module.time_to_echo" lands off the raster whenever TE '
+                'does, so quantise TE first',
             ],
         )
         raise CompileError(msg)
@@ -1226,18 +1291,12 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
             )
             raise CompileError(msg) from err
 
-    defs: dict[str, Any] = {'Name': name or root.tag or 'seqcraft'}
-    if geometry is not None:
-        defs.update(geometry.definitions())
-    for key, value in (definitions or {}).items():
-        if key in defs and not _same(defs[key], value):
-            msg = format_error(
-                f'two sources set the definition {key!r} to different values.',
-                {'already': defs[key], 'also': value},
-                ['pass the value in one place only, or make the two agree'],
-            )
-            raise DefinitionConflict(msg)
-        defs[key] = value
+    # Named sources, so a conflict says *who* claimed the key twice rather than "already"/"also".
+    defs = merge_definitions({
+        'the sequence name': {'Name': name or root.tag or 'seqcraft'},
+        'the geometry': geometry.definitions() if geometry is not None else {},
+        'the definitions= argument': definitions or {},
+    })
 
     out = CompiledSequence(
         seq=seq,
@@ -1275,13 +1334,6 @@ def _common_path(paths: Sequence[tuple[str, ...]]) -> tuple[str, ...]:
         if not common:
             break
     return tuple(common)
-
-
-def _same(a: Any, b: Any) -> bool:
-    """Compare two definition values, tolerating list/tuple and numpy differences."""
-    if isinstance(a, (list, tuple, np.ndarray)) or isinstance(b, (list, tuple, np.ndarray)):
-        return np.array_equal(np.asarray(a, dtype=float), np.asarray(b, dtype=float))
-    return bool(a == b)
 
 
 # ------------------------------------------------------------------------------ the result
@@ -1405,17 +1457,16 @@ class CompiledSequence:
                 )
             )
 
-        raster = self.system.grad_raster_s
         want: dict[str, float] = {}
         # Tolerance is scaled by the total area *traversed*, not by the net.  A readout and its
         # prephaser very nearly cancel, so a relative tolerance on the net would demand exactness
-        # that numerical integration of an arbitrary waveform cannot deliver -- while a tolerance
-        # on the total still catches a whole lost lobe, which is what this is for.
+        # that float summation over thousands of pieces cannot deliver -- while a tolerance on the
+        # total still catches a whole lost lobe, which is what this is for.
         magnitude: dict[str, float] = {}
         for p in placed:
             if p.kind in _GRAD:
                 channel = p.event.channel
-                area = ev.moment_of(p.event, raster, 0)
+                area = ev.pwl_moment(*ev.knots_of(p.event, p.node_t), 0)
                 want[channel] = want.get(channel, 0.0) + area
                 magnitude[channel] = magnitude.get(channel, 0.0) + abs(area)
         # m1 referenced to the start of the sequence, computed **exactly** on both sides.
@@ -1427,18 +1478,10 @@ class CompiledSequence:
         want_m1: dict[str, float] = {}
         for p in placed:
             if p.kind in _GRAD:
-                want_m1[p.event.channel] = want_m1.get(p.event.channel, 0.0) + _pwl_m1(
-                    *_grad_knots(p.event, p.node_t)
+                want_m1[p.event.channel] = want_m1.get(p.event.channel, 0.0) + ev.pwl_moment(
+                    *ev.knots_of(p.event, p.node_t), 1
                 )
-        actual_m1: dict[str, float] = dict.fromkeys(_AXES, 0.0)
-        t_block = 0.0
-        for index in sorted(self.seq.block_events):
-            block = self.seq.get_block(index)
-            for axis in _AXES:
-                grad = getattr(block, f'g{axis}', None)
-                if grad is not None:
-                    actual_m1[axis] += _pwl_m1(*_grad_knots(grad, t_block))
-            t_block += float(self.seq.block_durations[index])
+        actual_m1 = self.moments(order=1)
 
         if want:
             actual = self.moments()
@@ -1533,8 +1576,14 @@ class CompiledSequence:
         order
             ``0`` for area in 1/m, ``1`` for s/m, ``2`` for s^2/m.  Referenced to the start of
             the sequence.
+
+        Notes
+        -----
+        Integrated from each block's exact knots, not from raster samples.  The difference is
+        not cosmetic: sampling is exact for ``order == 0`` and only then, and an arbitrary
+        gradient's samples sit at raster *centres*, so a raster-sampled m0 quietly matched a
+        raster-sampled tree even when the compiled waveform had moved.
         """
-        raster = self.system.grad_raster_s
         out: dict[str, float] = dict.fromkeys(_AXES, 0.0)
         t = 0.0
         # Block IDs are 1-based, and block_durations is a dict keyed by them, not a list.
@@ -1542,12 +1591,8 @@ class CompiledSequence:
             block = self.seq.get_block(index)
             for axis in _AXES:
                 grad = getattr(block, f'g{axis}', None)
-                if grad is None:
-                    continue
-                tt, wf = ev.waveform_of(grad, raster)
-                out[axis] += (
-                    float(ev.trapz(wf * (tt + t) ** order, tt)) if order else float(ev.trapz(wf, tt))
-                )
+                if grad is not None:
+                    out[axis] += ev.pwl_moment(*ev.knots_of(grad, t), order)
             t += float(self.seq.block_durations[index])
         return out
 

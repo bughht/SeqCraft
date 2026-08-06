@@ -469,9 +469,20 @@ def merge_definitions(sources: Mapping[str, Mapping[str, Any]]) -> dict[str, Any
 
 
 def _definitions_equal(a: Any, b: Any) -> bool:
-    """Compare two definition values, tolerating float noise and list/tuple mixing."""
-    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+    """
+    Compare two definition values, tolerating float noise and sequence-type mixing.
+
+    A geometry writing ``FOV`` as a tuple and a module writing it as a numpy array are the same
+    definition, and so are two floats that differ in the last bit after being derived by
+    different arithmetic.  Neither should stop a compile.
+    """
+    import numpy as np  # noqa: PLC0415  (keeps `import seqcraft` light)
+
+    seq_types = (list, tuple, np.ndarray)
+    if isinstance(a, seq_types) or isinstance(b, seq_types):
+        if not (isinstance(a, seq_types) and isinstance(b, seq_types)):
+            return False
         return len(a) == len(b) and all(_definitions_equal(x, y) for x, y in zip(a, b))
-    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+    if isinstance(a, (int, float, np.number)) and isinstance(b, (int, float, np.number)):
         return abs(float(a) - float(b)) <= 1e-12 * max(1.0, abs(float(a)))
     return bool(a == b)

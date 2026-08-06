@@ -227,7 +227,12 @@ would flag every sequence over an hour.
 which lost a tail or a merge which dropped a piece — a whole class of compiler bug that no
 individual test case would have to think of. Its tolerance scales with the total area *traversed*,
 not the net: a readout and its prephaser very nearly cancel, and a relative tolerance on the net
-would demand exactness that numerical integration of an arbitrary waveform cannot deliver.
+would demand exactness that float summation over thousands of pieces cannot deliver.
+
+m0 alone is **not** evidence of fidelity, and it is worth being precise about why. Area is exactly
+what linear resampling preserves, so when both sides were integrated the same approximate way their
+errors cancelled: a resample that rounded 2.5 % off a spiral's peak left m0 agreeing to 1e-14. Both
+sides are now integrated from exact knots, which is what makes the agreement mean something.
 
 **Per-axis m1**, referenced to the start of the sequence. m0 is exactly the quantity that survives a
 *time shift* — a lobe playing a whole raster early leaves it untouched — so m0 alone cannot see a
@@ -269,7 +274,8 @@ for issue in report.issues:
 
 | `kind` | Severity | Means |
 |---|---|---|
-| `grad_merge` | warning | Two or more gradients shared an axis in one block and were summed. Names every source. |
+| `grad_merge` | warning | Two or more gradients shared an axis in one block and were summed. Names every source. The sum itself is exact. |
+| `grad_resample` | warning | A trapezoid was summed with a raster-centre waveform. Their sum bends both on and off the gradient raster and no pulseq gradient event can hold that, so it was resampled. The message carries a **bound on how far the waveform moved**, measured rather than estimated. This is the only place the compiler is knowingly inexact. |
 | `grad_limit`, `slew_limit` | **error** | The merged waveform exceeds the amplifier per axis. |
 | `grad_norm_limit`, `slew_norm_limit` | warning | The vector norm across axes exceeds the per-axis limit. Normal for multi-axis gradients. |
 | `raster` | warning | An RF or ADC start had to move onto the block raster. |

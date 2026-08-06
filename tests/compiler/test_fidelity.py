@@ -147,30 +147,39 @@ def test_two_axis_arbitrary_pair(system, opts) -> None:
     assert_matches(tree, sc.compile(tree, system))
 
 
-@pytest.mark.xfail(
-    reason='D4: merging resamples a raster-centre arbitrary gradient onto raster edges, '
-    'losing peak amplitude. Fixed by W4.',
-    strict=True,
-)
-def test_arbitrary_merged_with_a_trapezoid(system, opts) -> None:
+def test_arbitrary_merged_with_a_trapezoid_is_reported_not_silent(system, opts) -> None:
     """
-    The case where pulseq's two gradient representations collide.
+    The one case pulseq's two gradient representations cannot both be held.
 
     An arbitrary gradient is sampled at raster *centres*; a trapezoid's corners are on raster
-    *edges*.  Their sum has knots at both, and neither representation can hold it.
+    *edges*.  Their sum bends at both, and no pulseq gradient event has room for that -- so this
+    is the one place the compiler cannot be exact.  What it must not do is be inexact quietly:
+    the claim under test is that the resample is *reported*, with a bound, and that the bound is
+    honest.
     """
     wx, _ = _spiral_like(opts, n=60)
     g = pp.make_arbitrary_grad('x', waveform=wx, first=0.0, last=0.0, system=opts)
     trap = pp.make_trapezoid('x', area=20.0, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(0.0, trap)
-    assert_matches(tree, sc.compile(tree, system))
+    out = sc.compile(tree, system)
+
+    reported = out.report.of_kind('grad_resample')
+    assert reported, 'a resample that moves the waveform must never be silent'
+    assert 'axis x' in reported[0].message
+
+    # The reported bound must actually bound the measured deviation.
+    claimed = float(reported[0].message.split('at most ')[1].split(' %')[0]) / 100.0
+    worst = max(
+        v['max_abs_error'] for v in compare(tree, out).values()
+    ) / float(opts.max_grad)
+    assert worst <= claimed + 1e-9, f'measured {worst:.4%} exceeds reported bound {claimed:.4%}'
+    assert worst < 0.05, f'resample moved the waveform by {worst:.2%} of max_grad'
+
+    # Area is what a resample preserves, so it is not evidence of fidelity -- but losing it would
+    # mean something worse than a resample happened.
+    assert not out.report.of_kind('moment')
 
 
-@pytest.mark.xfail(
-    reason='D4: a barrier inside an arbitrary gradient forces a resample onto raster edges. '
-    'Fixed by W4.',
-    strict=True,
-)
 def test_arbitrary_gradient_split_by_a_barrier(system, opts) -> None:
     wx, _ = _spiral_like(opts, n=60)
     g = pp.make_arbitrary_grad('x', waveform=wx, first=0.0, last=0.0, system=opts)
@@ -190,14 +199,35 @@ def test_extended_trapezoid_passes_through(system, opts) -> None:
 
 
 # -------------------------------------------------------------------------------- off raster
-@pytest.mark.xfail(
-    reason='D5: a gradient started off the gradient raster is silently time-shifted by up to '
-    'half a raster. Fixed by W4 (becomes an error).',
-    strict=True,
-)
-def test_gradient_started_off_the_gradient_raster(system, opts) -> None:
+def test_gradient_started_off_the_gradient_raster_is_an_error(system, opts) -> None:
+    """
+    There is no correct snap, so the compiler must not pick one.
+
+    This used to be silent: ``_in_block_delay`` rounded the start onto the raster, so a gradient
+    asked for at 5 us played at 10 us.  m0 could not see it -- area does not depend on when a
+    lobe plays -- and only m1 moved.  The tree asked for something the hardware cannot do, and
+    which way to round is the caller's decision, not the compiler's.
+    """
     g = pp.make_trapezoid('x', area=100.0, system=opts)
     tree = sc.LogicBlock('t').add(5e-6, g)
+    with pytest.raises(sc.CompileError, match='not a multiple of the 10 us gradient raster'):
+        sc.compile(tree, system)
+
+
+def test_the_off_raster_error_names_both_neighbouring_rasters(system, opts) -> None:
+    """A message that only says "wrong" leaves the fix to be guessed."""
+    g = pp.make_trapezoid('y', area=100.0, system=opts)
+    tree = sc.LogicBlock('tr').add(0.0, sc.LogicBlock('spoiler').add(3e-6, g))
+    with pytest.raises(sc.CompileError) as err:
+        sc.compile(tree, system)
+    text = str(err.value)
+    assert 'tr.spoiler' in text
+    assert '0.0 us' in text and '10.0 us' in text
+
+
+def test_a_gradient_on_the_raster_is_unaffected(system, opts) -> None:
+    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    tree = sc.LogicBlock('t').add(20e-6, g)
     assert_matches(tree, sc.compile(tree, system))
 
 
@@ -345,3 +375,83 @@ def test_the_oracle_reconstructs_a_continuous_waveform(system, opts) -> None:
     assert max(abs(a) for a in amps) == pytest.approx(float(g.amplitude), rel=1e-9), (
         'the reconstructed peak must be the trapezoid amplitude, not twice it'
     )
+
+
+# ------------------------------------------------------------------------- the real modules
+def _roundtrip_floor(event, opts) -> float:
+    """
+    Return pypulseq's own shape-library round-trip error for `event`, in Hz/m.
+
+    A ``grad`` waveform is stored compressed -- run-length encoded derivatives -- and rebuilt by
+    ``cumsum``, so what comes back out of ``get_block`` is not bit-identical to what went in.
+    That is a floor no compiler can get under, and measuring it here rather than assuming a
+    tolerance is what keeps the assertions below honest: they compare against pypulseq's floor,
+    not against a number chosen to make them pass.
+    """
+    seq = pp.Sequence(system=opts)
+    seq.add_block(event, pp.make_delay(float(pp.calc_duration(event))))
+    before = np.asarray(event.waveform, dtype=float)
+    after = np.asarray(seq.get_block(1).gx.waveform, dtype=float)
+    return float(np.max(np.abs(before - after)))
+
+
+def test_spiral_module_survives_compilation(system, opts) -> None:
+    """
+    The real SpiralVDS, not a synthetic stand-in: its readout must reach the .seq unmoved.
+
+    The residual is pypulseq's shape compression, so the tolerance is *derived* from that floor
+    rather than picked.  If seqcraft ever starts moving the waveform itself, this fails even
+    though the absolute number is tiny.
+    """
+    ro = sc.modules.SpiralVDS(system, fov_mm=240, matrix=96, n_interleaves=8,
+                              density=0.6, regime='default')
+    tree = sc.LogicBlock('t').add(0.0, ro.build(interleaf=3))
+    out = sc.compile(tree, system)
+
+    floor = _roundtrip_floor(ro.gx, opts)
+    report = compare(tree, out, atol=10.0 * max(floor, 1e-9), rtol=0.0)
+    for ax, r in report.items():
+        assert r['max_abs_error'] <= r['tolerance'], (
+            f'axis {ax}: {r["max_abs_error"]:.4g} Hz/m exceeds 10x pypulseq\'s own '
+            f'{floor:.4g} Hz/m round-trip floor -- seqcraft moved the waveform'
+        )
+    assert not out.report.of_kind('grad_resample'), 'a spiral alone must never be resampled'
+
+
+def test_every_interleaf_of_a_spiral_is_faithful(system, opts) -> None:
+    """Rotation is baked into the waveform, so each interleaf is a different shape to preserve."""
+    ro = sc.modules.SpiralVDS(system, fov_mm=240, matrix=64, n_interleaves=4,
+                              density=0.6, regime='default')
+    floor = 10.0 * max(_roundtrip_floor(ro.gx, opts), 1e-9)
+    for k in range(4):
+        tree = sc.LogicBlock('t').add(0.0, ro.build(interleaf=k))
+        out = sc.compile(tree, system)
+        for ax, r in compare(tree, out, atol=floor, rtol=0.0).items():
+            assert r['max_abs_error'] <= r['tolerance'], f'interleaf {k}, axis {ax}'
+
+
+def test_a_diffusion_prepared_spiral_tr_is_faithful(system, opts) -> None:
+    """
+    The shape the DTI notebooks actually build: diffusion lobes, an excitation, a spiral readout.
+
+    Traps and a raster-centre waveform on the same axes, in one tree -- the combination every
+    individual test above isolates one part of.
+    """
+    rf = pp.make_sinc_pulse(flip_angle=1.57, duration=2e-3, system=opts, use='excitation',
+                            slice_thickness=5e-3, apodization=0.5, time_bw_product=4)
+    diff = sc.modules.MonopolarDiffusion(system, b_value_s_per_mm2=1000.0,
+                                         refocus_duration_us=3000.0, regime='default')
+    ro = sc.modules.SpiralVDS(system, fov_mm=240, matrix=96, n_interleaves=8,
+                              density=0.6, regime='default')
+    tree = sc.LogicBlock('tr')
+    tree.add(0.0, rf)
+    tree.add(3e-3, diff.build(part='pre', direction=(1.0, 1.0, 0.0)))
+    tree.add(3e-3 + diff.duration + 1e-3, ro.build(interleaf=2))
+    out = sc.compile(tree, system)
+
+    floor = 10.0 * max(_roundtrip_floor(ro.gx, opts), 1e-9)
+    for ax, r in compare(tree, out, atol=floor, rtol=0.0).items():
+        assert r['max_abs_error'] <= r['tolerance'], (
+            f'axis {ax}: {r["max_abs_error"]:.4g} Hz/m > {r["tolerance"]:.4g}'
+        )
+    assert not seam_discontinuities(out), 'a gradient must join across every block boundary'

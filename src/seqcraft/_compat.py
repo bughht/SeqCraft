@@ -146,8 +146,3 @@ def supported_rf_uses() -> tuple[str, ...]:
     module = importlib.import_module('pypulseq.supported_labels_rf_use')
     return tuple(module.get_supported_rf_uses())
 
-
-def supported_labels() -> tuple[str, ...]:
-    """Return the label names pypulseq accepts (``SLC``, ``LIN``, ``AVG``, ...)."""
-    module = importlib.import_module('pypulseq.supported_labels_rf_use')
-    return tuple(module.get_supported_labels())

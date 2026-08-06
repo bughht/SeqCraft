@@ -54,13 +54,45 @@ fails without it.
   the mark set was re-sorted each time. One monotone scan instead — byte-identical output, 32× faster
   at 6400 echoes (1250 ms → 39 ms), ratio per doubling 3.7 → 2.
 
-### Known and unfixed (phase C)
+### Fixed — precision (phase C)
 
-- Merging or splitting a **raster-centre arbitrary gradient** resamples it onto raster edges, losing
-  2.5 % of peak amplitude on a triangular waveform. Area survives, so the m0 invariant cannot see it.
-- A gradient started **off the gradient raster** is silently time-shifted by up to half a raster.
+- **Splitting or merging a gradient no longer resamples it.** Both operations are exact on a
+  piecewise-linear representation, and every pulseq gradient *is* piecewise linear — so the sum of
+  several is evaluated at the union of their knots, where it can bend, instead of on a uniform
+  raster grid. Splitting a spiral by a barrier used to round 2.5 % off its peak; it is now exact to
+  1e-14 %, and the peak is preserved digit for digit. Sampling was exact only when every knot
+  happened to land on the grid, and an arbitrary gradient's samples sit at raster *centres*, so
+  they never did.
+- **A split arbitrary gradient stays an arbitrary gradient.** A block boundary is on the raster, so
+  cutting there leaves each piece's samples at the centres of its own raster intervals, with the
+  seam amplitude becoming one piece's `last` and the other's `first`. Recognising that pattern is
+  what keeps a spiral a spiral.
+- **The one case pulseq cannot represent is now reported, not silent.** A trapezoid's corners are on
+  raster edges and an arbitrary gradient's samples at raster centres; their sum bends at both and no
+  pulseq gradient event has room for it. That resample now raises a `grad_resample` warning carrying
+  a *measured* bound on how far the waveform moved — exact, because two piecewise-linear functions
+  differ most at a knot of one of them.
+- **A gradient started off the gradient raster is an error.** It used to be snapped silently by up
+  to half a raster: a gradient asked for at 5 µs played at 10 µs. There is no correct snap to make,
+  and which way to round is the caller's decision.
+- **m0 was blind by construction.** Both sides of the invariant were integrated by the same
+  approximation, so their errors cancelled — the 2.5 % peak loss above left m0 agreeing to 1e-14.
+  Moments are now computed from exact knots on both sides, by Gauss-Legendre over each segment,
+  which is exact for every order the API offers.
 
-Both are `xfail(strict=True)` in `tests/compiler/test_fidelity.py`, so the marks fall away when fixed.
+### Changed — one implementation each
+
+- `events.knots_of` and `events.pwl_moment` are the single exact-gradient primitives; the compiler's
+  private copies are gone. `moment_of` is now exact and its `raster` argument is ignored (kept so
+  existing calls work). `waveform_of` remains for plotting, which genuinely wants uniform samples.
+- `CompiledSequence.moments()` integrates from knots rather than raster samples, so it is now correct
+  for arbitrary waveforms at every order.
+- Definition merging had two implementations, one of them dead and better. The compiler now uses
+  `validate.merge_definitions`, so a conflict names *which two sources* claimed the key rather than
+  reporting "already" and "also".
+- `_sample` and `_reduce_corners` deleted. The second existed only to undo the damage the first did:
+  a uniform resample turned a merged trapezoid into hundreds of collinear points that then had to be
+  reduced back to corners. The exact union of knots is minimal by construction.
 
 ## 0.3.0 — the logic-block rewrite
 
