@@ -31,7 +31,7 @@ ignore = [
 
 [lint.per-file-ignores]
 'src/seqcraft/cli.py' = ['T201']              # the CLI is allowed to print
-'src/seqcraft/core/display.py' = ['PLC0415']  # lazy matplotlib import is the whole point
+'src/seqcraft/display.py' = ['PLC0415']       # lazy matplotlib import is the whole point
 'tests/**' = ['ANN', 'D', 'S101', 'PLR2004', 'T201', 'INP001', 'SLF001']
 'examples/**' = ['ALL']
 

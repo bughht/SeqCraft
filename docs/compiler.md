@@ -63,7 +63,8 @@ Three consequences worth knowing:
   between *reservations*, that is an error naming both, rather than something pypulseq rejects
   40 000 blocks later.
 - **In-block delays are quantised onto the event's own raster** — 1 µs for RF, 100 ns for ADC, 10 µs
-  for gradients — and computed in integer picoseconds. A plain subtraction of absolute times drifts:
+  for gradients on Siemens, whatever the scanner reports elsewhere — and computed in integer ticks
+  (`core.timing`). A plain subtraction of absolute times drifts:
   at 39 s into a sequence it produced an RF delay of `129.9999999986 µs`, which pypulseq rejects.
 
 An ADC's `delay` works the same way: `make_adc` sets it to at least `adc_dead_time`, the reservation

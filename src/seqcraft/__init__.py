@@ -38,9 +38,9 @@ later.
 
 There are no recipes here on purpose.  A recipe is somebody else's sequence choices baked into
 library code, and changing your own sequence should never mean editing a package.  The notebooks in
-``examples/`` build their sequences from modules, start to finish -- copy one and edit it.  And when it does not fit,
-:class:`~seqcraft.modules.control.basic.RawEvents` and the ``CompiledSequence.seq`` attribute are
-always there.
+``examples/`` build their sequences from modules, start to finish -- copy one and edit it.  And when
+it does not fit, :class:`~seqcraft.modules.control.basic.RawEvents` and the ``CompiledSequence.seq``
+attribute are always there.
 
 Notes
 -----
@@ -52,9 +52,9 @@ from __future__ import annotations
 
 import importlib
 
-from . import _compat, modules
+from . import _compat, modules, ordering
 from ._version import __version__
-from .core import events, ordering, raster, units, validate
+from .core import events, timing, units, validate
 from .core.compiler import CompiledSequence, WriteResult
 from .core.compiler import compile_sequence as compile  # noqa: A001, A004
 from .core.errors import (
@@ -71,7 +71,11 @@ from .core.errors import (
 from .core.geometry import Geometry
 from .core.logic import Item, LogicBlock, Node, barrier, flatten, span
 from .core.module import Module
-from .core.ordering import (
+from .core.report import Issue, Report, ReportFailed
+from .core.system import Limits, System, load_hardware, synthetic_hardware
+from .core.timing import Raster
+from .core.units import convert
+from .ordering import (
     bit_reversed_order,
     centric_order,
     golden_angle,
@@ -79,9 +83,6 @@ from .core.ordering import (
     linear_order,
     rf_spoil_phase,
 )
-from .core.registry import lookup, register, registered
-from .core.report import Issue, Report, ReportFailed
-from .core.system import Limits, System, load_hardware, synthetic_hardware
 
 # Fail once with a complete list, rather than letting the first module that needs a missing
 # pypulseq function fail with an opaque AttributeError halfway through a build.
@@ -98,11 +99,12 @@ compile_sequence = compile
 #: it is used.  ``testing`` is deferred for tidiness: the contract assertions are documented as
 #: available downstream, but they are not part of the sequence-building API.
 _LAZY: dict[str, tuple[str, str | None]] = {
-    'display': ('.core.display', None),
-    'plot_block': ('.core.display', 'plot_block'),
-    'plot_kspace': ('.core.display', 'plot_kspace'),
-    'plot_sequence': ('.core.display', 'plot_sequence'),
-    'plot_trajectory': ('.core.display', 'plot_trajectory'),
+    'display': ('.display', None),
+    'plot_block': ('.display', 'plot_block'),
+    'plot_kspace': ('.display', 'plot_kspace'),
+    'plot_sequence': ('.display', 'plot_sequence'),
+    'plot_trajectory': ('.display', 'plot_trajectory'),
+    'provenance': ('.provenance', None),
     'testing': ('.testing', None),
 }
 
@@ -139,6 +141,7 @@ __all__ = [
     'MissingExtraError',
     'Module',
     'Node',
+    'Raster',
     'RasterError',
     'Report',
     'ReportFailed',
@@ -153,6 +156,7 @@ __all__ = [
     'centric_order',
     'compile',
     'compile_sequence',
+    'convert',
     'display',
     'events',
     'flatten',
@@ -160,20 +164,18 @@ __all__ = [
     'interleaved_slice_order',
     'linear_order',
     'load_hardware',
-    'lookup',
     'modules',
     'ordering',
     'plot_block',
     'plot_kspace',
     'plot_sequence',
     'plot_trajectory',
-    'raster',
-    'register',
-    'registered',
+    'provenance',
     'rf_spoil_phase',
     'span',
     'synthetic_hardware',
     'testing',
+    'timing',
     'units',
     'validate',
 ]

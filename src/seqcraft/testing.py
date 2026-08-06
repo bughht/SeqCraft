@@ -22,17 +22,15 @@ Examples
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .core import events as ev
 from .core.compiler import compile_sequence
 from .core.logic import LogicBlock
-from .core.raster import on_raster
-
-if TYPE_CHECKING:
-    from .core.module import Module
+from .core.module import Module
 
 __all__ = [
+    'all_modules',
     'assert_all',
     'assert_compiles',
     'assert_deterministic',
@@ -160,7 +158,7 @@ def assert_within_limits(module: Module, **build_args: Any) -> None:
     block = module.build(**build_args)
     events = [n.item for n in block if getattr(n.item, 'type', None) in ('trap', 'grad')]
     violations = [
-        entry for entry in ev.check_limits(events, module.opts, module.system.grad_raster_s)
+        entry for entry in ev.check_limits(events, module.opts, module.system.grad_raster.dt)
         if not entry[0].endswith('_norm')
     ]
     assert not violations, f'{type(module).__name__}: {violations}'
@@ -168,11 +166,11 @@ def assert_within_limits(module: Module, **build_args: Any) -> None:
 
 def assert_raster(module: Module, **build_args: Any) -> None:
     """Assert that every node start lands on the gradient raster."""
-    raster = module.system.grad_raster_s
+    raster = module.system.grad_raster
     for index, node in enumerate(module.build(**build_args)):
-        assert on_raster(node.start, raster), (
+        assert raster.holds(node.start), (
             f'{type(module).__name__} node {index} starts at {node.start * 1e6:.4f} us, '
-            f'off the {raster * 1e6:.0f} us raster'
+            f'off the {raster.dt * 1e6:.0f} us raster'
         )
 
 
@@ -230,3 +228,36 @@ def assert_all(module: Module, **build_args: Any) -> None:
     assert_within_limits(module, **build_args)
     assert_raster(module, **build_args)
     assert_compiles(module, **build_args)
+
+
+def all_modules() -> dict[str, type[Module]]:
+    """
+    Return every concrete :class:`~seqcraft.Module` subclass, keyed by class name.
+
+    Parametrise your own contract suite over this and a module gains the whole suite the moment it
+    is written.  Subclassing *is* the registration: there is no decorator to forget, which is what
+    a registry could not guarantee -- a module that forgot ``@register()`` silently lost its
+    coverage, the failure the registry existed to prevent.
+
+    Only classes reachable by import are found, so import your package first.  ``seqcraft.modules``
+    is imported by ``import seqcraft``, so the built-ins are always present.
+
+    Examples
+    --------
+    >>> import seqcraft as sc
+    >>> found = sc.testing.all_modules()
+    >>> 'SpiralVDS' in found and 'MonopolarDiffusion' in found
+    True
+    >>> issubclass(found['SincExcitation'], sc.Module)
+    True
+    """
+    out: dict[str, type[Module]] = {}
+
+    def walk(cls: type[Module]) -> None:
+        for sub in cls.__subclasses__():
+            if not getattr(sub, '__abstractmethods__', None):
+                out[sub.__name__] = sub
+            walk(sub)
+
+    walk(Module)
+    return dict(sorted(out.items()))

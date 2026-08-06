@@ -57,10 +57,10 @@ def build_gre(
     pe = sc.modules.PhaseEncode(system, fov_pe_mm=fov_mm, matrix_pe=matrix)
     spoil = sc.modules.Spoiler(system, twists=4, voxel_mm=slice_mm)
 
-    raster = system.block_raster_s
+    raster = system.block_raster
     t_winders = exc.duration
-    t_readout = sc.raster.ceil_to(exc.isodelay + te_s - ro.time_to_echo, raster)
-    t_spoil = sc.raster.ceil_to(t_readout + ro.duration, raster)
+    t_readout = raster.ceil(exc.isodelay + te_s - ro.time_to_echo)
+    t_spoil = raster.ceil(t_readout + ro.duration)
 
     seq = sc.LogicBlock('gre_2d')
     index = 0
@@ -118,16 +118,15 @@ def build_se(
         system, fov_ro_mm=fov_mm, matrix_ro=matrix, readout_duration_us=3200, prephase=False)
     pe = sc.modules.PhaseEncode(system, fov_pe_mm=fov_mm, matrix_pe=matrix)
 
-    raster = system.block_raster_s
-    winders = sc.raster.ceil_to(max(pe.duration, ro.prephase_duration), raster)
-    first = sc.raster.ceil_to(
-        (exc.duration - exc.isodelay) + winders + refoc.isodelay, raster)
-    second = sc.raster.ceil_to((refoc.duration - refoc.isodelay) + ro.time_to_echo, raster)
+    raster = system.block_raster
+    winders = raster.ceil(max(pe.duration, ro.prephase_duration))
+    first = raster.ceil((exc.duration - exc.isodelay) + winders + refoc.isodelay)
+    second = raster.ceil((refoc.duration - refoc.isodelay) + ro.time_to_echo)
     te_min = 2 * max(first, second)
     te = max(te_s, te_min)
 
-    t_refoc = sc.raster.ceil_to(exc.isodelay + te / 2 - refoc.isodelay, raster)
-    t_readout = sc.raster.ceil_to(exc.isodelay + te - ro.time_to_echo, raster)
+    t_refoc = raster.ceil(exc.isodelay + te / 2 - refoc.isodelay)
+    t_readout = raster.ceil(exc.isodelay + te - ro.time_to_echo)
 
     seq = sc.LogicBlock('se_2d')
     index = 0
@@ -206,25 +205,24 @@ def build_dti(
         for b in b_values
     }
 
-    raster = system.block_raster_s
+    raster = system.block_raster
     delta = reference.lobe_duration
-    first = sc.raster.ceil_to((exc.duration - exc.isodelay) + delta + refoc.isodelay, raster)
-    second = sc.raster.ceil_to(
-        (refoc.duration - refoc.isodelay) + delta + readout.time_to_echo, raster)
+    first = raster.ceil((exc.duration - exc.isodelay) + delta + refoc.isodelay)
+    second = raster.ceil((refoc.duration - refoc.isodelay) + delta + readout.time_to_echo)
     te_min = 2 * max(first, second)
-    te = te_min if te_s is None else sc.raster.ceil_to(te_s, raster)
+    te = te_min if te_s is None else raster.ceil(te_s)
     if te < te_min - 1e-12:
         msg = (f'TE {te * 1e3:.2f} ms is below the minimum {te_min * 1e3:.2f} ms; the diffusion '
                f'lobe contributes {delta * 1e3:.2f} ms to each half')
         raise sc.ConfigurationError(msg)
 
-    t_refoc = sc.raster.ceil_to(exc.isodelay + te / 2 - refoc.isodelay, raster)
-    t_lobe1 = sc.raster.ceil_to(t_refoc - delta, raster)
-    t_lobe2 = sc.raster.ceil_to(t_refoc + refoc.duration, raster)
-    t_readout = sc.raster.ceil_to(exc.isodelay + te - readout.time_to_echo, raster)
-    shot_s = sc.raster.ceil_to(t_readout + readout.duration + spoiler.duration, raster)
+    t_refoc = raster.ceil(exc.isodelay + te / 2 - refoc.isodelay)
+    t_lobe1 = raster.ceil(t_refoc - delta)
+    t_lobe2 = raster.ceil(t_refoc + refoc.duration)
+    t_readout = raster.ceil(exc.isodelay + te - readout.time_to_echo)
+    shot_s = raster.ceil(t_readout + readout.duration + spoiler.duration)
     prep_s = fat.duration if fat is not None else 0.0
-    period_s = sc.raster.ceil_to(prep_s + shot_s, raster)
+    period_s = raster.ceil(prep_s + shot_s)
     if tr_s < period_s * slices_per_tr:
         msg = (f'TR {tr_s * 1e3:.0f} ms cannot hold {slices_per_tr} shot(s) of '
                f'{period_s * 1e3:.2f} ms')

@@ -43,8 +43,7 @@ from ...core import events as ev
 from ...core.errors import ConfigurationError, format_error
 from ...core.logic import LogicBlock
 from ...core.module import Module
-from ...core.raster import ceil_to
-from ...core.registry import register
+from ...core.units import convert
 from ...core.validate import Range, require_in_range, require_int_in, require_positive
 
 if TYPE_CHECKING:
@@ -417,7 +416,6 @@ def _ramp_down(
     )
 
 
-@register()
 class SpiralVDS(Module):
     """
     Variable-density spiral readout with its own rewinder.
@@ -525,7 +523,7 @@ class SpiralVDS(Module):
         require_int_in(self, 'matrix', lo=8, hi=2048)
         require_int_in(self, 'n_interleaves', lo=1, hi=1024)
 
-        raster = self.system.grad_raster_s
+        raster = self.system.grad_raster.dt
         spiral = vds_trajectory(
             fov_m=self.fov_mm / 1e3,
             k_max_per_m=self.k_max_per_m,
@@ -560,7 +558,10 @@ class SpiralVDS(Module):
         if n_samples < divisor:
             msg = format_error(
                 'the spiral is shorter than one ADC sample group.',
-                {'spiral_us': len(gx_wave) * raster * 1e6, 'dwell_ns': self.adc_dwell_ns},
+                {
+                    'spiral_us': convert(len(gx_wave) * raster, 's', 'us'),
+                    'dwell_ns': self.adc_dwell_ns,
+                },
                 ['reduce adc_dwell_ns, or increase matrix'],
             )
             raise ConfigurationError(msg)
@@ -589,11 +590,12 @@ class SpiralVDS(Module):
                 np.max(np.abs(np.diff(gy) / raster)) if len(gy) > 1 else 0.0,
             )
         )
-        gamma = self.system.gamma
+        as_mT_m = self.system.convert
         if peak_grad > float(self.opts.max_grad) * 1.001:
             msg = format_error(
-                f'the generated spiral reaches {peak_grad / gamma * 1e3:.1f} mT/m, above the '
-                f'{float(self.opts.max_grad) / gamma * 1e3:.1f} mT/m limit of regime '
+                f'the generated spiral reaches '
+                f'{as_mT_m(peak_grad, "Hz/m", "mT/m"):.1f} mT/m, above the '
+                f'{as_mT_m(float(self.opts.max_grad), "Hz/m", "mT/m"):.1f} mT/m limit of regime '
                 f'{self.regime!r}.',
                 {'matrix': self.matrix, 'fov_mm': self.fov_mm, 'n_interleaves': self.n_interleaves},
                 ['increase n_interleaves', 'reduce matrix', 'design against a less derated regime'],
@@ -601,8 +603,10 @@ class SpiralVDS(Module):
             raise ConfigurationError(msg)
         if slew > float(self.opts.max_slew) * 1.05:
             msg = format_error(
-                f'the generated spiral reaches {slew / gamma:.0f} T/m/s, above the '
-                f'{float(self.opts.max_slew) / gamma:.0f} T/m/s limit of regime {self.regime!r}.',
+                f'the generated spiral reaches '
+                f'{as_mT_m(slew, "Hz/m/s", "T/m/s"):.0f} T/m/s, above the '
+                f'{as_mT_m(float(self.opts.max_slew), "Hz/m/s", "T/m/s"):.0f} T/m/s limit of '
+                f'regime {self.regime!r}.',
                 {'matrix': self.matrix, 'n_interleaves': self.n_interleaves},
                 ['increase n_interleaves', 'design against a less derated regime'],
             )
@@ -625,7 +629,7 @@ class SpiralVDS(Module):
         if worst == 0.0:
             return None
         reference = pp.make_trapezoid(channel=self.axes[0], area=worst, system=self.opts)
-        duration = ceil_to(float(pp.calc_duration(reference)), self.system.grad_raster_s)
+        duration = self.system.grad_raster.ceil(float(pp.calc_duration(reference)))
         return tuple(  # type: ignore[return-value]
             pp.make_trapezoid(channel=axis, area=worst, duration=duration, system=self.opts)
             for axis in self.axes
@@ -635,7 +639,7 @@ class SpiralVDS(Module):
     @property
     def k_max_per_m(self) -> float:
         """Outer k-space radius, ``matrix / (2 * FOV)``, in 1/m."""
-        return self.matrix / (2.0 * self.fov_mm / 1e3)
+        return self.matrix / (2.0 * convert(self.fov_mm, 'mm', 'm'))
 
     @property
     def resolution_mm(self) -> float:
@@ -650,7 +654,7 @@ class SpiralVDS(Module):
     @property
     def readout_duration_us(self) -> float:
         """Duration of the spiral gradient itself, microseconds."""
-        return len(self._kx) * self.system.grad_raster_s * 1e6
+        return convert(self.system.grad_raster.at(len(self._kx)), 's', 'us')
 
     @property
     def time_to_echo(self) -> float:
@@ -682,7 +686,7 @@ class SpiralVDS(Module):
         """
         gradient = float(pp.calc_duration(self.gx, self.gy))
         sampling = float(self.adc.delay) + self.adc_duration + float(self.opts.adc_dead_time)
-        return ceil_to(max(gradient, sampling), self.system.block_raster_s)
+        return self.system.block_raster.ceil(max(gradient, sampling))
 
     @property
     def duration(self) -> float:
@@ -694,7 +698,7 @@ class SpiralVDS(Module):
         """Seconds occupied by the rewinder, or zero when there is none."""
         if self.rewinder is None:
             return 0.0
-        return ceil_to(float(pp.calc_duration(*self.rewinder)), self.system.block_raster_s)
+        return self.system.block_raster.ceil(float(pp.calc_duration(*self.rewinder)))
 
     def trajectory(self, interleaf: int = 0) -> tuple[np.ndarray, np.ndarray]:
         """

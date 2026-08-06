@@ -81,8 +81,8 @@ from . import events as ev
 from . import units
 from .errors import CompileError, format_error
 from .logic import BARRIER, flatten
-from .raster import EPS, PS, ceil_to, floor_to, on_raster, picoseconds, round_to, sub_exact
 from .report import Issue, Report
+from .timing import EPS, TICKS_PER_SECOND, Raster, exact_diff, to_ticks
 from .validate import merge_definitions
 
 if TYPE_CHECKING:
@@ -549,7 +549,7 @@ def _barrier_conflict(
 def _gap_boundary(
     a_end: float,
     b_start: float,
-    raster: float,
+    raster: Raster,
     cuttable: Callable[[float], bool],
 ) -> float | None:
     """
@@ -560,9 +560,9 @@ def _gap_boundary(
     that something indivisible partly covers.
     """
     options = (
-        ceil_to(0.5 * (a_end + b_start), raster),
-        ceil_to(a_end, raster),
-        floor_to(b_start, raster),
+        raster.ceil(0.5 * (a_end + b_start)),
+        raster.ceil(a_end),
+        raster.floor(b_start),
     )
     for t in options:
         if a_end - EPS <= t <= b_start + EPS and cuttable(t):
@@ -596,7 +596,7 @@ def _gap_blocked(a_end: float, b_start: float, placed: Sequence[_Placed]) -> Com
 def _boundaries(
     placed: Sequence[_Placed],
     total: float,
-    raster: float,
+    raster: Raster,
     max_block: float,
 ) -> list[float]:
     """
@@ -657,7 +657,7 @@ def _boundaries(
     for p in placed:
         if p.kind != BARRIER:
             continue
-        at = round_to(p.node_t, raster)
+        at = raster.nearest(p.node_t)
         if not cuttable(at):
             raise _barrier_conflict(p, at, placed)
         marks.add(at)
@@ -669,11 +669,11 @@ def _boundaries(
     candidates: set[float] = set()
     for p in placed:
         if p.kind in _GRAD:
-            candidates.add(floor_to(p.start, raster))
-            candidates.add(ceil_to(p.end, raster))
+            candidates.add(raster.floor(p.start))
+            candidates.add(raster.ceil(p.end))
         elif p.kind in _INDIVISIBLE:
-            candidates.add(floor_to(p.res_start, raster))
-            candidates.add(ceil_to(p.res_end, raster))
+            candidates.add(raster.floor(p.res_start))
+            candidates.add(raster.ceil(p.res_end))
     marks.update(t for t in candidates if acceptable(t))
 
     # Guarantee one boundary per reservation gap.  Anything in the gap will do -- the gap is by
@@ -706,14 +706,14 @@ def _boundaries(
         extra.append(at)
     marks.update(extra)
 
-    snapped = sorted({round_to(min(max(0.0, t), total), raster) for t in marks})
+    snapped = sorted({raster.nearest(min(max(0.0, t), total)) for t in marks})
 
     out: list[float] = []
     for a, b in zip(snapped, snapped[1:]):
         out.append(a)
         n_extra = int(math.ceil((b - a) / max_block)) - 1
         if n_extra > 0:
-            step = round_to((b - a) / (n_extra + 1), raster)
+            step = raster.nearest((b - a) / (n_extra + 1))
             out.extend(a + step * (k + 1) for k in range(n_extra) if a + step * (k + 1) < b - EPS)
     out.append(snapped[-1])
     return sorted(set(out))
@@ -739,31 +739,31 @@ def _superpose(
     uniform resample rounded the peaks off a spiral by 2.5 % while preserving its area exactly --
     which is why the m0 invariant could not see it.
 
-    Times are carried as integer picoseconds so that a knot shared by two pieces is *the same*
-    knot after a sequence that has been running for minutes, rather than two knots a femtosecond
-    apart that then both survive into the shape.
+    Times are carried as integer ticks so that a knot shared by two pieces is *the same* knot
+    after a sequence that has been running for minutes, rather than two knots a femtosecond apart
+    that then both survive into the shape.
 
     Returns
     -------
-    rel_ps, amps
-        Knot times in integer picoseconds from `a`, and amplitudes in Hz/m.
+    rel_ticks, amps
+        Knot times in integer ticks from `a`, and amplitudes in Hz/m.
     """
-    a_ps, b_ps = picoseconds(a), picoseconds(b)
+    a_ps, b_ps = to_ticks(a), to_ticks(b)
     marks = {a_ps, b_ps}
     knots: list[tuple[np.ndarray, np.ndarray]] = []
     for p in pieces:
         times, amps = ev.knots_of(p.event, p.node_t)
-        t_ps = np.array([picoseconds(t) for t in times], dtype=np.int64)
+        t_ps = np.array([to_ticks(t) for t in times], dtype=np.int64)
         marks.update(int(t) for t in t_ps if a_ps < t < b_ps)
         knots.append((t_ps, amps))
 
     grid_ps = np.array(sorted(marks), dtype=np.int64)
-    grid = grid_ps / PS
+    grid = grid_ps / TICKS_PER_SECOND
     total = np.zeros(len(grid_ps), dtype=float)
     for t_ps, amps in knots:
         # left/right zero: outside its own span a gradient contributes nothing.  At its first and
         # last knot np.interp returns the knot value, so `first` and `last` are carried exactly.
-        total += np.interp(grid, t_ps / PS, amps, left=0.0, right=0.0)
+        total += np.interp(grid, t_ps / TICKS_PER_SECOND, amps, left=0.0, right=0.0)
     return grid_ps - a_ps, total
 
 
@@ -851,14 +851,14 @@ def _axis_gradient(
         if abs(amps[edge]) < negligible:
             amps[edge] = 0.0
 
-    raster_ps = picoseconds(float(opts.grad_raster_time))
+    raster_ps = to_ticks(float(opts.grad_raster_time))
     if np.all(rel_ps % raster_ps == 0):
         # The interval edges are block boundaries, so a non-zero value at either end has to be
         # carried by first/last with delay 0: pypulseq rejects a delayed gradient that starts away
         # from zero, and checks the join against the neighbouring block.
         grad = pp.make_extended_trapezoid(
             channel=axis,
-            times=rel_ps / PS,
+            times=rel_ps / TICKS_PER_SECOND,
             amplitudes=amps,
             system=opts,
             skip_check=True,
@@ -906,15 +906,15 @@ def _resampled(
     The bound is exact rather than estimated: two PWL functions differ most at a knot of one of
     them, so comparing at the union of both knot sets *is* the supremum.
     """
-    raster_ps = picoseconds(float(opts.grad_raster_time))
+    raster_ps = to_ticks(float(opts.grad_raster_time))
     n = int(rel_ps[-1] // raster_ps)
     grid_ps = np.arange(n + 1, dtype=np.int64) * raster_ps
-    grid_amps = np.interp(grid_ps / PS, rel_ps / PS, amps)
+    grid_amps = np.interp(grid_ps / TICKS_PER_SECOND, rel_ps / TICKS_PER_SECOND, amps)
 
-    union = np.union1d(rel_ps, grid_ps) / PS
-    error = float(
-        np.max(np.abs(np.interp(union, rel_ps / PS, amps) - np.interp(union, grid_ps / PS, grid_amps)))
-    )
+    union = np.union1d(rel_ps, grid_ps) / TICKS_PER_SECOND
+    before = np.interp(union, rel_ps / TICKS_PER_SECOND, amps)
+    after = np.interp(union, grid_ps / TICKS_PER_SECOND, grid_amps)
+    error = float(np.max(np.abs(before - after)))
     issues.append(
         Issue(
             'grad_resample',
@@ -929,7 +929,7 @@ def _resampled(
     )
     grad = pp.make_extended_trapezoid(
         channel=axis,
-        times=grid_ps / PS,
+        times=grid_ps / TICKS_PER_SECOND,
         amplitudes=grid_amps,
         system=opts,
         skip_check=True,
@@ -946,15 +946,15 @@ def _in_block_delay(p: _Placed, block_start: float, opts: Opts) -> float:
     a sequence that may run for minutes, so by the last TR the float resolution is coarser than a
     picosecond and ``p.start - block_start`` drifts -- pypulseq then reports an RF delay of
     ``129.9999999986us`` and rejects the block.  And pulseq requires each event's delay to sit on
-    its own raster: 1 us for RF, 100 ns for ADC, 10 us for gradients.  Subtracting in integer
-    picoseconds and then snapping satisfies both.
+    its own raster -- 1 us for RF, 100 ns for ADC and 10 us for gradients on Siemens, whatever
+    the scanner reports elsewhere.  Subtracting in integer ticks and then snapping satisfies both.
     """
-    dt = max(0.0, sub_exact(p.start, block_start))
+    dt = max(0.0, exact_diff(p.start, block_start))
     raster = {
-        'rf': float(opts.rf_raster_time),
-        'adc': float(opts.adc_raster_time),
-    }.get(p.kind, float(opts.grad_raster_time))
-    return round_to(dt, raster)
+        'rf': Raster(float(opts.rf_raster_time), 'RF'),
+        'adc': Raster(float(opts.adc_raster_time), 'ADC'),
+    }.get(p.kind, Raster(float(opts.grad_raster_time), 'gradient'))
+    return raster.nearest(dt)
 
 
 def _required_duration(events: Sequence[SimpleNamespace], opts: Opts) -> float:
@@ -1018,12 +1018,10 @@ def _limit_issues(
     raster = float(opts.grad_raster_time)
     gamma = float(opts.gamma)
     for kind, where, achieved, limit in ev.check_limits(events, opts, raster):
-        if kind.startswith('grad'):
-            unit, to_display = 'mT/m', functools.partial(units.Hz_per_m_to_mT_per_m, gamma=gamma)
-        else:
-            unit, to_display = 'T/m/s', functools.partial(
-                units.Hz_per_m_per_s_to_T_per_m_per_s, gamma=gamma
-            )
+        pulseq_unit, unit = ('Hz/m', 'mT/m') if kind.startswith('grad') else ('Hz/m/s', 'T/m/s')
+        to_display = functools.partial(
+            units.convert, from_unit=pulseq_unit, to_unit=unit, gamma=gamma
+        )
         out.append(
             Issue(
                 f'{kind}_limit',
@@ -1097,7 +1095,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     1.0
     """
     opts = system.limits(regime)
-    raster = system.block_raster_s
+    raster = system.block_raster
     placed = _place(root, opts)
 
     negative = [p for p in placed if p.res_start < -EPS]
@@ -1118,22 +1116,21 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     # by up to half a raster -- a gradient asked for at 5 us played at 10 us, and m0 could not see
     # it because area does not depend on when a lobe plays.  There is no correct snap to make: the
     # tree asked for something the hardware cannot do, and only the caller knows which way to round.
-    off = [p for p in placed if p.kind in _GRAD and not on_raster(p.start, opts.grad_raster_time)]
+    grad_raster = system.grad_raster
+    off = [p for p in placed if p.kind in _GRAD and not grad_raster.holds(p.start)]
     if off:
         worst = off[0]
-        grad_raster = float(opts.grad_raster_time)
         msg = format_error(
             f'gradient starts at {worst.start * 1e6:.3f} us, which is not a multiple of the '
-            f'{grad_raster * 1e6:.0f} us gradient raster.',
+            f'{grad_raster.dt * 1e6:.0f} us gradient raster.',
             {
                 'from': worst.where,
-                'nearest below': f'{floor_to(worst.start, grad_raster) * 1e6:.1f} us',
-                'nearest above': f'{ceil_to(worst.start, grad_raster) * 1e6:.1f} us',
+                'nearest below': f'{grad_raster.floor(worst.start) * 1e6:.1f} us',
+                'nearest above': f'{grad_raster.ceil(worst.start) * 1e6:.1f} us',
                 'others': len(off) - 1,
             },
             [
-                'round the start time where it is computed, with '
-                'seqcraft.core.raster.ceil_to(t, system.grad_raster_s)',
+                'round the start time where it is computed, with system.grad_raster.ceil(t)',
                 'a start derived from "te - module.time_to_echo" lands off the raster whenever TE '
                 'does, so quantise TE first',
             ],
@@ -1145,7 +1142,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     # Ceiling, not nearest: rounding the total *down* truncates the final block below what its
     # events need, which surfaces later as an unaligned block duration rather than as the four
     # microseconds it actually is.
-    total = ceil_to(max((p.res_end for p in placed), default=0.0), raster)
+    total = raster.ceil(max((p.res_end for p in placed), default=0.0))
     if total <= 0.0:
         msg = format_error(
             'nothing to compile: the tree contains no events that occupy time.',
@@ -1155,12 +1152,12 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
 
     issues: list[Issue] = [
         Issue('raster', p.where, f'start {p.res_start * 1e6:.4f} us snapped to '
-              f'{round_to(p.res_start, raster) * 1e6:.1f} us', 'warning')
+              f'{raster.nearest(p.res_start) * 1e6:.1f} us', 'warning')
         for p in placed
-        if p.kind in ('rf', 'adc') and not on_raster(p.res_start, raster)
+        if p.kind in ('rf', 'adc') and not raster.holds(p.res_start)
     ]
 
-    max_block = float(opts.block_duration_raster) * 2**24
+    max_block = raster.dt * 2**24
     edges = _boundaries(placed, total, raster, max_block)
 
     seq = pp.Sequence(system=opts)
@@ -1249,7 +1246,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
                 block.append(grad)
                 paths.extend(p.path for p in here)
 
-        duration = round_to(b - a, raster)
+        duration = raster.nearest(b - a)
         origins.append(_common_path(paths))
         if not block:
             seq.add_block(pp.make_delay(duration))
@@ -1820,7 +1817,7 @@ class CompiledSequence:
 
         side: _Path | None = None
         if sidecar:
-            from .provenance import write_sidecar  # noqa: PLC0415
+            from ..provenance import write_sidecar  # noqa: PLC0415
 
             side = write_sidecar(
                 target,

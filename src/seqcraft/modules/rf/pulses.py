@@ -36,6 +36,7 @@ LogicBlock(exc, 3 nodes, 1.80 ms)
 
 from __future__ import annotations
 
+import abc
 import math
 from typing import TYPE_CHECKING, Any
 
@@ -46,8 +47,7 @@ from ...core import events as ev
 from ...core.errors import ConfigurationError, format_error
 from ...core.logic import LogicBlock
 from ...core.module import Module
-from ...core.raster import ceil_to
-from ...core.registry import register
+from ...core.units import convert
 from ...core.validate import Range, require_in, require_in_range, require_positive
 
 if TYPE_CHECKING:
@@ -136,7 +136,7 @@ class RFPulse(Module):
     slice_offset_m : float, default 0.0
         Slice position along `slice_axis`, in metres.
     rf_phase_rad : float, default 0.0
-        Extra carrier phase, e.g. from :func:`~seqcraft.core.ordering.rf_spoil_phase`.  Added
+        Extra carrier phase, e.g. from :func:`~seqcraft.ordering.rf_spoil_phase`.  Added
         to `phase_offset_rad`.
 
     `rephase` is deliberately **not** a build argument: dropping the rephaser changes the block's
@@ -209,9 +209,13 @@ class RFPulse(Module):
         self._check_designed_b1()
 
     # ------------------------------------------------------------------ what a subclass does
+    @abc.abstractmethod
     def _design(self) -> tuple[SimpleNamespace, SimpleNamespace | None, SimpleNamespace | None]:
         """
         Build the RF event and, if slice-selective, the slice-select and rephasing lobes.
+
+        Abstract, so this class cannot be constructed and the contract suite -- which walks
+        :meth:`~seqcraft.Module.__subclasses__` -- skips it without needing to be told.
 
         Returns
         -------
@@ -219,7 +223,6 @@ class RFPulse(Module):
             `gz` and `gzr` are ``None`` for a non-selective pulse; `gzr` is ``None`` when
             ``rephase`` is false.
         """
-        raise NotImplementedError
 
     def _check_designed_b1(self) -> None:
         """
@@ -237,19 +240,19 @@ class RFPulse(Module):
         set ``max_b1_uT`` on the :class:`~seqcraft.core.system.System` from the reference voltage the
         scanner reports, and keep a margin.
         """
-        limit_t = float(self.opts.max_b1) / self.system.gamma
-        peak_t = self.peak_b1_uT / 1e6
-        if peak_t > limit_t * 1.001:
+        limit_uT = self.system.convert(float(self.opts.max_b1), 'Hz', 'uT')
+        peak_uT = self.peak_b1_uT
+        if peak_uT > limit_uT * 1.001:
             # Peak B1 falls roughly as 1/duration at fixed flip and time-bandwidth product.
-            suggested = self.duration_us * peak_t / limit_t
+            suggested = self.duration_us * peak_uT / limit_uT
             msg = format_error(
-                f'the designed {self.flip_deg:g} degree pulse peaks at {peak_t * 1e6:.2f} uT, '
-                f'above the {limit_t * 1e6:.2f} uT limit.',
+                f'the designed {self.flip_deg:g} degree pulse peaks at {peak_uT:.2f} uT, '
+                f'above the {limit_uT:.2f} uT limit.',
                 {
                     'duration_us': self.duration_us,
                     'time_bw_product': self.time_bw_product,
-                    'peak_b1_uT': round(peak_t * 1e6, 2),
-                    'max_b1_uT': round(limit_t * 1e6, 2),
+                    'peak_b1_uT': round(peak_uT, 2),
+                    'max_b1_uT': round(limit_uT, 2),
                 },
                 [
                     f'lengthen the pulse to about {suggested:.0f} us -- peak B1 falls as 1/duration',
@@ -266,7 +269,7 @@ class RFPulse(Module):
         pypulseq's own message is ``Amplitude violation (117%)``, which does not say which
         parameter to change.  This one names all three.
         """
-        duration_s = self.duration_us / 1e6
+        duration_s = convert(self.duration_us, 'us', 's')
         gamma = self.system.gamma
         # A shaped pulse needs more peak B1 than a hard one of the same flip; the sinc factor
         # is ~2.2 for tbw 4 with Hamming apodization.  Use the hard-pulse floor, which is a
@@ -274,14 +277,16 @@ class RFPulse(Module):
         floor_t = abs(math.radians(self.flip_deg)) / (2.0 * math.pi * gamma * duration_s)
         limit_t = float(self.opts.max_b1) / gamma
         if floor_t > limit_t:
-            needed_us = abs(math.radians(self.flip_deg)) / (2.0 * math.pi * gamma * limit_t) * 1e6
+            needed_s = abs(math.radians(self.flip_deg)) / (2.0 * math.pi * gamma * limit_t)
+            needed_us = convert(needed_s, 's', 'us')
             msg = format_error(
                 f'a {self.flip_deg:g} degree pulse in {self.duration_us:g} us needs at least '
-                f'{floor_t * 1e6:.1f} uT, above the {limit_t * 1e6:.1f} uT limit.',
+                f'{self.system.convert(floor_t, "T", "uT"):.1f} uT, above the '
+                f'{self.system.convert(limit_t, "T", "uT"):.1f} uT limit.',
                 {
                     'flip_deg': self.flip_deg,
                     'duration_us': self.duration_us,
-                    'max_b1_uT': limit_t * 1e6,
+                    'max_b1_uT': self.system.convert(limit_t, 'T', 'uT'),
                 },
                 [
                     f'lengthen the pulse to at least {needed_us:.0f} us '
@@ -314,14 +319,14 @@ class RFPulse(Module):
     def pulse_duration(self) -> float:
         """Seconds occupied by the pulse and its slice-select gradient, excluding the rephaser."""
         events = (self.rf,) if self.gz is None else (self.rf, self.gz)
-        return ceil_to(float(pp.calc_duration(*events)), self.system.block_raster_s)
+        return self.system.block_raster.ceil(float(pp.calc_duration(*events)))
 
     @property
     def rephase_duration(self) -> float:
         """Seconds occupied by the slice rephasing lobe, or zero when there is none."""
         if self.gzr is None:
             return 0.0
-        return ceil_to(float(pp.calc_duration(self.gzr)), self.system.block_raster_s)
+        return self.system.block_raster.ceil(float(pp.calc_duration(self.gzr)))
 
     @property
     def duration(self) -> float:
@@ -336,14 +341,14 @@ class RFPulse(Module):
     @property
     def bandwidth_hz(self) -> float:
         """Excitation bandwidth in hertz, from ``time_bw_product / duration``."""
-        return self.time_bw_product / (self.duration_us / 1e6)
+        return self.time_bw_product / convert(self.duration_us, 'us', 's')
 
     @property
     def peak_b1_uT(self) -> float:
         """Peak B1 amplitude, microtesla."""
         signal = np.asarray(self.rf.signal)
         peak_hz = float(np.max(np.abs(signal))) if signal.size else 0.0
-        return peak_hz / self.system.gamma * 1e6
+        return self.system.convert(peak_hz, 'Hz', 'uT')
 
     @property
     def energy_hz2_s(self) -> float:
@@ -354,7 +359,7 @@ class RFPulse(Module):
         which is outside seqcraft's scope.
         """
         signal = np.asarray(self.rf.signal)
-        return float(np.sum(np.abs(signal) ** 2) * self.system.rf_raster_s)
+        return float(np.sum(np.abs(signal) ** 2) * self.system.rf_raster.dt)
 
     # -------------------------------------------------------------------------------- build
     def build(self, *, slice_offset_m: float = 0.0, rf_phase_rad: float = 0.0) -> LogicBlock:
@@ -483,7 +488,7 @@ class RFPulse(Module):
         is why a 180 designed as an excitation pulse has a poor refocusing profile even when its
         excitation profile looks fine.
         """
-        duration_s = ceil_to(self.duration_us / 1e6, self.system.rf_raster_s)
+        duration_s = self.system.rf_raster.ceil(convert(self.duration_us, 'us', 's'))
         common: dict[str, Any] = {
             'flip_angle': self.flip_rad,
             'duration': duration_s,
@@ -499,13 +504,15 @@ class RFPulse(Module):
         if self.slice_thickness_mm is None:
             return pp.make_slr_pulse(**common, return_gz=False), None, None
         rf, gz, gzr = pp.make_slr_pulse(
-            **common, slice_thickness=self.slice_thickness_mm / 1e3, return_gz=True
+            **common,
+            slice_thickness=convert(self.slice_thickness_mm, 'mm', 'm'),
+            return_gz=True,
         )
         return rf, _on_axis(gz, self.slice_axis), _on_axis(gzr, self.slice_axis)
 
     def _sinc(self, *, use: str) -> tuple[Any, Any | None, Any | None]:
         """Design a windowed-sinc pulse with its slice-select and rephasing lobes."""
-        duration_s = ceil_to(self.duration_us / 1e6, self.system.rf_raster_s)
+        duration_s = self.system.rf_raster.ceil(convert(self.duration_us, 'us', 's'))
         common: dict[str, Any] = {
             'flip_angle': self.flip_rad,
             'duration': duration_s,
@@ -521,7 +528,7 @@ class RFPulse(Module):
             return rf, None, None
         rf, gz, gzr = pp.make_sinc_pulse(
             **common,
-            slice_thickness=self.slice_thickness_mm / 1e3,
+            slice_thickness=convert(self.slice_thickness_mm, 'mm', 'm'),
             return_gz=True,
         )
         gz = _on_axis(gz, self.slice_axis)
@@ -550,7 +557,6 @@ def _on_axis(grad: SimpleNamespace | None, axis: str) -> SimpleNamespace | None:
 
 
 # --------------------------------------------------------------------------------- concrete
-@register()
 class SincExcitation(RFPulse):
     """
     Slice-selective windowed-sinc excitation.
@@ -592,7 +598,6 @@ class SincExcitation(RFPulse):
         return self._sinc(use='excitation')
 
 
-@register()
 class SlabExcitation(SincExcitation):
     """
     Slab-selective excitation for 3D imaging.
@@ -699,9 +704,9 @@ class RefocusingPulse(RFPulse):
 
     use = 'refocusing'
 
+    @abc.abstractmethod
     def _design(self) -> tuple[Any, Any | None, Any | None]:
         """Subclasses choose the pulse shape."""
-        raise NotImplementedError
 
     def __init__(
         self,
@@ -734,7 +739,7 @@ class RefocusingPulse(RFPulse):
         if self.crusher_twists is None:
             return ()
         voxel_mm = self.crusher_voxel_mm or self.slice_thickness_mm
-        area = self.crusher_twists * 1e3 / float(voxel_mm)  # twists / voxel, in 1/m
+        area = self.crusher_twists / convert(float(voxel_mm), 'mm', 'm')  # twists per voxel, 1/m
         return tuple(
             pp.make_trapezoid(channel=axis, area=area, system=self.opts)
             for axis in self.crusher_axes
@@ -750,7 +755,7 @@ class RefocusingPulse(RFPulse):
         """Seconds occupied by one crusher lobe."""
         if not self.crushers:
             return 0.0
-        return ceil_to(float(pp.calc_duration(*self.crushers)), self.system.block_raster_s)
+        return self.system.block_raster.ceil(float(pp.calc_duration(*self.crushers)))
 
     @property
     def isodelay(self) -> float:
@@ -778,7 +783,6 @@ class RefocusingPulse(RFPulse):
         return out
 
 
-@register()
 class SincRefocusing(RefocusingPulse):
     """
     Slice-selective windowed-sinc refocusing pulse, optionally with crushers.
@@ -806,7 +810,6 @@ class SincRefocusing(RefocusingPulse):
         return rf, gz, None
 
 
-@register()
 class SLRExcitation(RFPulse):
     """
     Slice-selective Shinnar--Le Roux excitation.
@@ -846,7 +849,6 @@ class SLRExcitation(RFPulse):
         return self._slr(use='excitation')
 
 
-@register()
 class SLRRefocusing(RefocusingPulse):
     """
     Slice-selective Shinnar--Le Roux refocusing pulse, optionally with crushers.
@@ -882,7 +884,6 @@ class SLRRefocusing(RefocusingPulse):
         return rf, gz, None
 
 
-@register()
 class HardExcitation(RFPulse):
     """
     Non-selective rectangular (hard) excitation pulse.
@@ -918,7 +919,7 @@ class HardExcitation(RFPulse):
         """Design a rectangular pulse."""
         rf = pp.make_block_pulse(
             flip_angle=self.flip_rad,
-            duration=ceil_to(self.duration_us / 1e6, self.system.rf_raster_s),
+            duration=self.system.rf_raster.ceil(convert(self.duration_us, 'us', 's')),
             system=self.opts,
             phase_offset=self.phase_offset_rad,
             freq_offset=self.freq_offset_hz,
@@ -927,7 +928,6 @@ class HardExcitation(RFPulse):
         return rf, None, None
 
 
-@register()
 class HardRefocusing(HardExcitation):
     """
     Non-selective rectangular refocusing pulse.
@@ -958,7 +958,6 @@ class HardRefocusing(HardExcitation):
         super().__init__(system, phase_offset_rad=phase_offset_rad, **kwargs)
 
 
-@register()
 class GaussSaturation(RFPulse):
     """
     Gaussian saturation pulse, for fat saturation and saturation bands.
@@ -991,7 +990,7 @@ class GaussSaturation(RFPulse):
 
     def _design(self) -> tuple[Any, Any | None, Any | None]:
         """Design a Gaussian pulse, slice-selective only if a thickness was given."""
-        duration_s = ceil_to(self.duration_us / 1e6, self.system.rf_raster_s)
+        duration_s = self.system.rf_raster.ceil(convert(self.duration_us, 'us', 's'))
         common: dict[str, Any] = {
             'flip_angle': self.flip_rad,
             'duration': duration_s,
@@ -1006,13 +1005,12 @@ class GaussSaturation(RFPulse):
             return pp.make_gauss_pulse(**common, return_gz=False), None, None
         rf, gz, gzr = pp.make_gauss_pulse(
             **common,
-            slice_thickness=self.slice_thickness_mm / 1e3,
+            slice_thickness=convert(self.slice_thickness_mm, 'mm', 'm'),
             return_gz=True,
         )
         return rf, _on_axis(gz, self.slice_axis), _on_axis(gzr, self.slice_axis)
 
 
-@register()
 class AdiabaticInversion(RFPulse):
     """
     Hyperbolic-secant adiabatic inversion pulse.
@@ -1067,7 +1065,7 @@ class AdiabaticInversion(RFPulse):
         """Design a hyperbolic-secant pulse."""
         rf = pp.make_adiabatic_pulse(
             pulse_type='hypsec',
-            duration=ceil_to(self.duration_us / 1e6, self.system.rf_raster_s),
+            duration=self.system.rf_raster.ceil(convert(self.duration_us, 'us', 's')),
             system=self.opts,
             beta=self.beta,
             mu=self.mu,

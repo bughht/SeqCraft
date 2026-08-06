@@ -21,13 +21,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from . import events as ev
-from .errors import MissingExtraError, format_error
-from .logic import BARRIER, LogicBlock, flatten
+from .core import events as ev
+from .core.errors import MissingExtraError, format_error
+from .core.logic import BARRIER, LogicBlock, flatten
 
 if TYPE_CHECKING:
-    from .compiler import CompiledSequence
-    from .system import System
+    from .core.compiler import CompiledSequence
+    from .core.system import System
 
 __all__ = ['plot_block', 'plot_kspace', 'plot_sequence', 'plot_trajectory']
 

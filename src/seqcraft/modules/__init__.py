@@ -18,8 +18,15 @@ Subpackage    Contents
 Examples
 --------
 >>> import seqcraft as sc
->>> sc.lookup('spiral_vds').__name__
+>>> sc.modules.SpiralVDS.__name__
 'SpiralVDS'
+
+There is no registry and no string-keyed lookup: the class *is* the name.  What used to need one --
+running the contract suite over every module -- is :func:`seqcraft.testing.all_modules`, which walks
+``Module.__subclasses__()`` and therefore cannot be forgotten:
+
+>>> 'SpiralVDS' in sc.testing.all_modules()
+True
 """
 
 from __future__ import annotations
@@ -49,9 +56,9 @@ from .rf import (
     RFPulse,
     SincExcitation,
     SincRefocusing,
+    SlabExcitation,
     SLRExcitation,
     SLRRefocusing,
-    SlabExcitation,
 )
 
 __all__ = [

@@ -332,8 +332,8 @@ def to_mr0(
             ['to_mr0(seq, system=my_system)'],
         )
         raise ValueError(msg)
-    raster = resolved.grad_raster_s
-    rf_raster = resolved.rf_raster_s
+    raster = resolved.grad_raster.dt
+    rf_raster = resolved.rf_raster.dt
     dropped = tuple(_AXES.index(a) for a in ignore_axes if a in _AXES)
 
     # ---- pass one: group blocks into repetitions, one per RF pulse -------------------------

@@ -265,10 +265,10 @@ def _gre_tree(system, n_tr: int = 3):
     pe = sc.modules.PhaseEncode(system, fov_pe_mm=250.0, matrix_pe=32)
     spoil = sc.modules.Spoiler(system, twists=4, voxel_mm=5.0)
 
-    raster = system.block_raster_s
+    raster = system.block_raster
     t_winders = exc.duration
-    t_readout = sc.raster.ceil_to(exc.isodelay + 8e-3 - ro.time_to_echo, raster)
-    t_spoil = sc.raster.ceil_to(t_readout + ro.duration, raster)
+    t_readout = raster.ceil(exc.isodelay + 8e-3 - ro.time_to_echo)
+    t_spoil = raster.ceil(t_readout + ro.duration)
 
     tree = sc.LogicBlock('gre')
     for index in range(n_tr):

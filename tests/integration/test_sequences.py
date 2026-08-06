@@ -73,10 +73,10 @@ def test_every_recipe_records_its_definitions(compiled: sc.CompiledSequence) -> 
 
 
 def test_every_block_duration_lands_on_the_raster(compiled: sc.CompiledSequence) -> None:
-    raster = compiled.system.block_raster_s
+    raster = compiled.system.block_raster
     off = [
         index for index, duration in compiled.seq.block_durations.items()
-        if not sc.raster.on_raster(float(duration), raster)
+        if not raster.holds(float(duration))
     ]
     assert not off, f'blocks off the raster: {off[:5]}'
 
