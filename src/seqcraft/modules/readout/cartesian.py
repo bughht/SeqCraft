@@ -27,8 +27,7 @@ from ...core import events as ev
 from ...core.errors import ConfigurationError, format_error
 from ...core.logic import LogicBlock
 from ...core.module import Module
-from ...core.raster import ceil_to, round_to
-from ...core.registry import register
+from ...core.units import convert
 from ...core.validate import Range, require_in, require_in_range, require_int_in, require_positive
 
 if TYPE_CHECKING:
@@ -41,7 +40,6 @@ __all__ = ['CartesianLine', 'NoiseAcquisition']
 _FOV_RANGE = Range(0.5, 2000.0, 'mm', ((1e3, 'm'), (10.0, 'cm')))
 
 
-@register()
 class CartesianLine(Module):
     """
     One frequency-encoded k-space line, with its prephaser.
@@ -195,7 +193,9 @@ class CartesianLine(Module):
         self._n_samples = max(divisor, int(round(requested / divisor)) * divisor)
         self.partial_echo = 2.0 * self._n_samples / n_full - 1.0
 
-        flat_time = ceil_to(self.readout_duration_us / 1e6, self.system.grad_raster_s)
+        flat_time = self.system.grad_raster.ceil(
+            convert(self.readout_duration_us, 'us', 's')
+        )
         self.gx = pp.make_trapezoid(
             channel=self.axis,
             # Delta-k per sample is fixed by the resolution, so a shorter readout covers less of
@@ -207,7 +207,7 @@ class CartesianLine(Module):
         window = flat_time
         if self.ramp_sampling:
             window += float(self.gx.rise_time) + float(self.gx.fall_time)
-        dwell = round_to(window / self._n_samples, self.system.adc_raster_s)
+        dwell = self.system.adc_raster.nearest(window / self._n_samples)
         self.adc = pp.make_adc(
             num_samples=self._n_samples,
             dwell=dwell,
@@ -251,7 +251,7 @@ class CartesianLine(Module):
     @property
     def k_max_per_m(self) -> float:
         """Outer k-space radius along the readout, ``matrix / (2 * FOV)``, in 1/m."""
-        return self.matrix_ro / (2.0 * self.fov_ro_mm / 1e3)
+        return self.matrix_ro / (2.0 * convert(self.fov_ro_mm, 'mm', 'm'))
 
     @property
     def resolution_mm(self) -> float:
@@ -281,12 +281,12 @@ class CartesianLine(Module):
     @property
     def prephase_duration(self) -> float:
         """Seconds occupied by the prephaser."""
-        return ceil_to(float(pp.calc_duration(self.pre)), self.system.block_raster_s)
+        return self.system.block_raster.ceil(float(pp.calc_duration(self.pre)))
 
     @property
     def readout_block_duration(self) -> float:
         """Seconds occupied by the readout gradient and its ADC."""
-        return ceil_to(float(pp.calc_duration(self.gx, self.adc)), self.system.block_raster_s)
+        return self.system.block_raster.ceil(float(pp.calc_duration(self.gx, self.adc)))
 
     @property
     def duration(self) -> float:
@@ -407,7 +407,6 @@ def _flip(grad: SimpleNamespace) -> SimpleNamespace:
     )
 
 
-@register()
 class NoiseAcquisition(Module):
     """
     An ADC with no RF and no gradients, for a noise-covariance measurement.
@@ -450,14 +449,14 @@ class NoiseAcquisition(Module):
         require_int_in(self, 'n_samples', lo=4, hi=1_000_000)
         self.adc = pp.make_adc(
             num_samples=self.n_samples,
-            dwell=round_to(self.dwell_ns / 1e9, self.system.adc_raster_s),
+            dwell=self.system.adc_raster.nearest(convert(self.dwell_ns, 'ns', 's')),
             system=self.opts,
         )
 
     @property
     def duration(self) -> float:
         """Seconds occupied."""
-        return ceil_to(float(pp.calc_duration(self.adc)), self.system.block_raster_s)
+        return self.system.block_raster.ceil(float(pp.calc_duration(self.adc)))
 
     def build(self) -> LogicBlock:
         """Return the bare ADC."""

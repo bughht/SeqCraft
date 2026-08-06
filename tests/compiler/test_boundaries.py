@@ -15,7 +15,6 @@ import pytest
 
 import seqcraft as sc
 from seqcraft.core.compiler import _boundaries, _place
-from seqcraft.core.raster import ceil_to
 
 
 def _epi_tree(opts, n_echo: int) -> sc.LogicBlock:
@@ -38,8 +37,8 @@ def _epi_tree(opts, n_echo: int) -> sc.LogicBlock:
 
 def _time_boundaries(system, opts, n_echo: int) -> float:
     placed = _place(_epi_tree(opts, n_echo), opts)
-    raster = system.block_raster_s
-    total = ceil_to(max(p.res_end for p in placed), raster)
+    raster = system.block_raster
+    total = raster.ceil(max(p.res_end for p in placed))
     max_block = float(opts.block_duration_raster) * 2**24
     best = float('inf')
     for _ in range(3):                          # best of three; we care about the floor, not noise

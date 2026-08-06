@@ -23,8 +23,7 @@ from typing import TYPE_CHECKING
 from ...core.errors import ConfigurationError, format_error
 from ...core.logic import LogicBlock
 from ...core.module import Module
-from ...core.raster import ceil_to
-from ...core.registry import register
+from ...core.units import convert
 from ...core.validate import require_positive
 from ..encoding.cartesian import Spoiler
 from ..rf.pulses import AdiabaticInversion, GaussSaturation
@@ -38,7 +37,6 @@ __all__ = ['FatSat', 'InversionRecovery']
 FAT_SHIFT_PPM = -3.4
 
 
-@register()
 class FatSat(Module):
     """
     Chemical-shift-selective fat saturation: a spectrally selective pulse, then a spoiler.
@@ -167,13 +165,13 @@ class FatSat(Module):
 
     @property
     def freq_offset_hz(self) -> float:
-        """Carrier frequency offset, ``shift_ppm * 1e-6 * gamma * B0``, in hertz."""
-        return self.shift_ppm * 1e-6 * self.system.gamma * self.system.b0_T
+        """Carrier frequency offset in hertz: the shift as a fraction of the Larmor frequency."""
+        return self.system.convert(self.shift_ppm, 'ppm', 'Hz')
 
     @property
     def bandwidth_hz(self) -> float:
         """Spectral width of the saturation pulse, ``time_bw_product / duration``, in hertz."""
-        return self.time_bw_product / (self.duration_us / 1e6)
+        return self.time_bw_product / convert(self.duration_us, 'us', 's')
 
     @property
     def duration(self) -> float:
@@ -195,7 +193,6 @@ class FatSat(Module):
         return LogicBlock('fatsat').add(0.0, pulse).add(pulse.duration, self.spoiler.build())
 
 
-@register()
 class InversionRecovery(Module):
     """
     Adiabatic inversion followed by a spoiler, for a T1-nulling preparation.
@@ -273,9 +270,7 @@ class InversionRecovery(Module):
     @property
     def duration(self) -> float:
         """Seconds occupied by the pulse and its spoiler."""
-        return ceil_to(
-            self.pulse.duration + self.spoiler.duration, self.system.block_raster_s
-        )
+        return self.system.block_raster.ceil(self.pulse.duration + self.spoiler.duration)
 
     def build(self) -> LogicBlock:
         """Return the inversion pulse followed by the spoiler."""

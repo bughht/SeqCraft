@@ -88,17 +88,37 @@ compiling it produces the artifact.
 
 ## The rest of `core`
 
+`core` holds what is required to get from a logic block to a legal, validated `.seq` — and nothing
+else. That is the whole membership rule, and it is what keeps the layer small enough to read.
+
 | Module | What it is for |
 |---|---|
-| `system` | `System` holding **named `Opts` regimes**, so a diffusion encoding can run at full amplitude while the readout is derated. Asserts every regime agrees on the rasters, gamma and B0 — nothing upstream checks that, and a disagreement produces an unplayable file. |
-| `raster` | Integer-picosecond time arithmetic. `10 * 1e-6 != 1e-05` in float64, and `250 * 1e-7` is not `2.5e-5`; those errors propagate into ADC dwells and off-raster block durations. |
+| `system` | `System` holding **named `Opts` regimes**, so a diffusion encoding can run at full amplitude while the readout is derated. Asserts every regime agrees on the rasters, gamma and B0 — nothing upstream checks that, and a disagreement produces an unplayable file. Also the source of every `Raster` and of `system.convert`. |
+| `timing` | `Raster` — the raster as an object, with `ceil / floor / nearest / count / at / holds / require`. Arithmetic in integer ticks, because `1.5e-3 / 1e-5` is `149.99999999999997` and `250 * 1e-7` is not `2.5e-5`; both errors propagate into ADC dwells and off-raster block durations. Nothing here assumes 10 µs: rasters are values the scanner supplies. |
+| `units` | One function — `convert(value, from_unit, to_unit, gamma=, f0=)` — over eleven dimensions, in both directions, the shape `pypulseq.convert` uses. Scales are exact `Fraction`s, so `4200 us` is `0.0042 s` and not `0.004200000000000001 s`. |
 | `events` | `derive()` — the one sanctioned way to copy a pypulseq event. Also `waveform_of`, `moment_of`, `content_hash`, `check_limits`. |
 | `geometry` | FOV, matrix, slices, and one authoritative phase-encode index computation shared by `kspace_center_line` and the `LIN` label values, so the two cannot disagree. |
-| `validate` | Unit plausibility bands inferred from a field's name suffix, plus explicit `require_*` helpers. |
+| `validate` | Unit plausibility bands inferred from a field's name suffix, plus explicit `require_*` helpers. Its unit names are the ones `convert` knows, asserted by a test — one vocabulary, not two. |
 | `report` | `Issue` and `Report`. Immutable; `ok` is true when there are no errors, so warnings inform without failing. |
-| `ordering` | `interleaved_slice_order`, `centric_order`, `golden_angle`, `rf_spoil_phase` — the closed forms that otherwise get copy-pasted per notebook. |
-| `provenance` | The JSON sidecar: versions, git commit and dirty flag, definitions, sha256. |
+
+## What sits *outside* `core`, and why
+
+None of these is on the path from a tree to a file, so none of them is core. They are ordinary
+top-level modules, and `sc.ordering`, `sc.plot_block`, `sc.testing` are unchanged as import paths.
+
+| Module | What it is for |
+|---|---|
+| `ordering` | `interleaved_slice_order`, `centric_order`, `golden_angle`, `rf_spoil_phase` — sequence-programming vocabulary, the closed forms that otherwise get copy-pasted per notebook. Becomes a package when the trajectory work adds a second file beside it. |
+| `provenance` | The JSON sidecar: versions, git commit and dirty flag, definitions, sha256. Output tooling; the compiler imports it lazily at `write()` time. |
 | `display` | **The only module allowed to import matplotlib**, and lazily at that, so `import seqcraft` stays cheap. Every function returns a figure and never calls `show()`. |
+| `testing` | Contract assertions you can point at your own modules, plus `all_modules()` — every concrete `Module` subclass, which is what the contract suite parametrises over. |
+
+**There is no registry.** A registry earns its place when something must turn a *string* into a
+*class* at run time: a YAML front end, plugin entry points, a `--readout=spiral_vds` flag. seqcraft
+has none of those, on purpose. Its one consumer was the contract suite's `parametrize`, and
+`Module.__subclasses__()` serves that with no decorator anywhere — and cannot be forgotten, because
+subclassing *is* the registration. A `@register()` that a new module omitted silently lost the whole
+contract suite, which is the failure a registry was supposed to prevent.
 
 ---
 
@@ -130,12 +150,15 @@ can read), a YAML or GUI front end, and a `.seq` importer.
 
 ```
 src/seqcraft/
-  core/       logic  compiler  module  system  geometry  events  raster  units
-              validate  errors  report  provenance  ordering  registry  display
-  modules/    rf/  readout/  encoding/  prep/  control/
-  testing.py  assertions you can point at your own modules
+  core/          logic  compiler  module  system  geometry  events
+                 timing  units  validate  errors  report
+  modules/       rf/  readout/  encoding/  prep/  control/
+  ordering.py    view orders, golden angle, RF-spoil phase
+  provenance.py  the JSON sidecar
+  display.py     the only matplotlib importer
+  testing.py     assertions you can point at your own modules
 
-tests/        logic/  compiler/  modules/  integration/
+tests/        core/  logic/  compiler/  modules/  integration/
 examples/     01 getting started   02 DTI spiral (builds + writes it)   03 simulate + reconstruct
               seq/ (what notebook 2 writes)   lib/ (sim + recon helpers, not the package)
 docs/         architecture  compiler  writing_a_module

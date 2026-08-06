@@ -11,9 +11,9 @@ from .pulses import (
     RFPulse,
     SincExcitation,
     SincRefocusing,
+    SlabExcitation,
     SLRExcitation,
     SLRRefocusing,
-    SlabExcitation,
 )
 
 __all__ = [

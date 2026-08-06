@@ -199,7 +199,7 @@ Add the **known values** yourself, because those are the ones that catch physics
 ```python
 def test_venc_encodes_the_right_velocity(system):
     venc = VelocityEncode(system, venc_cm_s=50)
-    raster = system.grad_raster_s
+    raster = system.grad_raster.dt
     m1 = 0.0
     for node in venc.build():
         tt, wf = sc.events.waveform_of(node.item, raster)

@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .sequence import Sequence
+    from collections.abc import Mapping
 
 __all__ = ['SIDECAR_SCHEMA', 'build_sidecar', 'git_state', 'write_sidecar']
 
@@ -76,7 +76,7 @@ def _versions() -> dict[str, Any]:
     import numpy as np  # noqa: PLC0415
     import pypulseq as pp  # noqa: PLC0415
 
-    from .. import __version__  # noqa: PLC0415
+    from . import __version__  # noqa: PLC0415
 
     return {
         'seqcraft': __version__,

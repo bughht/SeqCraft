@@ -36,8 +36,7 @@ from ...core import events as ev
 from ...core.errors import ConfigurationError, format_error
 from ...core.logic import LogicBlock
 from ...core.module import Module
-from ...core.raster import ceil_to
-from ...core.registry import register
+from ...core.units import convert
 from ...core.validate import Range, require_in, require_int_in, require_positive
 
 if TYPE_CHECKING:
@@ -93,7 +92,9 @@ class _AreaTrapezoid(Module):
         area = abs(self.max_area_per_m) or 1.0
         kwargs = {'system': self.opts, 'area': area}
         if self.min_duration_us is not None:
-            kwargs['duration'] = ceil_to(self.min_duration_us / 1e6, self.system.grad_raster_s)
+            kwargs['duration'] = self.system.grad_raster.ceil(
+                convert(self.min_duration_us, 'us', 's')
+            )
         self._reference = {
             axis: pp.make_trapezoid(channel=axis, **kwargs) for axis in self.axes
         }
@@ -101,9 +102,8 @@ class _AreaTrapezoid(Module):
     @property
     def duration(self) -> float:
         """Seconds occupied, the same for every area this module can produce."""
-        return ceil_to(
-            float(pp.calc_duration(*self._reference.values())),
-            self.system.block_raster_s,
+        return self.system.block_raster.ceil(
+            float(pp.calc_duration(*self._reference.values()))
         )
 
     def _scaled(self, area_per_m: float) -> tuple[SimpleNamespace, ...]:
@@ -129,7 +129,6 @@ class _AreaTrapezoid(Module):
         return out.add(0.0, *self._scaled(area_per_m))
 
 
-@register()
 class PhaseEncode(_AreaTrapezoid):
     """
     In-plane phase-encode blip.
@@ -219,7 +218,6 @@ class PhaseEncode(_AreaTrapezoid):
         return self._block('pe', self.area_for(line) * float(scale))
 
 
-@register()
 class PartitionEncode(PhaseEncode):
     """
     Through-slab partition encode for 3D imaging.
@@ -278,7 +276,6 @@ class PartitionEncode(PhaseEncode):
         return self._block('par', self.area_for(partition) * float(scale))
 
 
-@register()
 class Prephaser(_AreaTrapezoid):
     """
     A gradient of an explicitly given area: readout prephaser, rewinder, or moment nuller.
@@ -341,7 +338,6 @@ class Prephaser(_AreaTrapezoid):
         return self._block('prephaser', self.area_per_m * float(scale))
 
 
-@register()
 class Spoiler(_AreaTrapezoid):
     """
     Gradient spoiler: dephases the residual transverse magnetisation across a voxel.
@@ -398,7 +394,7 @@ class Spoiler(_AreaTrapezoid):
         require_positive(self, 'twists', 'voxel_mm')
         super().__init__(
             system,
-            max_area_per_m=self.twists * 1e3 / self.voxel_mm,
+            max_area_per_m=self.twists / convert(self.voxel_mm, 'mm', 'm'),
             axes=axes,
             min_duration_us=min_duration_us,
             regime=regime,
@@ -407,14 +403,13 @@ class Spoiler(_AreaTrapezoid):
     @property
     def area_per_m(self) -> float:
         """Spoiler area, ``twists / voxel``, in 1/m."""
-        return self.twists * 1e3 / self.voxel_mm
+        return self.twists / convert(self.voxel_mm, 'mm', 'm')
 
     def build(self, *, scale: float = 1.0) -> LogicBlock:
         """Return the spoiler."""
         return self._block('spoil', self.area_per_m * float(scale))
 
 
-@register()
 class Crusher(Spoiler):
     """
     Crusher pair lobe, for placing either side of a refocusing pulse.

@@ -45,7 +45,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from pypulseq.opts import Opts
 
 from .errors import ConfigurationError, format_error
-from .units import GAMMA_1H, Hz_per_m_to_mT_per_m, T_per_m_per_s, mT_per_m
+from .timing import Raster
+from .units import GAMMA_1H, convert
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -98,11 +99,11 @@ class Limits:
         """Return a copy of `base` with these amplitude and slew limits applied."""
         gamma = base.gamma
         kwargs: dict[str, Any] = {
-            'max_grad': mT_per_m(self.max_grad_mT_m, gamma),
-            'max_slew': T_per_m_per_s(self.max_slew_T_m_s, gamma),
+            'max_grad': convert(self.max_grad_mT_m, 'mT/m', 'Hz/m', gamma=gamma),
+            'max_slew': convert(self.max_slew_T_m_s, 'T/m/s', 'Hz/m/s', gamma=gamma),
         }
         if self.rise_time_us is not None:
-            kwargs['rise_time'] = self.rise_time_us / 1e6
+            kwargs['rise_time'] = convert(self.rise_time_us, 'us', 's')
         return _opts_with(base, **kwargs)
 
 
@@ -160,8 +161,8 @@ class System:
     >>> s = System.preset('generic_3t')
     >>> sorted(s.regime_names)
     ['default']
-    >>> s.block_raster_s
-    1e-05
+    >>> s.block_raster
+    Raster(block, 10 us)
     """
 
     regimes: Mapping[str, Opts]
@@ -244,16 +245,16 @@ class System:
         ['default', 'epi']
         """
         base = Opts(
-            max_grad=mT_per_m(default.max_grad_mT_m, gamma),
-            max_slew=T_per_m_per_s(default.max_slew_T_m_s, gamma),
-            max_b1=max_b1_uT / 1e6 * gamma,
-            rf_dead_time=rf_dead_time_us / 1e6,
-            rf_ringdown_time=rf_ringdown_time_us / 1e6,
-            adc_dead_time=adc_dead_time_us / 1e6,
-            grad_raster_time=grad_raster_us / 1e6,
-            rf_raster_time=rf_raster_us / 1e6,
-            adc_raster_time=adc_raster_ns / 1e9,
-            block_duration_raster=block_raster_us / 1e6,
+            max_grad=convert(default.max_grad_mT_m, 'mT/m', 'Hz/m', gamma=gamma),
+            max_slew=convert(default.max_slew_T_m_s, 'T/m/s', 'Hz/m/s', gamma=gamma),
+            max_b1=convert(max_b1_uT, 'uT', 'Hz', gamma=gamma),
+            rf_dead_time=convert(rf_dead_time_us, 'us', 's'),
+            rf_ringdown_time=convert(rf_ringdown_time_us, 'us', 's'),
+            adc_dead_time=convert(adc_dead_time_us, 'us', 's'),
+            grad_raster_time=convert(grad_raster_us, 'us', 's'),
+            rf_raster_time=convert(rf_raster_us, 'us', 's'),
+            adc_raster_time=convert(adc_raster_ns, 'ns', 's'),
+            block_duration_raster=convert(block_raster_us, 'us', 's'),
             adc_samples_divisor=adc_samples_divisor,
             adc_samples_limit=adc_samples_limit,
             rf_samples_limit=rf_samples_limit,
@@ -367,10 +368,12 @@ class System:
         """
         base = self.default
         max_grad = (
-            mT_per_m(max_grad_mT_m, base.gamma) if max_grad_mT_m is not None else base.max_grad * grad
+            self.convert(max_grad_mT_m, 'mT/m', 'Hz/m')
+            if max_grad_mT_m is not None
+            else base.max_grad * grad
         )
         max_slew = (
-            T_per_m_per_s(max_slew_T_m_s, base.gamma)
+            self.convert(max_slew_T_m_s, 'T/m/s', 'Hz/m/s')
             if max_slew_T_m_s is not None
             else base.max_slew * slew
         )
@@ -395,10 +398,10 @@ class System:
         --------
         >>> import seqcraft as sc
         >>> system = sc.System.preset('cima_x').with_max_b1(12.0)
-        >>> round(system.default.max_b1 / system.gamma * 1e6, 1)
+        >>> round(system.convert(system.default.max_b1, 'Hz', 'uT'), 1)
         12.0
         """
-        limit = float(max_b1_uT) / 1e6 * self.gamma
+        limit = self.convert(float(max_b1_uT), 'uT', 'Hz')
         regimes = {
             name: _opts_with(opts, max_b1=limit) for name, opts in self.regimes.items()
         }
@@ -415,25 +418,45 @@ class System:
         """Field strength, tesla."""
         return float(self.default.B0)
 
+    def convert(self, value: float, from_unit: str, to_unit: str | None = None) -> float:
+        """
+        Convert a value between units using **this scanner's** gamma and Larmor frequency.
+
+        The same function as :func:`seqcraft.units.convert`, with `gamma` and `f0` filled in, so a
+        chemical shift or a B1 amplitude cannot silently pick up the proton value on a system set up
+        for another nucleus.
+
+        Examples
+        --------
+        >>> import seqcraft as sc
+        >>> system = sc.System.preset('prisma')
+        >>> round(system.convert(system.default.max_grad, 'Hz/m', 'mT/m'), 1)
+        80.0
+        >>> round(system.convert(-3.4, 'ppm', 'Hz'))         # fat/water shift at 2.894 T
+        -419
+        """
+        return convert(value, from_unit, to_unit, gamma=self.gamma, f0=self.gamma * self.b0_T)
+
+    # ------------------------------------------------------------------------- rasters
     @property
-    def grad_raster_s(self) -> float:
-        """Gradient raster, seconds."""
-        return float(self.default.grad_raster_time)
+    def grad_raster(self) -> Raster:
+        """The gradient raster: gradient waveform samples land on it."""
+        return Raster(float(self.default.grad_raster_time), 'gradient')
 
     @property
-    def rf_raster_s(self) -> float:
-        """RF raster, seconds."""
-        return float(self.default.rf_raster_time)
+    def rf_raster(self) -> Raster:
+        """The RF raster: RF waveform samples land on it."""
+        return Raster(float(self.default.rf_raster_time), 'RF')
 
     @property
-    def adc_raster_s(self) -> float:
-        """ADC raster, seconds."""
-        return float(self.default.adc_raster_time)
+    def adc_raster(self) -> Raster:
+        """The ADC raster: dwell times land on it."""
+        return Raster(float(self.default.adc_raster_time), 'ADC')
 
     @property
-    def block_raster_s(self) -> float:
-        """Block-duration raster, seconds. Every block duration must be a multiple."""
-        return float(self.default.block_duration_raster)
+    def block_raster(self) -> Raster:
+        """The block-duration raster: every block duration must be a multiple."""
+        return Raster(float(self.default.block_duration_raster), 'block')
 
     @property
     def adc_samples_divisor(self) -> int:
@@ -446,12 +469,15 @@ class System:
         lines = [f'System {self.name!r}  B0 = {self.b0_T:.4g} T  gamma = {self.gamma:.6g} Hz/T']
         for regime, opts in self.regimes.items():
             lines.append(
-                f'  {regime:<10} max_grad = {Hz_per_m_to_mT_per_m(opts.max_grad, self.gamma):7.2f} mT/m'
-                f'   max_slew = {opts.max_slew / self.gamma:7.2f} T/m/s'
+                f'  {regime:<10} '
+                f'max_grad = {self.convert(opts.max_grad, "Hz/m", "mT/m"):7.2f} mT/m'
+                f'   max_slew = {self.convert(opts.max_slew, "Hz/m/s", "T/m/s"):7.2f} T/m/s'
             )
         lines.append(
-            f'  rasters    grad {self.grad_raster_s * 1e6:.0f} us   rf {self.rf_raster_s * 1e6:.0f} us'
-            f'   adc {self.adc_raster_s * 1e9:.0f} ns   block {self.block_raster_s * 1e6:.0f} us'
+            f'  rasters    grad {convert(self.grad_raster.dt, "s", "us"):.0f} us'
+            f'   rf {convert(self.rf_raster.dt, "s", "us"):.0f} us'
+            f'   adc {convert(self.adc_raster.dt, "s", "ns"):.0f} ns'
+            f'   block {convert(self.block_raster.dt, "s", "us"):.0f} us'
         )
         if self.hardware is not None:
             lines.append(f'  hardware   {self.source or "attached"}')
@@ -464,19 +490,19 @@ class System:
             'b0_T': self.b0_T,
             'gamma_Hz_per_T': self.gamma,
             'rasters_s': {
-                'grad': self.grad_raster_s,
-                'rf': self.rf_raster_s,
-                'adc': self.adc_raster_s,
-                'block': self.block_raster_s,
+                'grad': self.grad_raster.dt,
+                'rf': self.rf_raster.dt,
+                'adc': self.adc_raster.dt,
+                'block': self.block_raster.dt,
             },
             'adc_samples_divisor': self.adc_samples_divisor,
             'regimes': {
                 regime: {
-                    'max_grad_mT_m': Hz_per_m_to_mT_per_m(opts.max_grad, self.gamma),
-                    'max_slew_T_m_s': opts.max_slew / self.gamma,
-                    'rf_dead_time_us': opts.rf_dead_time * 1e6,
-                    'rf_ringdown_time_us': opts.rf_ringdown_time * 1e6,
-                    'adc_dead_time_us': opts.adc_dead_time * 1e6,
+                    'max_grad_mT_m': self.convert(opts.max_grad, 'Hz/m', 'mT/m'),
+                    'max_slew_T_m_s': self.convert(opts.max_slew, 'Hz/m/s', 'T/m/s'),
+                    'rf_dead_time_us': convert(opts.rf_dead_time, 's', 'us'),
+                    'rf_ringdown_time_us': convert(opts.rf_ringdown_time, 's', 'us'),
+                    'adc_dead_time_us': convert(opts.adc_dead_time, 's', 'us'),
                 }
                 for regime, opts in self.regimes.items()
             },

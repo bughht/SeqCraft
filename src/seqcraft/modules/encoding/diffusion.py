@@ -53,13 +53,12 @@ from ...core import events as ev
 from ...core.errors import ConfigurationError, format_error
 from ...core.logic import LogicBlock
 from ...core.module import Module
-from ...core.raster import ceil_to
-from ...core.registry import register
+from ...core.timing import Raster
+from ...core.units import convert
 from ...core.validate import require_in, require_positive
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from types import SimpleNamespace
 
     from ...core.system import System
 
@@ -213,7 +212,6 @@ def _normalise(direction: tuple[float, float, float]) -> tuple[float, float, flo
     return (direction[0] / norm, direction[1] / norm, direction[2] / norm)
 
 
-@register()
 class MonopolarDiffusion(Module):
     """
     Stejskal--Tanner monopolar diffusion encoding: two identical lobes around the refocusing pulse.
@@ -313,22 +311,26 @@ class MonopolarDiffusion(Module):
         for axis in self.axes:
             require_in(type('_A', (), {'axis': axis})(), 'axis', _AXES)
 
-        raster = self.system.grad_raster_s
-        self._ramp = ceil_to(float(self.opts.max_grad) / float(self.opts.max_slew), raster)
+        raster = self.system.grad_raster
+        self._ramp = raster.ceil(float(self.opts.max_grad) / float(self.opts.max_slew))
         # The lobe lands on a multiple of this.  Monopolar needs one raster; bipolar needs two, so
         # that half a lobe is still a whole number of rasters and its two sub-lobes abut exactly --
         # a half-raster sliver between them survives resampling as a non-zero block endpoint, which
         # pypulseq reports as a gradient continuity error far from anything that looks wrong.
-        quantum = raster * self.DELTA_RASTERS
+        quantum = Raster(raster.at(self.DELTA_RASTERS), 'lobe')
         if self.lobe_duration_us is None:
-            self._delta = ceil_to(self._solve_delta(), quantum)
+            self._delta = quantum.ceil(self._solve_delta())
         else:
-            self._delta = ceil_to(self.lobe_duration_us / 1e6, quantum)
+            self._delta = quantum.ceil(convert(self.lobe_duration_us, 'us', 's'))
         if self._delta <= 2.0 * self._ramp:
             msg = format_error(
-                f'lobe duration {self._delta * 1e6:.0f} us is shorter than its own ramps '
-                f'({2 * self._ramp * 1e6:.0f} us).',
-                {'max_grad_mT_m': float(self.opts.max_grad) / self.system.gamma * 1e3},
+                f'lobe duration {convert(self._delta, "s", "us"):.0f} us is shorter than its '
+                f'own ramps ({convert(2 * self._ramp, "s", "us"):.0f} us).',
+                {
+                    'max_grad_mT_m': self.system.convert(
+                        float(self.opts.max_grad), 'Hz/m', 'mT/m'
+                    )
+                },
                 ['lengthen lobe_duration_us, or design against a lower-slew regime'],
             )
             raise ConfigurationError(msg)
@@ -349,7 +351,7 @@ class MonopolarDiffusion(Module):
     @property
     def _big_delta_for(self) -> float:
         """Seconds between lobe starts, given the current lobe duration."""
-        return self._delta + self.refocus_duration_us / 1e6
+        return self._delta + convert(self.refocus_duration_us, 'us', 's')
 
     def _b_of(self, amplitude: float, delta: float, big_delta: float) -> float:
         """
@@ -393,20 +395,21 @@ class MonopolarDiffusion(Module):
         gradient raster from the minimum -- at most a few hundred iterations, each cheap, and it
         cannot miss the answer the way a Newton solve on a non-monotonic residual could.
         """
-        raster = self.system.grad_raster_s
+        raster = self.system.grad_raster
+        shortest = raster.ceil(2.0 * self._ramp + raster.dt)
         if self.b_value_s_per_mm2 == 0.0:
-            return ceil_to(2.0 * self._ramp + raster, raster)
-        target = self.b_value_s_per_mm2 * 1e6  # s/mm^2 -> s/m^2
+            return shortest
+        target = convert(self.b_value_s_per_mm2, 's/mm^2', 's/m^2')
         amplitude = float(self.opts.max_grad)
-        delta = ceil_to(2.0 * self._ramp + raster, raster)
+        delta = shortest
         for _ in range(200_000):
-            big_delta = delta + self.refocus_duration_us / 1e6
+            big_delta = delta + convert(self.refocus_duration_us, 'us', 's')
             if self._b_of(amplitude, delta, big_delta) >= target:
                 return delta
-            delta += raster
+            delta += raster.dt
         msg = format_error(  # pragma: no cover - needs absurd b
             f'cannot reach b = {self.b_value_s_per_mm2:g} s/mm^2 on this system.',
-            {'max_grad_mT_m': amplitude / self.system.gamma * 1e3},
+            {'max_grad_mT_m': self.system.convert(amplitude, 'Hz/m', 'mT/m')},
             ['reduce b_value_s_per_mm2', 'use a stronger gradient regime'],
         )
         raise ConfigurationError(msg)
@@ -419,24 +422,27 @@ class MonopolarDiffusion(Module):
         """
         if self.b_value_s_per_mm2 == 0.0:
             return 0.0
-        target = self.b_value_s_per_mm2 * 1e6
+        target = convert(self.b_value_s_per_mm2, 's/mm^2', 's/m^2')
         unit_b = self._b_of(1.0, self._delta, self._big_delta_for)
         amplitude = math.sqrt(target / unit_b)
         limit = float(self.opts.max_grad)
         if amplitude > limit * (1 + 1e-9):
-            achievable = self._b_of(limit, self._delta, self._big_delta_for) / 1e6
+            achievable = convert(
+                self._b_of(limit, self._delta, self._big_delta_for), 's/m^2', 's/mm^2'
+            )
             msg = format_error(
                 f'b = {self.b_value_s_per_mm2:g} s/mm^2 needs '
-                f'{amplitude / self.system.gamma * 1e3:.1f} mT/m in a '
-                f'{self._delta * 1e6:.0f} us lobe, above the '
-                f'{limit / self.system.gamma * 1e3:.1f} mT/m limit.',
+                f'{self.system.convert(amplitude, "Hz/m", "mT/m"):.1f} mT/m in a '
+                f'{convert(self._delta, "s", "us"):.0f} us lobe, above the '
+                f'{self.system.convert(limit, "Hz/m", "mT/m"):.1f} mT/m limit.',
                 {
-                    'delta_us': self._delta * 1e6,
-                    'Delta_us': self._big_delta_for * 1e6,
+                    'delta_us': convert(self._delta, 's', 'us'),
+                    'Delta_us': convert(self._big_delta_for, 's', 'us'),
                     'achievable_b_s_per_mm2': round(achievable, 1),
                 },
                 [
-                    f'lengthen lobe_duration_us beyond {self._delta * 1e6:.0f} us',
+                    f'lengthen lobe_duration_us beyond '
+                    f'{convert(self._delta, "s", "us"):.0f} us',
                     'or leave lobe_duration_us=None to solve for the shortest lobe that fits',
                 ],
             )
@@ -469,8 +475,8 @@ class MonopolarDiffusion(Module):
         >>> abs(bip.m1_per_m_per_s()) < 1e-6        # velocity compensated
         True
         """
-        raster = self.system.grad_raster_s
-        gap = self.refocus_duration_us / 1e6
+        raster = self.system.grad_raster.dt
+        gap = convert(self.refocus_duration_us, 'us', 's')
         total = 0.0
         for part, sign in (('pre', 1.0), ('post', -1.0)):
             offset = 0.0 if part == 'pre' else self._delta + gap
@@ -503,7 +509,7 @@ class MonopolarDiffusion(Module):
     @property
     def duration(self) -> float:
         """Seconds occupied by one built block -- the same for both parts."""
-        return ceil_to(self._delta, self.system.block_raster_s)
+        return self.system.block_raster.ceil(self._delta)
 
     @property
     def total_duration(self) -> float:
@@ -528,7 +534,8 @@ class MonopolarDiffusion(Module):
         unit = _normalise(direction) if any(direction) else (0.0, 0.0, 0.0)
         # b is a quadratic form; for a single-direction encoding its trace is |d|^2 = 1.
         scale = sum(c * c for c in unit)
-        return self._b_of(self._amplitude, self._delta, self._big_delta_for) * scale / 1e6
+        b_si = self._b_of(self._amplitude, self._delta, self._big_delta_for) * scale
+        return convert(b_si, 's/m^2', 's/mm^2')
 
     # -------------------------------------------------------------------------------- build
     def build(
@@ -589,7 +596,6 @@ class MonopolarDiffusion(Module):
         return out
 
 
-@register()
 class BipolarDiffusion(MonopolarDiffusion):
     """
     Bipolar (velocity-compensated) diffusion encoding: each lobe is a plus/minus pair.
@@ -696,7 +702,6 @@ class BipolarDiffusion(MonopolarDiffusion):
         return out
 
 
-@register()
 class ArbitraryDiffusion(Module):
     """
     Diffusion encoding from a waveform you supply.
@@ -784,7 +789,7 @@ class ArbitraryDiffusion(Module):
             if value > 1e-6 * max(float(self.opts.max_grad), 1.0):
                 msg = format_error(
                     f'the supplied waveform does not {edge} at zero '
-                    f'({value / self.system.gamma * 1e3:.3f} mT/m).',
+                    f'({self.system.convert(value, "Hz/m", "mT/m"):.3f} mT/m).',
                     {'samples': self._wave.shape[1]},
                     [
                         'pad the waveform with a zero sample at each end',
@@ -796,8 +801,9 @@ class ArbitraryDiffusion(Module):
         peak = float(np.max(np.abs(self._wave)))
         if peak > float(self.opts.max_grad) * 1.001:
             msg = format_error(
-                f'the supplied waveform reaches {peak / self.system.gamma * 1e3:.1f} mT/m, above '
-                f'the {float(self.opts.max_grad) / self.system.gamma * 1e3:.1f} mT/m limit.',
+                f'the supplied waveform reaches '
+                f'{self.system.convert(peak, "Hz/m", "mT/m"):.1f} mT/m, above the '
+                f'{self.system.convert(float(self.opts.max_grad), "Hz/m", "mT/m"):.1f} mT/m limit.',
                 {'regime': self.regime},
                 ['scale the waveform down, or design against a stronger regime'],
             )
@@ -806,7 +812,7 @@ class ArbitraryDiffusion(Module):
     @property
     def duration(self) -> float:
         """Seconds occupied by one lobe."""
-        return ceil_to(self._wave.shape[1] * self.system.grad_raster_s, self.system.block_raster_s)
+        return self.system.block_raster.ceil(self.system.grad_raster.at(self._wave.shape[1]))
 
     def achieved_b_s_per_mm2(self) -> float:
         """
@@ -815,13 +821,16 @@ class ArbitraryDiffusion(Module):
         Integrates ``b = (2*pi)^2 * integral |integral G dt'|^2 dt`` over both lobes, with the
         sign of the second lobe's contribution flipped by the refocusing pulse.
         """
-        raster = self.system.grad_raster_s
-        gap = int(round(self.refocus_duration_us / 1e6 / raster))
+        raster = self.system.grad_raster.dt
+        gap = self.system.grad_raster.count(
+            self.system.grad_raster.nearest(convert(self.refocus_duration_us, 'us', 's'))
+        )
         first = self._wave
         second = -self._wave  # the refocusing pulse inverts accumulated phase
         joined = np.concatenate([first, np.zeros((first.shape[0], gap)), second], axis=1)
         k = np.cumsum(joined, axis=1) * raster
-        return float((2.0 * math.pi) ** 2 * np.sum(np.sum(k**2, axis=0)) * raster) / 1e6
+        b_si = float((2.0 * math.pi) ** 2 * np.sum(np.sum(k**2, axis=0)) * raster)
+        return convert(b_si, 's/m^2', 's/mm^2')
 
     def build(
         self,

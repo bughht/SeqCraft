@@ -1,9 +1,9 @@
 """
 Module physics: known values, and the contract every module keeps.
 
-The contract tests are parametrised over the registry, so a new module gets them for free.  The
-known-value tests are per module, and each asserts a number an independent calculation gives --
-not a number the code happened to produce.
+The contract tests are parametrised over every concrete ``Module`` subclass, so a new module gets
+them for free.  The known-value tests are per module, and each asserts a number an independent
+calculation gives -- not a number the code happened to produce.
 """
 
 from __future__ import annotations
@@ -15,55 +15,54 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-from seqcraft.core.registry import registered
 
-#: One constructed instance per registered module, for the contract tests.
+
+#: One constructed instance per module class, for the contract tests.
 def _instances(system: sc.System) -> dict[str, sc.Module]:
-    """Build one of every registered module with plausible parameters."""
+    """
+    Build one of every concrete Module subclass with plausible parameters.
+
+    Keyed by class name, derived from the instances themselves -- so the keys cannot drift from
+    the classes, and the coverage assertion compares against ``sc.testing.all_modules()``.
+    """
     m = sc.modules
-    return {
-        'sinc_excitation': m.SincExcitation(
-            system, flip_deg=15, duration_us=1000, slice_thickness_mm=5),
-        'slab_excitation': m.SlabExcitation(
+    built = (
+        m.SincExcitation(system, flip_deg=15, duration_us=1000, slice_thickness_mm=5),
+        m.SlabExcitation(
             system, flip_deg=10, duration_us=1500, slice_thickness_mm=80, time_bw_product=8),
-        'hard_excitation': m.HardExcitation(system, flip_deg=90, duration_us=500),
-        'slr_excitation': m.SLRExcitation(
-            system, flip_deg=90, duration_us=2000, slice_thickness_mm=4),
-        'slr_refocusing': m.SLRRefocusing(
+        m.HardExcitation(system, flip_deg=90, duration_us=500),
+        m.SLRExcitation(system, flip_deg=90, duration_us=2000, slice_thickness_mm=4),
+        m.SLRRefocusing(
             system, flip_deg=180, duration_us=4000, slice_thickness_mm=4, crusher_twists=4),
-        'sinc_refocusing': m.SincRefocusing(
+        m.SincRefocusing(
             system, flip_deg=180, duration_us=4000, slice_thickness_mm=5, crusher_twists=4),
-        'hard_refocusing': m.HardRefocusing(system, flip_deg=180, duration_us=1000),
-        'gauss_saturation': m.GaussSaturation(
-            system, flip_deg=90, duration_us=8000, time_bw_product=1.6),
-        'adiabatic_inversion': m.AdiabaticInversion(system, duration_us=10000),
-        'cartesian_line': m.CartesianLine(
-            system, fov_ro_mm=250, matrix_ro=64, readout_duration_us=3200),
-        'noise_acquisition': m.NoiseAcquisition(system, n_samples=256),
-        'spiral_vds': m.SpiralVDS(system, fov_mm=240, matrix=64, n_interleaves=8),
-        'phase_encode': m.PhaseEncode(system, fov_pe_mm=250, matrix_pe=64),
-        'partition_encode': m.PartitionEncode(system, slab_thickness_mm=80, matrix_sl=16),
-        'prephaser': m.Prephaser(system, area_per_m=-128.0),
-        'spoiler': m.Spoiler(system, twists=4, voxel_mm=5),
-        'crusher': m.Crusher(system, twists=4, voxel_mm=5),
-        'monopolar_diffusion': m.MonopolarDiffusion(
-            system, b_value_s_per_mm2=1000, refocus_duration_us=4200),
-        'bipolar_diffusion': m.BipolarDiffusion(
-            system, b_value_s_per_mm2=300, refocus_duration_us=4200),
-        'arbitrary_diffusion': m.ArbitraryDiffusion(
+        m.HardRefocusing(system, flip_deg=180, duration_us=1000),
+        m.GaussSaturation(system, flip_deg=90, duration_us=8000, time_bw_product=1.6),
+        m.AdiabaticInversion(system, duration_us=10000),
+        m.CartesianLine(system, fov_ro_mm=250, matrix_ro=64, readout_duration_us=3200),
+        m.NoiseAcquisition(system, n_samples=256),
+        m.SpiralVDS(system, fov_mm=240, matrix=64, n_interleaves=8),
+        m.PhaseEncode(system, fov_pe_mm=250, matrix_pe=64),
+        m.PartitionEncode(system, slab_thickness_mm=80, matrix_sl=16),
+        m.Prephaser(system, area_per_m=-128.0),
+        m.Spoiler(system, twists=4, voxel_mm=5),
+        m.Crusher(system, twists=4, voxel_mm=5),
+        m.MonopolarDiffusion(system, b_value_s_per_mm2=1000, refocus_duration_us=4200),
+        m.BipolarDiffusion(system, b_value_s_per_mm2=300, refocus_duration_us=4200),
+        m.ArbitraryDiffusion(
             system,
             waveform_Hz_per_m=np.concatenate(
                 [np.linspace(0, 1, 20), np.ones(60), np.linspace(1, 0, 20)]) * 1e6,
             refocus_duration_us=4200,
         ),
-        'fat_sat': m.FatSat(system, voxel_mm=5),
-        'inversion_recovery': m.InversionRecovery(system, voxel_mm=5),
-        'delay': m.Delay(system, duration_ms=20),
-        'trigger': m.Trigger(system, channel='osc0', duration_us=100),
-        'barrier': m.Barrier(system),
-        'raw_events': m.RawEvents(
-            system, events=(pp.make_trapezoid('x', area=100.0, system=system.default),)),
-    }
+        m.FatSat(system, voxel_mm=5),
+        m.InversionRecovery(system, voxel_mm=5),
+        m.Delay(system, duration_ms=20),
+        m.Trigger(system, channel='osc0', duration_us=100),
+        m.Barrier(system),
+        m.RawEvents(system, events=(pp.make_trapezoid('x', area=100.0, system=system.default),)),
+    )
+    return {type(module).__name__: module for module in built}
 
 
 @pytest.fixture(scope='module')
@@ -72,18 +71,22 @@ def instances(system: sc.System) -> dict[str, sc.Module]:
 
 
 def module_names() -> list[str]:
-    return sorted(registered())
+    return sorted(sc.testing.all_modules())
 
 
 # ------------------------------------------------------------------------------- the contract
-def test_every_registered_module_is_covered(instances) -> None:
+def test_every_module_class_is_covered(instances) -> None:
     """
     A new module must be added to the fixture, so it cannot slip past the contract tests.
 
-    That is the whole payoff of the registry: coverage is not opt-in.
+    Discovery walks ``Module.__subclasses__()``, so subclassing *is* the registration: there is no
+    decorator to forget, and coverage is not opt-in.  Intermediate bases declare an abstract
+    ``_design`` and are skipped.
     """
-    assert set(instances) == set(registered()), (
-        f'missing: {sorted(set(registered()) - set(instances))}'
+    found = set(sc.testing.all_modules())
+    assert set(instances) == found, (
+        f'not built in the fixture: {sorted(found - set(instances))}; '
+        f'built but not a Module subclass: {sorted(set(instances) - found)}'
     )
 
 
@@ -425,7 +428,7 @@ def test_spiral_respects_the_amplifier(system) -> None:
     gx = np.asarray(ro.gx.waveform)
     gy = np.asarray(ro.gy.waveform)
     assert float(np.hypot(gx, gy).max()) <= float(opts.max_grad) * 1.001
-    slew = np.hypot(np.diff(gx), np.diff(gy)) / derated.grad_raster_s
+    slew = np.hypot(np.diff(gx), np.diff(gy)) / derated.grad_raster.dt
     assert float(slew.max()) <= float(opts.max_slew) * 1.001
 
 
@@ -511,7 +514,7 @@ def test_b_value_matches_numerical_integration(system, b_target: float) -> None:
     diff = sc.modules.MonopolarDiffusion(
         system, b_value_s_per_mm2=b_target, refocus_duration_us=refoc.duration * 1e6)
 
-    raster = system.grad_raster_s
+    raster = system.grad_raster.dt
     n_lobe = int(round(diff.lobe_duration / raster))
     gap = int(round(refoc.duration / raster))
 
@@ -720,7 +723,7 @@ def test_slr_refocusing_beats_sinc_on_the_refocusing_profile(system) -> None:
     excitation profile.
     """
     thickness_mm = 4.0
-    raster = system.rf_raster_s
+    raster = system.rf_raster.dt
     positions = np.linspace(-1.5 * thickness_mm / 1e3, 1.5 * thickness_mm / 1e3, 121)
 
     def efficiency(module):

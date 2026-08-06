@@ -1,5 +1,91 @@
 # Changelog
 
+## Unreleased — core revision (v3): less is more
+
+Plan: [PLAN_CORE_V3.md](PLAN_CORE_V3.md). The compiled output does not move — the integration suite
+asserts physics and byte-identical rewrites, and it is unchanged.
+
+### Changed — `core/units.py` rewritten as one function
+
+- **`convert(value, from_unit, to_unit=None, *, gamma=, f0=)`** replaces fifteen one-argument helpers
+  (`mm`, `us`, `deg`, `mT_per_m`, `s_per_mm2`, …). Each of those encoded one conversion in one
+  direction from one unit, so µs → ms, Hz/m → G/cm and ppm → Hz were simply not expressible; nothing
+  outside `core/` called any of them. The new signature is the one `pypulseq.convert` uses,
+  generalised to eleven dimensions — time, length, angle, frequency/field, gradient, slew, k-space
+  (and its rate and area), b-value, ratio — in both directions, over 51 units.
+- **Field and frequency are one dimension**, because in pulseq they are: B1 is carried in hertz. So
+  `convert(12, 'uT', 'Hz')`, `convert(3.0, 'T', 'MHz')` (Larmor) and `convert(-434, 'Hz', 'ppm')` are
+  all the same call.
+- **`ppm ↔ Hz` needs a Larmor frequency** and says so, rather than guessing. `System.convert` fills in
+  the scanner's own `gamma` and `f0 = gamma·B0`, so a chemical shift or a B1 limit cannot silently pick
+  up the proton value on a system configured for another nucleus.
+- **Conversions are exact where decimals are exact.** Each unit's scale is a `Fraction`, so the ratio
+  between two units is computed exactly and collapsed to a float once — and where the ratio is a
+  reciprocal integer the single operation is a division by an exactly-representable integer. `4200 µs`
+  is `0.0042 s`, not `0.004200000000000001 s`, which is the difference between a value that compares
+  equal to its raster and one a `ceil` pushes up 10 µs.
+- **The hand-rolled conversions in the module layer are gone.** `/ gamma * 1e3` appeared nine times
+  across `diffusion.py`, `spiral.py` and `pulses.py`, `* 1e-6 * gamma * b0_T` twice, and `/ 1e3`,
+  `/ 1e6`, `* 1e6` at every `duration_us` and `fov_mm` site. All of them are now `convert`.
+- **One vocabulary.** `validate.DEFAULT_RANGES` names a unit per field-name suffix; a test asserts
+  every one of those names — and every alias name — is a unit `convert` knows, so an error message
+  cannot quote a unit the reader is unable to pass back in.
+
+### Changed — `core/raster.py` → `core/timing.py`, and the raster is an object
+
+- **`Raster`** carries `dt`, a name, and the seven operations: `holds`, `ceil`, `floor`, `nearest`,
+  `count`, `at`, `require`. Six free functions taking a bare `raster: float` are gone, and with them
+  the call-site shape `ceil_to(self.duration_ms / 1e3, self.system.block_raster_s)` — two conversions,
+  one of them a magic number, and a raster passed positionally. It is now
+  `self.system.block_raster.ceil(convert(self.duration_ms, 'ms', 's'))`.
+- **`System.grad_raster / rf_raster / adc_raster / block_raster`** return `Raster` objects and replace
+  the `*_raster_s` floats. `.dt` is the float when array arithmetic needs one. One spelling per raster.
+- **Nothing assumes 10 µs.** Rasters are values the scanner supplies; the doctests and tests exercise
+  GE's 4 µs, Philips' 6.4 µs and two invented values, and a 4 µs/2 µs system is compiled end to end.
+  The only floor is one tick (1 ps), 10⁵ finer than pulseq's finest raster, and a finer raster raises
+  with that sentence in the message.
+- **`picoseconds()` / `seconds()` → `to_ticks()` / `from_ticks()` / `TICKS_PER_SECOND`.** They read as
+  unit conversions and were not; ticks are the exact-integer time domain, and the docstring now says so
+  and points at `units.convert` for the actual conversion. `sum_exact`/`sub_exact` are `exact_sum`/
+  `exact_diff`.
+- **Fixed: `nearest` rounded negative times away from zero.** `-1.4` rasters became `-2`, not `-1`; the
+  sign branch it came from is gone. Unreachable from the compiler, which rejects negative times before
+  rounding, but wrong.
+
+### Removed — the module registry
+
+- **`core/registry.py`, 34 `@register()` decorators and `register`/`registered`/`lookup` are deleted.**
+  The registry's only consumer was the contract suite's `parametrize`; `lookup` had no callers outside
+  a docstring. It accelerated nothing and could not: it is a dict filled at import time, and no code
+  path is shortened by it. A registry earns its place when a *string* must become a *class* at run
+  time — a YAML front end, plugin entry points, a `--readout=` flag — and seqcraft has none of those on
+  purpose. Meanwhile it created the failure it existed to prevent: a new module that forgot the
+  decorator silently lost the entire contract suite.
+- **`seqcraft.testing.all_modules()`** replaces it, walking `Module.__subclasses__()`. Subclassing *is*
+  the registration, so it cannot be forgotten. `RFPulse` and `RefocusingPulse` now declare `_design`
+  abstract, which is both honest and how discovery skips them.
+
+### Changed — `core` holds only what compiles a sequence
+
+`core` goes from 15 modules to 11. Public import paths via `seqcraft` are unchanged (`sc.ordering`,
+`sc.plot_block`, `sc.testing`); `from seqcraft.core.X import …` changes for the three that moved.
+
+- `core/ordering.py` → **`seqcraft/ordering.py`** — view orders, golden angle and RF-spoil phase are
+  sequence-programming vocabulary, not infrastructure; the compiler and the data model never
+  reference them.
+- `core/provenance.py` → **`seqcraft/provenance.py`** and `core/display.py` → **`seqcraft/display.py`**
+  — output tooling, neither on the path from a logic block to a `.seq`. `sc.provenance` is now a lazy
+  attribute alongside `sc.display`. Two latent import bugs in `provenance.py` are fixed along the way:
+  a `TYPE_CHECKING` import of a module that does not exist, and a missing `Mapping` import.
+
+### Added
+
+- `tests/core/test_units.py` — known equivalences, exhaustive round-trips over every pair in every
+  dimension, exactness assertions, gamma cancellation within the tesla family, and the error messages.
+- `tests/core/test_timing.py` — the float traps as tests, across eight vendor and invented rasters.
+  Includes the measured one: accumulating an exactly-legal 1.5 ms TR leaves the 10 µs raster after
+  9813 repetitions, 14.7 s in, after which more than half of all later start times are illegal.
+
 ## Unreleased — compiler revision, phases A and B
 
 Plan and reproductions: [PLAN_COMPILER_V2.md](PLAN_COMPILER_V2.md). Every item below has a test that

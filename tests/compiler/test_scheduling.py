@@ -296,9 +296,9 @@ def test_block_durations_land_on_the_block_raster(system, opts) -> None:
     out = sc.compile(
         sc.LogicBlock('t').add(0.0, rf).add(2e-3, g).add(2e-3, adc), system
     )
-    raster = system.block_raster_s
+    raster = system.block_raster
     for index, duration in out.seq.block_durations.items():
-        assert sc.raster.on_raster(duration, raster), f'block {index} is {duration * 1e6} us'
+        assert raster.holds(duration), f'block {index} is {duration * 1e6} us'
     assert out.check().ok
 
 
@@ -317,7 +317,7 @@ def test_event_delays_land_on_their_own_raster(system, opts) -> None:
     for index in out.seq.block_events:
         block = out.seq.get_block(index)
         if getattr(block, 'rf', None) is not None:
-            assert sc.raster.on_raster(float(block.rf.delay), system.rf_raster_s)
+            assert system.rf_raster.holds(float(block.rf.delay))
     assert out.check().ok
 
 

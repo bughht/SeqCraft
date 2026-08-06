@@ -24,8 +24,7 @@ from ...core import events as ev
 from ...core.errors import ConfigurationError, format_error
 from ...core.logic import LogicBlock, barrier
 from ...core.module import Module
-from ...core.raster import ceil_to
-from ...core.registry import register
+from ...core.units import convert
 from ...core.validate import require_in, require_positive
 
 if TYPE_CHECKING:
@@ -36,7 +35,6 @@ if TYPE_CHECKING:
 __all__ = ['Barrier', 'Delay', 'RawEvents', 'Trigger']
 
 
-@register()
 class Delay(Module):
     """
     A block that occupies time and does nothing.
@@ -70,14 +68,13 @@ class Delay(Module):
     @property
     def duration(self) -> float:
         """Seconds occupied, rounded up to the block raster."""
-        return ceil_to(self.duration_ms / 1e3, self.system.block_raster_s)
+        return self.system.block_raster.ceil(convert(self.duration_ms, 'ms', 's'))
 
     def build(self) -> LogicBlock:
         """Return a block holding a single delay event."""
         return LogicBlock('delay').add(0.0, pp.make_delay(self.duration))
 
 
-@register()
 class Trigger(Module):
     """
     An external trigger or output pulse.
@@ -138,8 +135,8 @@ class Trigger(Module):
         make = pp.make_trigger if self.is_input else pp.make_digital_output_pulse
         self.event = make(
             channel=self.channel,
-            duration=self.duration_us / 1e6,
-            delay=self.delay_us / 1e6,
+            duration=convert(self.duration_us, 'us', 's'),
+            delay=convert(self.delay_us, 'us', 's'),
             system=self.opts,
         )
 
@@ -151,14 +148,15 @@ class Trigger(Module):
     @property
     def duration(self) -> float:
         """Seconds occupied, delay included."""
-        return ceil_to((self.delay_us + self.duration_us) / 1e6, self.system.block_raster_s)
+        return self.system.block_raster.ceil(
+            convert(self.delay_us + self.duration_us, 'us', 's')
+        )
 
     def build(self) -> LogicBlock:
         """Return the trigger event."""
         return LogicBlock('trigger').add(0.0, self.event)
 
 
-@register()
 class Barrier(Module):
     """
     Forces a pulseq block boundary where it is placed.
@@ -203,7 +201,6 @@ class Barrier(Module):
         return LogicBlock('barrier').add(0.0, barrier(self.tag))
 
 
-@register()
 class RawEvents(Module):
     """
     Arbitrary pypulseq events wrapped as a module.
