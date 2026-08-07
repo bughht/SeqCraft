@@ -96,7 +96,7 @@ else. That is the whole membership rule, and it is what keeps the layer small en
 | `system` | `System` holding **named `Opts` regimes**, so a diffusion encoding can run at full amplitude while the readout is derated. Asserts every regime agrees on the rasters, gamma and B0 — nothing upstream checks that, and a disagreement produces an unplayable file. Also the source of every `Raster` and of `system.convert`. |
 | `timing` | `Raster` — the raster as an object, with `ceil / floor / nearest / count / at / holds / require`. Arithmetic in integer ticks, because `1.5e-3 / 1e-5` is `149.99999999999997` and `250 * 1e-7` is not `2.5e-5`; both errors propagate into ADC dwells and off-raster block durations. Nothing here assumes 10 µs: rasters are values the scanner supplies. |
 | `units` | One function — `convert(value, from_unit, to_unit, gamma=, f0=)` — over eleven dimensions, in both directions, the shape `pypulseq.convert` uses. Scales are exact `Fraction`s, so `4200 us` is `0.0042 s` and not `0.004200000000000001 s`. |
-| `events` | `derive()` — the one sanctioned way to copy a pypulseq event. Also `waveform_of`, `moment_of`, `content_hash`, `check_limits`. |
+| `events` | `derive()` — the one sanctioned way to copy a pypulseq event. Also `knots_of` and `pwl_moment` (the exact-gradient primitives), `waveform_of` (a curve to plot, **not** a uniform raster — a `grad` event carries its own sample times), `moment_of`, `content_hash`, `check_limits`. |
 | `geometry` | FOV, matrix, slices, and one authoritative phase-encode index computation shared by `kspace_center_line` and the `LIN` label values, so the two cannot disagree. |
 | `validate` | Unit plausibility bands inferred from a field's name suffix, plus explicit `require_*` helpers. Its unit names are the ones `convert` knows, asserted by a test — one vocabulary, not two. |
 | `report` | `Issue` and `Report`. Immutable; `ok` is true when there are no errors, so warnings inform without failing. |
@@ -152,14 +152,15 @@ can read), a YAML or GUI front end, and a `.seq` importer.
 src/seqcraft/
   core/          logic  compiler  module  system  geometry  events
                  timing  units  validate  errors  report
-  modules/       rf/  readout/  encoding/  prep/  control/
+  modules/       rf/  readout/ (cartesian, epi, spiral)  encoding/  prep/  control/
   ordering.py    view orders, golden angle, RF-spoil phase
   provenance.py  the JSON sidecar
   display.py     the only matplotlib importer
   testing.py     assertions you can point at your own modules
 
 tests/        core/  logic/  compiler/  modules/  integration/
-examples/     01 getting started   02 DTI spiral (builds + writes it)   03 simulate + reconstruct
-              seq/ (what notebook 2 writes)   lib/ (sim + recon helpers, not the package)
+examples/     01_getting_started
+              dti_spiral/  dti_epi/   one scan each: 01_build, 02_simulate_and_reconstruct, seq/
+              lib/                    sim + recon helpers, not the package
 docs/         architecture  compiler  writing_a_module
 ```

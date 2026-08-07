@@ -276,6 +276,118 @@ def build_dti(
     )
 
 
+def build_epi_dwi(
+    system: sc.System,
+    *,
+    fov_mm: float = 240.0,
+    matrix: int = MATRIX,
+    slice_mm: float = 4.0,
+    b_values: tuple[float, ...] = (0.0, 1000.0),
+    n_directions: int = 6,
+    n_shots: int = 1,
+    partial_fourier_pe: float = 0.75,
+    partial_echo: float = 1.0,
+    pe_polarity: int = 1,
+    n_slices: int = 2,
+    slices_per_tr: int = 1,
+    tr_s: float = 6.0,
+    regime: str = 'default',
+) -> CompiledSequence:
+    """
+    A spin-echo EPI DWI shot set: the same diffusion encoding as :func:`build_dti`, a new readout.
+
+    Which is the point of having both.  The diffusion modules, the pulses, the spoiler and the TE
+    arithmetic are untouched; only ``readout`` changes, and ``readout.time_to_echo`` now points a
+    third of the way into a 96-echo train rather than at a spiral's first sample.
+    """
+    geometry = sc.Geometry(
+        fov_mm=(fov_mm, fov_mm, 0.0), matrix=(matrix, matrix, 1),
+        slice_thickness_mm=slice_mm, n_slices=n_slices,
+        partial_fourier_pe=partial_fourier_pe, n_shots=n_shots,
+    )
+    exc = sc.modules.SincExcitation(
+        system, flip_deg=90, duration_us=2000, slice_thickness_mm=slice_mm,
+        rephase=True, regime=regime)
+    refoc = sc.modules.SincRefocusing(
+        system, flip_deg=180, duration_us=4000, slice_thickness_mm=slice_mm,
+        crusher_twists=4, crusher_voxel_mm=slice_mm, regime=regime)
+    readout = sc.modules.EPIReadout(
+        system, fov_ro_mm=fov_mm, matrix_ro=matrix, fov_pe_mm=fov_mm, matrix_pe=matrix,
+        n_shots=n_shots, partial_fourier_pe=partial_fourier_pe, partial_echo=partial_echo,
+        regime=regime)
+    spoiler = sc.modules.Spoiler(
+        system, twists=4, voxel_mm=slice_mm, axes=('z',), regime=regime)
+
+    reference = sc.modules.MonopolarDiffusion(
+        system, b_value_s_per_mm2=max(b_values),
+        refocus_duration_us=refoc.duration * 1e6, regime=regime)
+    encoders = {
+        b: sc.modules.MonopolarDiffusion(
+            system, b_value_s_per_mm2=b, refocus_duration_us=refoc.duration * 1e6,
+            lobe_duration_us=reference.lobe_duration * 1e6, regime=regime)
+        for b in b_values
+    }
+
+    raster = system.block_raster
+    delta = reference.lobe_duration
+    first = raster.ceil((exc.duration - exc.isodelay) + delta + refoc.isodelay)
+    second = raster.ceil((refoc.duration - refoc.isodelay) + delta + readout.time_to_echo)
+    te = 2 * max(first, second)
+
+    t_refoc = raster.ceil(exc.isodelay + te / 2 - refoc.isodelay)
+    t_lobe1 = raster.ceil(t_refoc - delta)
+    t_lobe2 = raster.ceil(t_refoc + refoc.duration)
+    t_readout = raster.ceil(exc.isodelay + te - readout.time_to_echo)
+    period_s = raster.ceil(t_readout + readout.duration + spoiler.duration)
+    if tr_s < period_s * slices_per_tr:
+        msg = (f'TR {tr_s * 1e3:.0f} ms cannot hold {slices_per_tr} shot(s) of '
+               f'{period_s * 1e3:.2f} ms')
+        raise sc.ConfigurationError(msg)
+
+    table = sc.modules.dti_directions(n_directions)
+    volumes = [(b, (0.0, 0.0, 1.0)) for b in b_values if b == 0.0]
+    volumes += [(b, d) for b in b_values if b != 0.0 for d in table]
+
+    plan = [
+        (volume, b, direction, shot, slice_index)
+        for volume, (b, direction) in enumerate(volumes)
+        for shot in range(n_shots)
+        for slice_index in sc.interleaved_slice_order(n_slices)
+    ]
+
+    seq = sc.LogicBlock('epi_dwi')
+    for index, (volume, b, direction, shot, slice_index) in enumerate(plan):
+        period, position = divmod(index, slices_per_tr)
+        t0 = period * tr_s + position * period_s
+        z = geometry.slice_positions_m[slice_index]
+        diff = encoders[b]
+        seq.add(t0, exc.build(slice_offset_m=z))
+        seq.add(t0 + t_lobe1, diff.build(part='pre', direction=direction))
+        seq.add(t0 + t_refoc, refoc.build(slice_offset_m=z))
+        seq.add(t0 + t_lobe2, diff.build(part='post', direction=direction))
+        seq.add(t0 + t_readout, readout.build(shot=shot, pe_polarity=pe_polarity))
+        seq.add(t0 + t_readout + readout.duration, spoiler.build())
+        seq.add(t0 + t_readout,
+                pp.make_label('SLC', 'SET', slice_index),
+                pp.make_label('SET', 'SET', volume))
+
+    return sc.compile(
+        seq, system, geometry=geometry, name='epi_dwi', regime=regime,
+        definitions={
+            'TE': te, 'TR': tr_s,
+            'bValues': [float(b) for b in b_values],
+            'AchievedbValues': [round(encoders[b].achieved_b_s_per_mm2(), 2) for b in b_values],
+            'DiffusionScheme': 'monopolar',
+            'DiffusionDirections': len(table),
+            'DiffusionLobeDuration': reference.lobe_duration,
+            'DiffusionBigDelta': reference.big_delta,
+            'SlicesPerTR': slices_per_tr,
+            'PhaseEncodePolarity': pe_polarity,
+            **readout.definitions(),
+        },
+    )
+
+
 @pytest.fixture(scope='module')
 def gre(system: sc.System) -> CompiledSequence:
     return build_gre(system)
@@ -292,6 +404,25 @@ def dti() -> CompiledSequence:
     return build_dti(scanner, regime='dwi', n_directions=6, n_slices=2)
 
 
-@pytest.fixture(params=['gre', 'se', 'dti'])
+def epi_dwi_system() -> sc.System:
+    """
+    A Cima.X with two regimes, as the EPI example uses.
+
+    The diffusion lobes want full amplitude and the readout wants full slew, so they are separate
+    regimes of one system rather than one compromise -- which is what named regimes are for.
+    """
+    return (
+        sc.System.preset('cima_x')
+        .derate('epi', grad=0.85, slew=1.0)
+        .derate('diffusion', grad=0.85, slew=0.3)
+    )
+
+
+@pytest.fixture(scope='module')
+def epi_dwi() -> CompiledSequence:
+    return build_epi_dwi(epi_dwi_system(), regime='epi', n_directions=6, n_slices=2)
+
+
+@pytest.fixture(params=['gre', 'se', 'dti', 'epi_dwi'])
 def compiled(request) -> CompiledSequence:
     return request.getfixturevalue(request.param)

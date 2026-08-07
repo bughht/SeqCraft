@@ -1,28 +1,34 @@
 """
-Off-resonance-corrected reconstruction for non-Cartesian readouts.
+Off-resonance-corrected reconstruction for readouts whose samples are not on a uniform grid.
 
-A spiral's problem is not the trajectory, it is **time**.  Every sample is acquired at a different
-moment after the echo, so a voxel that is off resonance by ``df`` accumulates a phase
-``2*pi*df*t`` that varies along the readout.  On a Cartesian grid that shows up as a shift, which is
-merely annoying; on a spiral it shows up as blurring, which destroys resolution -- and the blur is
-worse the longer the readout, which is exactly the direction a diffusion sequence is pushed in for
-SNR.
+The problem is not the trajectory, it is **time**.  Every sample is acquired at a different moment
+relative to the echo, so a voxel off resonance by ``df`` accumulates a phase ``2*pi*df*t`` that
+varies along the readout.  Where that phase lands decides what the artefact looks like, and the two
+readouts here land in different places from the *same* term:
 
-The forward model here is the exact one, with no segmentation or time-binning:
+* a **spiral** sweeps k continuously, so the phase spreads over the whole plane and the image
+  **blurs** -- worse the longer the readout, which is the direction a diffusion sequence is pushed in
+  for SNR;
+* an **EPI** train advances one ``ky`` step per echo spacing, so the phase is linear in ``ky`` and the
+  image **shifts** along the phase-encode direction -- ``df`` divided by the phase-encode bandwidth
+  per pixel, which is five pixels per 100 Hz on the sequence the EPI example builds.
+
+One operator therefore serves both, and no deblurring or unwarping step is needed anywhere: the
+forward model is exact, with no segmentation or time-binning,
 
 .. code-block:: text
 
     y_c(t) = sum_r  s_c(r) x(r) exp(-i phi(r, t))
     phi(r, t) = 2 pi ( k(t) . r  +  df(r) t )  [+ phi_extra(t)]
 
-so correcting off-resonance is a matter of putting ``df`` into the operator and solving, rather
-than deblurring afterwards.  ``phi_extra`` is a spatially uniform, time-varying phase, which is
-where a concomitant-field term goes for an off-isocentre slice.
+so correcting off-resonance is a matter of putting ``df`` into the operator and solving.
+``phi_extra`` is a spatially uniform, time-varying phase, which is where a concomitant-field term
+goes for an off-isocentre slice.
 
 The price is that this is a dense operator: ``n_samples x n_pixels`` complex exponentials per
 application.  Being exact makes it the right thing to *check* a sequence against, because any
 residual blur is then the sequence's and not the reconstruction's -- and it makes it useless for a
-real one.  The sequence notebook 2 writes has 59 100 samples at 128 x 128, which is 968 million
+real one.  The spiral DTI sequence has 59 100 samples at 128 x 128, which is 968 million
 exponentials per matrix-vector product: about 25 s, so 2.8 hours for one conjugate-gradient solve.
 
 :class:`SegmentedOffresonance` is the version that scales, approximating the off-resonance term
@@ -37,15 +43,23 @@ Usage
 -----
 ::
 
-    import sys; sys.path.insert(0, 'examples/lib')
-    from spiral_recon import Readout, reconstruct_shot
+    import sys; sys.path.insert(0, '../lib')
+    from noncartesian_recon import Readout, reconstruct_shot
 
-    readout = Readout.from_sidecar('seq/spiral_dti.traj.npz')
-    image = reconstruct_shot(data, readout, b0_hz=field_map, sens=coil_maps)
+    readout = Readout.from_sidecar('seq/epi_dwi.traj.npz')
+    image = reconstruct_shot(data, readout, b0_hz=field_map, sens=coil_maps, dcf='speed')
 
 `data` is ``(n_coils, n_samples)`` however it was obtained -- simulated, or read from a vendor raw
 file -- which is the whole point of the split: the reconstruction never learns where it came from.
 :func:`reconstruct` underneath takes the trajectory as plain arrays if the sidecar is not involved.
+
+Two things differ per readout, and both are explicit rather than inferred, because inferring them
+from a spiral is what made them wrong for anything else:
+
+* **where the echo is** -- :attr:`Readout.t_echo_s`, since a spiral's echo is its first sample and an
+  EPI train's is a third of the way in;
+* **which density compensation** -- ``dcf='radial'`` for a spiral, ``'speed'`` for a ramp-sampled
+  EPI, whose samples are *sparsest* where k = 0.
 """
 
 from __future__ import annotations
@@ -62,14 +76,15 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 __all__ = [
+    'NoncartesianOffresonance',
     'Readout',
     'SegmentedOffresonance',
-    'SpiralOffresonance',
     'density_compensation',
     'reconstruct',
     'reconstruct_shot',
     'reconstruct_volume',
     'segments_for',
+    'speed_compensation',
 ]
 
 
@@ -115,7 +130,7 @@ def segments_for(
     interpolation of a unit-modulus exponential over a phase step ``dtheta`` is wrong by about
     ``dtheta^2 / 8``.  Inverting that for ``L = 2 pi df_halfrange T / dtheta`` gives this count.
 
-Measured on the notebook-2 sequence -- a 59 ms readout and a field spanning -60 to +112 Hz,
+Measured on the spiral DTI sequence -- a 59 ms readout and a field spanning -60 to +112 Hz,
     reconstructed at 128 x 128 with the B0 map properly interpolated:
 
     .. code-block:: text
@@ -182,10 +197,15 @@ class Readout:
     k_per_m
         ``(n_interleaves, 2, n_samples)`` trajectory as ``(kx, ky)`` in 1/m, at **ADC sample times**.
     t_adc_s
-        ``(n_samples,)`` sample times relative to the start of the readout block, which for a spiral
-        is the echo.
+        ``(n_samples,)`` sample times **relative to the echo**, so they are negative before it.  For
+        a spiral that means they start at (near) zero, since a spiral begins at k = 0; for an EPI
+        train the echo is a third of the way in and the first third of the array is negative.
     fov_m, matrix
         Geometry, so the reconstruction needs nothing else passed alongside.
+    t_echo_s
+        Where the echo sits in `t_adc_s`, for a sidecar that recorded the times from the readout
+        block's start rather than from the echo.  Subtracted on the way through
+        :meth:`interleaf`; leave it at zero when the times are already echo-relative.
 
     Notes
     -----
@@ -193,6 +213,13 @@ class Readout:
     arrays rather than a sequence object: what a reconstruction needs is the *trajectory*, and where
     it came from -- seqcraft's sidecar, a vendor trajectory file, a field-camera measurement -- is not
     its business.
+
+    **The echo reference is explicit, and it used to be inferred.**  This class rebased the times on
+    ``min(t_adc_s)``, which is right for a spiral for one reason only: a spiral's first sample *is*
+    its echo.  An EPI train reaches ``ky = 0`` 17 ms into a 50 ms readout, and rebasing on its first
+    sample puts ``2 pi df * 17 ms`` of phase on the operator -- **spatially varying**, since ``df``
+    varies with position, so not a constant that comes out in the wash.  On a 172 Hz field range
+    that is up to 2.9 cycles of unmodelled phase.
 
     Orientation, stated once so it cannot drift.  Trajectory in as ``(kx, ky)``; image out as
     ``[y, x]``, rows increasing with y, which is what ``imshow`` and every downstream tool assume.
@@ -207,17 +234,56 @@ class Readout:
     t_adc_s: np.ndarray
     fov_m: float
     matrix: int
+    t_echo_s: float = 0.0
+
+    def __post_init__(self) -> None:
+        """
+        Reject times that look absolute rather than readout-relative.
+
+        The failure this catches is a sidecar carrying sample times measured from the start of the
+        *sequence*, which for a spin echo includes TE.  The operator would then apply
+        ``2 pi df * (TE + t)`` instead of ``2 pi df * t``, and since ``df`` varies with position the
+        surplus is an image artefact rather than a global phase -- structured, plausible-looking, and
+        not obviously a units problem.
+
+        The discriminator is that ``t_echo_s`` claims the echo is at the very start while the times
+        do not begin anywhere near it.
+        """
+        times = np.asarray(self.t_adc_s, dtype=np.float64).reshape(-1)
+        if times.size < 2:
+            return
+        span = float(times.max() - times.min())
+        lead = float(times.min() - self.t_echo_s)
+        if span > 0.0 and lead > 0.05 * span:
+            msg = format_error(
+                'the sample times start well after the echo, so they look absolute rather than '
+                'measured from the readout.',
+                {
+                    'first_sample_ms': times.min() * 1e3,
+                    't_echo_s_given_ms': self.t_echo_s * 1e3,
+                    'readout_span_ms': span * 1e3,
+                },
+                [
+                    'pass t_echo_s= the time of k=0 within the readout '
+                    '(readout.time_to_echo for a seqcraft module)',
+                    'or subtract the readout block start from t_adc_s before constructing this',
+                ],
+            )
+            raise ValueError(msg)
 
     @classmethod
     def from_sidecar(cls, path: Any) -> Readout:
         """
         Load from the ``.traj.npz`` written beside a ``.seq``.
 
+        Reads ``t_echo_s`` when the sidecar records one, so a readout whose echo is not its first
+        sample describes itself rather than relying on a convention at the call site.
+
         Examples
         --------
         ::
 
-            readout = Readout.from_sidecar('seq/spiral_dti.traj.npz')
+            readout = Readout.from_sidecar('seq/epi_dwi.traj.npz')
             image = reconstruct_shot(twix_data, readout, b0_hz=field_map, sens=coil_maps)
         """
         with np.load(str(path)) as sidecar:
@@ -234,6 +300,7 @@ class Readout:
                 t_adc_s=times,
                 fov_m=float(sidecar['fov_m']),
                 matrix=int(sidecar['matrix']),
+                t_echo_s=float(sidecar['t_echo_s']) if 't_echo_s' in sidecar else 0.0,
             )
 
     @property
@@ -250,13 +317,18 @@ class Readout:
         """
         Return ``(k_per_m, t_relative_to_echo_s)`` for one interleaf.
 
-        Times come back measured from the **first sample of this readout**, which is what the
-        operator wants: an absolute time would carry TE into the off-resonance term and put
-        ``2*pi*df*TE`` of common phase on everything.
+        Times come back measured from the **echo**, which is what the operator wants: an absolute
+        time would carry TE into the off-resonance term and put ``2*pi*df*TE`` of phase on
+        everything -- and since ``df`` varies with position, that phase is an image artefact rather
+        than a global constant.
+
+        The reference is :attr:`t_echo_s`, taken from the sidecar.  It is *not* inferred from the
+        first sample: that inference is correct for a spiral and wrong for anything whose echo falls
+        mid-readout.
         """
         return (
             np.asarray(self.k_per_m[index % self.n_interleaves], dtype=np.float64),
-            np.asarray(self.t_adc_s, dtype=np.float64) - float(np.min(self.t_adc_s)),
+            np.asarray(self.t_adc_s, dtype=np.float64) - float(self.t_echo_s),
         )
 
 
@@ -268,6 +340,7 @@ def reconstruct_shot(
     b0_hz: np.ndarray | float = 0.0,
     sens: np.ndarray | None = None,
     matrix: int | None = None,
+    dcf: str = 'radial',
     iterations: int = 80,
     lamda: float = 1e-3,
     segments: int | None = 0,
@@ -296,8 +369,8 @@ def reconstruct_shot(
         Defaults to a single uniform channel, which is correct only if the data is fully sampled.
     matrix
         Overrides the sidecar's matrix, to reconstruct coarser or finer than nominal.
-    iterations, lamda, segments, device, progress
-        As :func:`reconstruct`.
+    dcf, iterations, lamda, segments, device, progress
+        As :func:`reconstruct`.  ``dcf='speed'`` for a ramp-sampled EPI.
 
     Returns
     -------
@@ -341,6 +414,7 @@ def reconstruct_shot(
         b0_hz=b0_hz,
         sens=sens,
         n_per_arm=readout.n_samples,
+        dcf=dcf,
         iterations=iterations,
         lamda=lamda,
         segments=segments,
@@ -356,6 +430,7 @@ def reconstruct_volume(
     b0_hz: np.ndarray | float = 0.0,
     sens: np.ndarray | None = None,
     matrix: int | None = None,
+    dcf: str = 'radial',
     iterations: int = 80,
     lamda: float = 1e-3,
     segments: int | None = 0,
@@ -370,7 +445,7 @@ def reconstruct_volume(
     shots
         The interleaves' data, either a sequence in interleaf order or a mapping from interleaf index
         to ``(n_coils, n_samples)``.  On real data the interleaf comes from the ``SEG`` label.
-    readout, b0_hz, sens, matrix, iterations, lamda, segments, device, progress
+    readout, b0_hz, sens, matrix, dcf, iterations, lamda, segments, device, progress
         As :func:`reconstruct_shot`.
 
     Returns
@@ -436,6 +511,7 @@ def reconstruct_volume(
         b0_hz=b0_hz,
         sens=sens,
         n_per_arm=readout.n_samples,
+        dcf=dcf,
         iterations=iterations,
         lamda=lamda,
         segments=segments,
@@ -466,6 +542,12 @@ def density_compensation(k_per_m: np.ndarray, *, n_per_arm: int | None = None) -
     is dominated by the centre and looks heavily low-pass filtered.  Weighting by ``|k|`` is the
     cheap approximation to the true Jacobian; it is not exact for a variable-density spiral, which
     is one reason to solve iteratively rather than trust a single adjoint.
+
+    **For a spiral only.**  It is a radial argument, and it is backwards for any trajectory that does
+    not sample its centre densely: a ramp-sampled EPI line passes ``k = 0`` at full gradient, which
+    is where its samples are *sparsest*, so ``|k|`` down-weights exactly the samples carrying the
+    signal.  Use :func:`speed_compensation` there -- and for a spiral too, where it agrees with this
+    to within the variable-density part it cannot see.
     """
     radius = np.sqrt(np.sum(np.asarray(k_per_m[:2], dtype=float) ** 2, axis=0))
     floor = 0.5 * float(radius.max()) / max(int(n_per_arm or radius.size), 1)
@@ -473,7 +555,78 @@ def density_compensation(k_per_m: np.ndarray, *, n_per_arm: int | None = None) -
     return (weights / float(np.mean(weights))).astype(np.float32)
 
 
-class SpiralOffresonance:
+def speed_compensation(
+    k_per_m: np.ndarray,
+    sample_times_s: np.ndarray,
+    *,
+    floor: float = 1e-3,
+) -> np.ndarray:
+    """
+    Return ``|dk/dt|``-based weights per sample, normalised to mean one.
+
+    Parameters
+    ----------
+    k_per_m
+        ``(2, n_samples)`` or ``(3, n_samples)`` k-space coordinates in 1/m, in acquisition order.
+    sample_times_s
+        ``(n_samples,)`` sample times.  Only the differences are used.
+    floor
+        Fraction of the median speed to clamp at, so a stationary instant -- an EPI blip, where the
+        readout gradient is at zero -- does not get a zero weight and drop its sample entirely.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(n_samples,)`` weights.
+
+    Notes
+    -----
+    The correct Jacobian for a trajectory traversed at varying speed, and correct for **both** the
+    readouts here rather than one.  Sampling uniformly in time means the local sample density is
+    inversely proportional to how fast k is moving, so the compensating weight is the speed itself.
+
+    For a ramp-sampled EPI line that is the whole story: the gradient is a triangle, so samples pile
+    up at the two ends of every line where k crawls and thin out at the apex where k = 0 is crossed
+    at full speed.  ``|k|``-weighting gets this exactly the wrong way round -- it down-weights the
+    centre of k-space, which is where the signal is.
+
+    For a spiral it reproduces the ``|k|`` argument in the amplitude-limited part, where speed is
+    constant and the density falls as ``1/|k|``, and does better near the origin and in the
+    variable-density taper, where ``|k|`` is only an approximation.
+
+    Speeds are taken from central differences, so a sample's weight reflects the interval it
+    actually represents rather than the one after it.  Across a shot boundary in a pooled multi-shot
+    problem the difference is meaningless, which the clamp absorbs.
+    """
+    k = np.asarray(k_per_m, dtype=np.float64)
+    t = np.asarray(sample_times_s, dtype=np.float64).reshape(-1)
+    if k.shape[-1] != t.size:
+        msg = format_error(
+            'speed_compensation needs one time per k-space sample.',
+            {'k_samples': k.shape[-1], 'times': t.size},
+        )
+        raise ValueError(msg)
+    if t.size < 2:
+        return np.ones(t.size, dtype=np.float32)
+
+    distance = np.linalg.norm(np.diff(k, axis=-1), axis=0)
+    interval = np.abs(np.diff(t))
+    segment_speed = np.divide(
+        distance, interval, out=np.zeros_like(distance), where=interval > 0
+    )
+    # Central difference: average the two segments a sample sits between, and take the single
+    # neighbouring segment at each end.
+    speed = np.empty(t.size)
+    speed[0] = segment_speed[0]
+    speed[-1] = segment_speed[-1]
+    speed[1:-1] = 0.5 * (segment_speed[:-1] + segment_speed[1:])
+
+    median = float(np.median(speed[speed > 0])) if np.any(speed > 0) else 1.0
+    weights = np.maximum(speed, floor * median)
+    return (weights / float(np.mean(weights))).astype(np.float32)
+
+
+class NoncartesianOffresonance:
     """
     Exact phase-accumulation encoding operator, as a sigpy ``Linop``.
 
@@ -665,7 +818,7 @@ class SegmentedOffresonance:
     coord_cycles_per_fov
         ``(n_samples, 2)`` k-space coordinates as ``(ky, kx)`` in cycles per FOV.  This is exactly
         sigpy's NUFFT convention, and sigpy's kernel is ``exp(-2i pi k.r)`` -- the same sign as
-        :class:`SpiralOffresonance`, so the two operators are directly comparable.
+        :class:`NoncartesianOffresonance`, so the two operators are directly comparable.
     sample_times_s
         ``(n_samples,)`` time of each sample **relative to the echo**, non-decreasing.
     b0_hz
@@ -675,13 +828,13 @@ class SegmentedOffresonance:
         segment is small: roughly ``4 * max|df| * T`` is comfortable, and
         :func:`reconstruct` defaults to that.
     weights_sqrt, extra_phase_rad, device
-        As :class:`SpiralOffresonance`.
+        As :class:`NoncartesianOffresonance`.
 
     Notes
     -----
     The exact operator is ``n_samples x n_pixels`` complex exponentials per application, which is a
     fine way to *verify* a reconstruction and hopeless as a way to perform one: the real sequence in
-    notebook 2 has 59 100 samples at 128 x 128, which is 968 million exponentials per matrix-vector
+    the spiral build notebook has 59 100 samples at 128 x 128, which is 968 million exponentials per matrix-vector
     product -- about 25 s, so 2.8 hours for one conjugate-gradient solve.
 
     Time segmentation replaces it with the standard approximation.  The off-resonance term is the
@@ -705,7 +858,7 @@ class SegmentedOffresonance:
 
     Accuracy is set by the phase left over inside a segment and the error falls as roughly its
     square, so :func:`segments_for` derives ``L`` from an explicit accuracy target rather than from a
-    round number of residual cycles.  Measured against the exact operator on the notebook-2 sequence
+    round number of residual cycles.  Measured against the exact operator on the spiral DTI sequence
     (59 ms readout, a field spanning -60 to +112 Hz):
 
     .. code-block:: text
@@ -723,7 +876,7 @@ class SegmentedOffresonance:
     structured rather than random that shows up as a visible ripple even though the RMSE reads 0.012.
 
     Being an approximation, it has to be checked rather than trusted, which is what the exact
-    operator is for: notebook 3 reconstructs the same data both ways at a matrix where both are
+    operator is for: the reconstruction notebook reconstructs the same data both ways at a matrix where both are
     affordable and compares.
     """
 
@@ -831,7 +984,7 @@ class SegmentedOffresonance:
         ]
 
         # sigpy's NUFFT is normalised -- it divides by sqrt(n_pixels) and by the interpolation
-        # width to the power of the dimension -- while :class:`SpiralOffresonance` computes the
+        # width to the power of the dimension -- while :class:`NoncartesianOffresonance` computes the
         # plain sum ``sum_r x(r) exp(-2i pi k.r)``.  The two therefore differ by a constant, and
         # only in *magnitude*: comparing the phase of a single sample, which is the obvious check,
         # shows perfect agreement and hides it completely.  Left in, the reconstructed image comes
@@ -922,6 +1075,7 @@ def reconstruct(
     sens: np.ndarray | None = None,
     extra_phase_rad: np.ndarray | None = None,
     n_per_arm: int | None = None,
+    dcf: str = 'radial',
     iterations: int = 12,
     lamda: float = 1e-3,
     segments: int | None = None,
@@ -952,6 +1106,12 @@ def reconstruct(
         Optional spatially uniform, time-varying phase -- a concomitant-field term.
     n_per_arm
         Samples per interleaf, for the density-compensation floor.
+    dcf
+        Which density compensation to weight the samples by.  ``'radial'`` is :func:`density
+        compensation <density_compensation>`, the ``|k|`` argument a spiral wants.  ``'speed'`` is
+        :func:`speed_compensation`, which is the correct Jacobian for any trajectory sampled
+        uniformly in time and the **only** correct one for a ramp-sampled EPI, whose samples are
+        sparsest at k = 0.  ``'none'`` weights every sample equally.
     iterations
         Conjugate-gradient iterations.
     lamda
@@ -997,7 +1157,19 @@ def reconstruct(
 
     k = np.asarray(k_per_m, dtype=np.float64)
     coord = np.stack([k[1] * fov_m, k[0] * fov_m], axis=-1).astype(np.float32)  # (ky, kx)
-    weights = density_compensation(k, n_per_arm=n_per_arm)
+    if dcf == 'radial':
+        weights = density_compensation(k, n_per_arm=n_per_arm)
+    elif dcf == 'speed':
+        weights = speed_compensation(k, sample_times_s)
+    elif dcf == 'none':
+        weights = np.ones(n_samples, dtype=np.float32)
+    else:
+        msg = format_error(
+            f'unknown density compensation {dcf!r}.',
+            {'given': dcf},
+            ["use 'radial' for a spiral, 'speed' for a ramp-sampled EPI, or 'none'"],
+        )
+        raise ValueError(msg)
     field = (
         np.full((matrix, matrix), float(b0_hz), dtype=np.float32)
         if np.isscalar(b0_hz) else np.asarray(b0_hz, dtype=np.float32)
@@ -1016,7 +1188,7 @@ def reconstruct(
         'device': device,
     }
     if segments is None:
-        operator = SpiralOffresonance(**shared).linop()
+        operator = NoncartesianOffresonance(**shared).linop()
     else:
         count = int(segments)
         if count <= 0:

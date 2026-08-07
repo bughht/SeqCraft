@@ -91,8 +91,8 @@ tmp/
 # ---------------------------------------------------------------------------
 # Example outputs are NOT tracked.
 #
-# The notebooks in examples/ write their .seq, .seq.json sidecar and .npz trajectory into
-# examples/seq/.  They are build products of the notebooks and they are large -- one spiral
+# Each example folder's build notebook writes its .seq, .seq.json sidecar and .npz trajectory
+# into its own seq/.  They are build products of the notebooks and they are large -- one spiral
 # DTI sequence is 326 kB of .seq plus 238 kB of trajectory, and every recompile rewrites
 # them, so tracking them puts a ~600 kB binary-ish diff in the history on each run.
 #
@@ -102,4 +102,4 @@ tmp/
 # invariants in CompiledSequence._verify (duration, per-axis m0 and m1, label addresses)
 # run on every compile.
 # ---------------------------------------------------------------------------
-examples/seq/
+examples/*/seq/

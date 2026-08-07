@@ -80,6 +80,13 @@ constraints the hardware actually applies rather than a continuous-time model of
 readout and a 29 ms one, and every limit check passed in both cases — which is the point: a sequence
 being legal says nothing about it being efficient, and neither is visible without measuring.
 
+**Timing properties that point where they say.** `EPIReadout.time_to_echo` lands 17.26 ms into a
+49.92 ms train — the echo whose `ky` is zero, not the train's midpoint, which partial Fourier moves by
+7.7 ms. What the ADC must cover is the *sampled* extent, so the readout lobe carries 540.53 1/m to
+deliver 533.33 1/m and the prephaser cancels the difference; a prephaser of minus `k_max` would put
+every shot 1.7 `dk` off-centre, which is a linear phase ramp across an image that looks perfectly
+normal.
+
 **Files that cannot lie about themselves.** `write()` takes no geometry, matrix or FOV arguments —
 everything written comes from what was compiled. A JSON sidecar records the versions, the git commit
 and dirty flag, the definitions and the file's sha256.
@@ -99,18 +106,25 @@ and `CompiledSequence.seq` is the pypulseq object itself.
 
 ## Examples
 
-| Notebook | What it covers |
+Each folder is one complete scan — build, check, write, simulate, reconstruct, quantify. See
+[`examples/README.md`](examples/README.md).
+
+| | What it covers |
 |---|---|
 | [`01_getting_started.ipynb`](examples/01_getting_started.ipynb) | All three concepts, the overlap rules, the escape hatches, writing a file. |
-| [`02_dti_spiral.ipynb`](examples/02_dti_spiral.ipynb) | Builds and writes **both** files a spiral DTI scan needs: the single-shot spin-echo spiral at 1.88 mm, and the two-echo field map its 67 ms readout cannot do without. b-value against numerical integration, k at the echo on every axis, PNS against the site's own `.asc`. |
-| [`03_dti_simulate_and_reconstruct.ipynb`](examples/03_dti_simulate_and_reconstruct.ipynb) | Plays both files against a phantom and goes through to an ADC map: reconstruct the field map from its own echoes, reconstruct the DTI with it, fit the diffusivity. `Readout.from_sidecar` plus one `reconstruct_shot` call — the same path twix data takes. |
+| [`dti_spiral/`](examples/dti_spiral/) | The single-shot spin-echo **spiral** DTI at 1.88 mm, and the two-echo field map its 67 ms readout cannot do without. b-value against numerical integration, k at the echo on every axis, PNS against the site's own `.asc`. Then simulate and go through to an ADC map. |
+| [`dti_epi/`](examples/dti_epi/) | The **same diffusion encoding** through a ramp-sampled **EPI** train — single-shot and two-shot, partial Fourier 0.75, no flat top at all. 20 Hz per pixel of phase-encode bandwidth, so 100 Hz of off-resonance displaces by five pixels — and the same operator that deblurs the spiral removes it. |
 
-Notebook 2 writes into [`examples/seq/`](examples/seq/): two `.seq` files, a provenance `.seq.json`
-for each, and one sidecar apiece. The spiral's `.traj.npz` carries its trajectory at **ADC sample
-times** — a spiral's k-space is not in the `.seq` in a form a reconstruction can use — cross-checked
-against pypulseq's own calculation. The field map's `.meta.npz` carries its echo times and line order.
+Two readouts, one encoding: the diffusivities have to agree, and where they do not, that is the
+readout's error budget.
 
-Play the field map first: it takes five seconds and the DTI reconstruction needs it.
+Each build notebook writes into its folder's `seq/`: the `.seq` files, a provenance `.seq.json` for
+each, and one sidecar apiece. The `.traj.npz` carries the trajectory at **ADC sample times** with the
+echo's own position recorded — neither readout's k-space is in the `.seq` in a form a reconstruction
+can use — cross-checked against pypulseq's own calculation to 0.0000 1/m. The field map's `.meta.npz`
+carries its echo times and line order.
+
+Play the field map first: it takes five seconds and the diffusion reconstruction needs it.
 
 ---
 
@@ -119,7 +133,7 @@ Play the field map first: it takes five seconds and the DTI reconstruction needs
 ```
 rf/         SincExcitation  SlabExcitation  HardExcitation  SincRefocusing  HardRefocusing
             SLRExcitation  SLRRefocusing  GaussSaturation  AdiabaticInversion
-readout/    CartesianLine  SpiralVDS  NoiseAcquisition
+readout/    CartesianLine  EPIReadout  SpiralVDS  NoiseAcquisition
 encoding/   PhaseEncode  PartitionEncode  Prephaser  Spoiler  Crusher
             MonopolarDiffusion  BipolarDiffusion  ArbitraryDiffusion  dti_directions
 prep/       FatSat  InversionRecovery
@@ -151,7 +165,7 @@ Writing your own module is one class with an `__init__` and a `build` — see
 pytest tests --doctest-modules src/seqcraft
 ```
 
-545 tests and doctests. The compiler directory is the heart of it: one case per rule, plus the
+765 tests and doctests. The compiler directory is the heart of it: one case per rule, plus the
 adversarial ones — a gradient straddling an RF, a boundary that would fall inside an ADC window, a
 split mid-ramp, two RFs whose dead times overlap. Every physics assertion is a number an independent
 calculation gives, not a number the code happened to produce.

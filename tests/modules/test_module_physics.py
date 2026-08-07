@@ -41,6 +41,9 @@ def _instances(system: sc.System) -> dict[str, sc.Module]:
         m.AdiabaticInversion(system, duration_us=10000),
         m.CartesianLine(system, fov_ro_mm=250, matrix_ro=64, readout_duration_us=3200),
         m.NoiseAcquisition(system, n_samples=256),
+        m.EPIReadout(
+            system, fov_ro_mm=240, matrix_ro=64, fov_pe_mm=240, matrix_pe=64,
+            partial_fourier_pe=0.75),
         m.SpiralVDS(system, fov_mm=240, matrix=64, n_interleaves=8),
         m.PhaseEncode(system, fov_pe_mm=250, matrix_pe=64),
         m.PartitionEncode(system, slab_thickness_mm=80, matrix_sl=16),
