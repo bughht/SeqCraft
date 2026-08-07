@@ -119,12 +119,13 @@ class Mr0Meta:
         moments actually handed to the simulator -- so it is the trajectory that was simulated, not
         a separate calculation that could disagree.
 
-        Measured **from each shot's first ADC sample**, not from the start of the sequence.  A
-        running total would carry the diffusion lobes' and crushers' enormous excursions into the
-        readout: for a b=1000 encoding the accumulated k is many times ``k_max``, and the
-        refocusing pulse's sign flip is not in it either.  What the reconstruction needs is the k
-        that encodes position *during the readout*, which is exactly the increment since sampling
-        began.
+        Measured per shot from whichever origin ``k_reference`` names, not from the start of the
+        sequence.  A running total would carry the diffusion lobes' and crushers' enormous
+        excursions into the readout: for a b=1000 encoding the accumulated k is many times
+        ``k_max``, and the refocusing pulse's sign flip is not in it either.  What the
+        reconstruction needs is the k that encodes position *during the readout*, and the two
+        readouts here disagree about where that starts -- a spiral's first sample is k = 0, an EPI
+        train's is the corner of k-space.
     echo_times_s
         Absolute time of each repetition's exciting pulse.
     flip_angles_deg
@@ -208,43 +209,58 @@ def _flip_and_phase(rf: Any, raster: float) -> tuple[float, float]:
     return flip, float(rf.phase_offset)
 
 
-def _grad_samples(block: Any, duration: float, raster: float) -> np.ndarray:
-    """Return ``(n, 3)`` gradient amplitudes in Hz/m on a uniform grid covering the block."""
-    n = max(1, int(round(duration / raster)))
-    grid = (np.arange(n) + 0.5) * raster
-    out = np.zeros((n, 3))
-    for axis_index, axis in enumerate(_AXES):
-        grad = getattr(block, f'g{axis}', None)
-        if grad is None:
-            continue
-        tt, wf = ev.waveform_of(grad, raster)
-        out[:, axis_index] = np.interp(grid, tt, wf, left=0.0, right=0.0)
-    return out
+def _cumulative_area(times: np.ndarray, amps: np.ndarray, query: np.ndarray) -> np.ndarray:
+    """
+    Return ``integral g dt`` from ``times[0]`` to each of `query`, exactly.
+
+    `times` and `amps` are the piecewise-linear knots of a gradient, which is what every pulseq
+    gradient is.  On one segment ``g`` is linear, so the integral to an interior point is a
+    quadratic in closed form -- no quadrature and no sampling anywhere.
+    """
+    if len(times) < 2:
+        return np.zeros(len(query))
+    widths = np.diff(times)
+    slopes = np.divide(
+        np.diff(amps), widths, out=np.zeros_like(widths), where=widths > 0
+    )
+    at_knots = np.concatenate([[0.0], np.cumsum(0.5 * (amps[1:] + amps[:-1]) * widths)])
+    inside = np.clip(np.searchsorted(times, query, side='right') - 1, 0, len(widths) - 1)
+    step = np.clip(query - times[inside], 0.0, widths[inside])
+    return at_knots[inside] + amps[inside] * step + 0.5 * slopes[inside] * step * step
 
 
 def _areas(block: Any, duration: float, raster: float, edges: np.ndarray) -> np.ndarray:
     """
     Return the exact gradient area in each interval of `edges`, as ``(len(edges) - 1, 3)``.
 
-    Integrates the sampled waveform once, cumulatively, and differences the result at the interval
-    edges.  Total area is then preserved no matter how the intervals are chosen, which is the whole
-    point: the obvious alternative -- resample the gradient *at* the edges and apply the trapezoidal
-    rule -- silently loses area whenever an interval is long compared with the gradient's features.
+    Integrates each axis once, cumulatively, and differences the result at the interval edges.  Total
+    area is then preserved no matter how the intervals are chosen, which is the whole point: the
+    obvious alternative -- resample the gradient *at* the edges and apply the trapezoidal rule --
+    silently loses area whenever an interval is long compared with the gradient's features.
 
     In the worst case it loses all of it.  A trapezoid gradient starts and ends at zero, so one
     interval spanning a whole prephaser samples zero at both ends and integrates to **exactly zero**:
     the phase encode and readout prephaser vanish, k-space starts at the origin instead of its corner,
     and a Cartesian image comes out as a bright smear with no hint of where it went.  Blocks shorter
     than about twice the event length are the ones at risk, which is most winders.
+
+    The cumulative integral is taken from the gradient's **exact knots** rather than from a raster
+    resampling.  The difference matters where the edges are not on the raster, which is exactly where
+    an ADC's sample centres fall: interpolating a cumulative integral linearly across a raster is a
+    linear approximation of a quadratic, and it under-reads on a ramp.  On an EPI train the ramp's
+    sign alternates with echo parity, so that error alternates too -- 0.024 dk of Nyquist ghost,
+    measured, on top of the half-dwell one.
     """
-    fine = _grad_samples(block, duration, raster)
-    # Rectangle rule per raster, which is what the hardware plays: each sample is held for one raster.
-    cumulative = np.concatenate([np.zeros((1, 3)), np.cumsum(fine, axis=0) * raster], axis=0)
-    sample_edges = np.arange(len(fine) + 1) * raster
-    at_edges = np.stack([
-        np.interp(edges, sample_edges, cumulative[:, axis]) for axis in range(3)
-    ], axis=1)
-    return np.diff(at_edges, axis=0)
+    out = np.zeros((len(edges) - 1, 3))
+    for axis_index, axis in enumerate(_AXES):
+        grad = getattr(block, f'g{axis}', None)
+        if grad is None:
+            continue
+        times, amps = ev.knots_of(grad)
+        # The block may extend past the gradient at either end; outside it the area is constant.
+        query = np.clip(np.asarray(edges, dtype=float), times[0], times[-1])
+        out[:, axis_index] = np.diff(_cumulative_area(times, amps, query))
+    return out
 
 
 def _drop(moments: np.ndarray, axes: tuple[int, ...]) -> np.ndarray:
@@ -264,6 +280,7 @@ def to_mr0(
     first_rep: int = 0,
     max_reps: int | None = None,
     ignore_axes: tuple[str, ...] = ('z',),
+    k_reference: str = 'first_sample',
 ) -> tuple[Any, Mr0Meta]:
     """
     Convert a compiled sequence, or a ``.seq`` read back from disk, into an MRzero ``Sequence``.
@@ -308,6 +325,24 @@ def to_mr0(
 
         Pass ``()`` to keep every axis -- correct only if the phantom actually resolves the slice
         direction, which needs several voxels through it.
+    k_reference
+        How :attr:`Mr0Meta.kspace_per_m` is referenced.  Neither setting affects the simulation --
+        the signal comes from the moments handed to the simulator, and only this reported trajectory
+        changes.
+
+        ``'excitation'`` is the physical one: accumulation restarts at every **excitation** pulse and
+        its sign flips at every **refocusing** pulse, which is the pulseq convention and what
+        ``calculate_kspacePP`` computes.  It is correct for any readout, weighted or not.
+
+        ``'first_sample'`` measures from each shot's first ADC sample instead.  That is right for a
+        **spiral**, whose sampling begins at k = 0, and wrong for anything else: an EPI readout's
+        prephaser sits inside the same repetition as the readout, so subtracting the first sample
+        subtracts the prephaser away and reports a trajectory starting at the origin instead of at
+        the corner of k-space.
+
+        It remains the default only because it is what existing callers expect.  Prefer
+        ``'excitation'``; and where a module supplies its own exact trajectory, that is authoritative
+        and this is the cross-check.
 
     Returns
     -------
@@ -335,6 +370,17 @@ def to_mr0(
     raster = resolved.grad_raster.dt
     rf_raster = resolved.rf_raster.dt
     dropped = tuple(_AXES.index(a) for a in ignore_axes if a in _AXES)
+    if k_reference not in ('first_sample', 'excitation'):
+        msg = format_error(
+            f'k_reference must be "first_sample" or "excitation", got {k_reference!r}.',
+            {},
+            [
+                '"excitation" is the physical one: reset at each excitation, sign flipped at each '
+                'refocusing pulse',
+                '"first_sample" is the spiral convention, whose sampling starts at k = 0',
+            ],
+        )
+        raise ValueError(msg)
 
     # ---- pass one: group blocks into repetitions, one per RF pulse -------------------------
     reps: list[dict[str, Any]] = []
@@ -386,6 +432,16 @@ def to_mr0(
         moments: list[np.ndarray] = []
         usage: list[int] = []
 
+        # k accumulates from the excitation, and a refocusing pulse inverts everything already
+        # accumulated -- which is the whole reason a spin-echo sequence's winders work at all.  Both
+        # are done here rather than left to a rebase afterwards, because no constant offset can undo
+        # a missing sign flip: a b = 1000 encoding's lobes are many times k_max, and with the same
+        # sign they swamp the readout instead of cancelling.
+        if entry['use'] == 'excitation':
+            running_k = np.zeros(3)
+        elif entry['use'] in ('refocusing', 'inversion'):
+            running_k = -running_k
+
         for block_start, _index, block, duration in entry['blocks']:
             adc = getattr(block, 'adc', None)
             if adc is not None:
@@ -396,33 +452,39 @@ def to_mr0(
                 delay = float(adc.delay)
                 tail = duration - delay - n * dwell
 
-                # One event per ADC sample, plus the lead before sampling starts and any tail after,
-                # so every part of the block's area is carried.
-                edges = np.concatenate((
-                    [0.0] if delay > 0 else [],
-                    delay + np.arange(n + 1) * dwell,
-                    [duration] if tail > 1e-12 else [],
-                ))
+                # Each sampled event **ends at its sample's centre**, because MRzero applies an
+                # event's gradient moment and then records the signal -- so where the event ends is
+                # where the sample sits in k-space.  Ending them on the dwell *boundaries* instead
+                # puts every sample half a dwell late.
+                #
+                # On a spiral that is a small radial offset and it merely blurs.  On an EPI train the
+                # readout gradient reverses every echo, so the offset **alternates sign with echo
+                # parity** -- which is a phase ramp of alternating sign, which is a Nyquist ghost at
+                # half the FOV.  Measured against the module's own trajectory: 2.14 1/m, 0.514 dk,
+                # and a set of horizontal stripes across the reconstructed image that look exactly
+                # like an uncalibrated gradient delay on a real scanner.
+                #
+                # The first interval absorbs the lead before sampling starts and the last the tail
+                # after it, so every part of the block's area is carried -- including, on an EPI
+                # train, the phase-encode blips, which live entirely in the lead and the tail.
+                centres = delay + (np.arange(n) + 0.5) * dwell
+                edges = np.concatenate(([0.0], centres, [duration]))
                 areas = _areas(block, duration, raster, edges)
-                offset = 1 if delay > 0 else 0
 
-                if delay > 0:
-                    times.append(delay)
-                    moments.append(_drop(areas[0], dropped))
-                    usage.append(0)
                 for sample in range(n):
-                    increment = areas[offset + sample]
-                    times.append(dwell)
+                    increment = areas[sample]
+                    times.append(float(edges[sample + 1] - edges[sample]))
                     moments.append(_drop(increment, dropped))
                     usage.append(1)
-                    adc_times.append(block_start + delay + (sample + 0.5) * dwell)
+                    adc_times.append(block_start + float(centres[sample]))
                     adc_rep.append(rep_index)
                     running_k = running_k + increment
                     kspace.append(running_k.copy())
-                if tail > 1e-12:
-                    times.append(tail)
-                    moments.append(_drop(areas[offset + n], dropped))
+                if duration - float(centres[-1]) > 1e-12:
+                    times.append(duration - float(centres[-1]))
+                    moments.append(_drop(areas[n], dropped))
                     usage.append(0)
+                    running_k = running_k + areas[n]
             else:
                 # No ADC: subdivide finely enough for the diffusion integral to be right, since b
                 # accumulates per event and one event spanning a 15 ms lobe would integrate it as a
@@ -450,11 +512,11 @@ def to_mr0(
 
     k_absolute = np.stack(kspace, axis=1) if kspace else np.zeros((3, 0))
     adc_rep_array = np.asarray(adc_rep, dtype=int)
-    # Re-base each shot's trajectory on its own first sample, which for a spiral is k = 0.
     k_relative = k_absolute.copy()
-    for rep in np.unique(adc_rep_array):
-        inside = adc_rep_array == rep
-        k_relative[:, inside] -= k_absolute[:, inside][:, :1]
+    if k_reference == 'first_sample':
+        for rep in np.unique(adc_rep_array):
+            inside = adc_rep_array == rep
+            k_relative[:, inside] -= k_absolute[:, inside][:, :1]
 
     meta = Mr0Meta(
         n_reps=len(out),

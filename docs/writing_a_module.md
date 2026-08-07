@@ -99,7 +99,40 @@ A property has to be honest about what it points at:
   recomputing a centre of mass: the two differ for asymmetric and minimum-phase pulses, and the
   designed value is the one timing needs.
 - **`time_to_echo`** — start of the block to k=0. **For a spiral that is the first sample**, not the
-  middle of the window; conflating the two shifts the diffusion weighting rather than the image.
+  middle of the window; conflating the two shifts the diffusion weighting rather than the image. For
+  an EPI train it is neither: with partial Fourier 0.75 the `ky = 0` echo lands 17.2 ms into a 49.9 ms
+  train, so both the midpoint and the first sample are wrong, and by different amounts.
+
+---
+
+## Where an ADC goes, and on which raster
+
+Three rasters constrain an ADC, and each one is a bug that compiles.
+
+**Put the sampling offset in the ADC's own `delay`, and place the node where the gradient starts.**
+
+```python
+adc = pp.make_adc(num_samples=n, dwell=dwell, delay=offset, system=self.opts)   # right
+out.add(lobe_start, adc)
+
+adc = pp.make_adc(num_samples=n, dwell=dwell, delay=0.0, system=self.opts)      # wrong, twice
+out.add(lobe_start + offset, adc)
+```
+
+The second form fails in two independent ways:
+
+- **`pp.make_adc` silently raises a `delay` below `adc_dead_time` up to it**, and seqcraft
+  *preserves* an event's own delay rather than folding it away. So `delay=0.0` becomes 10 µs, the node
+  offset adds to it, and sampling begins 40 µs into the lobe where 30 was intended.
+  `SpiralVDS.time_to_echo` returns `float(self.adc.delay)` rather than `0.0` for exactly this reason.
+- **An RF or ADC node off the block raster is snapped**, with a `raster` warning rather than an error.
+  The snap moves the event against the gradient by up to half a raster: at 2 MHz/m that is 10 1/m of
+  k, two and a half `dk`. Placing the node at the gradient's own start puts it on the raster by
+  construction, and leaves the offset free.
+
+The offset itself must land on the **RF** raster (1 µs), which is what pypulseq's own `check_timing`
+requires of an ADC `delay` — not the 100 ns ADC raster, which only the *dwell* answers to. A 33.2 µs
+offset produces one error per echo.
 
 ---
 

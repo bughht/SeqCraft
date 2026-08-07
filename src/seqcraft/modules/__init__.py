@@ -46,7 +46,7 @@ from .encoding import (
     dti_directions,
 )
 from .prep import FatSat, InversionRecovery
-from .readout import CartesianLine, NoiseAcquisition, SpiralVDS, vds_trajectory
+from .readout import CartesianLine, EPIReadout, NoiseAcquisition, SpiralVDS, vds_trajectory
 from .rf import (
     AdiabaticInversion,
     GaussSaturation,
@@ -69,6 +69,7 @@ __all__ = [
     'CartesianLine',
     'Crusher',
     'Delay',
+    'EPIReadout',
     'FatSat',
     'GaussSaturation',
     'HardExcitation',

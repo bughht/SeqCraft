@@ -22,7 +22,15 @@ import pytest
 
 import seqcraft as sc
 
-from conftest import FOV_MM, MATRIX, SLICE_MM, build_dti, build_gre
+from conftest import (
+    FOV_MM,
+    MATRIX,
+    SLICE_MM,
+    build_dti,
+    build_epi_dwi,
+    build_gre,
+    epi_dwi_system,
+)
 
 
 # ------------------------------------------------------------------------- every recipe passes
@@ -249,6 +257,221 @@ def test_dti_records_the_diffusion_scheme(dti: sc.CompiledSequence) -> None:
     assert defs['SpiralInterleaves'] == 1
     assert defs['SlicesPerTR'] == 1
     assert defs['DiffusionBigDelta'] > defs['DiffusionLobeDuration']
+
+
+# ---------------------------------------------------------------------------- EPI DWI physics
+def test_epi_dwi_b_values_are_achieved(epi_dwi: sc.CompiledSequence) -> None:
+    """The same diffusion encoding as the spiral, so the same b-values must come out of it."""
+    for want, got in zip(epi_dwi.definitions['bValues'],
+                         epi_dwi.definitions['AchievedbValues']):
+        assert got == pytest.approx(want, rel=2e-3, abs=1e-6)
+
+
+def test_epi_dwi_echo_lands_at_te(epi_dwi: sc.CompiledSequence) -> None:
+    """
+    TE is measured to the ``ky = 0`` echo, a third of the way into the train, not to its start.
+
+    This is the assertion that would fail if ``time_to_echo`` were taken as the train's midpoint or
+    as its first sample -- and neither mistake changes anything else about the sequence.
+    """
+    k = epi_dwi.kspace()
+    te = epi_dwi.definitions['TE']
+    at_echo = int(np.argmin(np.hypot(k['k_adc'][0], k['k_adc'][1])))
+    elapsed = float(k['t_adc'][at_echo] - k['t_excitation'][0])
+    assert elapsed == pytest.approx(te, abs=2.0 * epi_dwi.definitions['EchoSpacing'])
+    # The refocusing pulse sits at TE/2, as for any spin echo.
+    assert float(k['t_refocusing'][0] - k['t_excitation'][0]) == pytest.approx(te / 2, abs=1e-5)
+
+
+def test_epi_dwi_k_is_zero_at_the_echo_on_every_axis(epi_dwi: sc.CompiledSequence) -> None:
+    """
+    Catches a missing slice rewinder, which nothing else in the sequence would reveal.
+
+    The excitation's slice-select gradient leaves through-slice dephasing equal to its own tail, and
+    the refocusing pulse does not undo it -- its own gradient is symmetric about its centre.
+    """
+    k = epi_dwi.kspace()['k_adc']
+    at_echo = int(np.argmin(np.hypot(k[0], k[1])))
+    dk = 1e3 / 240.0
+    for axis, value in zip('xyz', k[:, at_echo]):
+        assert abs(float(value)) < dk, f'k_{axis} = {float(value):+.2f} 1/m at the echo'
+
+
+def test_epi_dwi_covers_k_space_on_a_grid(epi_dwi: sc.CompiledSequence) -> None:
+    """
+    Readout extent from ``matrix / (2 FOV)``, phase extent from the partial-Fourier table.
+
+    Partial Fourier truncates the **low** end, so ky runs from ``-0.25 matrix dk`` to
+    ``+0.5 matrix dk`` -- asymmetric, which is the whole point, and a check on |k| alone could not
+    see it because |k| is symmetric.
+    """
+    k = epi_dwi.kspace()['k_adc']
+    dk = 1e3 / 240.0
+    k_max_ro = MATRIX / (2.0 * 240.0 / 1e3)
+    assert float(np.abs(k[0]).max()) == pytest.approx(k_max_ro, rel=0.02)
+    assert float(k[1].max()) == pytest.approx((MATRIX / 2 - 1) * dk, abs=dk)
+    assert float(k[1].min()) == pytest.approx(-0.25 * MATRIX * dk, abs=dk)
+    # Distinct ky values, one per acquired line, and they are a uniform ladder.
+    rungs = np.unique(np.round(k[1] / dk).astype(int))
+    assert len(rungs) == int(round(0.75 * MATRIX))
+    assert np.all(np.diff(rungs) == 1)
+
+
+def test_epi_dwi_records_the_readout_it_played(epi_dwi: sc.CompiledSequence) -> None:
+    """
+    The definitions carry what a downstream correction needs, and nothing it would have to guess.
+
+    ``TotalReadoutTime`` and ``PhaseEncodeBandwidthPerPixelHz`` are what FSL's ``topup`` and
+    ``eddy`` ask for; a sequence that does not record them makes someone measure them from the file.
+    """
+    defs = epi_dwi.definitions
+    assert defs['EPIFactor'] == int(round(0.75 * MATRIX))
+    assert defs['NumberOfShots'] == 1
+    assert defs['PartialFourierPE'] == pytest.approx(0.75)
+    assert defs['TotalReadoutTime'] == pytest.approx(
+        (defs['EPIFactor'] - 1) * defs['EchoSpacing'])
+    assert defs['PhaseEncodeBandwidthPerPixelHz'] == pytest.approx(
+        1.0 / (defs['EPIFactor'] * defs['EchoSpacing']))
+    assert defs['PhaseEncodePolarity'] == 1
+
+
+def test_epi_dwi_shares_the_diffusion_encoding_with_the_spiral(system: sc.System) -> None:
+    """
+    Two readouts, one encoding.  If they disagreed, the ADC maps could not be compared.
+
+    Built on the same system and the same b-value, so the lobe duration and Delta must match to the
+    raster -- the readout only enters TE, not the encoding.
+    """
+    scanner = epi_dwi_system()
+    epi = build_epi_dwi(scanner, regime='epi', n_directions=6, n_slices=1)
+    spiral = build_dti(
+        scanner, regime='epi', n_directions=6, n_slices=1, density=0.5, tr_s=6.0)
+    for key in ('DiffusionLobeDuration', 'DiffusionBigDelta', 'AchievedbValues'):
+        assert epi.definitions[key] == spiral.definitions[key], f'{key} differs'
+    # TE does differ, because the two readouts reach k=0 at different points in themselves.
+    assert epi.definitions['TE'] != spiral.definitions['TE']
+
+
+def test_epi_dwi_blip_down_mirrors_the_phase_encode(system: sc.System) -> None:
+    """
+    The blip-down half of a distortion-correction pair: identical timing, mirrored ky.
+
+    Reversed polarity displaces off-resonance the other way, which is what lets the pair be combined
+    into an undistorted image -- so the two must agree on TE exactly, or the pair is inconsistent.
+    """
+    scanner = epi_dwi_system()
+    up = build_epi_dwi(scanner, regime='epi', n_directions=6, n_slices=1)
+    down = build_epi_dwi(scanner, regime='epi', n_directions=6, n_slices=1, pe_polarity=-1)
+    assert up.definitions['TE'] == down.definitions['TE']
+    assert up.duration_s == pytest.approx(down.duration_s)
+
+    ky_up = up.kspace()['k_adc'][1]
+    ky_down = down.kspace()['k_adc'][1]
+    assert float(ky_up.max()) == pytest.approx(-float(ky_down.min()), rel=1e-6)
+    assert float(ky_up.min()) == pytest.approx(-float(ky_down.max()), rel=1e-6)
+
+
+def test_epi_dwi_two_shots_halve_the_train_and_double_the_bandwidth(system: sc.System) -> None:
+    """
+    The trade the segmented variant exists to make: less distortion, more shots, shorter TE.
+
+    Both are the same acquisition of the same k-space; only how it is split differs, so the line
+    count over all shots has to be identical.
+    """
+    scanner = epi_dwi_system()
+    one = build_epi_dwi(scanner, regime='epi', n_directions=6, n_slices=1, n_shots=1)
+    two = build_epi_dwi(scanner, regime='epi', n_directions=6, n_slices=1, n_shots=2)
+
+    assert two.definitions['EPIFactor'] * 2 == one.definitions['EPIFactor']
+    assert two.definitions['PhaseEncodeBandwidthPerPixelHz'] > (
+        1.9 * one.definitions['PhaseEncodeBandwidthPerPixelHz'])
+    assert two.definitions['TE'] < one.definitions['TE']
+
+    dk = 1e3 / 240.0
+    for out in (one, two):
+        rungs = np.unique(np.round(out.kspace()['k_adc'][1] / dk).astype(int))
+        assert len(rungs) == int(round(0.75 * MATRIX))
+
+
+def test_epi_dwi_partial_echo_shortens_the_echo_spacing(system: sc.System) -> None:
+    """Dropping the leading part of every line shortens each echo, and so the whole train."""
+    scanner = epi_dwi_system()
+    full = build_epi_dwi(scanner, regime='epi', n_directions=1, n_slices=1)
+    short = build_epi_dwi(scanner, regime='epi', n_directions=1, n_slices=1, partial_echo=0.7)
+    assert short.definitions['EchoSpacing'] < full.definitions['EchoSpacing']
+    assert short.definitions['TE'] < full.definitions['TE']
+    assert short.definitions['EPIFactor'] == full.definitions['EPIFactor']
+
+
+def test_epi_dwi_labels_address_every_line_once(epi_dwi: sc.CompiledSequence) -> None:
+    """
+    Every acquired line, once per volume and slice.  The duplicate-address check is the guard.
+
+    ``test_every_recipe_has_unique_kspace_addresses`` already covers collisions for this sequence;
+    this one asserts the *coverage*, which a collision check cannot see.
+    """
+    lines: set[int] = set()
+    for index in sorted(epi_dwi.seq.block_events):
+        block = epi_dwi.seq.get_block(index)
+        labels = getattr(block, 'label', None)
+        if labels is None or getattr(block, 'adc', None) is None:
+            continue
+        for label in (labels if isinstance(labels, (list, tuple)) else [labels]):
+            if label.label == 'LIN':
+                lines.add(int(label.value))
+    expected = set(range(MATRIX - int(round(0.75 * MATRIX)), MATRIX))
+    assert lines == expected
+
+
+def test_epi_dwi_scales_to_a_full_acquisition(system: sc.System) -> None:
+    """
+    Seven volumes of a 48-echo train, and every block boundary splits the one train gradient.
+
+    The plan flagged this as the one scale risk of building the train as a single extended
+    trapezoid rather than one trapezoid per echo: a superlinear split path would show up here as
+    wall-clock.  It does not -- the compiler's boundary scan and its exact split are both linear.
+    """
+    import time
+
+    scanner = epi_dwi_system()
+    started = time.perf_counter()
+    out = build_epi_dwi(
+        scanner, matrix=64, regime='epi', n_directions=6, n_slices=1, tr_s=6.0)
+    elapsed = time.perf_counter() - started
+    assert out.check().ok
+    # One block per echo, seven volumes, plus the prep blocks of each shot.
+    echoes = out.definitions['EPIFactor']
+    assert out.n_blocks > 7 * echoes
+    assert elapsed < 60.0, f'compiling {out.n_blocks} blocks took {elapsed:.1f} s'
+
+
+def test_epi_dwi_pns_is_dominated_by_the_readout(system: sc.System) -> None:
+    """
+    The opposite of the spiral, where derating the readout did nothing for peripheral nerve
+    stimulation.
+
+    An EPI readout oscillates at ~1 kHz for tens of milliseconds, which is the stimulation worst
+    case -- so derating *its* slew is what moves the number.  Measured against the synthetic model,
+    which over-reports and must never be used to clear a human scan; what matters here is the
+    ordering, not the value.
+    """
+    hardware = sc.synthetic_hardware()
+    scanner = epi_dwi_system()
+    fast = build_epi_dwi(scanner, matrix=64, regime='epi', n_directions=1, n_slices=1)
+    derated = (
+        sc.System.preset('cima_x')
+        .derate('epi', grad=0.85, slew=0.25)
+        .derate('diffusion', grad=0.85, slew=0.3)
+    )
+    slow = build_epi_dwi(derated, matrix=64, regime='epi', n_directions=1, n_slices=1)
+
+    def peak(out: sc.CompiledSequence) -> float:
+        return float(out.pns(hardware).values['peak_pns_fraction'])
+
+    assert peak(fast) > 0.0, 'the synthetic model reported nothing at all'
+    assert peak(slow) < peak(fast), (
+        f'derating the readout slew did not lower PNS: {peak(slow):.2f} against {peak(fast):.2f}'
+    )
 
 
 def test_dti_refuses_a_te_shorter_than_the_encoding(system: sc.System) -> None:

@@ -35,6 +35,7 @@ Examples
 from __future__ import annotations
 
 import copy
+import itertools
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -176,14 +177,27 @@ def channels_of(events: Iterable[Event]) -> dict[str, Event]:
 
 def waveform_of(event: Event, raster: float) -> tuple[np.ndarray, np.ndarray]:
     """
-    Sample a gradient event onto a uniform raster.
+    Return a gradient event as a curve to plot or interpolate, with its own time axis.
+
+    A trapezoid is sampled onto `raster`.  A ``grad`` event is returned **at its own sample
+    times**, which are the raster *centres* for ``make_arbitrary_grad`` and the *knots* for
+    ``make_extended_trapezoid`` -- neither of which lies on `raster`, and the latter of which is
+    not uniformly spaced at all.
+
+    So **never assume the returned times are uniform**: use the ``t`` that comes back.  Every
+    caller here does (``np.interp(grid, tt, wf)`` in the MRzero bridge, ``trapz(wf * tt, tt)`` in
+    the diffusion moment check).  :func:`check_limits` did not, and divided by `raster` where it
+    should have divided by ``diff(t)``; on an EPI train's extended trapezoid that overstated the
+    slew by 26x.  For arithmetic -- moments, splits, sums -- use :func:`knots_of` and
+    :func:`pwl_moment`, which are exact.
 
     Parameters
     ----------
     event
         A ``trap`` or ``grad`` event.
     raster
-        Gradient raster in seconds.
+        Gradient raster in seconds.  Used for ``trap`` only; a ``grad`` event carries its own
+        sample times and they are returned unchanged.
 
     Returns
     -------
@@ -191,6 +205,22 @@ def waveform_of(event: Event, raster: float) -> tuple[np.ndarray, np.ndarray]:
         Times in seconds from the start of the block, and amplitudes in Hz/m.  Both
         include the event's own ``delay`` as leading zeros so that events on different
         channels can be summed directly.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import pypulseq as pp
+    >>> from pypulseq.opts import Opts
+    >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=170, slew_unit='T/m/s')
+    >>> t, g = waveform_of(pp.make_trapezoid(channel='x', area=100.0, system=o), 1e-5)
+    >>> bool(np.allclose(np.diff(t), 1e-5))                 # a trapezoid: uniform
+    True
+    >>> extended = pp.make_extended_trapezoid(
+    ...     'x', amplitudes=np.array([0.0, 1e6, 0.0]),
+    ...     times=np.array([0.0, 2.6e-4, 5.2e-4]), system=o)
+    >>> t, g = waveform_of(extended, 1e-5)
+    >>> [round(v * 1e6) for v in t]                         # its knots, not the 10 us raster
+    [0, 260, 520]
     """
     kind = getattr(event, 'type', None)
     if kind == 'trap':
@@ -382,10 +412,35 @@ def content_hash(event: Event) -> str:
     return h.hexdigest()
 
 
+def _merge_times(times: np.ndarray) -> np.ndarray:
+    """Return `times` sorted with knots closer than one nanosecond collapsed into one."""
+    ordered = np.sort(np.asarray(times, dtype=float))
+    if ordered.size < 2:
+        return ordered
+    keep = np.concatenate([[True], np.diff(ordered) > _EDGE_EPS])
+    return ordered[keep]
+
+
+def _on_grid(pieces: Sequence[tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return `pieces` summed on the union of their knots.
+
+    Exact, because a sum of piecewise-linear functions is piecewise linear with knots at the
+    union of theirs -- the same fact :func:`seqcraft.core.compiler._superpose` rests on.
+    """
+    grid = _merge_times(np.concatenate([t for t, _ in pieces]))
+    total = np.zeros(len(grid))
+    for t, a in pieces:
+        total += np.interp(grid, t, a, left=0.0, right=0.0)
+    return grid, total
+
+
 def check_limits(
     events: Iterable[Event],
     opts: Opts,
-    raster: float,
+    raster: float = 0.0,
+    *,
+    starts: Sequence[float] | None = None,
 ) -> list[tuple[str, str, float, float]]:
     """
     Check gradient amplitude and slew against `opts`, per axis and in vector norm.
@@ -413,40 +468,94 @@ def check_limits(
         its diffusion direction vectors, so ``[1, 1, 0]`` silently requested
         ``sqrt(2) * Gmax`` and ``[1, 1, 1]`` requested ``sqrt(3) * Gmax``.
 
+    Parameters
+    ----------
+    events
+        Gradient events.  Non-gradient events are ignored.
+    opts
+        The limits to check against.
+    raster
+        Unused, and kept so existing positional calls work.  Everything here is computed from
+        exact knots; see the note below for why it was a liability rather than a parameter.
+    starts
+        Optional node time of each event, seconds.  Needed only when two events **on the same
+        axis** are given: without it they are both taken to play at their own ``delay``, and
+        two lobes of a bipolar pair then land on top of each other.  The compiler passes
+        compiled-block events, at most one per axis, so it needs nothing here.
+
     Returns
     -------
     list of (kind, where, achieved, limit)
         One entry per violation; empty when everything is within limits.  ``where`` is a
         channel name for per-axis entries and ``'norm'`` for the vector ones.
+
+    Notes
+    -----
+    **Everything is measured on the union of the events' knots**, where a piecewise-linear
+    function's slope is piecewise constant, so ``diff(a) / diff(t)`` is the slew rather than an
+    approximation of it.  Three bugs lived in the sampled version this replaces, all of them
+    reachable only through an *extended trapezoid* -- whose knots are neither uniform nor on the
+    raster, and which is what an EPI readout train has to be if it is to be one event per axis
+    rather than one per echo:
+
+    * the vector-norm slew divided ``diff(norm)`` by the **raster** rather than by ``diff(t)``.
+      On one EPI echo junction, whose knots are 260 us apart, that reported **2441 % of the slew
+      limit where the truth is 94 %** -- 4882.9 T/m/s being exactly the peak amplitude over one
+      10 us raster.  The per-axis path divided by ``diff(t)`` and was right, which is why the
+      error surfaced only as a warning.
+    * the axes were stacked by sample **index**, so ``gx`` at 260 us was combined with ``gy`` at
+      490 us, and the shorter axis was zero-padded at the end instead of held at its ``last``.
+      That can hide a real violation as easily as invent one.
+    * a second event on an axis **overwrote** the first in the norm's dictionary, so only the
+      last was ever combined.
+
+    Examples
+    --------
+    >>> import pypulseq as pp
+    >>> from pypulseq.opts import Opts
+    >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=170, slew_unit='T/m/s')
+    >>> gx = pp.make_trapezoid(channel='x', amplitude=0.9 * o.max_grad, duration=1e-3, system=o)
+    >>> gy = pp.make_trapezoid(channel='y', amplitude=0.9 * o.max_grad, duration=1e-3, system=o)
+    >>> [kind for kind, *_ in check_limits([gx], o)]              # legal on its own
+    []
+    >>> [kind for kind, *_ in check_limits([gx, gy], o)]          # sqrt(2) in vector norm
+    ['grad_norm', 'slew_norm']
     """
-    events = [e for e in events if getattr(e, 'type', None) in GRAD_TYPES]
-    if not events:
+    offsets = itertools.repeat(0.0) if starts is None else starts
+    chosen = [
+        (event, float(t0))
+        for event, t0 in zip(events, offsets)
+        if getattr(event, 'type', None) in GRAD_TYPES
+    ]
+    if not chosen:
         return []
 
-    out: list[tuple[str, str, float, float]] = []
-    sampled: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-    for e in events:
-        t, g = waveform_of(e, raster)
-        sampled[e.channel] = (t, g)
-        peak = float(np.max(np.abs(g))) if g.size else 0.0
-        if peak > opts.max_grad * (1 + 1e-6):
-            out.append(('grad', e.channel, peak, float(opts.max_grad)))
-        if g.size > 1:
-            slew = float(np.max(np.abs(np.diff(g) / np.diff(t))))
-            if slew > opts.max_slew * (1 + 1e-6):
-                out.append(('slew', e.channel, slew, float(opts.max_slew)))
+    by_channel: dict[str, list[tuple[np.ndarray, np.ndarray]]] = {}
+    for event, t0 in chosen:
+        by_channel.setdefault(event.channel, []).append(knots_of(event, t0))
 
-    if len(sampled) > 1:
-        n = max(len(g) for _, g in sampled.values())
-        stack = np.zeros((len(sampled), n))
-        for i, (t, g) in enumerate(sampled.values()):
-            stack[i, : len(g)] = g
+    out: list[tuple[str, str, float, float]] = []
+    curves: list[tuple[np.ndarray, np.ndarray]] = []
+    for channel, pieces in by_channel.items():
+        grid, amps = _on_grid(pieces)
+        curves.append((grid, amps))
+        peak = float(np.max(np.abs(amps))) if amps.size else 0.0
+        if peak > opts.max_grad * (1 + 1e-6):
+            out.append(('grad', channel, peak, float(opts.max_grad)))
+        if grid.size > 1:
+            slew = float(np.max(np.abs(np.diff(amps) / np.diff(grid))))
+            if slew > opts.max_slew * (1 + 1e-6):
+                out.append(('slew', channel, slew, float(opts.max_slew)))
+
+    if len(curves) > 1:
+        grid = _merge_times(np.concatenate([t for t, _ in curves]))
+        stack = np.stack([np.interp(grid, t, a, left=0.0, right=0.0) for t, a in curves])
         norm = np.linalg.norm(stack, axis=0)
         peak = float(np.max(norm))
         if peak > opts.max_grad * (1 + 1e-6):
             out.append(('grad_norm', 'norm', peak, float(opts.max_grad)))
-        if n > 1:
-            slew = float(np.max(np.abs(np.diff(norm)) / raster))
+        if grid.size > 1:
+            slew = float(np.max(np.abs(np.diff(norm) / np.diff(grid))))
             if slew > opts.max_slew * (1 + 1e-6):
                 out.append(('slew_norm', 'norm', slew, float(opts.max_slew)))
     return out

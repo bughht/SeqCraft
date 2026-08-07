@@ -26,7 +26,7 @@ from typing import Any
 
 from .core import events as ev
 from .core.compiler import compile_sequence
-from .core.logic import LogicBlock
+from .core.logic import LogicBlock, flatten
 from .core.module import Module
 
 __all__ = [
@@ -155,22 +155,39 @@ def assert_within_limits(module: Module, **build_args: Any) -> None:
     >>> spoil = sc.modules.Spoiler(sc.System.preset('generic_3t'), twists=4, voxel_mm=5)
     >>> sc.testing.assert_within_limits(spoil)
     """
-    block = module.build(**build_args)
-    events = [n.item for n in block if getattr(n.item, 'type', None) in ('trap', 'grad')]
+    # `flatten`, not iteration: a block's direct children may be nested blocks, and a module that
+    # nests -- FatSat, EPIReadout -- would otherwise have its actual gradients skipped entirely and
+    # pass this vacuously.
+    placed = [
+        (start, event) for start, event, _ in flatten(module.build(**build_args))
+        if getattr(event, 'type', None) in ('trap', 'grad')
+    ]
+    # Node times matter: two lobes of a bipolar pair are both on one axis, and without their
+    # starts they would be taken to play simultaneously and sum to zero.
     violations = [
-        entry for entry in ev.check_limits(events, module.opts, module.system.grad_raster.dt)
+        entry for entry in ev.check_limits(
+            [event for _, event in placed], module.opts, starts=[start for start, _ in placed]
+        )
         if not entry[0].endswith('_norm')
     ]
     assert not violations, f'{type(module).__name__}: {violations}'
 
 
 def assert_raster(module: Module, **build_args: Any) -> None:
-    """Assert that every node start lands on the gradient raster."""
+    """
+    Assert that every gradient in the built tree starts on the gradient raster.
+
+    Walks the whole tree rather than its direct children, so a nested module's own placement is
+    checked too.  Only gradients: an RF or ADC event carries its own dead time in its ``delay`` and
+    answers to the RF raster, which pypulseq's own timing check covers.
+    """
     raster = module.system.grad_raster
-    for index, node in enumerate(module.build(**build_args)):
-        assert raster.holds(node.start), (
-            f'{type(module).__name__} node {index} starts at {node.start * 1e6:.4f} us, '
-            f'off the {raster.dt * 1e6:.0f} us raster'
+    for index, (start, event, path) in enumerate(flatten(module.build(**build_args))):
+        if getattr(event, 'type', None) not in ('trap', 'grad'):
+            continue
+        assert raster.holds(start), (
+            f'{type(module).__name__} gradient {index} ({".".join(path) or "-"}) starts at '
+            f'{start * 1e6:.4f} us, off the {raster.dt * 1e6:.0f} us raster'
         )
 
 

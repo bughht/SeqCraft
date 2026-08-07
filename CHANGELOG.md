@@ -1,5 +1,290 @@
 # Changelog
 
+## Unreleased — EPI
+
+Plan: [PLAN_EPI_V1.md](PLAN_EPI_V1.md), which is phase 1 of
+[PLAN_MODULES_V1.md](PLAN_MODULES_V1.md). Every item below has a test that fails without it.
+
+### Added — `EPIReadout`
+
+An echo-planar train with its own prephasers, blips and labels. Ramp sampling, partial Fourier along
+the phase encode, partial echo along the readout, interleaved segmentation, blip-up/blip-down, and
+`LIN`/`SEG`/`REV`. `modules/readout/epi.py`; nothing in `core` changed to accommodate it.
+
+**The train is one gradient event per axis, not one per echo.** Per-echo trapezoids put the tail of
+echo *n* and the head of *n+1* in the same compiled block, and the compiler warns whenever a block
+holds two gradients on an axis — **96 warnings per shot**, 1824 for a 19-volume acquisition, every one
+describing correct output. One `make_extended_trapezoid` per axis gives each block one piece to split,
+and the compiled waveform is identical.
+
+**Echo spacing is slew-limited, and the amplitude limit never binds.** For a lobe of fixed area the
+minimum-time trapezoid is a triangle at `G = √(A·S)` — 48.9 mT/m against a 170 mT/m limit at 240 mm on
+a 128 matrix. So there is no flat top to sample, ramp sampling is not optional, and the only levers on
+echo spacing are slew, `k_max` and partial echo. `flat_time_us` is an override for deliberate
+derating, not the parameter. A test asserts that doubling `max_slew` shortens the echo by √2 while
+doubling `max_grad` changes nothing.
+
+**What must cover k-space is the *sampled* extent, not the lobe's area.** The blip is centred on the
+junction where the readout gradient crosses zero and the ADC skips `blip/2` at each end, so `ky` is
+constant while a line is read — measured drift **0.000000 1/m**. The lobe therefore carries 540.53 1/m
+to deliver 533.33 1/m of sampled extent, and the prephaser cancels the difference exactly. Minus
+`k_max` is the tempting value and would displace every shot by 1.7 `dk`; a k-space offset is a linear
+phase ramp across the image, so the magnitude image looks perfect and every phase-derived quantity is
+wrong. This is `CartesianLine`'s documented ramp-area trap in a second form.
+
+**`time_to_echo` is neither the midpoint nor the first sample.** With partial Fourier 0.75 the `ky = 0`
+echo is number 32 of 96 — 17.26 ms into a 49.92 ms train. Taking the midpoint puts TE 7.7 ms late,
+silently; taking the first sample, as a spiral would, is 17 ms out. It is found by inverting the
+lobe's moment, and it is `p // n_shots`, which is **shot-independent** — required, since a build
+argument may not change a timing property, and also the physics: segmented EPI plays every shot at the
+same TE so they carry the same T2 weighting.
+
+**Three rasters constrain the ADC, and each was found by being caught.** The blip is an even number of
+gradient rasters, so `blip/2` lands on one — a 50 µs blip failed with *"The last time point must be on
+a gradient raster"*. The ADC's node goes at the lobe start so it lands on the **block** raster: a node
+off it is snapped with a `raster` warning, which moved sampling against the gradient by up to half a
+raster and put `kx` at ±268.66 where ±266.67 was asked for. And the sampling offset lives in the ADC
+event's **own delay**, on the **RF** raster, which is what pypulseq's `check_timing` requires of an ADC
+delay — 33.2 µs produced one error per echo. Carrying the offset in the node time instead made two
+delays *add*, because `pp.make_adc` silently raises a delay below `adc_dead_time` up to it while
+seqcraft preserves an event's own delay: sampling began 40 µs into the lobe rather than 30, leaving
+`kx` 4.88 1/m asymmetric about the echo with every limit check passing.
+
+**The sampled window must be centred on the lobe, exactly.** Otherwise the leading and trailing
+unsampled corners differ, they stop cancelling between a forward echo and the reversed one after it,
+and the reversed echoes' `kx` drifts. Measured at **800 ns of asymmetry on a two-shot design: 0.28 1/m,
+6.8 % of `dk`** — while a single shot was exact, because its leftover happened to split evenly. An
+alternating k-space offset is the worst kind: a phase ramp of alternating sign is a Nyquist ghost, and
+it looks exactly like an uncalibrated gradient delay rather than an arithmetic mistake. The sample
+count is now chosen so the leftover splits onto the RF raster, and the trajectory agrees with
+`calculate_kspacePP` to **0.0000 1/m** for 1, 2 and 4 shots.
+
+**The dwell is the longest that satisfies Nyquist at the apex**, which is where `k` moves fastest —
+2000 ns and 228 samples per echo here, against a 2000 ns bound. Maximising the *sampled span* instead,
+so the gradient is as low as possible, is measurably the wrong trade: it picks 1000 ns and 460 samples
+to buy 4 µs more span and **0.2 %** less gradient, doubling the data the reconstruction and the
+simulator both scale with.
+
+`EPIBlip` and `ReversedPolarityPair`, which PLAN_MODULES_V1 listed alongside, are **not** included. A
+blip is one trapezoid of a chosen area, which is `PhaseEncode` — and the train cannot delegate it
+anyway, since the blip's duration sets the unsampled corner, which sets `G`, which sets the echo
+spacing. A blip-up/blip-down pair is one train played twice with the phase encode reversed, which
+changes no duration and is therefore `build(pe_polarity=-1)`. Flyback EPI is out of scope for v1, and
+the docstring says why.
+
+### Fixed — `check_limits` reported 2441 % where the truth was 94 %
+
+Three independent errors in `events.check_limits`, all reachable only through a gradient whose knots
+are neither uniform nor on the raster — which is what an EPI train has to be:
+
+- **The vector-norm slew divided `diff(norm)` by the raster** rather than by `diff(t)`. An EPI echo
+  junction's knots are 260 µs apart, so dividing by 10 µs overstated the slew by 26×, and 4882.9 T/m/s
+  is exactly the peak amplitude over one raster. The per-axis path divided correctly, which is why this
+  surfaced only as a warning — 97 of them on a 96-echo train, which is the state in which a warning
+  stops meaning anything.
+- **The axes were stacked by sample index**, so `gx` at 260 µs was combined with `gy` at 490 µs, and
+  the shorter axis was zero-padded rather than held at its `last`. That hides a real violation as
+  easily as it invents one, and the test demonstrates the hiding direction: two axes peaking at the
+  same instant reach 106 % of the amplitude limit and were reported as 84 %.
+- **A second event on an axis overwrote the first** in the norm's dictionary, so only the last was ever
+  combined.
+
+Everything is now measured on the union of the events' knots, where a piecewise-linear function's
+slope is piecewise constant — the same fact the compiler's `_superpose` rests on. `check_limits` gained
+an optional `starts=`, needed when two events on one axis are passed without their node times;
+`testing.assert_within_limits` passes them, so two lobes of a bipolar pair no longer land on top of
+each other and sum to zero.
+
+**`waveform_of` promised a uniform raster and did not deliver one**, which is the root cause: for
+`type='grad'` it returns `event.tt` verbatim and ignores `raster`. True for `make_arbitrary_grad`
+(raster centres), false for `make_extended_trapezoid`. Now documented as what it is — a curve to plot
+or interpolate, carrying its own time axis — with `knots_of` and `pwl_moment` named as the exact path.
+
+### Changed — the contract suite walks the whole tree
+
+`testing.assert_within_limits` and `assert_raster` iterated a built block's **direct children**, so a
+module that nests — `FatSat`, and now `EPIReadout` — had its actual gradients skipped and passed
+vacuously. Both use `flatten` now, and `assert_raster` checks gradients only, since an RF or ADC
+carries its dead time in its own delay and answers to the RF raster.
+
+### Changed — `examples/` is one folder per scan
+
+```
+examples/  01_getting_started.ipynb   lib/   dti_spiral/   dti_epi/
+```
+
+Each folder holds `01_build.ipynb`, `02_simulate_and_reconstruct.ipynb` and its own `seq/`, and is
+runnable from inside itself with nothing above it. `spiral_recon.py` → **`noncartesian_recon.py`** and
+`SpiralOffresonance` → **`NoncartesianOffresonance`**, wholesale and with no shim, because the module
+serves both readouts: a spiral's blur and an EPI's phase-encode shift are the same `exp(-2πi·df·t)`
+term, and correcting either needs no new operator. The field-map section is duplicated between the two
+build notebooks; `examples/README.md` records that as a decision and what it buys.
+
+### Fixed — three things `examples/lib` had inferred from a spiral
+
+Each was correct for a spiral for one reason — a spiral's first sample is its echo — and wrong for any
+readout whose echo falls mid-train.
+
+- **`Readout` rebased the sample times on `min(t_adc_s)`.** For an EPI train that puts
+  `2π·df·17 ms` of phase into the operator, and since `df` varies with position it is an image artefact
+  rather than a global constant — up to 2.9 cycles over a 172 Hz field range. The echo reference is now
+  an explicit `t_echo_s`, read from the sidecar, and a sidecar whose times look *absolute* is refused
+  outright rather than reconstructed.
+- **`density_compensation` weights by `|k|`.** A ramp-sampled EPI line crosses `k = 0` at full
+  gradient, which is where its samples are **sparsest**, so `|k|` weights this trajectory backwards.
+  `speed_compensation` computes `|dk/dt|`, the correct Jacobian for both readouts;
+  `reconstruct(dcf=...)` selects, and the default is unchanged so the spiral notebook does not move.
+
+  Measured, the cost is not where one would guess, and the notebook shows both cases rather than
+  asserting one: for a **single density-compensated back-projection** — what gridding does — the
+  Jacobian has to be right, because nothing downstream repairs it. For a **converged
+  conjugate-gradient solve** the weights are a preconditioner on a problem whose solution they do not
+  change, so a wrong one costs iterations rather than accuracy. That distinction is why "the density
+  compensation barely matters" and "the density compensation is critical" are both repeated in the
+  literature, each true of one case.
+- **`to_mr0` rebased each repetition's k on its own first ADC sample.** An EPI readout's prephaser sits
+  inside the same repetition as the readout, so that subtracts the prephaser away and reports a
+  trajectory starting at the origin instead of at the corner of k-space. `k_reference='excitation'`
+  accumulates from the excitation and flips the sign at each refocusing pulse — the physical
+  convention, and what `calculate_kspacePP` computes. No rebasing is then needed for any readout, and
+  no constant offset could have substituted for the missing sign flip: a b=1000 encoding's lobes are
+  many times `k_max`, and with the same sign they swamp the readout instead of cancelling.
+
+### Fixed — the MRzero bridge placed every ADC sample half a dwell late
+
+**This one produced a Nyquist ghost, and it was found by looking at the reconstructed image.** Three
+faults, compounding, all of them invisible on a spiral:
+
+- **Each sampled event ended on a dwell *boundary* rather than at its sample's centre.** MRzero applies
+  an event's gradient moment and *then* records, so where the event ends is where the sample sits in
+  k-space — half a dwell late, here **2.14 1/m, 0.514 `dk`**. A spiral never reverses its readout, so
+  this is a small radial offset that merely blurs. An EPI train reverses every echo, so the offset
+  **alternates sign with echo parity** — a phase ramp of alternating sign, which is a Nyquist ghost at
+  half the FOV, and which looks exactly like an uncalibrated gradient delay rather than an arithmetic
+  mistake. Events now end at sample centres.
+- **The lead and tail areas of an ADC block were handed to the simulator but left out of the reported
+  k.** On a spiral the lead is 10 µs of almost nothing. On an EPI train the lead and tail are *exactly*
+  where the phase-encode blips sit, so the reported `ky` never advanced: **95 `dk` short over a
+  96-echo train**, while the simulated signal was correct throughout.
+- **`_areas` interpolated a cumulative integral linearly**, having built it by the rectangle rule on
+  raster-centre samples. Between raster points that integral is a quadratic, so it under-read on a
+  ramp — and an ADC's sample centres fall precisely between raster points. Another 0.024 `dk` of
+  alternating error. It now integrates the gradient's **exact piecewise-linear knots**, the same
+  primitive the compiler uses.
+
+Together: the simulator's trajectory and the module's now agree to **0.0001 `dk`**, from 0.514.
+`tests/examples/test_bridge_areas.py` covers the area arithmetic and the sample placement against
+`calculate_kspacePP`, including an explicit assertion that the *alternating* component is zero — a
+constant k offset is a linear phase and nothing worse, and only the alternating one makes stripes.
+The area tests need no simulator, so they run in the ordinary suite.
+
+### Corrected — what a wrong echo reference actually costs
+
+The plan claimed a first-sample time reference puts a spatially varying phase into the operator and
+therefore an image artefact. The first half is right and the conclusion was not, and the notebook now
+does the algebra: shifting every sample time by `Δ` multiplies the operator by
+`diag(exp(-2πi·df(r)·Δ))`, so the solution comes back multiplied by `exp(+2πi·df(r)·Δ)` — a spatially
+varying phase on the **image**, with the magnitude untouched exactly. Measured: magnitude RMSE 0.000000,
+phase error peak-to-peak as predicted by `2π·df·Δ`. It costs a magnitude image and an ADC map nothing,
+and it is fatal for a field map, for flow, and for the phase navigators multi-shot DWI needs.
+
+### Added — `examples/dti_epi/`
+
+The same diffusion encoding as the spiral example — 3 axes plus 12 face diagonals, condition number
+√2 — through single-shot and two-shot ramp-sampled EPI at 1.88 mm with partial Fourier 0.75. Measured
+on a Cima.X at 240 mm:
+
+| | single-shot | two-shot |
+|---|---|---|
+| echo spacing | 520 µs | 520 µs |
+| echoes, train | 96, 49.92 ms | 48, 24.96 ms |
+| `ky = 0` at | echo 32, 17.26 ms in | echo 16, 8.94 ms in |
+| TE | 59.40 ms | 42.80 ms |
+| PE bandwidth per pixel | **20.03 Hz** → 5.0 px per 100 Hz | 40.06 Hz → 2.5 px |
+| samples per shot | 21 888 | 10 560 |
+| PNS, synthetic model | 276 % | — |
+
+**Derating the readout does not fix PNS on its own.** From 1.00× to 0.30× readout slew the synthetic
+figure falls 276 % → 175 % while the train grows 49.9 → 90.2 ms: the readout dominates, but the
+diffusion lobes on a face diagonal put the whole gradient vector on two axes and set a floor of their
+own. The notebook prints the whole trade and refuses to call any row runnable — on the spiral sequence
+the synthetic model said 2.44× where the real descriptor said 0.95×, and the error is neither small nor
+in a known direction.
+
+The reconstruction notebook plays all three files against a phantom with a 217 Hz field — chosen so the
+displacement is 7 pixels rather than the spiral example's 3, which is not enough to see — and goes
+through to an ADC map. Against a true `D` of 1.50 / 0.38 / 3.75 e-3 mm²/s it recovers **1.50 / 0.37 /
+3.74** single-shot and 1.50 / 0.37 / 3.77 two-shot. **No unwarping step appears anywhere**: the field
+map goes into the operator and the solve removes the distortion, which is the same operator and the
+same code that deblurs the spiral.
+
+Three measurements in it are worth keeping, because each contradicts a reasonable guess:
+
+- **Off-resonance correction barely moves the ADC where signal is plentiful.** An ADC is a ratio of two
+  images with the same readout, so the distortion largely divides out: corrected and uncorrected agree
+  to 0.01 e-3 for the background. The exception is free water — 3.74 against 3.46 uncorrected — where
+  `exp(-b·D)` leaves 2.4 % of the signal and a residual is no longer small against it. So the
+  correction buys least where there is most signal, and what it always buys is geometric fidelity,
+  which no table shows.
+- **A radial density compensation is worse than none at all on this trajectory.** Relative RMSE for a
+  single back-projection: `|dk/dt|` **0.052**, no weighting 0.093, `|k|` **0.906** — seventeen times
+  the true Jacobian's error, and still four times it after 30 iterations. An EPI line is close to
+  uniformly spaced in k except at its two ends, so the radial argument is not merely suboptimal.
+- **A wrong echo reference is a pure image-phase error.** Predicted 3.66 cycles peak-to-peak from
+  `2π·df·Δ`; observed residual against that prediction **0.0000 cycles RMS**, magnitude RMSE 0.000030.
+
+### Performance — the EPI reconstruction notebook, 433 s to 301 s
+
+Profiled rather than guessed at. `simulate` is 3.6 s a shot and `to_mr0` 0.3 s, so the simulation was
+never the cost: **a corrected solve is 37 s**, because `segments_for` returns **88** here against 13
+for the spiral. The segmented operator does `segments × n_coils` oversampled FFTs per application and
+the segment count scales with `field range × readout span` — EPI loses on both, at 49.9 ms of train
+against 17.1 ms and a field deliberately widened to 217 Hz so the displacement is 7 pixels rather than
+3. That much is inherent to the demonstration.
+
+What was not inherent, and is fixed:
+
+- **The density-compensation comparison ran through the corrected operator** — five solves including a
+  150-iteration reference, ~300 s of the total. A density compensation is a property of the
+  *trajectory*; off-resonance has nothing to do with it. At `b0 = 0` the operator needs the 8-segment
+  floor, which is 8× faster **and** the correct isolation: with the field map in, a reader could
+  attribute one effect to the other. The reference is now 200 iterations because it became cheap.
+- **A duplicate simulation** — `acquire` was called a second time purely to fetch trajectory metadata
+  that the first call had already returned.
+- **A duplicate solve** — the `speed` variant recomputed what section 4 had already produced.
+
+The notebook now states the measured costs and the order the levers are worth pulling in: do not
+correct what you are not studying, do not solve twice, and only then reduce iterations — which is the
+only one of the three that trades away accuracy.
+
+Its committed size also came down from 608 kB to 277 kB: the figure was rendering 128² images at
+100 dpi, upsampling them three and a half times, and the repository's own `check-added-large-files`
+backstop is 512 kB.
+
+### Changed — the spiral example, which the bridge fix improved
+
+`t_echo_s` is written into the `.traj.npz` rather than left to be inferred, which for a spiral is
+`adc.delay` and not `min(t_adc_s)` — a half-dwell difference, and the reason the inference existed at
+all.
+
+Re-executed, the spiral's **field map now recovers to 0.95 Hz RMS against the truth where 0.3.0
+recorded 2.0 Hz**, and its ADC reads 1.50 / 0.38 / 3.66 against a true 1.50 / 0.38 / 3.75. Nothing in
+the sequence changed: the improvement is the sample-placement fix above, which a spiral suffered from
+too — just as a blur rather than as a ghost, which is why it had gone unnoticed. The inline note in the
+build notebook that quoted the old figures for one- against three-axis spoiling has been rewritten to
+point at what the reconstruction notebook prints, rather than carrying numbers that no longer hold.
+
+### Tests
+
+768 tests and doctests, up from 671. `tests/modules/test_epi.py`, `tests/core/test_events.py` and
+`tests/examples/test_bridge_areas.py` are new; `tests/integration` gained an SE-EPI DWI built from the
+same helpers as the spiral DTI, including the assertion that the two agree on
+`DiffusionLobeDuration`, `DiffusionBigDelta` and `AchievedbValues` while differing on TE.
+
+Two of the EPI tests are parametrised over shot count **because a single shot passed while the design
+was wrong**: the asymmetric-window bug left `kx` exact for one shot and 6.8 % of `dk` out for two.
+Where a bug is invisible in the default configuration, the parametrisation is the test.
+
 ## Unreleased — core revision (v3): less is more
 
 Plan: [PLAN_CORE_V3.md](PLAN_CORE_V3.md). The compiled output does not move — the integration suite
