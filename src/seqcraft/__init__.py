@@ -1,17 +1,20 @@
 """
 seqcraft -- composable, verifiable MRI pulse sequence programming on top of pypulseq.
 
-Three concepts, and no more.
+Two concepts, and no more.
 
 :class:`~seqcraft.core.logic.LogicBlock`
     A tree of pulseq events and nested blocks, each with a start time.  Two attributes and one
     method.  Anything may overlap anything.
-:class:`~seqcraft.core.module.Module`
-    A reusable sequence task.  ``__init__`` designs, ``build()`` returns a logic block, and
-    timing a caller needs in order to place it is a plain property.
 :func:`~seqcraft.core.compiler.compile_sequence`
     Turns a tree into legal pulseq blocks: finds block boundaries, sums gradients that share an
     axis, and validates the result against the amplifier.
+
+Everything else is a convenience for producing logic blocks.  :mod:`seqcraft.modules` is a
+library of reusable ones -- excitations, readouts, encodings -- and
+:class:`seqcraft.modules.base.Module` is the optional base they share.  Your own components owe
+seqcraft nothing beyond returning a ``LogicBlock``: a plain function will do, and so will a class
+with as many domain-shaped methods as it likes.
 
 Getting started
 ---------------
@@ -70,7 +73,6 @@ from .core.errors import (
 )
 from .core.geometry import Geometry
 from .core.logic import Item, LogicBlock, Node, barrier, flatten, span
-from .core.module import Module
 from .core.report import Issue, Report, ReportFailed
 from .core.system import Limits, System, load_hardware, synthetic_hardware
 from .core.timing import Raster
@@ -139,7 +141,6 @@ __all__ = [
     'Limits',
     'LogicBlock',
     'MissingExtraError',
-    'Module',
     'Node',
     'Raster',
     'RasterError',

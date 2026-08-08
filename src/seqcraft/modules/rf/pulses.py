@@ -46,9 +46,9 @@ import pypulseq as pp
 from ...core import events as ev
 from ...core.errors import ConfigurationError, format_error
 from ...core.logic import LogicBlock
-from ...core.module import Module
 from ...core.units import convert
 from ...core.validate import Range, require_in, require_in_range, require_positive
+from ..base import Module
 
 if TYPE_CHECKING:
     from types import SimpleNamespace
@@ -74,7 +74,7 @@ _DURATION_RANGE = Range(1.0, 100_000.0, 'us', ((1e6, 's'), (1e3, 'ms')))
 _THICKNESS_RANGE = Range(0.05, 500.0, 'mm', ((1e3, 'm'),))
 
 
-class RFPulse(Module):
+class RFPulse(Module, abc.ABC):
     """
     Shared behaviour for RF pulse modules.
 
@@ -214,8 +214,12 @@ class RFPulse(Module):
         """
         Build the RF event and, if slice-selective, the slice-select and rephasing lobes.
 
-        Abstract, so this class cannot be constructed and the contract suite -- which walks
-        :meth:`~seqcraft.Module.__subclasses__` -- skips it without needing to be told.
+        Abstract -- which is why this class declares :class:`abc.ABC` explicitly, rather than
+        inheriting abstractness from :class:`~seqcraft.modules.base.Module`, which has none to
+        give.  A pulse shape genuinely is a subclass's whole job, so the requirement is real
+        here in a way no ``build()`` requirement ever was.  It also means the contract suite --
+        which walks :func:`~seqcraft.testing.module_subclasses` -- skips this class without
+        needing to be told.
 
         Returns
         -------

@@ -23,9 +23,9 @@ import pypulseq as pp
 from ...core import events as ev
 from ...core.errors import ConfigurationError, format_error
 from ...core.logic import LogicBlock, barrier
-from ...core.module import Module
 from ...core.units import convert
 from ...core.validate import require_in, require_positive
+from ..base import Module
 
 if TYPE_CHECKING:
     from types import SimpleNamespace

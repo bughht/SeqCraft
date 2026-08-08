@@ -20,7 +20,9 @@ Two mechanisms:
 
        fov_mm: float = field(metadata={'range': Range(5.0, 600.0, 'mm')})
 
-:func:`check_fields` is called from ``SeqModule.__post_init__``, so no module can opt out.
+Both entry points take an ordinary object: :func:`check_fields` for a dataclass,
+:func:`check_units` for anything that sets attributes in ``__init__``.  Neither asks what
+class it was handed, so a component of your own gets the check by calling it.
 
 Examples
 --------
@@ -217,9 +219,9 @@ def check_fields(obj: object) -> None:
     """
     Validate every numeric field of a dataclass instance against its range.
 
-    Called from ``SeqModule.__post_init__``, so every module gets this for free and no
-    module can opt out.  Fields that are ``None``, boolean, or non-numeric are skipped;
-    numpy arrays are skipped (they are waveforms, validated elsewhere).
+    The dataclass counterpart of :func:`check_units`.  Fields that are ``None``, boolean,
+    or non-numeric are skipped; numpy arrays are skipped (they are waveforms, validated
+    elsewhere).
 
     Parameters
     ----------
@@ -242,7 +244,7 @@ def check_fields(obj: object) -> None:
         # zero has no magnitude to get wrong.  0 mm is 0 m.  Skipping it lets gaps,
         # offsets and "derive this" sentinels keep their natural default without needing a
         # bespoke range each.  A zero that is genuinely invalid is caught by
-        # require_positive(), which every module calls for its mandatory fields.
+        # require_positive(), which the built-in modules call for their mandatory fields.
         if value == 0:
             continue
         rng = range_for(f.name, f.metadata.get('range'))
@@ -256,8 +258,8 @@ def check_units(obj: object) -> None:
 
     The plain-object counterpart of :func:`check_fields`: modules are ordinary classes that set
     their parameters in ``__init__``, so there are no ``dataclasses.fields`` to walk.
-    :class:`~seqcraft.core.module.Module` calls this automatically once a subclass's ``__init__``
-    returns, so every module gets it and none can opt out.
+    :class:`~seqcraft.modules.base.Module` calls this automatically once a subclass's ``__init__``
+    returns; a component that does not inherit it calls this itself, since it takes any object.
 
     Attributes starting with ``_`` are skipped, as are booleans, non-numerics and exact zeros -- a
     wrong unit changes the magnitude, and zero has no magnitude to get wrong.

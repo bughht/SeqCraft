@@ -22,9 +22,9 @@ from typing import TYPE_CHECKING
 
 from ...core.errors import ConfigurationError, format_error
 from ...core.logic import LogicBlock
-from ...core.module import Module
 from ...core.units import convert
 from ...core.validate import require_positive
+from ..base import Module
 from ..encoding.cartesian import Spoiler
 from ..rf.pulses import AdiabaticInversion, GaussSaturation
 

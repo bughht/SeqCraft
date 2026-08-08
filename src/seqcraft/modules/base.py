@@ -1,32 +1,51 @@
 """
-The module base class: where a sequence's logic lives.
+The base class the built-in modules share -- convenience, not contract.
 
-A module encapsulates one sequence task -- an excitation, a readout, a phase encode, a spoiler,
-one lobe of a diffusion pair.  It works like a ``torch.nn.Module``: :meth:`Module.__init__` does
-the expensive design once, and :meth:`Module.build` is cheap and returns a value.
+A module encapsulates one sequence task: an excitation, a readout, a phase encode, a spoiler, one
+lobe of a diffusion pair.  :class:`Module` holds the scanner, resolves the limit regime to design
+against, checks units when a subclass's ``__init__`` returns, and reports its own parameters for
+provenance and ``repr``.  Inherit it when those are useful; ignore it when they are not.
 
-Three conventions, and no machinery to enforce them
----------------------------------------------------
+**Nothing in seqcraft requires it.**  What the compiler consumes is a
+:class:`~seqcraft.core.logic.LogicBlock`, and any Python object at all may produce one.  A plain
+function is a sequence component:
+
+>>> import pypulseq as pp
+>>> import seqcraft as sc
+>>>
+>>> def blip(system, *, area_per_m, axis='y'):
+...     '''A single phase-encode blip on one axis.'''
+...     g = pp.make_trapezoid(channel=axis, area=area_per_m, system=system.default)
+...     return sc.LogicBlock('blip').add(0.0, g)
+>>>
+>>> blip(sc.System.preset('generic_3t'), area_per_m=200.0)
+LogicBlock(blip, 1 node, 0.36 ms)
+
+So is a class with as many methods as its domain wants -- ``diffusion.pre()`` and
+``diffusion.post()``, ``readout.readout()`` and ``readout.prephaser()``.  There is no method name
+seqcraft insists on, no ``build`` it looks for, and no base class it checks for.
+
+Three conventions the built-ins follow, and no machinery to enforce them
+-----------------------------------------------------------------------
 **``__init__`` designs, ``build`` assembles.**  Waveforms are created in ``__init__`` and stored
-on ``self``, so a 30-direction diffusion encoding costs one design, not thirty.
+on ``self``, so a 30-direction diffusion encoding costs one design, not thirty.  ``build`` is the
+name the built-in library happens to use; a module free to name its outputs for its own domain
+often reads better.
 
-**``build``'s arguments select the variant.**  A diffusion module returns its first or second
-lobe according to ``part=``; an excitation applies a slice offset and an RF phase.  Nothing is
-declared in advance -- they are ordinary keyword arguments with ordinary defaults, and Python
-reports a typo as a ``TypeError``.
+**A build argument selects the variant.**  A diffusion module returns its first or second lobe
+according to ``part=``; an excitation applies a slice offset and an RF phase.  Nothing is declared
+in advance -- they are ordinary keyword arguments with ordinary defaults, and Python reports a typo
+as a ``TypeError``.
 
 **Timing a caller needs in order to place the block is a property.**  ``exc.isodelay``,
 ``readout.time_to_echo``, ``diff.lobe_duration``.  The module has the domain knowledge, so the
 module answers.  The block does not, and cannot: it does not know where it sits, and pinning the
 answer into it would stop the same block being reused elsewhere.
 
-Writing one
------------
->>> import pypulseq as pp
->>> import seqcraft as sc
->>>
->>> class Blip(sc.Module):
-...     '''A single phase-encode blip on one axis.'''
+Writing one on top of the base
+------------------------------
+>>> class Blip(sc.modules.Module):
+...     '''The same blip, with the scanner, the regime and the unit check for free.'''
 ...     def __init__(self, system, *, area_per_m, axis='y'):
 ...         super().__init__(system)
 ...         self.axis = axis
@@ -50,24 +69,22 @@ LogicBlock(blip, 1 node, 0.36 ms)
 
 from __future__ import annotations
 
-import abc
 import functools
 from typing import TYPE_CHECKING, Any
 
-from .validate import check_units
+from ..core.validate import check_units
 
 if TYPE_CHECKING:
     from pypulseq.opts import Opts
 
-    from .logic import LogicBlock
-    from .system import System
+    from ..core.system import System
 
 __all__ = ['Module']
 
 
-class Module(abc.ABC):
+class Module:
     """
-    Base class for a sequence module.
+    Optional base for a reusable sequence module.
 
     Parameters
     ----------
@@ -87,9 +104,11 @@ class Module(abc.ABC):
 
     Notes
     -----
-    Subclasses implement :meth:`build`, and nothing else is required.  There are no class
-    variables to declare, no categories to register, no hooks to override: what a module *is*,
-    is a thing that can build a logic block.
+    Inheriting this is a choice, not an interface.  It declares no abstract method, so there is
+    nothing a subclass is obliged to implement, and nothing in ``core`` -- the compiler least of
+    all -- ever asks whether an object is a ``Module``.  What it offers is the bookkeeping every
+    reusable module turns out to need anyway: the scanner and its resolved ``Opts``, a unit check,
+    parameters for the provenance sidecar, and a ``repr`` that shows them.
 
     The one thing that happens behind your back is unit validation.  After a subclass's
     ``__init__`` returns, :func:`seqcraft.validate.check_units` walks the attributes it set and
@@ -97,7 +116,8 @@ class Module(abc.ABC):
     fails at construction with *"0.22 looks like metres, did you mean fov_mm=220?"* instead of
     producing a sequence with a 22 cm error in it.  Suffix a float attribute with its unit
     (``_mm``, ``_us``, ``_deg``, ``_per_m``) and the check applies; name it without one and it
-    is skipped.
+    is skipped.  A component that does not inherit this can call
+    :func:`seqcraft.validate.check_units` itself -- it takes any object.
     """
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -133,24 +153,6 @@ class Module(abc.ABC):
         """
         return self._opts
 
-    @abc.abstractmethod
-    def build(self, **args: Any) -> LogicBlock:
-        """
-        Return a :class:`~seqcraft.core.logic.LogicBlock` holding this module's events.
-
-        Parameters
-        ----------
-        **args
-            Variant selection: which lobe, which line, which slice, what phase.  Declare the
-            ones the module supports as keyword arguments with defaults.
-
-        Returns
-        -------
-        LogicBlock
-            A fresh block each call.  Must not mutate the module or the events stored on it;
-            derive modified events with :func:`seqcraft.events.derive`.
-        """
-
     # -------------------------------------------------------------------------- reporting
     def params(self) -> dict[str, Any]:
         """
@@ -159,6 +161,10 @@ class Module(abc.ABC):
         Walks ``__dict__`` for JSON-safe values, so a subclass gets sensible provenance without
         declaring anything.  Pypulseq events and numpy arrays are skipped; nested modules are
         summarised.
+
+        A component that does not inherit :class:`Module` is not shut out of provenance:
+        :func:`seqcraft.provenance.build_sidecar` takes any mapping, so hand it whatever dict
+        describes your design.
 
         Examples
         --------

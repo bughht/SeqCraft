@@ -2,10 +2,15 @@
 Core layer: the data model, the compiler, and the arithmetic they rest on.
 
 Everything here is required to get from a :class:`~seqcraft.core.logic.LogicBlock` to a legal,
-validated ``.seq`` -- and nothing else is.  Sequence-programming vocabulary
-(:mod:`seqcraft.ordering`) and output tooling (:mod:`seqcraft.provenance`,
-:mod:`seqcraft.display`) sit one level up, outside this package, because the compiler never
-references them.
+validated ``.seq`` -- and nothing else is.  The module library (:mod:`seqcraft.modules`),
+sequence-programming vocabulary (:mod:`seqcraft.ordering`) and output tooling
+(:mod:`seqcraft.provenance`, :mod:`seqcraft.display`) sit one level up, outside this package,
+because the compiler never references them.
+
+In particular there is no module abstraction here.  The compiler's input is a ``LogicBlock`` and
+it never asks what produced one, so :class:`seqcraft.modules.base.Module` -- an optional
+convenience for writing reusable components -- lives with the components rather than with the
+compiler.
 
 Import from :mod:`seqcraft` rather than from here for everyday use; this package is the
 implementation surface.
@@ -28,7 +33,6 @@ from .errors import (
 )
 from .geometry import Geometry
 from .logic import Item, LogicBlock, Node, barrier, flatten, span
-from .module import Module
 from .report import Issue, Report, ReportFailed
 from .system import Limits, System, load_hardware, synthetic_hardware
 from .timing import Raster
@@ -46,7 +50,6 @@ __all__ = [
     'Limits',
     'LogicBlock',
     'MissingExtraError',
-    'Module',
     'Node',
     'Raster',
     'RasterError',

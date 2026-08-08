@@ -1,9 +1,13 @@
 """
-Module physics: known values, and the contract every module keeps.
+Module physics: known values, and the contract the built-in library keeps.
 
-The contract tests are parametrised over every concrete ``Module`` subclass, so a new module gets
-them for free.  The known-value tests are per module, and each asserts a number an independent
-calculation gives -- not a number the code happened to produce.
+The contract tests are parametrised over every concrete subclass of the optional ``Module`` base,
+so a new library module gets them for free.  That base is a convenience and not an interface --
+``test_module_base.py`` is where the freedom to ignore it is asserted -- so this file covers the
+classes that do use it, not the universe of valid seqcraft components.
+
+The known-value tests are per module, and each asserts a number an independent calculation gives --
+not a number the code happened to produce.
 """
 
 from __future__ import annotations
@@ -18,12 +22,12 @@ import seqcraft as sc
 
 
 #: One constructed instance per module class, for the contract tests.
-def _instances(system: sc.System) -> dict[str, sc.Module]:
+def _instances(system: sc.System) -> dict[str, sc.modules.Module]:
     """
     Build one of every concrete Module subclass with plausible parameters.
 
     Keyed by class name, derived from the instances themselves -- so the keys cannot drift from
-    the classes, and the coverage assertion compares against ``sc.testing.all_modules()``.
+    the classes, and the coverage assertion compares against ``sc.testing.module_subclasses()``.
     """
     m = sc.modules
     built = (
@@ -69,12 +73,26 @@ def _instances(system: sc.System) -> dict[str, sc.Module]:
 
 
 @pytest.fixture(scope='module')
-def instances(system: sc.System) -> dict[str, sc.Module]:
+def instances(system: sc.System) -> dict[str, sc.modules.Module]:
     return _instances(system)
 
 
+def library_modules() -> dict[str, type]:
+    """
+    The subclasses that live in ``seqcraft.modules``, which is what this file is about.
+
+    Filtered by package rather than taken whole: ``module_subclasses`` enumerates *every* subclass
+    of the optional base, so a class defined in another test file -- or in a user's -- would
+    otherwise land in seqcraft's own coverage assertion below.
+    """
+    return {
+        name: cls for name, cls in sc.testing.module_subclasses().items()
+        if cls.__module__.startswith('seqcraft.modules.')
+    }
+
+
 def module_names() -> list[str]:
-    return sorted(sc.testing.all_modules())
+    return sorted(library_modules())
 
 
 # ------------------------------------------------------------------------------- the contract
@@ -82,11 +100,11 @@ def test_every_module_class_is_covered(instances) -> None:
     """
     A new module must be added to the fixture, so it cannot slip past the contract tests.
 
-    Discovery walks ``Module.__subclasses__()``, so subclassing *is* the registration: there is no
-    decorator to forget, and coverage is not opt-in.  Intermediate bases declare an abstract
-    ``_design`` and are skipped.
+    Discovery walks ``Module.__subclasses__()``, so subclassing *is* the registration for the
+    built-in library: there is no decorator to forget, and coverage is not opt-in.  Private
+    shared bases (``_AreaTrapezoid``) and ones left abstract by ``_design`` are skipped.
     """
-    found = set(sc.testing.all_modules())
+    found = set(library_modules())
     assert set(instances) == found, (
         f'not built in the fixture: {sorted(found - set(instances))}; '
         f'built but not a Module subclass: {sorted(set(instances) - found)}'

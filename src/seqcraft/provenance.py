@@ -1,9 +1,13 @@
 """
 Provenance sidecar: making a written ``.seq`` self-describing.
 
-Every :meth:`seqcraft.core.sequence.Sequence.write` drops a ``<name>.seq.json`` beside the
-sequence recording versions, the resolved parameters of every module, the achieved timing,
-the exact definitions written, and the file hash.
+Every :meth:`seqcraft.core.compiler.CompiledSequence.write` drops a ``<name>.seq.json`` beside
+the sequence recording versions, the resolved parameters the caller supplied, the achieved
+timing, the exact definitions written, and the file hash.
+
+:func:`build_sidecar` takes a plain mapping, so what those parameters came from is not its
+concern: :meth:`seqcraft.modules.base.Module.params` produces one for a module, and a component
+of your own supplies whatever dict describes it.
 
 The problem this solves is concrete.  The reference implementation's archived files carry
 no b-value, no diffusion directions, no moment order, no acceleration and no partial-Fourier
