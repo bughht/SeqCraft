@@ -1,18 +1,21 @@
 # Architecture
 
-Three concepts, and no more.
+Two concepts, and no more.
 
 ```
-      you write this                                     seqcraft does this
+   any Python you like                                  seqcraft does this
   ─────────────────────────                          ──────────────────────────
-  Module.__init__   designs the waveforms
-  Module.build()    returns a LogicBlock
-  lb.add(t, ...)    places blocks in a tree     ──►   sc.compile()
-                                                        finds block boundaries
-                                                        sums same-axis gradients
-                                                        checks the amplifier
-                                                        ──► pypulseq.Sequence
+  a function                ─┐
+  a class of your own shape  ├─►  LogicBlock  ──►    sc.compile()
+  sc.modules.SincExcitation ─┘    lb.add(t, ...)       finds block boundaries
+                                                       sums same-axis gradients
+                                                       checks the amplifier
+                                                       ──► pypulseq.Sequence
 ```
+
+**`LogicBlock` is the interface.** It is where seqcraft imposes structure, and the only place. What
+produces one — a function, a class, a notebook cell, a module from the library — is not seqcraft's
+business, and nothing on the path from a tree to a `.seq` inspects the producer's type.
 
 ---
 
@@ -39,37 +42,11 @@ CRUD is Python's, not seqcraft's: create with `add`, read with `lb.nodes[i]` or 
 
 | Absent | Where the job went |
 |---|---|
-| `marks` / anchors | The **module**. A block cannot know where it sits, so it cannot know when its echo occurs — and pinning the answer in would stop the same block being reused. `readout.time_to_echo` is a property. |
+| `marks` / anchors | **Whatever produced the block.** A block cannot know where it sits, so it cannot know when its echo occurs — and pinning the answer in would stop the same block being reused. `readout.time_to_echo` is a property of the readout. |
 | `labels` field | A pulseq label is an event, so it is a node: `add(t, pp.make_label('LIN', 'SET', k))`. |
 | a declared `duration` | Measured. To make a block longer, add a delay event — which is how you lengthen a block in pulseq anyway. |
 | `then`, `over`, `chain`, `scaled` | `add` is shorter than any algebra and needs nothing learned. |
 | `walk`, `axes`, `moment` | The compiler. Reading a tree is not part of being one. |
-
----
-
-## `Module` — where the logic lives
-
-```python
-class Module(abc.ABC):
-    def __init__(self, system, *, regime='default') -> None
-    @property
-    def opts(self) -> Opts                  # the resolved pypulseq limits
-    @abc.abstractmethod
-    def build(self, **args) -> LogicBlock   # the one method you write
-    def params(self) -> dict                # for the provenance sidecar
-```
-
-Works like `torch.nn.Module`: `__init__` designs once, `build` is cheap and returns a value. Its
-arguments select the *variant* — which diffusion lobe, which line, which slice, what phase — and must
-not change the block's duration.
-
-There are no class variables to declare, no categories to register, no hooks to override. What a
-module *is*, is a thing that can build a logic block. See
-[`writing_a_module.md`](writing_a_module.md).
-
-The one thing that happens behind your back is unit validation: `check_units` runs when a subclass's
-`__init__` returns, so `fov_mm=0.22` fails at construction with a hint rather than producing a
-sequence with a 22 cm error in it.
 
 ---
 
@@ -83,6 +60,46 @@ is the only place a merge's effect is visible. Full detail in [`compiler.md`](co
 Returns a `CompiledSequence` holding the `pypulseq.Sequence`, the compile report, and per-block
 provenance. There is **no `Sequence` class** in seqcraft — a sequence *is* a logic block, and
 compiling it produces the artifact.
+
+Its signature is `compile(root: LogicBlock, system: System, ...)`, and that is the whole of what it
+knows about the world upstream of it. A test asserts that `core` never imports `seqcraft.modules`,
+because the direction of that arrow is the design.
+
+---
+
+## Modules — a library, not an interface
+
+`sc.modules` is a **provided library of reusable design components**: excitations, readouts, phase
+encodes, spoilers, diffusion encodings. Everything in it is written on `sc.modules.Module`, an
+**optional** base:
+
+```python
+class Module:
+    def __init__(self, system, *, regime='default') -> None
+    @property
+    def opts(self) -> Opts       # the resolved pypulseq limits for `regime`
+    def params(self) -> dict     # for the provenance sidecar and repr
+    def submodules(self) -> dict[str, Module]
+```
+
+It declares no abstract method. There is no `build()` requirement, no class variable to declare, no
+category to register and no hook to override — inheriting it is a way of not rewriting the same
+bookkeeping, and nothing more. What it does behind your back is unit validation: `check_units` runs
+when a subclass's `__init__` returns, so `fov_mm=0.22` fails at construction with a hint rather than
+producing a sequence with a 22 cm error in it. `check_units` takes any object, so a component that
+inherits nothing can call it itself.
+
+The library's own modules follow one convention that the base does not enforce: `__init__` designs
+once, `build(**args)` is cheap and returns a block, and its arguments select the *variant* — which
+diffusion lobe, which line, which slice, what phase — without changing the block's duration. That
+convention suits a module with one output. A component with two — `diffusion.pre()` and
+`diffusion.post()`, `readout.readout()` and `readout.prephaser()` — should say so in its method
+names, and seqcraft has no opinion about it either way. See
+[`writing_a_module.md`](writing_a_module.md).
+
+**Why it is not in `core`.** `core` is what gets a logic block to a validated `.seq`. A convenience
+base for writing components is not on that path, and while it lived there it read as a requirement:
+"three concepts" implied a sequence had to be expressed as modules. It never did.
 
 ---
 
@@ -108,10 +125,11 @@ top-level modules, and `sc.ordering`, `sc.plot_block`, `sc.testing` are unchange
 
 | Module | What it is for |
 |---|---|
+| `modules` | The library of reusable design components, and `Module`, the optional base they share. |
 | `ordering` | `interleaved_slice_order`, `centric_order`, `golden_angle`, `rf_spoil_phase` — sequence-programming vocabulary, the closed forms that otherwise get copy-pasted per notebook. Becomes a package when the trajectory work adds a second file beside it. |
-| `provenance` | The JSON sidecar: versions, git commit and dirty flag, definitions, sha256. Output tooling; the compiler imports it lazily at `write()` time. |
+| `provenance` | The JSON sidecar: versions, git commit and dirty flag, definitions, sha256. Output tooling; the compiler imports it lazily at `write()` time. Takes a mapping, so a component that reports its own parameters however it likes is not shut out. |
 | `display` | **The only module allowed to import matplotlib**, and lazily at that, so `import seqcraft` stays cheap. Every function returns a figure and never calls `show()`. |
-| `testing` | Contract assertions you can point at your own modules, plus `all_modules()` — every concrete `Module` subclass, which is what the contract suite parametrises over. |
+| `testing` | Two tiers. `assert_output(make, system)` and the block-level assertions it composes take a callable and a block, so they ask nothing about ancestry; `assert_all(module, **build_args)` adds the checks that only mean something for the `build()` convention. `module_subclasses()` enumerates what inherits the base, which is what the library's own contract suite parametrises over. |
 
 **There is no registry.** A registry earns its place when something must turn a *string* into a
 *class* at run time: a YAML front end, plugin entry points, a `--readout=spiral_vds` flag. seqcraft
@@ -119,6 +137,10 @@ has none of those, on purpose. Its one consumer was the contract suite's `parame
 `Module.__subclasses__()` serves that with no decorator anywhere — and cannot be forgotten, because
 subclassing *is* the registration. A `@register()` that a new module omitted silently lost the whole
 contract suite, which is the failure a registry was supposed to prevent.
+
+`module_subclasses()` is scoped accordingly: it answers *what inherits the base*, which is the right
+question for parametrising the library's contract suite and the wrong one for deciding what seqcraft
+accepts. Nothing outside the tests consults it.
 
 ---
 
@@ -150,13 +172,14 @@ can read), a YAML or GUI front end, and a `.seq` importer.
 
 ```
 src/seqcraft/
-  core/          logic  compiler  module  system  geometry  events
+  core/          logic  compiler  system  geometry  events
                  timing  units  validate  errors  report
-  modules/       rf/  readout/ (cartesian, epi, spiral)  encoding/  prep/  control/
+  modules/       base.py (the optional Module)
+                 rf/  readout/ (cartesian, epi, spiral)  encoding/  prep/  control/
   ordering.py    view orders, golden angle, RF-spoil phase
   provenance.py  the JSON sidecar
   display.py     the only matplotlib importer
-  testing.py     assertions you can point at your own modules
+  testing.py     assertions you can point at any component of your own
 
 tests/        core/  logic/  compiler/  modules/  integration/
 examples/     01_getting_started

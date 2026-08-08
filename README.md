@@ -2,13 +2,17 @@
 
 Composable, verifiable MRI pulse sequence programming on top of [pypulseq](https://github.com/imr-framework/pypulseq).
 
-Three concepts, and no more.
+Two concepts, and no more.
 
 | | |
 |---|---|
 | **`LogicBlock`** | A tree of pulseq events, each with a start time. Two attributes, one method. Anything may overlap anything. |
-| **`Module`** | A reusable sequence task. `__init__` designs, `build()` returns a logic block, and timing a caller needs is a plain property. |
 | **`sc.compile`** | Turns the tree into legal pulseq blocks: finds boundaries, sums gradients that share an axis, and validates the result against the amplifier. |
+
+Everything else is a way of producing logic blocks. `sc.modules` is a library of reusable ones —
+excitations, readouts, encodings, diffusion — and seqcraft imposes no structure on the code that
+produces a block beyond the block itself, so a plain function or a class of your own shape works
+just as well. See [*Writing your own*](#writing-your-own).
 
 ```python
 import pypulseq as pp
@@ -111,7 +115,7 @@ Each folder is one complete scan — build, check, write, simulate, reconstruct,
 
 | | What it covers |
 |---|---|
-| [`01_getting_started.ipynb`](examples/01_getting_started.ipynb) | All three concepts, the overlap rules, the escape hatches, writing a file. |
+| [`01_getting_started.ipynb`](examples/01_getting_started.ipynb) | Blocks, modules and `compile`; the overlap rules, the escape hatches, writing a file. |
 | [`dti_spiral/`](examples/dti_spiral/) | The single-shot spin-echo **spiral** DTI at 1.88 mm, and the two-echo field map its 67 ms readout cannot do without. b-value against numerical integration, k at the echo on every axis, PNS against the site's own `.asc`. Then simulate and go through to an ADC map. |
 | [`dti_epi/`](examples/dti_epi/) | The **same diffusion encoding** through a ramp-sampled **EPI** train — single-shot and two-shot, partial Fourier 0.75, no flat top at all. 20 Hz per pixel of phase-encode bandwidth, so 100 Hz of off-resonance displaces by five pixels — and the same operator that deblurs the spiral removes it. |
 
@@ -145,17 +149,50 @@ changing your own scan should never mean editing a package. The notebooks build 
 modules, start to finish — the DTI one is about twenty lines of placement, and every number in it is
 yours to change.
 
-Writing your own module is one class with an `__init__` and a `build` — see
-[`docs/writing_a_module.md`](docs/writing_a_module.md). Then
-`sc.testing.assert_all(your_module)` gives it the same contract checks the built-in ones get.
+---
+
+## Writing your own
+
+A component takes part in a sequence by returning a `LogicBlock`. That is the entire contract:
+there is no base class to inherit, no method name to match, and no registry to join.
+
+```python
+def spoiler(system, *, area_per_m=800.0):                # a function is a component
+    g = pp.make_trapezoid('z', area=area_per_m, system=system.default)
+    return sc.LogicBlock('spoil').add(0.0, g)
+
+
+class VelocityEncode:                                    # so is a class of any shape
+    def __init__(self, system, *, m1_s_per_m, axis='y'):
+        self.lobe = pp.make_trapezoid(axis, area=..., system=system.default)
+
+    def pre(self):
+        return sc.LogicBlock('venc_pre').add(0.0, self.lobe)
+
+    def post(self):
+        return sc.LogicBlock('venc_post').add(0.0, sc.events.derive(self.lobe, ...))
+```
+
+Two outputs named for what they are, rather than one `build(part=...)` — seqcraft has no opinion
+either way.
+
+`sc.testing.assert_output(component.pre, system)` gives either of them the block-level contract
+checks — a well-formed block, deterministic output, gradients on the raster, per-axis limits, and a
+clean compile on its own.
+
+`sc.modules.Module` is an **optional** base for reusable modules, and what the built-in library is
+written on: it holds the scanner, resolves the limit regime to design against, checks units when
+your `__init__` returns, and reports parameters for the provenance sidecar. Inherit it when those
+are worth having; `sc.testing.assert_all(your_module)` then adds the checks for the convention it
+comes with. See [`docs/writing_a_module.md`](docs/writing_a_module.md).
 
 ---
 
 ## Documentation
 
-- [`docs/architecture.md`](docs/architecture.md) — the three concepts, and what each core module is for.
+- [`docs/architecture.md`](docs/architecture.md) — the two concepts, where modules sit, and what each core module is for.
 - [`docs/compiler.md`](docs/compiler.md) — how block boundaries are chosen, how an event's own `delay` is handled, and what every warning means.
-- [`docs/writing_a_module.md`](docs/writing_a_module.md) — the three conventions, and what to assert.
+- [`docs/writing_a_module.md`](docs/writing_a_module.md) — components that inherit nothing, the conventions the library follows, and what to assert.
 
 ---
 
