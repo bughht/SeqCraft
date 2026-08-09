@@ -6,7 +6,7 @@ simulate them, reconstruct, quantify. Run a folder from inside it — the notebo
 
 | | What it covers |
 |---|---|
-| [`01_getting_started.ipynb`](01_getting_started.ipynb) | All three concepts, the overlap rules, the escape hatches, writing a file. Not a scan. |
+| [`01_getting_started.ipynb`](01_getting_started.ipynb) | Blocks, modules and `compile`; the overlap rules, the escape hatches, writing a file. Not a scan. |
 | [`dti_spiral/`](dti_spiral/) | Single-shot spin-echo **spiral** DTI at 1.88 mm, and the two-echo field map its 67 ms readout cannot do without. |
 | [`dti_epi/`](dti_epi/) | The **same diffusion encoding** through a ramp-sampled **EPI** train — single-shot and two-shot, partial Fourier 0.75. |
 

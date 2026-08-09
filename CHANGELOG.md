@@ -1,5 +1,73 @@
 # Changelog
 
+## Unreleased — `LogicBlock` is the interface
+
+`Module` was described as one of seqcraft's three concepts and lived in `core` beside the compiler,
+which read as a requirement: to write a sequence component you inherited a base class and implemented
+one abstract `build(**args) -> LogicBlock`. It never was a requirement — the compiler's input has
+always been a `LogicBlock` and it has never asked what produced one — but the architecture said
+otherwise, and the contract it imposed is wrong for components with more than one output. A diffusion
+encoding's two lobes became `build(part='pre')`, a keyword standing in for two methods that should
+have been named `pre` and `post`.
+
+**The concepts are now two: `LogicBlock` and `compile`.** Modules are a provided library on top of
+them.
+
+### Changed — `Module` moved to `seqcraft.modules.base` and stopped being a contract
+
+- **`core/module.py` is gone.** The class is `seqcraft.modules.base.Module`, re-exported as
+  `seqcraft.modules.Module`. `core` now holds only what is on the path from a block to a validated
+  `.seq`, which was always the stated membership rule.
+- **No `abc.ABC`, no abstract `build`.** The base declares no abstract method, so nothing is required
+  of a subclass. It keeps what a reusable module actually needs and nothing more: `system`, `regime`,
+  the resolved `opts`, the unit check that runs when a subclass's `__init__` returns, `params()`,
+  `submodules()` and `repr`. Existing `build()` methods are unchanged — the *requirement* is what was
+  removed, not the method.
+- **`sc.Module` and `sc.core.Module` are gone, with no shim.** Use `sc.modules.Module` or
+  `from seqcraft.modules import Module`. A compatibility import would keep asserting the membership
+  this release removes, and at 0.3.0 alpha the project has broken cleanly before rather than
+  accumulate shims.
+- `RFPulse` now declares `abc.ABC` itself. Its abstract `_design` is a real requirement — a pulse
+  shape is the whole of what its subclasses add — where the `build` requirement never was.
+
+A component may now be anything that returns a `LogicBlock`: a function, or a class with as many
+domain-shaped methods as it likes (`readout.readout()` and `readout.prephaser()`,
+`diffusion.pre()` and `diffusion.post()`). `tests/modules/test_module_base.py` holds that line,
+including a test that `core` never imports `seqcraft.modules`.
+
+### Changed — `seqcraft.testing` splits into block-level and convention-level
+
+The assertions took a module and called `.build()`, so testing a component that had neither meant
+not testing it.
+
+- **`assert_output(make, system, *, regime=)`** is the new general entry point: it takes any callable
+  returning a block and runs the whole block-level suite on it. **`assert_block`**, **`assert_raster`**,
+  **`assert_within_limits`** and **`assert_compiles`** now take `(block, system)` rather than a module,
+  and **`assert_deterministic`** takes the callable.
+- **`assert_pure(component, make)`** and **`assert_duration_is_honest(component, make)`** take the call
+  under test; **`assert_timing_properties_in_range(component)`** needs no call at all.
+- **`assert_all(module, **build_args)`** is unchanged in signature and is now a wrapper over those. It
+  reads `build`, `system`, `regime` and `duration` off the object and never checks its type, so
+  inheritance is not required.
+- **`all_modules()` → `module_subclasses()`**, renamed because the old name claimed a universe it
+  never described. It enumerates what inherits the optional base — the right question for
+  parametrising the library's contract suite, the wrong one for deciding what seqcraft accepts.
+  Private bases (`_AreaTrapezoid`) are skipped by name now that they are no longer abstract, and the
+  library's own coverage assertion filters by package so a user's subclass cannot contaminate it.
+
+### Fixed — `assert_pure` could not see the bug it was written for
+
+It hashed the stored events, called the builder **twice**, and compared. The canonical mutation it
+exists to catch — the reference implementation's `self.gx.amplitude = -self.gx.amplitude` inside a
+readout loop — is an involution, so two calls left every hash where it started and the check passed.
+Now checked after each call.
+
+### Changed — `assert_deterministic` walks the whole tree
+
+It compared a block's direct children, so a component that nests — `FatSat`, `EPIReadout` — had its
+actual events skipped and passed vacuously. The same fix `assert_within_limits` and `assert_raster`
+got in the EPI release, applied to the one that was missed.
+
 ## Unreleased — EPI
 
 Plan: [PLAN_EPI_V1.md](PLAN_EPI_V1.md), which is phase 1 of

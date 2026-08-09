@@ -1,14 +1,72 @@
-# Writing a module
+# Writing a component
 
-A module is one class with an `__init__` and a `build`. There is nothing to register, no class
-variables to declare, and no hooks to override.
+## What seqcraft actually requires
+
+One thing: whatever takes part in a sequence returns a `LogicBlock`. There is no base class to
+inherit, no method name to match, no registry to join and no hook to override.
+
+A function is a component:
 
 ```python
 import pypulseq as pp
 import seqcraft as sc
 
 
-class VelocityEncode(sc.Module):
+def spoiler(system, *, twists=4, voxel_mm=5.0, axis='z'):
+    """Dephase by `twists` cycles across a voxel."""
+    area_per_m = twists / (voxel_mm / 1e3)
+    g = pp.make_trapezoid(channel=axis, area=area_per_m, system=system.default)
+    return sc.LogicBlock('spoil').add(0.0, g)
+```
+
+So is a class of whatever shape the physics wants. Nothing here inherits anything, and the compiler
+cannot tell:
+
+```python
+class VelocityEncode:
+    """A bipolar pair straddling a refocusing pulse — two outputs, named for what they are."""
+
+    def __init__(self, system, *, venc_cm_s, axis='y'):
+        self.m1_s_per_m = 1.0 / (2.0 * venc_cm_s / 100.0)
+        self.lobe = pp.make_trapezoid(channel=axis, area=self._area(), system=system.default)
+
+    @property
+    def lobe_duration(self):
+        return float(pp.calc_duration(self.lobe))
+
+    def pre(self):
+        return sc.LogicBlock('venc_pre').add(0.0, self.lobe)
+
+    def post(self):
+        return sc.LogicBlock('venc_post').add(0.0, _scaled(self.lobe, -1.0))
+```
+
+```python
+venc = VelocityEncode(system, venc_cm_s=50)
+seq.add(t0, venc.pre())
+seq.add(t0 + venc.lobe_duration + refoc.duration, venc.post())
+
+sc.testing.assert_output(venc.pre, system)     # the block-level contract, for any callable
+```
+
+The old shape for this was one `build(part='pre')` with a keyword that meant two different
+gradients. Where that reads better, keep it; where two methods read better, write two methods.
+
+---
+
+## The optional base
+
+`sc.modules.Module` is a convenience base, and what the built-in library is written on. It holds the
+scanner, resolves the limit regime to design against, checks units when your `__init__` returns, and
+reports parameters for the provenance sidecar and `repr`. It declares no abstract method, so nothing
+is required of a subclass — inheriting it buys you those four things and asks for nothing.
+
+```python
+import pypulseq as pp
+import seqcraft as sc
+
+
+class VelocityEncode(sc.modules.Module):
     """A bipolar gradient pair that encodes velocity along one axis."""
 
     def __init__(self, system, *, venc_cm_s, axis='y', regime='default'):
@@ -50,7 +108,11 @@ sc.testing.assert_all(venc)      # the same contract checks the built-in modules
 
 ---
 
-## The three conventions
+## The three conventions the library follows
+
+These are how the built-in modules are written and why. None of them is enforced — `Module` has no
+abstract method and the compiler never sees a module at all — but each one exists because getting it
+wrong produced a specific bug, so they are worth knowing before departing from them.
 
 ### `__init__` designs, `build` assembles
 
@@ -82,6 +144,10 @@ build argument. When `CartesianLine.build` accepted `prephase=False` it silently
 ro = sc.modules.CartesianLine(system, ..., prephase=False)   # right
 ro.build(prephase=False)                                     # was wrong; no longer exists
 ```
+
+The rule is about *timing properties*, not about the word `build`. A component whose outputs have no
+shared duration to invalidate — `venc.pre()` and `venc.post()` above — does not have this problem,
+and a separate method per output is often the clearer way to say so.
 
 ### Timing a caller needs is a property
 
@@ -141,7 +207,7 @@ offset produces one error per echo.
 A module that contains modules just nests their blocks:
 
 ```python
-class FatSat(sc.Module):
+class FatSat(sc.modules.Module):
     def __init__(self, system, *, voxel_mm):
         super().__init__(system)
         self.pulse = sc.modules.GaussSaturation(system, flip_deg=90, duration_us=8000, ...)
@@ -180,7 +246,9 @@ ADC events overlapping is an error. See [`compiler.md`](compiler.md).
 ## Units are checked for you
 
 Suffix a float attribute with its unit — `_mm`, `_us`, `_deg`, `_per_m`, `_s_per_mm2` — and
-`sc.validate.check_units` rejects an implausible value when the constructor returns, with a hint:
+`sc.validate.check_units` rejects an implausible value when the constructor returns, with a hint.
+`Module` runs it for you when a subclass's `__init__` returns; a component that inherits nothing
+calls `sc.validate.check_units(self)` itself, since it takes any object.
 
 ```
 UnitSanityError: M.slice_thickness_mm = 0.005 is outside the plausible range 0.01 .. 1000 mm.
@@ -224,8 +292,27 @@ three parameters to change. That difference is most of what a module is for.
 
 ## What to assert in your tests
 
-`sc.testing.assert_all(module)` covers purity, determinism, an honest duration, timing properties
-inside the block, per-axis limits, raster alignment, and that the module compiles cleanly alone.
+Two tiers, and neither asks what your component inherits.
+
+**`sc.testing.assert_output(make, system)`** takes any callable returning a block, so it fits a
+function, one method of several, or a module's `build`. It covers a well-formed block, deterministic
+output, gradients on the raster, per-axis limits, and a clean compile on its own:
+
+```python
+sc.testing.assert_output(lambda: spoiler(system, twists=4), system)
+sc.testing.assert_output(venc.pre, system)
+sc.testing.assert_output(venc.post, system)
+```
+
+**`sc.testing.assert_all(module, **build_args)`** adds the checks that only mean something for the
+`build()` convention — that the call mutates neither the module nor the events on it, that `duration`
+is not optimistic, and that `isodelay` / `time_to_echo` fall inside the block — then runs
+`assert_output` on the result. It reads `build`, `system`, `regime` and `duration` off the object and
+never checks its type, so a class shaped that way passes whether or not it inherits `Module`.
+
+```python
+sc.testing.assert_all(venc)                 # the same contract checks the built-in modules get
+```
 
 Add the **known values** yourself, because those are the ones that catch physics errors:
 
