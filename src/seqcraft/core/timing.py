@@ -51,8 +51,8 @@ Examples
 Durations are summed exactly, so a solved TE still compares equal to the raster value it came from:
 
 >>> terms = [1e-5] * 121                             # all exact multiples of 10 us
->>> sum(terms)                                      # plain addition drifts
-0.0012100000000000001
+>>> sum(terms) == 0.00121                           # plain addition drifts
+False
 >>> exact_sum(terms)
 0.00121
 >>> exact_diff(0.008, 0.00324)
