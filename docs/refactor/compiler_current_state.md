@@ -86,8 +86,8 @@ The direct private call graph is:
 The versioned artifact `tests/baselines/compiler_phase0.json` records the four integration recipes.
 It includes block-duration, emitted-content and provenance digests; event and issue counts; moments;
 placed-event, gradient-split and file-size observations; and local timing/memory samples. The stable
-subset is asserted by the integration suite. Performance and file size are observations tied to the
-recorded runner, not cross-platform exact assertions.
+subset is asserted by the integration suite. Performance, file size, and the exact floating-point
+content digest are observations tied to the recorded runner, not cross-platform exact assertions.
 
 ## Frozen behavior and known bugs
 

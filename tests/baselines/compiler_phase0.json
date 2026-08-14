@@ -15,6 +15,7 @@
   "recipes": {
     "epi_dwi": {
       "observed": {
+        "emitted_content_sha256": "087211d7046f94fd66b0881e614bde0a86f3b768a1af72eae074ec730aea4cc9",
         "gradient_splits": 644,
         "input_gradients": 212,
         "performance": {
@@ -44,7 +45,6 @@
           "warning:slew_norm_limit": 14
         },
         "duration_ticks": 78032490000000,
-        "emitted_content_sha256": "087211d7046f94fd66b0881e614bde0a86f3b768a1af72eae074ec730aea4cc9",
         "event_counts": {
           "adc": 336,
           "gx": 374,
@@ -76,6 +76,7 @@
     },
     "gre_2d": {
       "observed": {
+        "emitted_content_sha256": "29452102ccf64a39ea123467dbe1488fa809ae475a5885d241bb46702863fff8",
         "gradient_splits": 0,
         "input_gradients": 382,
         "performance": {
@@ -105,7 +106,6 @@
           "warning:slew_norm_limit": 64
         },
         "duration_ticks": 1270980000000,
-        "emitted_content_sha256": "29452102ccf64a39ea123467dbe1488fa809ae475a5885d241bb46702863fff8",
         "event_counts": {
           "adc": 64,
           "gx": 128,
@@ -137,6 +137,7 @@
     },
     "se_2d": {
       "observed": {
+        "emitted_content_sha256": "3a39f642f8ea9ecc46c2fcc8037c9878eb37383056cb910ee6e409c4ac23c703",
         "gradient_splits": 0,
         "input_gradients": 446,
         "performance": {
@@ -166,7 +167,6 @@
           "warning:slew_norm_limit": 22
         },
         "duration_ticks": 31522710000000,
-        "emitted_content_sha256": "3a39f642f8ea9ecc46c2fcc8037c9878eb37383056cb910ee6e409c4ac23c703",
         "event_counts": {
           "adc": 64,
           "gx": 128,
@@ -198,6 +198,7 @@
     },
     "spiral_dti": {
       "observed": {
+        "emitted_content_sha256": "48780a4d7771a7408f69f7071670b038e5ef339b98e612cd2ff046f3fd84d3f7",
         "gradient_splits": 0,
         "input_gradients": 212,
         "performance": {
@@ -223,7 +224,6 @@
         "checked_issue_counts": {},
         "compile_issue_counts": {},
         "duration_ticks": 78064310000000,
-        "emitted_content_sha256": "48780a4d7771a7408f69f7071670b038e5ef339b98e612cd2ff046f3fd84d3f7",
         "event_counts": {
           "adc": 14,
           "gx": 52,
@@ -254,5 +254,5 @@
       }
     }
   },
-  "schema_version": 1
+  "schema_version": 2
 }

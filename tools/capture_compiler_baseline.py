@@ -78,7 +78,7 @@ def _sha256(value: Any) -> str:
 
 
 def stable_summary(compiled: CompiledSequence) -> dict[str, Any]:
-    """Return platform-independent compiler output fields that later phases must preserve."""
+    """Return compiler output fields used to build the Phase 0 baseline."""
     counts: collections.Counter[str] = collections.Counter()
     content = hashlib.sha256()
     durations: list[int] = []
@@ -259,10 +259,12 @@ def capture(iterations: int) -> dict[str, Any]:
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         assert stable is not None and observed is not None and compiled is not None
+        emitted_content_sha256 = stable.pop('emitted_content_sha256')
         recipes[name] = {
             'stable': stable,
             'observed': {
                 **observed,
+                'emitted_content_sha256': emitted_content_sha256,
                 'seq_size_bytes': _file_size(compiled),
                 'python_warning_counts': dict(sorted(warning_counts.items())),
                 'performance': {
@@ -275,7 +277,7 @@ def capture(iterations: int) -> dict[str, Any]:
                 },
             },
         }
-    return {'schema_version': 1, 'environment': _environment(), 'recipes': recipes}
+    return {'schema_version': 2, 'environment': _environment(), 'recipes': recipes}
 
 
 def main() -> None:

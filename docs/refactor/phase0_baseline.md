@@ -30,15 +30,15 @@ documented runner.
 | EPI DWI | 1,294 | 487 | 212 | 644 | 96,283 | 0.300 s | 4.67 MiB |
 
 Times are three local samples after environment import; allocation is a separate `tracemalloc` run
-and therefore measures Python allocations, not total process RSS or native NumPy storage. File size
-and performance are runner observations. They are compared on the same runner profile with a 20%
-performance tolerance; they are not exact Linux/Windows assertions.
+and therefore measures Python allocations, not total process RSS or native NumPy storage. File size,
+performance, and the raw emitted-content digest are runner observations. The digest intentionally
+retains exact floating-point bytes for same-runner comparisons, so it is not an exact cross-platform
+assertion. Performance is compared on the same runner profile with a 20% tolerance.
 
 The integration snapshot does make the following cross-platform exact assertions:
 
 - total duration in integer picosecond ticks;
 - emitted block count and block-duration digest;
-- emitted RF/ADC/gradient/label content digest;
 - event counts and provenance-path digest;
 - compile/check issue kinds and severities;
 - whole-sequence m0, m1, and m2 summaries.

@@ -96,7 +96,7 @@ def test_every_block_duration_lands_on_the_raster(compiled: sc.CompiledSequence)
 def test_every_recipe_matches_the_phase0_compiler_baseline(
     compiled: sc.CompiledSequence,
 ) -> None:
-    """Freeze block structure, emitted content, provenance, issue surface, and moments."""
+    """Freeze the compiler fields that are exact across supported CI platforms."""
     name = str(compiled.definitions['Name'])
     expected = _PHASE0_BASELINE['recipes'][name]['stable']
     actual = stable_summary(compiled)
