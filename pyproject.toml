@@ -70,6 +70,8 @@ packages = ['src/seqcraft']
 [tool.pytest.ini_options]
 minversion = '8.0'
 testpaths = ['tests']
+# Phase 0 snapshots share canonicalization with repository-local capture tooling.
+pythonpath = ['.']
 addopts = '--strict-markers --strict-config -ra'
 doctest_optionflags = ['ELLIPSIS', 'IGNORE_EXCEPTION_DETAIL', 'NORMALIZE_WHITESPACE']
 markers = [
