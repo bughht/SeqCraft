@@ -181,7 +181,7 @@ class CartesianLine(Module):
                 {'nearest multiple': int(round(n_full / divisor)) * divisor},
                 [
                     f'use a matrix_ro that is a multiple of {divisor}',
-                    f'or an oversampling that makes the product one',
+                    'or an oversampling that makes the product one',
                 ],
             )
             raise ConfigurationError(msg)

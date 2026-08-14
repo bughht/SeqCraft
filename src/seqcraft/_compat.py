@@ -49,6 +49,19 @@ _REQUIRED_TOPLEVEL = (
     'scale_grad',
 )
 
+# These fields identify the Pulseq 1.5.1 compatibility build more reliably than its package
+# version, which is identical to the incompatible PyPI wheel.
+_REQUIRED_OPTS_FIELDS = (
+    'max_b1',
+    'max_freq_offset',
+    'rf_samples_limit',
+)
+
+_PYPULSEQ_SOURCE = (
+    'https://github.com/m-a-x-i-m-z/pypulseq-matlab-like/archive/'
+    '22ef2db1f71ff38c8ce355c61913cfd8fceaac3b.zip'
+)
+
 #: Optional capabilities.  Absence disables a feature rather than failing the import.
 _OPTIONAL = {
     'soft_delay': 'make_soft_delay',
@@ -99,16 +112,19 @@ def require() -> None:
         Listing everything missing, with the install hint.
     """
     missing = [name for name in _REQUIRED_TOPLEVEL if not hasattr(pp, name)]
+    if hasattr(pp, 'Opts'):
+        opts = pp.Opts()
+        missing.extend(f'Opts.{name}' for name in _REQUIRED_OPTS_FIELDS if not hasattr(opts, name))
     if missing:
         msg = format_error(
-            'the installed pypulseq is missing functions seqcraft needs.',
+            'the installed pypulseq is missing capabilities seqcraft needs.',
             {
                 'missing': ', '.join(missing),
                 'found version': PYPULSEQ_VERSION,
                 'module': getattr(pp, '__file__', 'unknown'),
             },
             [
-                "pip install --upgrade 'pypulseq>=1.5.0'",
+                f'python -m pip install --force-reinstall "pypulseq @ {_PYPULSEQ_SOURCE}"',
                 'seqcraft probes capabilities rather than version strings, so a partial or '
                 'patched install shows up here',
             ],
@@ -145,4 +161,3 @@ def supported_rf_uses() -> tuple[str, ...]:
     """
     module = importlib.import_module('pypulseq.supported_labels_rf_use')
     return tuple(module.get_supported_rf_uses())
-

@@ -19,11 +19,13 @@ classifiers = [
   'Topic :: Scientific/Engineering :: Medical Science Apps.',
 ]
 
-# NOTE: pypulseq is pinned '>=1.5.0', NOT '>=1.5.1'.  The git-master build in use here
-# reports __version__ == '1.5.1' but ships dist metadata '1.5.0.post1', so a >=1.5.1
-# requirement is unsatisfiable and pip would replace it with the PyPI wheel.  Actual
-# feature requirements are probed at runtime in seqcraft._compat.
-dependencies = ['pypulseq>=1.5.0', 'numpy>=1.24']
+# SeqCraft needs the Pulseq 1.5.1 behavior in this compatibility fork.  Its distribution
+# metadata is still 1.5.0.post1, so a version specifier cannot distinguish it from the
+# incompatible PyPI wheel.  Pin the immutable source commit and probe its capabilities at import.
+dependencies = [
+  'pypulseq @ https://github.com/m-a-x-i-m-z/pypulseq-matlab-like/archive/22ef2db1f71ff38c8ce355c61913cfd8fceaac3b.zip',
+  'numpy>=1.24',
+]
 
 [project.optional-dependencies]
 viz = ['matplotlib>=3.7', 'seqeyes-python>=0.2.9']
@@ -58,6 +60,9 @@ Issues = 'https://github.com/cmr-group/seqcraft/issues'
 
 [tool.hatch.version]
 path = 'src/seqcraft/_version.py'
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ['src/seqcraft']
@@ -96,7 +101,7 @@ warn_redundant_casts = true
 # therefore structurally untypeable; do not attempt to type pypulseq itself.
 [[tool.mypy.overrides]]
 module = [
-  'seqcraft.core.raster',
+  'seqcraft.core.timing',
   'seqcraft.core.units',
   'seqcraft.core.validate',
   'seqcraft.core.geometry',

@@ -19,18 +19,16 @@ from pathlib import Path
 import numpy as np
 import pypulseq as pp
 import pytest
-
-import seqcraft as sc
-
 from conftest import (
     FOV_MM,
     MATRIX,
-    SLICE_MM,
     build_dti,
     build_epi_dwi,
     build_gre,
     epi_dwi_system,
 )
+
+import seqcraft as sc
 
 
 # ------------------------------------------------------------------------- every recipe passes

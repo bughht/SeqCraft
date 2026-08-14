@@ -50,13 +50,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from .errors import ConfigurationError
 from .validate import Range, check_fields, require_in, require_in_range
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence as Seq
 
 __all__ = ['Geometry', 'round_half_up']
 

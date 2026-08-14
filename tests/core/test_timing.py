@@ -93,7 +93,7 @@ def test_exact_sum_stays_on_the_raster() -> None:
     Plain addition of raster-aligned floats does not stay aligned, and the drift is not academic:
     a solved TE then compares unequal to the value it came from, and the next ceil adds 10 us.
     """
-    terms = [1.3e-4, 5.0e-4, 3.7e-4, 2.1e-4]
+    terms = [1e-5] * 121
     r = Raster(1e-5)
     assert sum(terms) != 0.00121
     assert exact_sum(terms) == 0.00121

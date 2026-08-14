@@ -102,7 +102,11 @@ def test_the_whitelist_accounts_for_every_pypulseq_event_type() -> None:
     next pypulseq release adding an event type seqcraft would otherwise drop.
     """
     produced = _pypulseq_event_types()
-    assert len(produced) >= 12, f'introspection found only {produced} -- the regex has rotted'
+    expected_core = set(_HANDLED) - {sc.core.logic.BARRIER}
+    assert expected_core <= produced, (
+        f'introspection missed handled PyPulseq types {sorted(expected_core - produced)}; '
+        'the source regex or installed package layout has changed'
+    )
     unaccounted = produced - set(_HANDLED) - set(_UNSUPPORTED)
     assert not unaccounted, (
         f'pypulseq can produce {sorted(unaccounted)}, which the compiler neither emits nor '

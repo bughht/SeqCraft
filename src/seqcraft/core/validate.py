@@ -424,7 +424,7 @@ def suggest_field(obj_or_cls: object, bad: str, *, extra: Iterable[str] = ()) ->
     with no error at all.
     """
     cls = obj_or_cls if isinstance(obj_or_cls, type) else type(obj_or_cls)
-    known = sorted({*(f.name for f in dataclasses.fields(cls)), *extra})  # type: ignore[arg-type]
+    known = sorted({*(f.name for f in dataclasses.fields(cls)), *extra})
     fields: dict[str, object] = {'known fields': ', '.join(known)}
     close = difflib.get_close_matches(bad, known, n=3)
     if close:

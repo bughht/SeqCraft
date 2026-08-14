@@ -861,6 +861,8 @@ def _axis_gradient(
             times=rel_ps / TICKS_PER_SECOND,
             amplitudes=amps,
             system=opts,
+            max_grad=math.inf,
+            max_slew=math.inf,
             skip_check=True,
         )
         grad.delay = 0.0
@@ -932,6 +934,8 @@ def _resampled(
         times=grid_ps / TICKS_PER_SECOND,
         amplitudes=grid_amps,
         system=opts,
+        max_grad=math.inf,
+        max_slew=math.inf,
         skip_check=True,
     )
     grad.delay = 0.0

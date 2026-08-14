@@ -1,0 +1,60 @@
+# Testing and continuous integration
+
+SeqCraft tests real PyPulseq events and emitted sequences; compiler tests do not mock PyPulseq.
+The CI environment constrains dependencies through `ci/constraints.txt` so an unchanged commit is
+not made red by a new lint rule, type-checker release, or incompatible PyPulseq wheel.
+
+SeqCraft currently requires Pulseq 1.5.1 behavior from the compatibility fork pinned in
+`pyproject.toml` and `ci/constraints.txt`.  Its package metadata is the same `1.5.0.post1` used by
+the incompatible PyPI wheel, so the immutable source URL is part of the dependency contract.
+
+## Pull-request CI
+
+Every push to `main` and every pull request runs four gates:
+
+1. `lint`: the established Ruff correctness baseline on Python 3.11.
+2. `types`: strict mypy checking of the pure-arithmetic core on Python 3.11.
+3. `test`: pytest and source doctests on Linux and Windows with Python 3.11 and 3.12.
+4. `examples`: isolated execution of the getting-started notebook and both build notebooks on
+   Linux with Python 3.11.
+
+The notebook runner copies `examples/` to a temporary directory before execution. Generated
+sequence files therefore never modify the working tree.
+
+To reproduce the main gates locally from the repository root:
+
+```bash
+python -m pip install --constraint ci/constraints.txt -e ".[dev,viz,rf]"
+ruff check .
+mypy src/seqcraft/core/timing.py src/seqcraft/core/units.py \
+  src/seqcraft/core/validate.py src/seqcraft/core/geometry.py src/seqcraft/ordering.py
+pytest -n auto \
+  -m "not slow and not bloch and not crossval and not hardware" \
+  --cov=seqcraft --cov-report=term-missing
+pytest --doctest-modules src/seqcraft
+python tools/run_notebook_smoke.py
+```
+
+Ruff formatting remains a pre-commit hook.  It is not yet a repository-wide CI gate because the
+existing tree has not had a dedicated format-only migration.  Likewise, mypy is intentionally
+limited to the modules that the configuration describes as structurally typeable; expand that
+list only after bringing an additional module to a clean baseline.  The README contains fenced
+examples rather than doctests, so the former empty pytest invocation is not a gate.
+
+## Tiers outside pull-request CI
+
+Simulation and reconstruction notebooks require MRzeroCore, Torch, SigPy, and artifacts generated
+by the build notebooks. Vendor hardware checks additionally require site-confidential `.asc` files
+provided through `SEQCRAFT_ASC_DIR`. Those tiers run on a controlled lab or nightly environment,
+not on public GitHub-hosted runners.
+
+The public CI result therefore proves the compiler, modules, documentation snippets, file
+round-trip, and build notebooks on the supported matrix. It does not prove vendor hardware,
+full simulation, reconstruction, or external cross-validation.
+
+## Updating dependencies
+
+Dependency updates are intentional maintenance changes. Update one related group in
+`ci/constraints.txt`, run every gate above, and record any changed warning, error, waveform,
+block-count, or notebook behavior. The constraints file pins direct CI-critical dependencies;
+transitive packages remain resolver-managed until a compatibility issue justifies locking them.

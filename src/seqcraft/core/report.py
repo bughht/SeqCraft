@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from .errors import SeqCraftError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Mapping
 
 __all__ = ['Issue', 'Report', 'ReportFailed']
 

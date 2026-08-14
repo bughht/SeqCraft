@@ -56,7 +56,7 @@ def _sample(root: LogicBlock, system: System) -> tuple[np.ndarray, dict[str, np.
     meant, before the compiler decided where the block boundaries go, which is what you want when
     the question is "did I place this correctly".
     """
-    raster = system.grad_raster_s
+    raster = system.grad_raster.dt
     placed = list(flatten(root))
     if not placed:
         return np.zeros(1), {}, []
@@ -173,7 +173,7 @@ def plot_sequence(
     seq = compiled.seq
     lo, hi = time_range if time_range is not None else (0.0, min(50e-3, compiled.duration_s))
     gamma = compiled.system.gamma
-    raster = compiled.system.grad_raster_s
+    raster = compiled.system.grad_raster.dt
 
     figure, (top, bottom) = plt.subplots(
         2, 1, figsize=figsize, sharex=True, height_ratios=(1, 2)

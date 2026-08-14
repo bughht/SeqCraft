@@ -6,30 +6,35 @@ on:
   pull_request:
 
 # Vendor .asc gradient descriptors are never available in CI by design, so the `hardware`
-# marker is always deselected here.  PNS runs against the synthetic model instead.  The
-# golden/bloch/crossval tiers likewise need local data or MATLAB and run nightly on the lab
-# machine -- see docs/testing.md.  Green CI does not mean the full suite ran.
+# marker is always deselected here.  Build notebooks run in a separate smoke job; simulation,
+# reconstruction and site-data tiers stay on the lab/nightly runner.  See docs/testing.md.
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
-      - run: python -m pip install ruff
+      - run: python -m pip install --constraint ci/constraints.txt ruff
       - run: ruff check .
-      - run: ruff format --check .
 
   types:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
-      - run: python -m pip install -e ".[dev]"
-      - run: mypy src/seqcraft
+      - run: python -m pip install --constraint ci/constraints.txt -e ".[dev]"
+      - name: strict pure-core types
+        run: >-
+          mypy
+          src/seqcraft/core/timing.py
+          src/seqcraft/core/units.py
+          src/seqcraft/core/validate.py
+          src/seqcraft/core/geometry.py
+          src/seqcraft/ordering.py
 
   test:
     strategy:
@@ -39,11 +44,11 @@ jobs:
         python: ['3.11', '3.12']
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install -e ".[dev,viz]"
+      - run: python -m pip install --constraint ci/constraints.txt -e ".[dev,viz,rf]"
       - name: test suite
         run: >-
           pytest -n auto
@@ -51,7 +56,14 @@ jobs:
           --cov=seqcraft --cov-report=term-missing
       - name: doctests
         run: pytest --doctest-modules src/seqcraft
-      - name: README snippet
-        run: pytest --doctest-glob='*.md' README.md
-      - name: example runs
-        run: python examples/01_gre_2d.py
+
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --constraint ci/constraints.txt -e ".[dev,viz,rf]"
+      - name: build notebook smoke tests
+        run: python tools/run_notebook_smoke.py

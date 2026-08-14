@@ -50,7 +50,7 @@ Examples
 --------
 Durations are summed exactly, so a solved TE still compares equal to the raster value it came from:
 
->>> terms = [1.3e-4, 5.0e-4, 3.7e-4, 2.1e-4]        # all exact multiples of 10 us
+>>> terms = [1e-5] * 121                             # all exact multiples of 10 us
 >>> sum(terms)                                      # plain addition drifts
 0.0012100000000000001
 >>> exact_sum(terms)
@@ -183,6 +183,10 @@ class Raster:
     >>> system.block_raster == Raster(10e-6)
     True
     """
+
+    _ticks: int
+    dt: float
+    name: str
 
     __slots__ = ('_ticks', 'dt', 'name')
 
