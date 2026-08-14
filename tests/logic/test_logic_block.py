@@ -152,6 +152,16 @@ def test_flatten_does_not_add_the_event_delay(opts) -> None:
     assert start == pytest.approx(1e-3)
 
 
+def test_flatten_preserves_insertion_order_for_events_at_the_same_time(opts) -> None:
+    """Same-time ordering is list order, not an incidental sort by event type or identity."""
+    events = [
+        pp.make_trapezoid(axis, area=area, system=opts)
+        for axis, area in zip(('z', 'x', 'y'), (30.0, 10.0, 20.0), strict=True)
+    ]
+    block = sc.LogicBlock('same_time').add(0.0, *events)
+    assert [event for _, event, _ in flatten(block)] == events
+
+
 def test_barrier_occupies_no_time() -> None:
     b = sc.barrier('mid')
     assert span(b) == 0.0

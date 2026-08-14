@@ -13,6 +13,7 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
+from seqcraft.core.events import content_hash
 
 
 def compile_one(system: sc.System, *nodes: tuple[float, object]) -> sc.CompiledSequence:
@@ -253,6 +254,37 @@ def test_a_negative_start_is_an_error_naming_the_likely_cause(system, opts) -> N
 def test_an_empty_tree_is_an_error(system) -> None:
     with pytest.raises(sc.CompileError, match='nothing to compile'):
         sc.compile(sc.LogicBlock('empty'), system)
+
+
+@pytest.mark.parametrize('point_kind', ['barrier', 'label'])
+def test_a_tree_with_only_zero_duration_points_is_an_error(system, point_kind) -> None:
+    """Point events cannot create a physical block without an event that occupies time."""
+    point = sc.barrier('only') if point_kind == 'barrier' else pp.make_label('LIN', 'SET', 0)
+    tree = sc.LogicBlock('point_only').add(0.0, point)
+    with pytest.raises(sc.CompileError, match='nothing to compile'):
+        sc.compile(tree, system)
+
+
+def test_compile_does_not_mutate_the_input_tree_or_events(system, opts) -> None:
+    """Compilation may register derived events, but source nodes and numeric content stay intact."""
+    gradient = pp.make_trapezoid('x', area=100.0, system=opts)
+    adc = pp.make_adc(num_samples=64, dwell=4e-6, system=opts)
+    label = pp.make_label('LIN', 'SET', 7)
+    inner = sc.LogicBlock('inner').add(0.0, gradient).add(1e-3, adc, label)
+    tree = sc.LogicBlock('root').add(2e-3, inner)
+
+    before = [
+        (start, path, id(event), content_hash(event))
+        for start, event, path in sc.flatten(tree)
+    ]
+    out = sc.compile(tree, system)
+    after = [
+        (start, path, id(event), content_hash(event))
+        for start, event, path in sc.flatten(tree)
+    ]
+
+    assert after == before
+    assert out.check().ok
 
 
 # ---------------------------------------------------------------------------------- invariants

@@ -12,6 +12,7 @@ self-consistent.
 
 from __future__ import annotations
 
+import json
 import math
 import tempfile
 from pathlib import Path
@@ -29,6 +30,11 @@ from conftest import (
 )
 
 import seqcraft as sc
+from tools.capture_compiler_baseline import stable_summary
+
+_PHASE0_BASELINE = json.loads(
+    (Path(__file__).parents[1] / 'baselines' / 'compiler_phase0.json').read_text()
+)
 
 
 # ------------------------------------------------------------------------- every recipe passes
@@ -85,6 +91,17 @@ def test_every_block_duration_lands_on_the_raster(compiled: sc.CompiledSequence)
         if not raster.holds(float(duration))
     ]
     assert not off, f'blocks off the raster: {off[:5]}'
+
+
+def test_every_recipe_matches_the_phase0_compiler_baseline(
+    compiled: sc.CompiledSequence,
+) -> None:
+    """Freeze block structure, emitted content, provenance, issue surface, and moments."""
+    name = str(compiled.definitions['Name'])
+    expected = _PHASE0_BASELINE['recipes'][name]['stable']
+    actual = stable_summary(compiled)
+    for field, value in expected.items():
+        assert actual[field] == value, f'{name}: Phase 0 baseline changed for {field}'
 
 
 # ------------------------------------------------------------------------------- GRE physics

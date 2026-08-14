@@ -58,3 +58,18 @@ Dependency updates are intentional maintenance changes. Update one related group
 `ci/constraints.txt`, run every gate above, and record any changed warning, error, waveform,
 block-count, or notebook behavior. The constraints file pins direct CI-critical dependencies;
 transitive packages remain resolver-managed until a compatibility issue justifies locking them.
+
+## Compiler refactor baseline
+
+The Phase 0 compiler baseline is documented in
+[`refactor/phase0_baseline.md`](refactor/phase0_baseline.md). Its machine-readable structural and
+performance artifact lives at `tests/baselines/compiler_phase0.json`; the integration suite checks
+the stable subset on every run. Regenerate it only after reviewing an approved behavior change:
+
+```bash
+python tools/capture_compiler_baseline.py --iterations 3
+```
+
+Current compiler responsibilities and the event/boundary support matrix are recorded in
+[`refactor/compiler_current_state.md`](refactor/compiler_current_state.md) and
+[`refactor/compiler_constraint_matrix.md`](refactor/compiler_constraint_matrix.md).

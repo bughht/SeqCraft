@@ -38,6 +38,9 @@ Measperm*
 *.npz
 *.json
 
+# Reviewed compiler snapshots are source-controlled regression inputs, not scan output.
+!tests/baselines/*.json
+
 # Generated sequences and sidecars.  Regenerate by running the notebooks.
 *.seq
 *.seq.json
