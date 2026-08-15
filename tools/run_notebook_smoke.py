@@ -11,11 +11,9 @@ import nbformat
 from nbclient import NotebookClient
 
 _ROOT = Path(__file__).resolve().parents[1]
-_NOTEBOOKS = (
-    Path('01_getting_started.ipynb'),
-    Path('dti_spiral/01_build.ipynb'),
-    Path('dti_epi/01_build.ipynb'),
-)
+# The DTI build notebooks are parked under `examples/_parked/` until a module library exists to
+# rebuild them against, so they are deliberately not executed here.  See examples/_parked/README.md.
+_NOTEBOOKS = (Path('01_getting_started.ipynb'),)
 
 
 def _execute(path: Path) -> None:
