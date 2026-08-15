@@ -28,7 +28,7 @@ from pypulseq.opts import Opts
 import seqcraft as sc
 
 if TYPE_CHECKING:
-    from seqcraft.core.compiler import CompiledSequence
+    from seqcraft.result import CompiledSequence
 
 #: Small enough that the whole tier runs in a few seconds.
 MATRIX = 32
@@ -68,6 +68,48 @@ def rf_spoil_phase(index: int, increment_rad: float) -> float:
     return (increment_rad * index * (index + 1) / 2.0) % (2.0 * math.pi)
 
 
+def slice_positions_m(n_slices: int, thickness_mm: float, gap_mm: float = 0.0) -> list[float]:
+    """
+    Slice centre offsets along the slice axis, in metres, symmetric about zero.
+
+    Scaled to metres last: ``(i * pitch_mm) / 1e3`` is exact for the common integer-millimetre
+    pitches, whereas ``i * (pitch_mm / 1e3)`` accumulates float noise that then shows up in the
+    ``SlicePositions`` definition.
+    """
+    pitch_mm = thickness_mm + gap_mm
+    first = -(n_slices - 1) / 2.0
+    return [(first + i) * pitch_mm / 1e3 for i in range(n_slices)]
+
+
+def geometry_definitions(
+    *, fov_mm: float, matrix: int, slice_mm: float, n_slices: int,
+) -> dict[str, object]:
+    """
+    The ``[DEFINITIONS]`` a fully sampled 2D acquisition is responsible for.
+
+    Written out here rather than derived from a ``Geometry`` object, because `compile` takes
+    pulseq's own definition keys and nothing else: FOV, matrix and slice order are decisions about
+    the scan, and the compiler is indifferent to why the tree looks the way it does.  A geometry
+    dataclass that produces exactly this mapping is in ``salvage/geometry.py`` for when a module
+    library wants one.
+
+    The one rule worth stating: ``kSpaceCenterLine`` here and the ``LIN`` label values below come
+    from the same expression, ``matrix // 2``.  The reference implementation wrote
+    ``kSpaceCenterLine = Ny/2 = 73.0`` while its navigator computed 36.5, and the two disagreeing
+    is precisely the failure that costs an image.
+    """
+    return {
+        'FOV': [fov_mm / 1e3, fov_mm / 1e3, slice_mm * n_slices / 1e3],
+        'SliceThickness': slice_mm / 1e3,
+        'SliceGap': 0.0,
+        'SlicePositions': slice_positions_m(n_slices, slice_mm),
+        'BaseResolution': matrix,
+        'PhaseResolution': 1.0,
+        'kSpaceCenterLine': matrix // 2,
+        'ReadoutOversamplingFactor': 1.0,
+    }
+
+
 def _readout(opts: Opts, *, fov_mm: float, matrix: int, duration_s: float = 3.2e-3):
     """
     A frequency-encoding lobe, its ADC, and where k = 0 falls inside it.
@@ -100,10 +142,10 @@ def build_gre(
     The three winders -- slice rephaser on z, phase blip on y, readout prephaser on x -- are placed
     at one time on three axes, which is the overlap the whole design exists to make free.
     """
-    geometry = sc.Geometry(
-        fov_mm=(fov_mm, fov_mm, slice_mm), matrix=(matrix, matrix, 1),
-        slice_thickness_mm=slice_mm, n_slices=n_slices,
-    )
+    defs = geometry_definitions(
+        fov_mm=fov_mm, matrix=matrix, slice_mm=slice_mm, n_slices=n_slices)
+    positions = slice_positions_m(n_slices, slice_mm)
+    centre_line = matrix // 2
     raster = sc.Raster(opts.block_duration_raster, 'block')
 
     rf, gz, gz_reph = pp.make_sinc_pulse(
@@ -125,8 +167,12 @@ def build_gre(
     seq = sc.LogicBlock('gre_2d')
     index = 0
     for slice_index in interleaved_slice_order(n_slices):
-        z = geometry.slice_positions_m[slice_index]
-        for line in geometry.pe_lines:
+        z = positions[slice_index]
+        # Fully sampled, so the phase-encode table is every line on the recon grid.  Which lines a
+        # partial-Fourier or accelerated acquisition takes is a sequence-programming choice;
+        # salvage/geometry_pe.py has that arithmetic, including the residue nudge that keeps k = 0
+        # on the sampled lattice.
+        for line in range(matrix):
             t0 = index * tr_s
             phase = rf_spoil_phase(index, math.radians(117.0))
             # A slice is selected by offsetting the RF's frequency, not by moving the gradient.
@@ -136,7 +182,7 @@ def build_gre(
                 phase_offset=phase - 2.0 * math.pi * float(gz.amplitude) * z * float(rf.delay),
             )
             pe = pp.make_trapezoid(
-                'y', area=(line - geometry.kspace_center_line) * dk, duration=1e-3, system=opts)
+                'y', area=(line - centre_line) * dk, duration=1e-3, system=opts)
             seq.add(t0, shifted, gz)
             seq.add(t0 + t_winders, gz_reph, pe, gx_pre)
             seq.add(t0 + t_readout, gx, adc)
@@ -147,8 +193,8 @@ def build_gre(
             index += 1
 
     return sc.compile(
-        seq, opts, geometry=geometry, name='gre_2d',
-        definitions={'TE': te_s, 'TR': tr_s, 'FlipAngle': flip_deg,
+        seq, opts, name='gre_2d',
+        definitions={**defs, 'TE': te_s, 'TR': tr_s, 'FlipAngle': flip_deg,
                      'RfSpoilIncrementDeg': 117.0},
     )
 
@@ -171,10 +217,10 @@ def build_se(
     conventional sign the readout ends at 3*k_max and the phase encode is mirrored -- the second
     invisible in a k-space extent check, because ``|k|`` is symmetric.
     """
-    geometry = sc.Geometry(
-        fov_mm=(fov_mm, fov_mm, slice_mm), matrix=(matrix, matrix, 1),
-        slice_thickness_mm=slice_mm, n_slices=n_slices,
-    )
+    defs = geometry_definitions(
+        fov_mm=fov_mm, matrix=matrix, slice_mm=slice_mm, n_slices=n_slices)
+    positions = slice_positions_m(n_slices, slice_mm)
+    centre_line = matrix // 2
     raster = sc.Raster(opts.block_duration_raster, 'block')
 
     rf, gz, _ = pp.make_sinc_pulse(
@@ -209,12 +255,12 @@ def build_se(
     seq = sc.LogicBlock('se_2d')
     index = 0
     for slice_index in interleaved_slice_order(n_slices):
-        z = geometry.slice_positions_m[slice_index]
-        for line in geometry.pe_lines:
+        z = positions[slice_index]
+        for line in range(matrix):                      # fully sampled; see build_gre
             t0 = index * tr_s
             offsets = {'freq_offset': float(gz.amplitude) * z}
             pe = pp.make_trapezoid(
-                'y', area=-(line - geometry.kspace_center_line) * dk, duration=1e-3, system=opts)
+                'y', area=-(line - centre_line) * dk, duration=1e-3, system=opts)
             seq.add(t0, sc.events.derive(rf, **offsets), gz)
             seq.add(t0 + t_winders, pe, gx_pre)
             seq.add(t0 + t_refoc, crusher)
@@ -229,8 +275,8 @@ def build_se(
             index += 1
 
     return sc.compile(
-        seq, opts, geometry=geometry, name='se_2d',
-        definitions={'TE': te, 'TR': tr_s},
+        seq, opts, name='se_2d',
+        definitions={**defs, 'TE': te, 'TR': tr_s},
     )
 
 

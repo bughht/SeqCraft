@@ -3,7 +3,7 @@ Bridge to MRzeroCore: simulate what the compiled sequence will actually play.
 
 MRzero's own ``.seq`` reader handles **trapezoid gradients only**, so a spiral cannot be imported
 through it at all.  :func:`to_mr0` therefore takes the events directly -- either from a compiled
-:class:`~seqcraft.core.compiler.CompiledSequence`, or from a ``pypulseq.Sequence`` that has read the
+:class:`~seqcraft.result.CompiledSequence`, or from a ``pypulseq.Sequence`` that has read the
 written file back, since pypulseq's reader does handle arbitrary waveforms.
 
 Reading the file back is the stronger of the two.  What gets simulated is then the bytes that will be
@@ -58,11 +58,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from seqcraft.core import events as ev
-from seqcraft.core.errors import MissingExtraError, format_error
+from seqcraft.design import events as ev
+from seqcraft.errors import MissingExtraError, format_error
 
 if TYPE_CHECKING:
-    from seqcraft.core.compiler import CompiledSequence
+    from seqcraft.result import CompiledSequence
 
 __all__ = [
     'Mr0Meta',
@@ -288,7 +288,7 @@ def to_mr0(
     Parameters
     ----------
     compiled
-        Either the result of :func:`~seqcraft.core.compiler.compile_sequence`, or a bare
+        Either the result of :func:`~seqcraft.compiler.compile_sequence`, or a bare
         ``pypulseq.Sequence`` -- in which case pass `opts` as well, since a ``.seq`` file records
         the raster *values* but not the ``Opts`` object they came from.
 

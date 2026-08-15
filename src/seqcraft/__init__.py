@@ -3,17 +3,17 @@ seqcraft -- composable, verifiable MRI pulse sequence programming on top of pypu
 
 Three things, and one of them is pypulseq's.
 
-:class:`~seqcraft.core.logic.LogicBlock`
+:class:`~seqcraft.design.logic.LogicBlock`
     A tree of pulseq events and nested blocks, each with a start time.  Two attributes and one
     method.  Anything may overlap anything.
-:func:`~seqcraft.core.compiler.compile_sequence`
+:func:`~seqcraft.compiler.compile_sequence`
     Turns a tree into legal pulseq blocks: finds block boundaries, sums gradients that share an
     axis, and validates the result against the amplifier.
 :class:`pypulseq.Opts`
     The scanner.  Not wrapped, not subclassed, not hidden behind a seqcraft class -- the same
     object you pass to ``pp.make_trapezoid`` is the one you pass to ``sc.compile``.
 
-:class:`~seqcraft.module.Module` is the standard shape for a *reusable* component that produces
+:class:`~seqcraft.design.module.Module` is the standard shape for a *reusable* component that produces
 blocks.  It is a convention, not a gate: the compiler never asks what produced a tree, so a plain
 function is a component too.
 
@@ -57,16 +57,30 @@ library code, and changing your own sequence should never mean editing a package
 
 Layout
 ------
-``core/`` is the compile path -- the tree, the compiler, and the arithmetic they rest on --
-and holds nothing else.  Everything beside it is deliberately *not* on that path:
-:mod:`~seqcraft.scanner` describes the machine, :mod:`~seqcraft.module` is the component
-contract, and :mod:`~seqcraft.display`, :mod:`~seqcraft.provenance` and :mod:`~seqcraft.testing`
-are tools around it.
+Four packages, named for the four questions, in the order a sequence passes through them::
+
+    scanner/     what you build against    Opts, and the PNS response model
+    design/      what you build            the tree, events, timing, units, sampling
+    compiler/    the transform             boundaries, legalization, emission, verification
+    result/      what compile returns      CompiledSequence, the report, the sidecar
+
+and three modules beside them that are on nobody's path: :mod:`~seqcraft.errors` (the exception
+hierarchy, which everything may raise), :mod:`~seqcraft.display` (the sole matplotlib importer)
+and :mod:`~seqcraft.testing` (assertions for components of your own).
+
+The dependencies run one way -- ``errors -> design -> result -> compiler`` -- and two tests
+assert it, so ``result/`` cannot come to import ``compiler/`` and nothing on the compile path can
+come to import the display helpers, the sidecar or the scanner package.
+
+This module is the only global re-export layer.  Import from here.
 
 Notes
 -----
-Importing this package is cheap and side-effect free: it does not import matplotlib, does not
-touch ``pypulseq.Opts.default``, and prints nothing.
+Importing this package is side-effect free: it does not touch ``pypulseq.Opts.default`` and prints
+nothing.  ``display`` and ``testing`` are resolved on first access rather than at import, so
+neither the plotting stack nor the assertions are paid for unless used -- though note that
+``import pypulseq`` itself imports matplotlib (in ``Sequence/calc_grad_spectrum.py``), so the
+saving is seqcraft's own weight rather than the whole plotting stack's.
 """
 
 from __future__ import annotations
@@ -75,10 +89,14 @@ import importlib
 
 from . import _compat
 from ._version import __version__
-from .core import events, timing, units, validate
-from .core.compiler import CompiledSequence, WriteResult
-from .core.compiler import compile_sequence as compile  # noqa: A001, A004
-from .core.errors import (
+from .compiler import compile_sequence as compile  # noqa: A001, A004
+from .design import events, timing, units
+from .design.logic import Item, LogicBlock, Node, barrier, flatten, span
+from .design.module import Module
+from .design.sampling import sample
+from .design.timing import Raster
+from .design.units import convert
+from .errors import (
     CompileError,
     ConfigurationError,
     DefinitionConflict,
@@ -89,12 +107,8 @@ from .core.errors import (
     UnitSanityError,
     UnknownFieldError,
 )
-from .core.geometry import Geometry
-from .core.logic import Item, LogicBlock, Node, barrier, flatten, span
-from .core.report import Issue, Report, ReportFailed
-from .core.timing import Raster
-from .core.units import convert
-from .module import Module
+from .report import Issue, Report, ReportFailed
+from .result import CompiledSequence, WriteResult
 from .scanner import hardware, opts
 
 # Fail once with a complete list, rather than letting the first caller that needs a missing
@@ -114,10 +128,9 @@ compile_sequence = compile
 _LAZY: dict[str, tuple[str, str | None]] = {
     'display': ('.display', None),
     'plot_block': ('.display', 'plot_block'),
-    'plot_kspace': ('.display', 'plot_kspace'),
     'plot_sequence': ('.display', 'plot_sequence'),
     'plot_trajectory': ('.display', 'plot_trajectory'),
-    'provenance': ('.provenance', None),
+    'provenance': ('.result.provenance', None),
     'testing': ('.testing', None),
 }
 
@@ -145,7 +158,6 @@ __all__ = [
     'CompiledSequence',
     'ConfigurationError',
     'DefinitionConflict',
-    'Geometry',
     'HardwareLimitError',
     'Issue',
     'Item',
@@ -172,14 +184,13 @@ __all__ = [
     'hardware',
     'opts',
     'plot_block',
-    'plot_kspace',
     'plot_sequence',
     'plot_trajectory',
     'provenance',
+    'sample',
     'scanner',
     'span',
     'testing',
     'timing',
     'units',
-    'validate',
 ]

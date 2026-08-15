@@ -14,7 +14,7 @@ import pytest
 from pypulseq.opts import Opts
 
 import seqcraft as sc
-from seqcraft.core.events import content_hash
+from seqcraft.design.events import content_hash
 
 
 def compile_one(opts: Opts, *nodes: tuple[float, object]) -> sc.CompiledSequence:

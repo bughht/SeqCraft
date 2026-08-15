@@ -1,10 +1,10 @@
 """
 The invariants that run on every compile -- and proof that each one can fail.
 
-`_verify` is the last line of defence: it runs for every user, on every sequence, including the
-ones no test thought of.  So each check gets two tests: it passes on a good compile, and it
-*fires* on a deliberately broken one.  A check that cannot fail is worse than no check, because
-it reads like coverage.
+`verify_against_tree` is the last line of defence: it runs for every user, on every sequence,
+including the ones no test thought of.  So each check gets two tests: it passes on a good compile,
+and it *fires* on a deliberately broken one.  A check that cannot fail is worse than no check,
+because it reads like coverage.
 """
 
 from __future__ import annotations
@@ -16,9 +16,11 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-from seqcraft.core.compiler import _label_targets, _place
-from seqcraft.core.events import knots_of as _grad_knots
-from seqcraft.core.events import pwl_moment
+from seqcraft.compiler.boundaries import label_targets
+from seqcraft.compiler.placement import place_events
+from seqcraft.compiler.verification import verify_against_tree
+from seqcraft.design.events import knots_of as _grad_knots
+from seqcraft.design.events import pwl_moment
 
 
 def pwl_moment_m1(times, amps):
@@ -107,9 +109,14 @@ def test_grad_knots_does_not_duplicate_an_extended_trapezoids_edges(opts) -> Non
 # ------------------------------------------------------------------------ the checks can fail
 def _recheck(out, placed, targets):
     """Re-run the invariants against a (possibly tampered) tree and return the fresh report."""
-    fresh = dataclasses.replace(out, report=sc.core.report.Report(()), _checked=None)
-    fresh._verify(placed, targets)
-    return fresh.report
+    return sc.Report(tuple(verify_against_tree(
+        placed,
+        targets,
+        duration_s=out.duration_s,
+        tree_duration_s=out.tree_duration_s,
+        moments=out.moments,
+        label_states=lambda: out.seq.evaluate_labels(evolution='adc'),
+    )))
 
 
 def test_m1_catches_a_gradient_that_plays_at_the_wrong_time(opts) -> None:
@@ -126,7 +133,7 @@ def test_m1_catches_a_gradient_that_plays_at_the_wrong_time(opts) -> None:
     assert not out.report.of_kind('moment'), 'must be clean to begin with'
 
     opts_ = opts
-    placed = _place(tree, opts_)
+    placed = place_events(tree, opts_)
     shifted = [
         dataclasses.replace(p, node_t=p.node_t + 10e-6, start=p.start + 10e-6,
                             end=p.end + 10e-6, res_start=p.res_start + 10e-6,
@@ -134,7 +141,7 @@ def test_m1_catches_a_gradient_that_plays_at_the_wrong_time(opts) -> None:
         if p.kind == 'trap' else p
         for p in placed
     ]
-    report = _recheck(out, shifted, _label_targets(shifted))
+    report = _recheck(out, shifted, label_targets(shifted))
     reported = [i.message for i in report.of_kind('moment')]
     assert any(m.startswith('compiled m1') for m in reported), (
         f'm1 must notice a 10 us displacement; got {report}'
@@ -151,9 +158,9 @@ def test_m0_still_catches_a_lost_lobe(opts) -> None:
     tree = sc.LogicBlock('t').add(0.0, g)
     out = sc.compile(tree, opts)
 
-    placed = _place(tree, opts)
+    placed = place_events(tree, opts)
     doubled = [*placed, *[p for p in placed if p.kind == 'trap']]
-    report = _recheck(out, doubled, _label_targets(doubled))
+    report = _recheck(out, doubled, label_targets(doubled))
     assert any('m0' in i.message for i in report.of_kind('moment')), report
 
 
@@ -175,7 +182,7 @@ def test_the_address_check_catches_a_label_on_the_wrong_readout(opts) -> None:
     assert not out.report.of_kind('address'), 'must be clean to begin with'
     assert out.check().ok
 
-    placed = _place(tree, opts)
+    placed = place_events(tree, opts)
     adc_starts = sorted(p.res_start for p in placed if p.kind == 'adc')
     wrong = {
         i: adc_starts[0]                       # claim the label belongs to the first readout
@@ -212,5 +219,5 @@ def test_duration_is_still_checked(opts) -> None:
     tree = sc.LogicBlock('t').add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
     out = sc.compile(tree, opts)
     object.__setattr__(out, 'tree_duration_s', out.tree_duration_s + 1e-3)
-    report = _recheck(out, _place(tree, opts), {})
+    report = _recheck(out, place_events(tree, opts), {})
     assert report.of_kind('duration'), report

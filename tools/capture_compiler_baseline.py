@@ -27,12 +27,12 @@ import pypulseq
 import pytest
 
 import seqcraft as sc
-from seqcraft.core.timing import EPS, to_ticks
+from seqcraft.design.timing import EPS, to_ticks
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from seqcraft.core.compiler import CompiledSequence
+    from seqcraft.result import CompiledSequence
 
 _ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_OUTPUT = _ROOT / 'tests' / 'baselines' / 'compiler_phase0.json'
@@ -137,7 +137,7 @@ def _builders() -> dict[str, Callable[[], CompiledSequence]]:
 
 def _tracked_build(builder: Callable[[], CompiledSequence]) -> tuple[CompiledSequence, dict[str, int]]:
     """Build one recipe while observing placement and split counts at existing seam points."""
-    compiler = importlib.import_module('seqcraft.core.compiler')
+    compiler = importlib.import_module('seqcraft.compiler')
     original_place = compiler._place
     original_axis_gradient = compiler._axis_gradient
     placed: list[Any] = []

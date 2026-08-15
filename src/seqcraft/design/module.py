@@ -2,7 +2,7 @@
 :class:`Module` -- the standard shape for a reusable sequence component.
 
 A module is **an MR building block that takes parameters and returns one**
-:class:`~seqcraft.core.logic.LogicBlock`.  That is the entire idea, and everything here follows
+:class:`~seqcraft.design.logic.LogicBlock`.  That is the entire idea, and everything here follows
 from keeping it that small.
 
 Three layers, three kinds of knowledge, no overlap::
@@ -154,7 +154,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from .core.logic import LogicBlock
+from ..design.logic import LogicBlock
 
 if TYPE_CHECKING:
     from pypulseq.opts import Opts

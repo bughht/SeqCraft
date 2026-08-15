@@ -15,7 +15,7 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-from seqcraft.core.timing import (
+from seqcraft.design.timing import (
     TICKS_PER_SECOND,
     Raster,
     exact_diff,

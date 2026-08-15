@@ -27,11 +27,11 @@ To reproduce the main gates locally from the repository root:
 ```bash
 python -m pip install --constraint ci/constraints.txt -e ".[dev,viz,rf]"
 ruff check .
-mypy src/seqcraft/core/timing.py src/seqcraft/core/units.py \
-  src/seqcraft/core/validate.py src/seqcraft/core/geometry.py \
-  src/seqcraft/module.py src/seqcraft/scanner/opts.py \
-  src/seqcraft/core/_compiler/model.py src/seqcraft/core/_compiler/placement.py \
-  src/seqcraft/core/_compiler/verification.py
+mypy src/seqcraft/design/timing.py src/seqcraft/design/units.py \
+  src/seqcraft/design/module.py \
+  src/seqcraft/scanner/opts.py \
+  src/seqcraft/compiler/model.py src/seqcraft/compiler/placement.py \
+  src/seqcraft/compiler/boundaries.py src/seqcraft/compiler/definitions.py
 pytest -n auto \
   -m "not slow and not bloch and not crossval and not hardware" \
   --cov=seqcraft --cov-report=term-missing

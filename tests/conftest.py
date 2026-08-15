@@ -44,10 +44,3 @@ def derated_opts(opts: Opts) -> Opts:
 
     return sc.opts.derate(opts, grad=0.8, slew=0.5)
 
-
-@pytest.fixture(scope='session')
-def geometry():
-    """A small 2D geometry: 64 x 64 over 250 mm, one 5 mm slice."""
-    import seqcraft as sc
-
-    return sc.Geometry(fov_mm=(250.0, 250.0, 5.0), matrix=(64, 64, 1), slice_thickness_mm=5.0)

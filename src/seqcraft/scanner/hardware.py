@@ -28,7 +28,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
-from ..core.errors import ConfigurationError, format_error
+from ..errors import ConfigurationError, format_error
 
 __all__ = ['ASC_ENV_VAR', 'load_hardware', 'synthetic_hardware']
 

@@ -40,7 +40,8 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pypulseq as pp
+
+from .logic import BARRIER
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -52,17 +53,17 @@ if TYPE_CHECKING:
 _EDGE_EPS = 1e-9
 
 __all__ = [
+    'ADDRESS_KEYS',
+    'AXES',
     'Event',
-    'GRAD_TYPES',
-    'channels_of',
+    'GRADIENT_KINDS',
+    'HANDLED_KINDS',
+    'LABEL_KINDS',
+    'POINT_KINDS',
     'content_hash',
     'derive',
-    'duration_of',
-    'kinds_of',
     'knots_of',
-    'moment_of',
     'pwl_moment',
-    'sanitise',
     'trapz',
     'waveform_of',
 ]
@@ -70,8 +71,42 @@ __all__ = [
 #: A pypulseq event.  Alias rather than a class: seqcraft never wraps these.
 Event = SimpleNamespace
 
+# --------------------------------------------------------------------------- the vocabulary
+# What an event *is*, as opposed to what the compiler may do with it.  These classify pulseq's
+# own ``type`` strings, so they belong beside the functions that read that field rather than in
+# the compiler -- which is also what keeps the result types free of a compiler import, since
+# ``CompiledSequence`` reads four of them.  The two genuinely-compiler constants (what may not be
+# cut, what may not share a block) stay in :mod:`seqcraft.compiler.model`, because they are
+# block-format policy rather than event identity.
+
 #: Event ``type`` values that carry a gradient on a channel.
-GRAD_TYPES = frozenset({'trap', 'grad'})
+GRADIENT_KINDS = frozenset({'trap', 'grad'})
+
+#: Events that occupy an instant rather than a span: labels, triggers, outputs.
+POINT_KINDS = frozenset({'labelset', 'labelinc', 'trigger', 'output'})
+
+#: The two label events, which write the ``[LABELS]`` registers a readout is addressed by.
+LABEL_KINDS = frozenset({'labelset', 'labelinc'})
+
+#: Every ``type`` the compiler knows how to place.  Anything else is rejected by name.
+HANDLED_KINDS = frozenset({
+    BARRIER,
+    'adc',
+    'delay',
+    'grad',
+    'labelinc',
+    'labelset',
+    'output',
+    'rf',
+    'trap',
+    'trigger',
+})
+
+#: The three logical gradient axes, in the order everything reports them.
+AXES = ('x', 'y', 'z')
+
+#: Label keys that together address a k-space location, so two ADCs sharing all of them collide.
+ADDRESS_KEYS = ('SLC', 'LIN', 'PAR', 'AVG', 'REP', 'SEG', 'ECO', 'SET')
 
 _STRIP = ('id', 'shape_IDs', '_pypulseq_sequence_event_cache')
 
@@ -113,65 +148,6 @@ def derive(event: Event, **changes: Any) -> Event:
             )
             raise AttributeError(msg)
         setattr(out, key, value)
-    return out
-
-
-def sanitise(event: Event) -> Event:
-    """
-    Strip registration state from an event obtained from ``Sequence.get_block``.
-
-    Needed when importing an existing sequence: events read back out of a ``Sequence``
-    carry that sequence's ids and cache, which must not travel into a new one.
-    """
-    return derive(event)
-
-
-def duration_of(events: Sequence[Event], *, explicit: float | None = None) -> float:
-    """
-    Return the duration a block of `events` will occupy.
-
-    Parameters
-    ----------
-    events
-        The block's events.  May be empty.
-    explicit
-        An explicit block duration.  When given it is returned as-is; pulseq treats it
-        as a floor and raises if the events are longer, which is the semantics wanted.
-
-    Returns
-    -------
-    float
-        Duration in seconds.  Zero for an empty block with no explicit duration.
-    """
-    if explicit is not None:
-        return float(explicit)
-    if not events:
-        return 0.0
-    return float(pp.calc_duration(*events))
-
-
-def kinds_of(events: Iterable[Event]) -> frozenset[str]:
-    """Return the set of ``type`` strings present in `events`."""
-    return frozenset(getattr(e, 'type', '?') for e in events)
-
-
-def channels_of(events: Iterable[Event]) -> dict[str, Event]:
-    """
-    Return ``channel -> event`` for the gradient events in `events`.
-
-    Raises
-    ------
-    ValueError
-        If two gradients share a channel, which pulseq cannot represent in one block.
-    """
-    out: dict[str, Event] = {}
-    for e in events:
-        if getattr(e, 'type', None) in GRAD_TYPES:
-            ch = e.channel
-            if ch in out:
-                msg = f'two gradients on channel {ch!r} in one block'
-                raise ValueError(msg)
-            out[ch] = e
     return out
 
 
@@ -354,41 +330,6 @@ def pwl_moment(times: np.ndarray, amps: np.ndarray, order: int = 0) -> float:
     return total
 
 
-def moment_of(event: Event, raster: float = 0.0, order: int = 0) -> float:
-    """
-    Return the `order`-th gradient moment of a single event, exactly.
-
-    Parameters
-    ----------
-    event
-        A ``trap`` or ``grad`` event.
-    raster
-        Unused, and kept only so existing calls keep working.  The moment is computed from the
-        event's exact knots, which needs no raster -- passing one never made it more accurate,
-        only less.
-    order
-        ``0`` for m0 (area, 1/m), ``1`` for m1 (s/m), ``2`` for m2 (s^2/m).  Referenced to the
-        start of the event's block, so an event's own ``delay`` counts toward orders above 0.
-
-    Returns
-    -------
-    float
-        The moment, in pulseq units (amplitudes are Hz/m, so m0 is already 1/m, i.e.
-        k-space units, and no gamma appears anywhere).
-
-    Examples
-    --------
-    >>> import pypulseq as pp
-    >>> from pypulseq.opts import Opts
-    >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=170, slew_unit='T/m/s')
-    >>> g = pp.make_trapezoid(channel='x', area=100.0, system=o)
-    >>> round(moment_of(g, o.grad_raster_time, 0), 6)
-    100.0
-    """
-    del raster
-    return pwl_moment(*knots_of(event), order)
-
-
 def content_hash(event: Event) -> str:
     """
     Return a stable hash of an event's numeric content.
@@ -426,7 +367,7 @@ def _on_grid(pieces: Sequence[tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarra
     Return `pieces` summed on the union of their knots.
 
     Exact, because a sum of piecewise-linear functions is piecewise linear with knots at the
-    union of theirs -- the same fact :func:`seqcraft.core.compiler._superpose` rests on.
+    union of theirs -- the same fact :func:`seqcraft.compiler.legalization.superpose` rests on.
     """
     grid = _merge_times(np.concatenate([t for t, _ in pieces]))
     total = np.zeros(len(grid))
@@ -525,7 +466,7 @@ def check_limits(
     chosen = [
         (event, float(t0))
         for event, t0 in zip(events, offsets)
-        if getattr(event, 'type', None) in GRAD_TYPES
+        if getattr(event, 'type', None) in GRADIENT_KINDS
     ]
     if not chosen:
         return []

@@ -21,20 +21,20 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .core import events as ev
-from .core.errors import MissingExtraError, format_error
-from .core.logic import BARRIER, LogicBlock, flatten
+from .design import events as ev
+from .design.events import AXES
+from .design.sampling import sample
+from .errors import MissingExtraError, format_error
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from pypulseq.opts import Opts
 
-    from .core.compiler import CompiledSequence
+    from .design.logic import LogicBlock
+    from .result import CompiledSequence
 
-__all__ = ['plot_block', 'plot_kspace', 'plot_sequence', 'plot_trajectory']
-
-_AXES = ('x', 'y', 'z')
+__all__ = ['plot_block', 'plot_sequence', 'plot_trajectory']
 
 
 def _pyplot() -> Any:
@@ -49,43 +49,6 @@ def _pyplot() -> Any:
         )
         raise MissingExtraError(msg) from err
     return plt
-
-
-def _sample(root: LogicBlock, opts: Opts) -> tuple[np.ndarray, dict[str, np.ndarray], list[tuple]]:
-    """
-    Sample a tree onto a uniform grid: gradients per axis, plus the RF and ADC spans.
-
-    Sampling the *tree* rather than the compiled sequence is deliberate -- it shows what the module
-    meant, before the compiler decided where the block boundaries go, which is what you want when
-    the question is "did I place this correctly".
-    """
-    raster = float(opts.grad_raster_time)
-    placed = list(flatten(root))
-    if not placed:
-        return np.zeros(1), {}, []
-
-    total = root.duration
-    n = max(2, int(round(total / raster)) + 1)
-    grid = np.arange(n) * raster
-    grads: dict[str, np.ndarray] = {}
-    marks: list[tuple] = []
-
-    for start, event, path in placed:
-        kind = getattr(event, 'type', None)
-        delay = float(getattr(event, 'delay', 0.0) or 0.0)
-        label = '.'.join(path) or kind or '?'
-        if kind in ('trap', 'grad'):
-            tt, wf = ev.waveform_of(event, raster)
-            values = np.interp(grid - start, tt, wf, left=0.0, right=0.0)
-            grads[event.channel] = grads.get(event.channel, np.zeros(n)) + values
-        elif kind == 'rf':
-            marks.append(('rf', start + delay, start + delay + float(event.shape_dur), label))
-        elif kind == 'adc':
-            span = float(event.num_samples) * float(event.dwell)
-            marks.append(('adc', start + delay, start + delay + span, label))
-        elif kind == BARRIER:
-            marks.append(('barrier', start, start, label))
-    return grid, grads, marks
 
 
 def plot_block(root: LogicBlock, opts: Opts, *, title: str = '', figsize=(10.0, 4.5)) -> Any:
@@ -114,11 +77,11 @@ def plot_block(root: LogicBlock, opts: Opts, *, title: str = '', figsize=(10.0, 
     :func:`plot_sequence` shows those.
     """
     plt = _pyplot()
-    grid, grads, marks = _sample(root, opts)
+    grid, grads, marks = sample(root, opts)
     gamma = float(opts.gamma)
 
     figure, axis = plt.subplots(figsize=figsize)
-    for name in _AXES:
+    for name in AXES:
         if name in grads:
             axis.plot(grid * 1e3, grads[name] / gamma * 1e3, label=f'G{name}', linewidth=1.2)
 
@@ -155,7 +118,7 @@ def plot_sequence(
     Parameters
     ----------
     compiled
-        The result of :func:`~seqcraft.core.compiler.compile_sequence`.
+        The result of :func:`~seqcraft.compiler.compile_sequence`.
     time_range
         ``(start, end)`` in seconds.  Defaults to the first 50 ms, because a whole acquisition is
         minutes long and drawing all of it says nothing.
@@ -183,7 +146,7 @@ def plot_sequence(
     )
     t = 0.0
     boundaries: list[float] = []
-    traces: dict[str, list[tuple[np.ndarray, np.ndarray]]] = {a: [] for a in _AXES}
+    traces: dict[str, list[tuple[np.ndarray, np.ndarray]]] = {a: [] for a in AXES}
     rf_spans: list[tuple[float, float]] = []
     adc_spans: list[tuple[float, float]] = []
 
@@ -192,7 +155,7 @@ def plot_sequence(
         if t + duration >= lo and t <= hi:
             boundaries.append(t)
             block = seq.get_block(index)
-            for name in _AXES:
+            for name in AXES:
                 grad = getattr(block, f'g{name}', None)
                 if grad is not None:
                     tt, wf = ev.waveform_of(grad, raster)
@@ -220,7 +183,7 @@ def plot_sequence(
         f'{compiled.duration_s:.3f} s'
     )
 
-    for name, colour in zip(_AXES, ('tab:blue', 'tab:orange', 'tab:purple')):
+    for name, colour in zip(AXES, ('tab:blue', 'tab:orange', 'tab:purple')):
         first = True
         for times, values in traces[name]:
             bottom.plot(
@@ -240,45 +203,12 @@ def plot_sequence(
     return figure
 
 
-def plot_kspace(compiled: CompiledSequence, *, figsize=(5.5, 5.5), max_points: int = 200_000) -> Any:
-    """
-    Plot the acquired k-space trajectory in the kx--ky plane.
-
-    Parameters
-    ----------
-    compiled
-        The compiled sequence.
-    figsize
-        Matplotlib figure size.
-    max_points
-        Decimate above this many samples, so a full acquisition still draws in a second.
-
-    Returns
-    -------
-    matplotlib.figure.Figure
-    """
-    plt = _pyplot()
-    k = compiled.kspace()['k_adc']
-    step = max(1, k.shape[1] // max_points)
-    kx, ky = k[0, ::step], k[1, ::step]
-
-    figure, axis = plt.subplots(figsize=figsize)
-    axis.plot(kx, ky, linewidth=0.4, alpha=0.8)
-    axis.plot(kx, ky, ',', color='tab:red', alpha=0.4)
-    axis.set_xlabel('$k_x$ (1/m)')
-    axis.set_ylabel('$k_y$ (1/m)')
-    axis.set_title(f'{compiled.definitions.get("Name", "sequence")} -- {k.shape[1]} samples')
-    axis.set_aspect('equal')
-    axis.grid(alpha=0.25)
-    figure.tight_layout()
-    return figure
-
-
 def plot_trajectory(
     interleaves: Iterable[tuple[np.ndarray, np.ndarray]],
     *,
     title: str = '',
     figsize=(5.5, 5.5),
+    max_points: int = 200_000,
 ) -> Any:
     """
     Plot a set of k-space interleaves, one colour per shot.
@@ -288,11 +218,16 @@ def plot_trajectory(
     interleaves
         An iterable of ``(kx, ky)`` array pairs in 1/m -- one pair per shot.  A spiral's shots, a
         radial set's spokes, one segment of an EPI train: this takes the numbers, so it works for
-        any of them.
+        any of them.  A whole acquisition is one pair::
+
+            sc.plot_trajectory([compiled.kspace()['k_adc'][:2]])
+
     title
         Figure title.  Defaults to the interleaf count.
     figsize
         Matplotlib figure size.
+    max_points
+        Decimate any interleaf longer than this, so a full acquisition still draws in a second.
 
     Returns
     -------
@@ -303,6 +238,9 @@ def plot_trajectory(
     Takes arrays rather than a readout object on purpose.  It previously took anything with
     ``.trajectory()``, ``.n_interleaves`` and ``.k_max_per_m`` -- a duck type only one class in one
     module library ever satisfied, which quietly made a plotting helper depend on that library.
+    A ``plot_kspace(compiled)`` that took a whole sequence went the same way: it was this function
+    applied to ``compiled.kspace()['k_adc'][:2]``, and spelling that out at the call site is one
+    line that says which two of the three axes are being drawn.
 
     The picture to look at when deciding an interleaf count and a density: the radial gap between
     adjacent turns of the *combined* set is what has to stay within ``1/FOV``, and undersampling
@@ -321,6 +259,8 @@ def plot_trajectory(
     count = 0
     for kx, ky in interleaves:
         kx, ky = np.asarray(kx), np.asarray(ky)
+        step = max(1, kx.size // max_points)
+        kx, ky = kx[::step], ky[::step]
         axis.plot(kx, ky, linewidth=0.7, alpha=0.85)
         limit = max(limit, float(np.max(np.abs(kx))), float(np.max(np.abs(ky))))
         count += 1

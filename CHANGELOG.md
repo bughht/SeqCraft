@@ -1,5 +1,151 @@
 # Changelog
 
+## Unreleased — four packages, and 600 fewer lines
+
+The package was one 4 700-line `core/` directory whose membership rule — *"what is required to get
+a logic block to a validated `.seq`"* — is a property of the package rather than of any file in it.
+It admitted the scheduler, the unit table, the geometry, the report type and the exception hierarchy
+alike, and gave no reason to keep anything out. It is now four packages named for four questions,
+ordered by the one direction the dependencies run.
+
+```text
+scanner/     what you build against     compiler/    the transform
+design/      what you build             result/      what compile returns
+
+errors, report  ─►  design  ─►  result  ─►  compiler
+```
+
+`errors.py` and `report.py` stay at the root as a pair — hard failures raise, soft findings report
+— because both are cross-cutting and neither is *produced* by any one layer. `Report` in particular
+is the vocabulary the compiler writes findings in: five of its stage modules build `Issue` objects
+long before a `CompiledSequence` exists, so filing it under "what compile returns" would have made
+`compiler/` import `result/` for a type.
+
+`tests/test_layering.py` asserts that order per file, read from the source rather than from
+`sys.modules`, so a `TYPE_CHECKING`-only import still counts and one satisfied by import order does
+not. Nothing in this section changes what the compiler produces: the frozen baseline
+(`tools/capture_compiler_baseline.py`) matches block for block.
+
+### Moved — every import path
+
+| was | is |
+|---|---|
+| `seqcraft.core.logic` | `seqcraft.design.logic` |
+| `seqcraft.core.events` | `seqcraft.design.events` |
+| `seqcraft.core.timing` / `.units` / `.geometry` | `seqcraft.design.timing` / `.units` / `.geometry` |
+| `seqcraft.module` | `seqcraft.design.module` |
+| `seqcraft.core.compiler` (+ `core._compiler`) | `seqcraft.compiler` |
+| `seqcraft.core.report` | `seqcraft.report` |
+| `seqcraft.provenance` | `seqcraft.result.provenance` |
+| `seqcraft.core.errors` | `seqcraft.errors` |
+| `seqcraft.core.validate` | split: `seqcraft.compiler.definitions` + `seqcraft.design.geometry` |
+| `CompiledSequence`, `WriteResult` | `seqcraft.result` |
+
+**The top-level names are otherwise unchanged.** `sc.compile`, `sc.LogicBlock`, `sc.Module`,
+`sc.Raster`, `sc.convert`, `sc.opts`, `sc.hardware`, `sc.display`, `sc.provenance`, `sc.testing`,
+`sc.events`, `sc.timing`, `sc.units` all still spell the same way, and `seqcraft` remains the only
+global re-export layer. Only code that reached past it needs editing — plus `sc.Geometry`, below.
+
+- **`sc.sample(tree, opts)` is new** — a tree as arrays, gradients per axis plus the RF/ADC spans.
+  It was `display._sample`; turning a tree into numbers is useful without drawing it, and moving it
+  out means nothing numeric is left behind the matplotlib import.
+- **`sc.validate` is gone.** `merge_definitions` is compiler-internal; the plausibility bands went
+  with `Geometry`, below.
+
+### Removed — `sc.Geometry`, and `compile(geometry=)` with it
+
+The compiler now takes pulseq's own definition keys and nothing else:
+
+```python
+out = sc.compile(tree, opts, geometry=geometry)                       # was
+out = sc.compile(tree, opts, definitions=geometry.definitions())      # is
+```
+
+`geometry=` existed to call `definitions()` on a `Geometry` and merge the eight keys that came
+back — which is what `definitions=` already did, for any source, with no dataclass in between. So
+~450 lines of dataclass plus range framework sat inside the package to produce one dict. FOV, matrix
+and slice order are decisions about the *scan* you are running; the compiler turns a tree into legal
+pulseq blocks and is indifferent to why the tree looks the way it does, and keeping `Geometry` in
+the package made it look like a required input it never was.
+
+- `CompiledSequence.geometry` is gone. `CompiledSequence.definitions` is unchanged and is now the
+  only place scan metadata lives, which is the point: what the file says and what it plays come from
+  one mapping.
+- **The class is preserved whole** in `salvage/geometry.py`, standalone — no seqcraft imports, its
+  two error types plain `ValueError` subclasses — so it can be copied into a module library or into
+  user code as it stands. Unlike the rest of `salvage/` it is *expected back*: a geometry of that
+  shape is wanted the moment the module library gets its infrastructure, and this is the design to
+  start from.
+- The two tests asserting the range bands' unit names are ones `convert` knows went with it. They
+  guarded against one package growing two spellings of a unit; with the bands outside the package
+  there is no shared vocabulary left to keep in step. `salvage/geometry.py` records the check so
+  whoever adopts it can re-establish it.
+
+### The compiler is seven files instead of one 1 724-line module
+
+`compile_sequence` is now the pass that orchestrates them, and each stage is a module with a name:
+`placement` → `boundaries` → `legalization` → `emission`, with `verification`, `model` and
+`definitions` beside them. The `_Placed` / `_GRAD` / `_place` alias shim is gone; the real names are
+at the ~180 use sites.
+
+**`CompiledSequence._verify` moved to `compiler.verification.verify_against_tree`.** It took
+`Sequence[PlacedEvent]` — the compiler's *private IR* — while living on the result type, and that
+one method was the only reason `result/` depended on `compiler/`. It is a compile stage that happens
+to run last, not an accessor, and moving it removed ~150 lines from the result type and the cycle at
+once.
+
+**`in_block_delay` lives in `compiler/model.py`**, not in `emission.py` as first planned:
+legalization needs it to delay a gradient that passes through untouched and emission needs it for
+every RF, ADC and label, so putting it in either stage would make the two import each other.
+
+### Removed — 543 lines with no reachable consumer, and 59 quarantined
+
+Each of these was found by grepping `src/`, `tests/`, `examples/`, `tools/` and `salvage/` for a
+caller and finding none.
+
+- `events`: `sanitise`, `duration_of`, `kinds_of`, `channels_of`, `moment_of` — four of nine public
+  functions had no caller and no doctest, and a fifth had only a doctest.
+- `report`: `merge`, `combine`, `to_dict`. `to_dict`'s docstring claimed it was "for the provenance
+  sidecar"; `provenance.py` never called it.
+- `errors`: `PurityError` — documented as "raised by the test helpers", which never raised it.
+- `_compat`: `probe`, `has`, `rotate_3d`, `_rotate_3d_available`, `_OPTIONAL`, `supported_rf_uses` —
+  the entire optional-capability chain. `require()` does its own `hasattr` checks and never called
+  `probe()`. The module now does exactly one job: fail once, at import, with a complete list.
+- `geometry`: `round_half_up`, `dk_per_m`, `res_mm`, `slice_position_m`, `check_module`, `params`,
+  `describe`.
+- `testing`: `assert_block`, `assert_raster`, `assert_compiles`, `module_subclasses`. The first two
+  check what the compiler already refuses with a better message — `LogicBlock.add()` rejects a
+  malformed node at construction, and an off-raster gradient start raises naming the nearest raster
+  point above *and* below plus two fixes. `assert_compiles` was one line, now inlined into
+  `assert_output`. Nine public assertions become five.
+- `display`: `plot_kspace` — it was `plot_trajectory([compiled.kspace()['k_adc'][:2]])` plus
+  decimation and a title. `plot_trajectory` absorbed both and gained `max_points=`.
+
+**Quarantined to `salvage/geometry_pe.py`:** the phase-encode table (`pe_first_index`, `pe_lines`,
+`n_pe_acquired`, `pe_lines_for_shot`, `par_first_index`, `par_lines`). `geometry` was defended as
+holding the *one* index computation `kspace_center_line` and the `LIN` label would share — but the
+sharing never happened, because the module library that would have consumed it was deleted. What is
+worth keeping is one non-obvious line, `skip += (c - skip) % r`, without which an even skip and an
+odd centre miss k = 0 entirely; it is preserved with the reasoning. `kspace_center_line` stays,
+because `definitions()` writes it.
+
+### Fixed — three stale references
+
+- `pyproject.toml` declared `[project.scripts] seqcraft = 'seqcraft.cli:main'`. There is no
+  `cli.py`, so `pip install` shipped a console script that raised `ModuleNotFoundError`.
+- Two places named `sc.opts.from_specs()`, which has never existed; the name is `from_scanner`.
+- The `viz` extra required `seqeyes-python>=0.2.9`, which nothing imports. Dropped; it belongs there
+  the day a module in `src/` actually imports it.
+
+### Corrected — a documented invariant that was not true
+
+`import seqcraft` was documented as not importing matplotlib. It does, and always did:
+`pypulseq/Sequence/calc_grad_spectrum.py` imports matplotlib at module level, so *any* import of
+pypulseq pulls it in. What seqcraft can promise, and what is now asserted, is that `display.py` is
+the only file here that imports it and that `display` and `testing` stay behind `__getattr__`.
+
+---
+
 ## Unreleased — `pp.Opts` is the scanner, and there is no module library
 
 Three concepts are removed, and none could go alone: they held each other up. Full rationale in

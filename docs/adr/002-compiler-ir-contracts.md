@@ -3,6 +3,11 @@
 - Status: Accepted
 - Date: 2026-08-14
 - Applies from: Compiler refactor Phase 1
+- **Amended by the structure revision:** the paths below are historical.  The private
+  `core/_compiler/` package became the public-by-position `seqcraft/compiler/`, and `core/`
+  no longer exists; see [`docs/architecture.md`](../architecture.md).  The decision this ADR
+  records — one facade, explicit stages, no second compile path — is unchanged and now holds
+  across seven stage modules rather than two.
 
 ## Context
 

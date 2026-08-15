@@ -70,7 +70,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from seqcraft.core.errors import MissingExtraError, format_error
+from seqcraft.errors import MissingExtraError, format_error
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

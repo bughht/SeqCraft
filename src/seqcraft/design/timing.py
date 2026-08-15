@@ -63,7 +63,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .errors import RasterError, format_error
+from ..errors import RasterError, format_error
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -317,7 +317,7 @@ class Raster:
 
     def require(self, t: float, *, what: str = 'duration') -> None:
         """
-        Raise :class:`~seqcraft.core.errors.RasterError` unless `t` lands on this raster.
+        Raise :class:`~seqcraft.errors.RasterError` unless `t` lands on this raster.
 
         The message names the two nearest valid values, so the fix is mechanical.
 
@@ -328,7 +328,7 @@ class Raster:
         >>> block.require(1.505e-3)
         Traceback (most recent call last):
             ...
-        seqcraft.core.errors.RasterError: duration 1.505000 ms is not a multiple of the 10.0 us block raster.
+        seqcraft.errors.RasterError: duration 1.505000 ms is not a multiple of the 10.0 us block raster.
           nearest below:  1.500000 ms
           nearest above:  1.510000 ms
           fix

@@ -201,34 +201,38 @@ def test_nesting_produces_the_provenance_path(opts) -> None:
 
 
 # ------------------------------------------------------------------------ the layer boundary
-def test_core_does_not_import_the_module_contract() -> None:
+def test_the_compiler_does_not_import_the_module_contract() -> None:
     """
-    The compile path must stay independent of the component contract, in that direction.
+    The compile path stays independent of the component contract, in that direction.
 
-    ``core`` takes a ``LogicBlock`` and never asks what produced it.  Importing ``seqcraft.module``
-    from anywhere inside ``core`` would make that false by construction, and the dependency would
-    be invisible until something tried to reuse the compiler on its own.
+    The compiler takes a ``LogicBlock`` and never asks what produced it.  Importing
+    ``seqcraft.design.module`` from anywhere inside ``seqcraft.compiler`` would make that false by
+    construction, and the dependency would be invisible until something tried to reuse the
+    compiler on its own.
+
+    The general layering rule is asserted in ``tests/test_layering.py``; this is the one direction
+    the ``Module`` convention itself depends on, so it is stated where ``Module`` is tested.
     """
     import importlib
     import pkgutil
     import sys
 
-    import seqcraft.core
+    import seqcraft.compiler
 
-    for info in pkgutil.walk_packages(seqcraft.core.__path__, 'seqcraft.core.'):
+    for info in pkgutil.walk_packages(seqcraft.compiler.__path__, 'seqcraft.compiler.'):
         importlib.import_module(info.name)
 
     offenders = sorted(
         name for name, mod in sys.modules.items()
-        if name.startswith('seqcraft.core')
+        if name.startswith('seqcraft.compiler')
         and mod is not None
         and any(
-            getattr(value, '__module__', '') == 'seqcraft.module'
-            or value is sys.modules.get('seqcraft.module')
+            getattr(value, '__module__', '') == 'seqcraft.design.module'
+            or value is sys.modules.get('seqcraft.design.module')
             for value in vars(mod).values()
         )
     )
-    assert not offenders, f'seqcraft.core reaches seqcraft.module from: {offenders}'
+    assert not offenders, f'seqcraft.compiler reaches seqcraft.design.module from: {offenders}'
 
 
 def test_a_plain_function_is_still_a_component(opts) -> None:
@@ -242,3 +246,52 @@ def test_a_plain_function_is_still_a_component(opts) -> None:
 
     assert out.check().ok
     assert out.origin(0) == ('tr', 'crush')
+
+    # And the shipped assertion takes it, because it asks for a callable and nothing else.
+    sc.testing.assert_output(lambda: crusher(opts), opts)
+
+
+# ------------------------------------------------------------------- the assertions we ship
+@pytest.mark.parametrize('make', [
+    pytest.param(lambda opts: Blip(opts=opts), id='Blip'),
+    pytest.param(lambda opts: Pair(opts=opts), id='Pair'),
+])
+def test_assert_all_passes_on_the_reference_modules(make, opts) -> None:
+    """
+    ``sc.testing`` is pointed at this repository's own modules, not only at other people's.
+
+    An assertion suite nobody in the project runs is a suite whose failures nobody has seen.  These
+    two are the only ``Module`` subclasses seqcraft has -- ``Blip`` designs once and scales per
+    call, ``Pair`` nests one inside another -- so between them they cover the purity check (the
+    events on ``self`` must survive two calls unchanged) and the whole-tree checks that a nesting
+    component would otherwise pass vacuously.
+
+    ``line=17`` rather than the default: ``Blip(line=0)`` is a zero-amplitude gradient, which
+    passes a limit check for the wrong reason.
+    """
+    sc.testing.assert_all(make(opts), line=17)
+
+
+def test_assert_pure_catches_the_mutation_it_exists_for(opts) -> None:
+    """
+    The canonical bug, and proof the check can fail.
+
+    ``self.g.amplitude = -self.g.amplitude`` in a per-call method is an *involution*: comparing
+    only before the first call and after the second finds the module exactly where it started.
+    ``assert_pure`` compares after each call, which is the whole reason it is written that way.
+    """
+
+    class Flipper(sc.Module):
+        """A module that mutates the event it stores, the way a readout loop used to."""
+
+        def __init__(self, *, opts, tag=None):
+            super().__init__(opts=opts, tag=tag)
+            self.g = pp.make_trapezoid('x', area=100.0, system=opts)
+
+        def build(self) -> sc.LogicBlock:
+            self.g.amplitude = -self.g.amplitude
+            return sc.LogicBlock().add(0.0, self.g)
+
+    module = Flipper(opts=opts)
+    with pytest.raises(AssertionError, match='mutated'):
+        sc.testing.assert_pure(module, module)

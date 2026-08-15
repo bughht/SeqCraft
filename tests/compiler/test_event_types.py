@@ -18,8 +18,8 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-from seqcraft.core._compiler.model import HANDLED_KINDS
-from seqcraft.core._compiler.placement import UNSUPPORTED_KINDS
+from seqcraft.compiler.placement import UNSUPPORTED_KINDS
+from seqcraft.design.events import HANDLED_KINDS
 
 
 def test_a_rotation_extension_is_rejected_not_dropped(opts) -> None:
@@ -103,7 +103,7 @@ def test_the_whitelist_accounts_for_every_pypulseq_event_type() -> None:
     next pypulseq release adding an event type seqcraft would otherwise drop.
     """
     produced = _pypulseq_event_types()
-    expected_core = set(HANDLED_KINDS) - {sc.core.logic.BARRIER}
+    expected_core = set(HANDLED_KINDS) - {sc.design.logic.BARRIER}
     assert expected_core <= produced, (
         f'introspection missed handled PyPulseq types {sorted(expected_core - produced)}; '
         'the source regex or installed package layout has changed'
@@ -112,7 +112,7 @@ def test_the_whitelist_accounts_for_every_pypulseq_event_type() -> None:
     assert not unaccounted, (
         f'pypulseq can produce {sorted(unaccounted)}, which the compiler neither emits nor '
         f'rejects by name -- they would fall through as "unknown event type". Add each to '
-        f'HANDLED_KINDS in model.py or UNSUPPORTED_KINDS in placement.py.'
+        f'HANDLED_KINDS in events.py or UNSUPPORTED_KINDS in placement.py.'
     )
 
 
@@ -141,7 +141,7 @@ def test_all_handled_types_actually_compile(opts) -> None:
         'labelinc': pp.make_label('LIN', 'INC', 1),
         'trigger': pp.make_trigger('physio1', duration=200e-6, system=opts),
         'output': pp.make_digital_output_pulse('osc0', duration=200e-6, system=opts),
-        sc.core.logic.BARRIER: sc.barrier(),
+        sc.design.logic.BARRIER: sc.barrier(),
     }
     assert set(cases) == set(HANDLED_KINDS), (
         f'HANDLED_KINDS and this table disagree: {set(HANDLED_KINDS) ^ set(cases)}'

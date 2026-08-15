@@ -1,7 +1,7 @@
 """
 Provenance sidecar: making a written ``.seq`` self-describing.
 
-Every :meth:`seqcraft.core.compiler.CompiledSequence.write` drops a ``<name>.seq.json`` beside
+Every :meth:`seqcraft.result.CompiledSequence.write` drops a ``<name>.seq.json`` beside
 the sequence recording versions, the resolved parameters the caller supplied, the achieved
 timing, the exact definitions written, and the file hash.
 
@@ -81,7 +81,7 @@ def _versions() -> dict[str, Any]:
     import numpy as np  # noqa: PLC0415
     import pypulseq as pp  # noqa: PLC0415
 
-    from . import __version__  # noqa: PLC0415
+    from .. import __version__  # noqa: PLC0415
 
     return {
         'seqcraft': __version__,
