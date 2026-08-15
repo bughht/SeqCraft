@@ -460,9 +460,13 @@ def test_a_lone_arbitrary_gradient_passes_through_untouched(opts) -> None:
     A spiral must not be resampled: it takes the fast path when it sits alone in its interval.
 
     Resampling would be lossy exactly where the diffusion measurement is most sensitive.
+
+    ``first`` and ``last`` are stated: without them ``make_arbitrary_grad`` extrapolates from the
+    end samples, which puts the waveform at -2680 Hz/m half a raster before it starts.  pypulseq's
+    own timing check calls that a step from zero, and the compile now stops on it.
     """
     wave = np.sin(np.linspace(0.0, np.pi, 500)) * 0.5 * opts.max_grad
-    g = pp.make_arbitrary_grad(channel='x', waveform=wave, system=opts)
+    g = pp.make_arbitrary_grad(channel='x', waveform=wave, first=0.0, last=0.0, system=opts)
     out = compile_one(opts, (0.0, g))
     assert out.seq.get_block(1).gx.type == 'grad'
     assert len(out.seq.get_block(1).gx.waveform) == len(wave)

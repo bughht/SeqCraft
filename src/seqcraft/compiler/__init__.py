@@ -111,6 +111,14 @@ if TYPE_CHECKING:
 
 __all__ = ['compile_sequence']
 
+#: Substrings of a ``check_timing`` complaint that stay informational rather than failing the
+#: compile.  ``TotalDuration`` is a float-equality artifact pypulseq emits even on pulseq's own
+#: approved reference files, so treating it as an error would fail every sequence.
+#:
+#: Deliberately not a parameter.  It was ``check(allow_timing=...)`` and no caller ever passed it,
+#: which makes it a knob whose only effect is to let a real timing failure through.
+_ALLOWED_TIMING = ('TotalDuration',)
+
 
 def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     root: LogicBlock,
@@ -166,9 +174,10 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     ``salvage/geometry.py`` holds the dataclass that used to be here, standalone, for when a module
     library wants one again.
 
-    Amplitude and slew violations are *reported*, not raised.  Call
-    :meth:`CompiledSequence.check` then
-    :meth:`~seqcraft.report.Report.raise_if_failed` to stop on them.
+    **Every legality failure raises**, including amplitude and slew: there is no legal sequence to
+    hand back, and a returned object carrying a report is a way of not noticing.  What the compile
+    *did* -- summed two gradients on an axis, resampled one onto the raster -- is a
+    :class:`~seqcraft.errors.SeqCraftWarning` instead.
 
     Examples
     --------
@@ -263,6 +272,24 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     # interpreter's sample limit, and do two imaging ADCs write the same k-space address.
     check_event_sizes(seq, opts, origins)
     check_label_addresses(seq)
+
+    # pypulseq's own timing audit, run here rather than offered as a method: a `.seq` that fails
+    # it is one the console will refuse, so there is nothing to hand back.
+    timing_ok, complaints = seq.check_timing()
+    if not timing_ok:
+        fatal = [
+            text for text in (str(line).strip() for line in complaints)
+            if not any(token in text for token in _ALLOWED_TIMING)
+        ]
+        if fatal:
+            msg = format_error(
+                f'pypulseq\'s timing check found {len(fatal)} problem(s) in the compiled '
+                f'sequence.',
+                dict(enumerate(fatal[:5], start=1)),
+                ['this is a compiler bug unless the tree contains raw events built against a '
+                 'different Opts -- please report it with the tree that produced it'],
+            )
+            raise CompileError(msg)
 
     # Named sources, so a conflict says *who* claimed the key twice rather than "already"/"also".
     defs = merge_definitions({

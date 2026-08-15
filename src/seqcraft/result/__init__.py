@@ -39,7 +39,6 @@ from ..report import Issue, Report, ReportFailed
 from .provenance import _jsonable, write_sidecar
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from pathlib import Path
     from types import SimpleNamespace
 
@@ -128,19 +127,14 @@ class CompiledSequence:
             f'{len(self.report.warnings)} warnings)'
         )
 
-    def check(self, *, allow_timing: Sequence[str] = ('TotalDuration',)) -> Report:
+    def check(self) -> Report:
         """
-        Run every post-compile check and return one report.
+        Return the compile report, with the block count and duration attached.
 
-        Combines the compile report with ``Sequence.check_timing``.  Event-size and
-        label-address checking moved into the compile itself, where they raise.
-
-        Parameters
-        ----------
-        allow_timing
-            Substrings of ``check_timing`` messages to downgrade to information.  Defaults to
-            the ``TotalDuration`` float-equality artifact, which pypulseq emits even on
-            pulseq's own approved reference files.
+        Everything this used to *find* now raises during the compile: limit violations, event
+        sizes, duplicate k-space addresses and pypulseq's timing audit.  What is left is a view
+        of what the compile *did*, so ``ok`` is always true and there is nothing to forget to
+        check.  It is on its way out with the rest of this type.
 
         Examples
         --------
@@ -155,14 +149,7 @@ class CompiledSequence:
         """
         if self._checked is not None:
             return self._checked
-        issues = list(self.report.issues)
-        ok, errors = self.seq.check_timing()
-        if not ok:
-            for line in errors:
-                text = str(line).strip()
-                allowed = any(token in text for token in allow_timing)
-                issues.append(Issue('timing', 'sequence', text, 'info' if allowed else 'error'))
-        out = Report(tuple(issues), subject=self.report.subject, values={
+        out = Report(self.report.issues, subject=self.report.subject, values={
             'n_blocks': self.n_blocks,
             'duration_s': self.duration_s,
         })
