@@ -95,6 +95,7 @@ simulation stack; they remain external Phase 0 evidence rather than a public PR 
 
 ## Exit status
 
-Local Phase 0 gates are complete. Remote completion still requires a green pull-request run for the
-Phase 0 commit. Until that run exists, this report is a locally verified candidate baseline rather
-than authorization to start behavior-changing work.
+Phase 0 local and remote gates are complete. GitHub Actions
+[run #10](https://github.com/bughht/SeqCraft/actions/runs/31852265376) passed all seven jobs at
+commit `7be79bf`: lint, types, examples, and Ubuntu/Windows tests on Python 3.11 and 3.12. Phase 1 may
+begin, subject to ADR-000's no-change and private-package scope.

@@ -52,10 +52,17 @@ CRUD is Python's, not seqcraft's: create with `add`, read with `lb.nodes[i]` or 
 
 ## `sc.compile` — the scheduler
 
-The only complicated thing in the project, deliberately: one hard thing, in one file, tested hard.
-Boundaries come from where RF and ADC events fall and nowhere else; same-axis gradients are summed
-with a warning; different axes are silent; limits are checked on the *compiled* waveform because that
-is the only place a merge's effect is visible. Full detail in [`compiler.md`](compiler.md).
+The only deliberately complicated subsystem in the project: one public façade, explicit internal
+stages, and tests at each responsibility boundary. The Phase 0 implementation still concentrates
+placement, boundary selection, gradient legalization, emission, and verification in
+`core/compiler.py`; the refactor extracts those responsibilities without changing the public API.
+Internally this is treated as a deterministic constrained-scheduling algorithm: tree placement,
+interval legality, boundary selection, piecewise-linear gradient transformation, and mechanical
+emission.
+Boundaries come from where RF and ADC events fall and nowhere else under the current policy;
+same-axis gradients are summed with a warning; different axes are silent; limits are checked on the
+*compiled* waveform because that is the only place a merge's effect is visible. Full detail in
+[`compiler.md`](compiler.md).
 
 Returns a `CompiledSequence` holding the `pypulseq.Sequence`, the compile report, and per-block
 provenance. There is **no `Sequence` class** in seqcraft — a sequence *is* a logic block, and
@@ -64,6 +71,22 @@ compiling it produces the artifact.
 Its signature is `compile(root: LogicBlock, system: System, ...)`, and that is the whole of what it
 knows about the world upstream of it. A test asserts that `core` never imports `seqcraft.modules`,
 because the direction of that arrow is the design.
+
+The compatible implementation boundary is:
+
+```text
+src/seqcraft/core/
+├── compiler.py              public façade and orchestration
+└── _compiler/               private stage contracts and implementations
+    ├── model.py
+    ├── placement.py
+    ├── legalization.py
+    ├── emission.py
+    └── verification.py
+```
+
+The private package is introduced incrementally. It must not expose a second compile path or force
+users to import stage types.
 
 ---
 
@@ -107,6 +130,18 @@ base for writing components is not on that path, and while it lived there it rea
 
 `core` holds what is required to get from a logic block to a legal, validated `.seq` — and nothing
 else. That is the whole membership rule, and it is what keeps the layer small enough to read.
+
+Membership in `core` does not require every responsibility to remain in one flat file. Conversely,
+moving a file is not evidence that its responsibility improved. Phases 1–6 only organize compiler
+internals under `core/_compiler`; they do not relocate unrelated core modules. Phase 7 records a
+dependency- and cohesion-based boundary audit, and any broader move requires a separate decision and
+compatibility plan. The audit scope and evidence rules are defined in
+[`refactor/core_package_boundary_audit.md`](refactor/core_package_boundary_audit.md).
+
+Phase 1 establishes the private `PlacedEvent` and `PulseqReadyBlock` contracts while the existing
+`compile_sequence` control flow remains authoritative. Their time arithmetic and shallow
+immutability policies are recorded in [ADR-001](adr/001-compiler-internal-time-policy.md) and
+[ADR-002](adr/002-compiler-ir-contracts.md).
 
 | Module | What it is for |
 |---|---|
@@ -170,6 +205,8 @@ can read), a YAML or GUI front end, and a `.seq` importer.
 
 ## Layout
 
+The current public layout remains:
+
 ```
 src/seqcraft/
   core/          logic  compiler  system  geometry  events
@@ -187,3 +224,9 @@ examples/     01_getting_started
               lib/                    sim + recon helpers, not the package
 docs/         architecture  compiler  writing_a_module
 ```
+
+During the compiler refactor, `core/compiler.py` remains import-compatible while private stage files
+are added beneath `core/_compiler/`. Phase 1 adds only `model.py` and the verification skeleton;
+placement, legalization, and emission remain in the façade until their numbered extraction phases.
+The current flat compiler implementation is removed only after the differential and public-import
+gates pass.
