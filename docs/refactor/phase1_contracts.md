@@ -42,6 +42,6 @@ passed all seven jobs: lint, types, examples, and Ubuntu/Windows tests on Python
 
 ## Exit status
 
-All Phase 1 local and hosted gates are complete. The implementation remains on
-`refactor/compiler-phases`; `main` was not changed. Phase 2 may begin after the Phase 1 merge
-recommendation is reviewed.
+All Phase 1 local and hosted gates are complete. Phase 1 was merged through
+[PR #4](https://github.com/bughht/SeqCraft/pull/4) at merge commit `824f380`; the long-lived
+`refactor/compiler-phases` branch was fast-forwarded to the same commit for Phase 2.

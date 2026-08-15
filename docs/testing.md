@@ -28,7 +28,8 @@ python -m pip install --constraint ci/constraints.txt -e ".[dev,viz,rf]"
 ruff check .
 mypy src/seqcraft/core/timing.py src/seqcraft/core/units.py \
   src/seqcraft/core/validate.py src/seqcraft/core/geometry.py src/seqcraft/ordering.py \
-  src/seqcraft/core/_compiler/model.py src/seqcraft/core/_compiler/verification.py
+  src/seqcraft/core/_compiler/model.py src/seqcraft/core/_compiler/placement.py \
+  src/seqcraft/core/_compiler/verification.py
 pytest -n auto \
   -m "not slow and not bloch and not crossval and not hardware" \
   --cov=seqcraft --cov-report=term-missing

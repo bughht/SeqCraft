@@ -18,7 +18,8 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-from seqcraft.core.compiler import _HANDLED, _UNSUPPORTED
+from seqcraft.core._compiler.model import HANDLED_KINDS
+from seqcraft.core._compiler.placement import UNSUPPORTED_KINDS
 
 
 def test_a_rotation_extension_is_rejected_not_dropped(system, opts) -> None:
@@ -42,10 +43,10 @@ def test_the_rotation_error_says_how_to_get_the_rotation(system, opts) -> None:
     assert 'dwi' in text, 'the message must name where in the tree it came from'
 
 
-@pytest.mark.parametrize('kind', sorted(_UNSUPPORTED))
+@pytest.mark.parametrize('kind', sorted(UNSUPPORTED_KINDS))
 def test_every_unsupported_type_names_itself_and_offers_a_way_round(kind) -> None:
     """Each entry must carry a description and at least one hint, or the error is useless."""
-    what, hints = _UNSUPPORTED[kind]
+    what, hints = UNSUPPORTED_KINDS[kind]
     assert what, f'{kind} has no description'
     assert not what.endswith('.'), 'the description is a phrase, not a sentence'
     assert hints, f'{kind} has no hints'
@@ -102,21 +103,21 @@ def test_the_whitelist_accounts_for_every_pypulseq_event_type() -> None:
     next pypulseq release adding an event type seqcraft would otherwise drop.
     """
     produced = _pypulseq_event_types()
-    expected_core = set(_HANDLED) - {sc.core.logic.BARRIER}
+    expected_core = set(HANDLED_KINDS) - {sc.core.logic.BARRIER}
     assert expected_core <= produced, (
         f'introspection missed handled PyPulseq types {sorted(expected_core - produced)}; '
         'the source regex or installed package layout has changed'
     )
-    unaccounted = produced - set(_HANDLED) - set(_UNSUPPORTED)
+    unaccounted = produced - set(HANDLED_KINDS) - set(UNSUPPORTED_KINDS)
     assert not unaccounted, (
         f'pypulseq can produce {sorted(unaccounted)}, which the compiler neither emits nor '
         f'rejects by name -- they would fall through as "unknown event type". Add each to '
-        f'_HANDLED or _UNSUPPORTED in core/compiler.py.'
+        f'HANDLED_KINDS in model.py or UNSUPPORTED_KINDS in placement.py.'
     )
 
 
 def test_unsupported_and_handled_do_not_overlap() -> None:
-    assert not (set(_HANDLED) & set(_UNSUPPORTED))
+    assert not (set(HANDLED_KINDS) & set(UNSUPPORTED_KINDS))
 
 
 def test_all_handled_types_actually_compile(system, opts) -> None:
@@ -142,8 +143,8 @@ def test_all_handled_types_actually_compile(system, opts) -> None:
         'output': pp.make_digital_output_pulse('osc0', duration=200e-6, system=opts),
         sc.core.logic.BARRIER: sc.barrier(),
     }
-    assert set(cases) == set(_HANDLED), (
-        f'_HANDLED and this table disagree: {set(_HANDLED) ^ set(cases)}'
+    assert set(cases) == set(HANDLED_KINDS), (
+        f'HANDLED_KINDS and this table disagree: {set(HANDLED_KINDS) ^ set(cases)}'
     )
     for kind, event in cases.items():
         tree = sc.LogicBlock('t').add(0.0, pp.make_delay(2e-3)).add(0.0, event)
