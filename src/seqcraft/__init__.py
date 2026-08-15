@@ -104,6 +104,7 @@ from .errors import (
     MissingExtraError,
     RasterError,
     SeqCraftError,
+    SeqCraftWarning,
     UnitSanityError,
     UnknownFieldError,
 )
@@ -170,6 +171,7 @@ __all__ = [
     'Report',
     'ReportFailed',
     'SeqCraftError',
+    'SeqCraftWarning',
     'UnitSanityError',
     'UnknownFieldError',
     'WriteResult',

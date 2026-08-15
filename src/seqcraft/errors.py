@@ -35,6 +35,7 @@ __all__ = [
     'MissingExtraError',
     'RasterError',
     'SeqCraftError',
+    'SeqCraftWarning',
     'UnitSanityError',
     'UnknownFieldError',
     'format_error',
@@ -43,6 +44,21 @@ __all__ = [
 
 class SeqCraftError(Exception):
     """Base class for every error raised by seqcraft."""
+
+
+class SeqCraftWarning(UserWarning):
+    """
+    The compiler changed a waveform or a time to make the sequence legal.
+
+    Not a failure: it names something the compile *did* -- summed two gradients that shared an
+    axis, resampled one onto the raster to join a boundary, snapped a reservation to the block
+    raster -- rather than something it refused.  A ``UserWarning`` subclass, so the standard
+    ``warnings`` machinery applies::
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', SeqCraftWarning)   # treat any as fatal
+            seq = sc.compile(tree, opts)
+    """
 
 
 class ConfigurationError(SeqCraftError):
