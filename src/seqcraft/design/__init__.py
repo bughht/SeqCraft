@@ -21,14 +21,15 @@ number -- and none of them has an opinion about where the boundaries will fall.
 :mod:`~seqcraft.design.units`
     :func:`~seqcraft.design.units.convert`, one function for every pair of units a sequence deals
     in, and the plausibility bands that catch a millimetre passed as a metre.
-:mod:`~seqcraft.design.sampling`
-    :func:`~seqcraft.design.sampling.sample`, a tree as arrays -- useful without drawing it.
+``sample`` used to be here, as a sixth module.  It is in :mod:`seqcraft.analysis` now, beside the
+other three ways of measuring a tree -- one place to look for "give it a tree, get numbers back",
+and one place to state which of them are exact.
 
 Import from :mod:`seqcraft` rather than from here for everyday use.
 """
 
 from __future__ import annotations
 
-from . import events, logic, module, sampling, timing, units
+from . import events, logic, module, timing, units
 
-__all__ = ['events', 'logic', 'module', 'sampling', 'timing', 'units']
+__all__ = ['events', 'logic', 'module', 'timing', 'units']
