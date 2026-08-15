@@ -6,8 +6,9 @@ the sequence recording versions, the resolved parameters the caller supplied, th
 timing, the exact definitions written, and the file hash.
 
 :func:`build_sidecar` takes a plain mapping, so what those parameters came from is not its
-concern: :meth:`seqcraft.modules.base.Module.params` produces one for a module, and a component
-of your own supplies whatever dict describes it.
+concern: the compiler hands it ``vars(opts)`` for the scanner, and a component describes itself
+with whatever dict it likes.  Nothing is scraped off an object's ``__dict__``, so a module that
+wants to be recorded says so.
 
 The problem this solves is concrete.  The reference implementation's archived files carry
 no b-value, no diffusion directions, no moment order, no acceleration and no partial-Fourier
