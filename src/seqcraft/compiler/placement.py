@@ -9,16 +9,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ..design.events import HANDLED_KINDS
+from ..design.logic import BARRIER, flatten
 from ..errors import CompileError, format_error
-from ..logic import BARRIER, flatten
-from .model import HANDLED_KINDS, PlacedEvent
+from .model import PlacedEvent
 
 if TYPE_CHECKING:
     from types import SimpleNamespace
 
     from pypulseq.opts import Opts
 
-    from ..logic import LogicBlock
+    from ..design.logic import LogicBlock
 
 # Recognized PyPulseq kinds that require explicit rejection rather than an unknown-kind fallback.
 UNSUPPORTED_KINDS: dict[str, tuple[str, tuple[str, ...]]] = {

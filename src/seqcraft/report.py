@@ -1,7 +1,7 @@
 """
 Findings as data: :class:`Issue` and :class:`Report`.
 
-Hard failures raise (see :mod:`seqcraft.core.errors`).  Soft findings -- a gradient at
+Hard failures raise (see :mod:`seqcraft.errors`).  Soft findings -- a gradient at
 98 % of the limit, a b-value 0.4 % below target after raster rounding -- become a
 :class:`Report`, which is a value: it can be asserted on, rendered as a table, written into
 the provenance sidecar, or turned into an exception on demand.
@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from .errors import SeqCraftError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Mapping
 
 __all__ = ['Issue', 'Report', 'ReportFailed']
 
@@ -124,24 +124,6 @@ class Report:
         """Issues whose :attr:`Issue.kind` equals `kind`."""
         return tuple(i for i in self.issues if i.kind == kind)
 
-    # --------------------------------------------------------------------- combining
-    def merge(self, *others: Report, subject: str | None = None) -> Report:
-        """Return a new report combining this one with `others`."""
-        issues = list(self.issues)
-        values = dict(self.values)
-        for other in others:
-            issues.extend(other.issues)
-            values.update(other.values)
-        return Report(tuple(issues), subject=subject or self.subject, values=values)
-
-    @classmethod
-    def combine(cls, reports: Iterable[Report], *, subject: str = '') -> Report:
-        """Combine an iterable of reports into one."""
-        reports = list(reports)
-        if not reports:
-            return cls((), subject=subject)
-        return reports[0].merge(*reports[1:], subject=subject or reports[0].subject)
-
     # ---------------------------------------------------------------------- raising
     def raise_if_failed(self) -> Report:
         """
@@ -197,24 +179,6 @@ class Report:
             )
         except Exception as exc:  # noqa: BLE001 - a raising repr makes a notebook unusable
             return f'<pre>Report could not render: {exc!r}</pre>'
-
-    def to_dict(self) -> dict[str, Any]:
-        """JSON-safe representation, for the provenance sidecar."""
-        return {
-            'subject': self.subject,
-            'ok': self.ok,
-            'values': dict(self.values),
-            'issues': [
-                {
-                    'kind': i.kind,
-                    'where': i.where,
-                    'message': i.message,
-                    'severity': i.severity,
-                    'data': dict(i.data) if i.data else None,
-                }
-                for i in self.issues
-            ],
-        }
 
 
 def _fmt(value: Any) -> str:

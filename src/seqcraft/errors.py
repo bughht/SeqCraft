@@ -16,7 +16,7 @@ Every message follows one shape so it is scannable and so a test can assert on i
         <option 2>
 
 Use :func:`format_error` to build the body.  Soft findings are *not* exceptions -- they
-belong in a :class:`seqcraft.core.report.Report` as an ``Issue`` so they survive into the
+belong in a :class:`seqcraft.report.Report` as an ``Issue`` so they survive into the
 provenance sidecar.
 """
 
@@ -33,7 +33,6 @@ __all__ = [
     'DefinitionConflict',
     'HardwareLimitError',
     'MissingExtraError',
-    'PurityError',
     'RasterError',
     'SeqCraftError',
     'UnitSanityError',
@@ -73,17 +72,13 @@ class CompileError(SeqCraftError):
     Raised for the conditions the compiler cannot resolve by scheduling: two RF or ADC events
     overlapping in time, a negative absolute start, or a block boundary falling inside a
     gradient that an ADC is sampling.  Amplitude and slew violations are reported through a
-    :class:`~seqcraft.core.report.Report` instead, because there are usually several and
+    :class:`~seqcraft.report.Report` instead, because there are usually several and
     seeing them all at once is more useful than stopping at the first.
     """
 
 
 class DefinitionConflict(SeqCraftError):
     """Two sources claimed the same ``.seq`` definition key with different values."""
-
-
-class PurityError(AssertionError):
-    """A module mutated itself or a shared event. Raised by the test helpers."""
 
 
 class MissingExtraError(SeqCraftError):

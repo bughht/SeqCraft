@@ -33,7 +33,9 @@ internal / derived values        strict SI or pulseq-native, SI suffix: ``fov_m`
 There is no ``Quantity`` type and no ``pint``.  A unit type would poison numpy interop for
 waveform arrays and would still not prevent the actual observed bug class, which is a *plausible
 number in the wrong unit* -- ``fov=220`` meaning millimetres reaching code that reads metres.
-That is caught by the range bands in :mod:`seqcraft.core.validate`, not by a type.
+That is caught by a range check where the parameter enters, not by a type.  The plausibility bands
+that did it for ``Geometry`` -- one per unit suffix, so most fields need no per-field code -- are in
+``salvage/geometry.py``, for whichever module library grows one next.
 
 Precision
 ---------
@@ -45,7 +47,7 @@ carries a single rounding, which is the best float64 can do:
 2.5e-05
 
 Exact *raster* arithmetic -- summing durations, quantising onto a 10 us grid -- is a different
-job and lives in :mod:`seqcraft.core.timing`.
+job and lives in :mod:`seqcraft.design.timing`.
 
 Gamma, and other system parameters
 ----------------------------------
@@ -70,7 +72,7 @@ import math
 from fractions import Fraction
 from typing import NamedTuple
 
-from .errors import ConfigurationError, format_error
+from ..errors import ConfigurationError, format_error
 
 __all__ = ['GAMMA_1H', 'convert', 'dimension_of', 'dimensions', 'known_units']
 

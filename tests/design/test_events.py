@@ -13,7 +13,7 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-from seqcraft.core import events as ev
+from seqcraft.design import events as ev
 
 
 @pytest.fixture

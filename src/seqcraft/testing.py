@@ -2,8 +2,8 @@
 Assertions for testing your own sequence components.
 
 What seqcraft can check about a component is what it *produces*: a
-:class:`~seqcraft.core.logic.LogicBlock` that lands on the raster, respects the amplifier, and
-compiles to a legal ``.seq``.  Nothing here asks what produced it, so a plain function and a class
+:class:`~seqcraft.design.logic.LogicBlock` that is reproducible, respects the amplifier, and compiles
+to a legal ``.seq`` on its own.  Nothing here asks what produced it, so a plain function and a class
 of your own design get exactly the same checks a :class:`seqcraft.Module` subclass gets::
 
     import seqcraft as sc
@@ -20,6 +20,13 @@ the scanner -- and reads them off the module itself::
 
 They are ordinary functions raising ``AssertionError``, so they work with pytest, unittest, or a
 bare script.
+
+What is deliberately *not* here is any check the compiler already makes with a better message.
+A malformed node cannot be constructed -- :meth:`~seqcraft.design.logic.LogicBlock.add` rejects
+anything that is neither an event nor a block -- and an off-raster gradient start makes
+:func:`~seqcraft.compiler.compile_sequence` raise, naming the nearest raster point above and
+below and two ways to fix it.  A second, thinner assertion for either would only be a worse error
+message competing with the good one.
 
 Examples
 --------
@@ -43,14 +50,11 @@ Examples
 
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, Any
 
-from .core import events as ev
-from .core.compiler import compile_sequence
-from .core.logic import LogicBlock, flatten
-from .core.timing import Raster
-from .module import Module
+from .compiler import compile_sequence
+from .design import events as ev
+from .design.logic import LogicBlock, flatten
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -59,14 +63,10 @@ if TYPE_CHECKING:
 
 __all__ = [
     'assert_all',
-    'assert_block',
-    'assert_compiles',
     'assert_deterministic',
     'assert_output',
     'assert_pure',
-    'assert_raster',
     'assert_within_limits',
-    'module_subclasses',
 ]
 
 
@@ -76,40 +76,6 @@ def _name(block: LogicBlock) -> str:
 
 
 # ------------------------------------------------------------------ what any component produces
-def assert_block(block: object) -> None:
-    """
-    Assert that `block` is a well-formed :class:`~seqcraft.core.logic.LogicBlock`.
-
-    This is the whole of seqcraft's contract with a component: whatever it hands the compiler is
-    a logic block, and one whose children are events or nested blocks at finite times.
-    ``nodes`` is a plain list you are invited to mutate, so the second half is worth checking.
-
-    Raises
-    ------
-    AssertionError
-        Naming what was returned, or which node is malformed.
-
-    Examples
-    --------
-    >>> import pypulseq as pp
-    >>> import seqcraft as sc
-    >>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s')
-    >>> g = pp.make_trapezoid('x', area=100.0, system=opts)
-    >>> sc.testing.assert_block(sc.LogicBlock('mine').add(0.0, g))
-    """
-    assert isinstance(block, LogicBlock), (
-        f'expected a seqcraft.LogicBlock, got {type(block).__name__} -- a component takes part '
-        f'in a sequence by returning one'
-    )
-    for index, node in enumerate(block.nodes):
-        assert math.isfinite(node.start), f'{_name(block)} node {index} starts at {node.start}'
-        assert isinstance(node.item, LogicBlock) or getattr(node.item, 'type', None) is not None, (
-            f'{_name(block)} node {index} holds a {type(node.item).__name__}, which is neither a '
-            f'pulseq event nor a LogicBlock'
-        )
-    assert math.isfinite(block.duration), f'{_name(block)} has a duration of {block.duration}'
-
-
 def assert_deterministic(make: Callable[[], LogicBlock]) -> None:
     """
     Assert that two calls of `make` produce the same block.
@@ -143,24 +109,6 @@ def assert_deterministic(make: Callable[[], LogicBlock]) -> None:
         where = '.'.join(path) or '-'
         assert abs(t_a - t_b) < 1e-12, f'event {index} ({where}) moved from {t_a} to {t_b}'
         assert ev.content_hash(a) == ev.content_hash(b), f'event {index} ({where}) changed'
-
-
-def assert_raster(block: LogicBlock, opts: Opts) -> None:
-    """
-    Assert that every gradient in `block` starts on the gradient raster of `opts`.
-
-    Walks the whole tree rather than its direct children, so a nested component's own placement is
-    checked too.  Only gradients: an RF or ADC event carries its own dead time in its ``delay`` and
-    answers to the RF raster, which pypulseq's own timing check covers.
-    """
-    raster = Raster(float(opts.grad_raster_time), 'gradient')
-    for index, (start, event, path) in enumerate(flatten(block)):
-        if getattr(event, 'type', None) not in ('trap', 'grad'):
-            continue
-        assert raster.holds(start), (
-            f'{_name(block)} gradient {index} ({".".join(path) or "-"}) starts at '
-            f'{start * 1e6:.4f} us, off the {raster.dt * 1e6:.0f} us raster'
-        )
 
 
 def assert_within_limits(block: LogicBlock, opts: Opts) -> None:
@@ -201,32 +149,6 @@ def assert_within_limits(block: LogicBlock, opts: Opts) -> None:
     assert not violations, f'{_name(block)}: {violations}'
 
 
-def assert_compiles(block: LogicBlock, opts: Opts) -> None:
-    """
-    Assert that `block` produces a legal pulseq sequence on its own.
-
-    A component that only works when something else happens to be beside it is not reusable, so this
-    compiles the block alone and requires a clean report.
-
-    Examples
-    --------
-    >>> import pypulseq as pp
-    >>> import seqcraft as sc
-    >>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
-    ...                rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
-    >>> block = sc.LogicBlock('spoil').add(0.0, pp.make_trapezoid('z', area=500.0, system=opts))
-    >>> sc.testing.assert_compiles(block, opts)
-    """
-    if not block.nodes or block.duration == 0.0:
-        return
-    out = compile_sequence(LogicBlock(f'assert_{_name(block)}').add(0.0, block), opts)
-    errors = [
-        issue for issue in out.check().errors
-        if issue.kind != 'timing' or 'TotalDuration' not in issue.message
-    ]
-    assert not errors, f'{_name(block)} does not compile cleanly on its own: {errors}'
-
-
 def assert_output(make: Callable[[], LogicBlock], opts: Opts) -> None:
     """
     Run every block-level assertion against whatever `make` returns.
@@ -234,12 +156,24 @@ def assert_output(make: Callable[[], LogicBlock], opts: Opts) -> None:
     The universal one: it takes a callable, so it applies to a module call, to one of several
     methods on a class of your own, or to a bare function.  Nothing here inspects the caller.
 
+    Three checks, and each is here because nothing else performs it:
+
+    **Determinism** -- two calls agree across the whole tree, by content hash.
+
+    **Per-axis limits** -- against the ``Opts`` the component was *designed* against, with node
+    times, which the compiler's own limit check cannot supply because it sees one block at a time.
+
+    **It compiles alone** -- a component that only works when something else happens to be beside
+    it is not reusable.  The compile is what checks the raster: an off-raster gradient start makes
+    :func:`~seqcraft.compiler.compile_sequence` raise ``CompileError`` naming the nearest
+    raster point above and below, which is strictly more than a separate assertion could say.
+
     Parameters
     ----------
     make
-        A callable of no arguments returning a :class:`~seqcraft.core.logic.LogicBlock`.
+        A callable of no arguments returning a :class:`~seqcraft.design.logic.LogicBlock`.
     opts
-        The scanner to check the raster and limits against, and to compile with.
+        The scanner to check the limits against, and to compile with.
 
     Examples
     --------
@@ -255,11 +189,16 @@ def assert_output(make: Callable[[], LogicBlock], opts: Opts) -> None:
     >>> sc.testing.assert_output(crusher, opts)
     """
     block = make()
-    assert_block(block)
     assert_deterministic(make)
-    assert_raster(block, opts)
     assert_within_limits(block, opts)
-    assert_compiles(block, opts)
+    if not block.nodes or block.duration == 0.0:
+        return
+    out = compile_sequence(LogicBlock(f'assert_{_name(block)}').add(0.0, block), opts)
+    errors = [
+        issue for issue in out.check().errors
+        if issue.kind != 'timing' or 'TotalDuration' not in issue.message
+    ]
+    assert not errors, f'{_name(block)} does not compile cleanly on its own: {errors}'
 
 
 # ---------------------------------------------------------------- the conventions Module follows
@@ -339,45 +278,3 @@ def _event_hashes(component: object) -> dict[str, str]:
         for key, value in vars(component).items()
         if getattr(value, 'type', None) is not None
     }
-
-
-# ------------------------------------------------------------------------------------- discovery
-def module_subclasses() -> dict[str, type[Module]]:
-    """
-    Return every concrete subclass of :class:`seqcraft.Module`, keyed by class name.
-
-    seqcraft ships no concrete modules, so this finds **your** library -- import your package
-    first.  It is not the set of valid seqcraft components either: a function or a class that
-    never heard of ``Module`` produces logic blocks just as well, and anything generic belongs in
-    :func:`assert_output`, which asks nothing about ancestry.
-
-    What this *is* for is parametrising a contract suite over the classes that do follow the
-    convention, so one of them gains the whole suite the moment it is written.  Subclassing is the
-    registration: there is no decorator to forget, which is what a registry could not guarantee --
-    a module that omitted ``@register()`` silently lost its coverage, the failure the registry
-    existed to prevent.
-
-    Classes whose name begins with an underscore are private shared bases and are skipped, as are
-    those left abstract by an ``abc.abstractmethod``.
-
-    Examples
-    --------
-    >>> import pypulseq as pp
-    >>> import seqcraft as sc
-    >>> class Crusher(sc.Module):
-    ...     def build(self):
-    ...         return sc.LogicBlock().add(0.0, pp.make_trapezoid('z', area=400.0,
-    ...                                                           system=self.opts))
-    >>> 'Crusher' in sc.testing.module_subclasses()
-    True
-    """
-    out: dict[str, type[Module]] = {}
-
-    def walk(cls: type[Module]) -> None:
-        for sub in cls.__subclasses__():
-            if not sub.__name__.startswith('_') and not getattr(sub, '__abstractmethods__', None):
-                out[sub.__name__] = sub
-            walk(sub)
-
-    walk(Module)
-    return dict(sorted(out.items()))

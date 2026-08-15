@@ -20,7 +20,7 @@ Compiler stages use one policy:
 
 - External and IR time fields remain seconds as `float` for PyPulseq compatibility.
 - Duration addition/subtraction and raster quantization use `core.timing` integer-tick helpers.
-- Ordering and interval containment use the named helpers in `core._compiler.model`, all based on
+- Ordering and interval containment use the named helpers in `compiler.model`, all based on
   the existing `EPS` tolerance.
 - Active intervals (`start`, `end`) and hardware reservations (`res_start`, `res_end`) remain
   distinct. A comparison must name which interval it is using.

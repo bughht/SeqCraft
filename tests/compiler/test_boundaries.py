@@ -14,7 +14,8 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-from seqcraft.core.compiler import _boundaries, _place
+from seqcraft.compiler.boundaries import find_boundaries
+from seqcraft.compiler.placement import place_events
 
 
 def _epi_tree(opts, n_echo: int) -> sc.LogicBlock:
@@ -36,14 +37,14 @@ def _epi_tree(opts, n_echo: int) -> sc.LogicBlock:
 
 
 def _time_boundaries(opts, n_echo: int) -> float:
-    placed = _place(_epi_tree(opts, n_echo), opts)
+    placed = place_events(_epi_tree(opts, n_echo), opts)
     raster = sc.Raster(opts.block_duration_raster)
     total = raster.ceil(max(p.res_end for p in placed))
     max_block = float(opts.block_duration_raster) * 2**24
     best = float('inf')
     for _ in range(3):                          # best of three; we care about the floor, not noise
         t0 = time.perf_counter()
-        _boundaries(placed, total, raster, max_block)
+        find_boundaries(placed, total, raster, max_block)
         best = min(best, time.perf_counter() - t0)
     return best
 

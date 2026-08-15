@@ -12,7 +12,7 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-from seqcraft.core.logic import flatten, span
+from seqcraft.design.logic import flatten, span
 
 
 # ------------------------------------------------------------------------------------- create

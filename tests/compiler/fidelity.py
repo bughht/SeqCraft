@@ -6,8 +6,8 @@ everywhere if and only if they agree at the union of their knots.  That makes th
 rather than a sampled approximation: no tolerance on the time axis, and no risk of a
 distortion hiding between sample points.
 
-Deliberately independent of :mod:`seqcraft.core.compiler` and
-:mod:`seqcraft.core.events` -- it re-derives the pulseq semantics from the raw event fields.
+Deliberately independent of :mod:`seqcraft.compiler` and
+:mod:`seqcraft.design.events` -- it re-derives the pulseq semantics from the raw event fields.
 An oracle that shared code with the thing it checks would hide exactly the bugs it exists to
 find.
 
@@ -35,12 +35,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from seqcraft.core.logic import BARRIER, LogicBlock, flatten
+from seqcraft.design.logic import BARRIER, LogicBlock, flatten
 
 if TYPE_CHECKING:
     from types import SimpleNamespace
 
-    from seqcraft.core.compiler import CompiledSequence
+    from seqcraft.result import CompiledSequence
 
 __all__ = ['axis_knots', 'compare', 'compiled_knots', 'describe_mismatch', 'tree_knots']
 

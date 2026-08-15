@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 import seqcraft as sc
-from seqcraft.core.units import GAMMA_1H, convert, dimension_of, dimensions, known_units
+from seqcraft.design.units import GAMMA_1H, convert, dimension_of, dimensions, known_units
 
 # ------------------------------------------------------------------------------ known values
 # Each is an independently quoted equivalence, not a number the code produced.
@@ -157,29 +157,3 @@ def test_dimension_lookup() -> None:
     assert dimension_of('s/mm^2') == 'bvalue'
     with pytest.raises(sc.ConfigurationError, match='unknown dimension'):
         known_units('nonsense')
-
-
-# -------------------------------------------------------- one vocabulary with validate.py
-def test_validate_range_units_are_units_convert_knows() -> None:
-    """
-    The plausibility bands and the converter must not develop two spellings of one unit.
-
-    ``validate`` names a unit per field-name suffix; if that name is not in the converter's table,
-    an error message can quote a unit no user can pass back in.
-    """
-    unknown = {
-        band.unit
-        for band in sc.validate.DEFAULT_RANGES.values()
-        if band.unit not in known_units()
-    }
-    assert not unknown, f'units in validate.DEFAULT_RANGES that convert does not know: {unknown}'
-
-
-def test_validate_alias_units_are_units_convert_knows() -> None:
-    unknown = {
-        name
-        for band in sc.validate.DEFAULT_RANGES.values()
-        for _, name in band.aliases
-        if name not in known_units()
-    }
-    assert not unknown, f'alias units convert does not know: {unknown}'

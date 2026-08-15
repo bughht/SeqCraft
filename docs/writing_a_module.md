@@ -290,11 +290,13 @@ ADC events overlapping is an error. See [`compiler.md`](compiler.md).
 
 ## Units, and where the check went
 
-The base no longer runs one. `sc.validate.check_fields` still exists for dataclasses, and the
-plausibility bands are still keyed off the unit suffix, but calling anything is your decision —
-because the base holds what is true of *every* module, and this is not.
+The base no longer runs one, and there is no helper in the package to call either. The plausibility
+bands keyed off the unit suffix — what turns `fov_mm=0.22` into *"0.22 looks like m. Did you mean
+fov_mm=220?"* — left with `Geometry`, and are in [`salvage/geometry.py`](../salvage/geometry.py).
+They are worth adopting when a module library grows the infrastructure to share them; copying them
+into your own package is the intended use.
 
-State the range where the range is actually known:
+Until then: state the range where the range is actually known.
 
 ```python
 if not 0.5 <= fov_mm <= 2000:

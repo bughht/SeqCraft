@@ -66,7 +66,7 @@ from typing import TYPE_CHECKING, Any
 
 from pypulseq.opts import Opts
 
-from ..core.errors import (
+from ..errors import (
     ConfigurationError,
     MissingExtraError,
     UnknownFieldError,

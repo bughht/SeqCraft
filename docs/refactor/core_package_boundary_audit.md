@@ -1,64 +1,37 @@
-# Core package boundary audit charter
+# Core package boundary audit charter — superseded
 
-- Status: Charter accepted; findings deferred to Phase 7
-- Scope: `src/seqcraft/core/`
-- Implementation authority: None until a follow-up decision is accepted
+- Status: **Superseded.** Closed by the structure revision, which carried out the move this
+  charter existed to authorise.
+- Superseded by: [`docs/architecture.md`](../architecture.md) for the resulting layout, and
+  `tests/test_layering.py` for the rule that keeps it.
 
-## Purpose
+## What it asked
 
-The compiler refactor and a package-wide core cleanup solve different problems. Phases 1–6 turn the
-compiler into an explicit, deterministic pipeline. This audit asks whether every other core module
-has a coherent responsibility and dependency position after that pipeline exists.
+Whether every module in `src/seqcraft/core/` had a coherent responsibility and dependency position
+once the compiler had been turned into an explicit pipeline — and it deliberately withheld
+implementation authority until that question had an evidence-backed answer.
 
-The audit prevents two opposite mistakes: retaining unrelated code in `core` merely because it is
-already there, and moving cohesive low-level code merely to make the directory look different.
+## What the answer turned out to be
 
-## Fixed compiler boundary
+`core` did not. Its membership rule — *"what is required to get a logic block to a validated
+`.seq`"* — is a property of the whole package rather than of any file in it, so it admitted the
+scheduler, the unit table, the geometry, the report type and the exception hierarchy into one
+4 700-line directory and gave no reason to keep any of them out. The audit's own framing names the
+failure: it asked whether each module had "a coherent dependency position", which is a question a
+directory called `core` cannot answer.
 
-The compiler refactor uses the following private layout:
+The replacement is four packages named for four questions — `scanner/`, `design/`, `compiler/`,
+`result/` — ordered by the one direction the dependencies run. That rule is mechanical, so
+`tests/test_layering.py` checks it per file rather than a document asserting it.
 
-```text
-src/seqcraft/core/
-├── compiler.py              compatible façade and orchestration
-└── _compiler/               private stage contracts and implementations
-    ├── model.py
-    ├── placement.py
-    ├── legalization.py
-    ├── emission.py
-    └── verification.py
-```
+## What is worth keeping from it
 
-Phases 1–6 may create and populate `core/_compiler`. They may not relocate other core modules.
+The two mistakes it was written to prevent are both still real, and both still apply to whatever
+moves next:
 
-## Audit scope
+- retaining unrelated code in a package merely because it is already there;
+- moving cohesive low-level code merely to make the directory look different.
 
-Phase 7 reviews `compiler`, `logic`, `events`, `system`, `geometry`, `timing`, `units`, `validate`,
-`errors`, and `report`. For each module, record:
-
-- its responsibility and owner;
-- incoming and outgoing imports, including public import paths;
-- whether it is required on the `LogicBlock → legal validated .seq` path;
-- cohesion, test ownership, and circular-import risk;
-- compatibility cost if its path changes;
-- a recommendation: keep, split, move, or merge.
-
-Recommendations require concrete evidence from the dependency graph and tests. File length or a
-preference for a flatter or deeper directory is not sufficient evidence.
-
-## Non-goals
-
-This audit does not authorize:
-
-- public import changes;
-- broad file moves in compiler extraction commits;
-- repository-wide typing, formatting, or naming cleanup;
-- changes to `LogicBlock`, module, timing, waveform, or error semantics;
-- speculative abstractions for future backends.
-
-## Deliverables and decision rule
-
-Phase 7 completes this document with a dependency graph, a module-by-module decision table, and
-follow-up issues. Moves required to remove the legacy compiler path may remain in Phase 7. All other
-approved structural changes require a separate post-refactor plan, compatibility review, ADR, and
-PR sequence.
-
+The second is why `design/timing.py`, `design/units.py` and `design/logic.py` moved without a line
+changing, and why `display.py` was **not** split into a package: three public functions with no
+callers is not a subsystem yet.

@@ -5,7 +5,7 @@ A logic block is a list of children, each with a start time measured from the bl
 start.  A child is either a pulseq event or another logic block.  That is the whole model.
 
 Overlap is legal everywhere in the tree -- two gradients on one axis, a gradient across an
-RF, anything.  Making it legal *for pulseq* is :mod:`seqcraft.core.compiler`'s job.  Keeping
+RF, anything.  Making it legal *for pulseq* is :mod:`seqcraft.compiler`'s job.  Keeping
 those two concerns apart is what lets a module say what it means (a diffusion lobe here, a
 readout there) without also having to know where pulseq's block boundaries will land.
 
@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Any, Union, overload
 
 import pypulseq as pp
 
-from .errors import ConfigurationError, format_error
+from ..errors import ConfigurationError, format_error
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

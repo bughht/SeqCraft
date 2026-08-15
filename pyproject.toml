@@ -28,7 +28,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-viz = ['matplotlib>=3.7', 'seqeyes-python>=0.2.9']
+# matplotlib only: seqcraft.display is the sole importer of a plotting library, and it imports
+# nothing else.  A second backend belongs here the day a module in src/ actually imports it.
+viz = ['matplotlib>=3.7']
 rf = ['sigpy>=0.1.26']              # SLR pulse design, via pypulseq.make_slr_pulse
 # The affine argument VoxelGridPhantom requires arrived in MRzeroCore 1.0; without it the phantom
 # builds but its voxels land in the wrong place, which is scaled or shifted rather than an error.
@@ -36,7 +38,8 @@ sim = ['MRzeroCore>=1.0', 'torch>=2.0']
 recon = ['sigpy>=0.1.26']           # the off-resonance-corrected reconstruction in examples/lib
 marcos = ['marga-pulseq>=0.2.2']
 # Vendor max_grad/max_slew/B0 as data, for sc.opts.from_scanner().  Optional on purpose:
-# sc.opts.from_specs() takes any mapping, so a spec sheet typed by hand needs no dependency.
+# from_scanner() also accepts every Opts field as a keyword, so a spec sheet typed by hand
+# needs no dependency at all.
 systems = ['pulseq-systems>=0.1.3']
 dev = [
   'pytest>=8',
@@ -54,9 +57,6 @@ dev = [
 ]
 docs = ['mkdocs', 'mkdocs-material', 'mkdocs-jupyter', 'mkdocstrings-python', 'mkdocs-awesome-nav']
 all = ['seqcraft[viz,rf,sim,recon,marcos,systems]']
-
-[project.scripts]
-seqcraft = 'seqcraft.cli:main'
 
 [project.urls]
 Homepage = 'https://github.com/cmr-group/seqcraft'
@@ -107,14 +107,13 @@ warn_redundant_casts = true
 # therefore structurally untypeable; do not attempt to type pypulseq itself.
 [[tool.mypy.overrides]]
 module = [
-  'seqcraft.core._compiler.model',
-  'seqcraft.core._compiler.placement',
-  'seqcraft.core._compiler.verification',
-  'seqcraft.core.timing',
-  'seqcraft.core.units',
-  'seqcraft.core.validate',
-  'seqcraft.core.geometry',
-  'seqcraft.module',
+  'seqcraft.compiler.boundaries',
+  'seqcraft.compiler.definitions',
+  'seqcraft.compiler.model',
+  'seqcraft.compiler.placement',
+  'seqcraft.design.module',
+  'seqcraft.design.timing',
+  'seqcraft.design.units',
   'seqcraft.scanner.opts',
 ]
 strict = true

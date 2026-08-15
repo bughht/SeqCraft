@@ -9,11 +9,10 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-import seqcraft.core.compiler as compiler
-from seqcraft.core._compiler.model import (
+import seqcraft.compiler as compiler
+from seqcraft.compiler import emission
+from seqcraft.compiler.model import (
     EXCLUSIVE_KINDS,
-    GRADIENT_KINDS,
-    HANDLED_KINDS,
     PlacedEvent,
     PulseqReadyBlock,
     interval_duration,
@@ -22,10 +21,11 @@ from seqcraft.core._compiler.model import (
     time_equal,
     time_strictly_between,
 )
-from seqcraft.core._compiler.verification import (
+from seqcraft.compiler.verification import (
     verify_placed_events,
     verify_ready_blocks,
 )
+from seqcraft.design.events import GRADIENT_KINDS, HANDLED_KINDS
 
 
 def _event(kind: str) -> SimpleNamespace:
@@ -117,11 +117,17 @@ def test_ready_verifier_reports_timing_and_exclusivity() -> None:
 
 
 def test_authoritative_compile_path_produces_both_contracts(monkeypatch, opts) -> None:
-    """Phase 1 wraps the existing algorithm rather than adding a second compiler path."""
+    """
+    The compile path really does produce both IRs, rather than running a second algorithm beside
+    them.
+
+    Patched in two places because the two contracts are checked by two stages: the pass verifies
+    the placed events it receives, and emission verifies each ready block as it builds it.
+    """
     seen_placed: list[PlacedEvent] = []
     seen_ready: list[PulseqReadyBlock] = []
     real_placed = compiler.verify_placed_events
-    real_ready = compiler.verify_ready_blocks
+    real_ready = emission.verify_ready_blocks
 
     def capture_placed(events):
         seen_placed.extend(events)
@@ -132,7 +138,7 @@ def test_authoritative_compile_path_produces_both_contracts(monkeypatch, opts) -
         return real_ready(blocks, **kwargs)
 
     monkeypatch.setattr(compiler, 'verify_placed_events', capture_placed)
-    monkeypatch.setattr(compiler, 'verify_ready_blocks', capture_ready)
+    monkeypatch.setattr(emission, 'verify_ready_blocks', capture_ready)
 
     grad = pp.make_trapezoid('x', area=100.0, duration=1e-3, system=opts)
     tree = sc.LogicBlock('tr').add(0.0, grad).add(2e-3, pp.make_delay(1e-3))

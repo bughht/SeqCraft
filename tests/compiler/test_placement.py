@@ -8,10 +8,10 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-import seqcraft.core.compiler as compiler
-from seqcraft.core._compiler.model import PlacedEvent
-from seqcraft.core._compiler.placement import place_events
-from seqcraft.core.events import content_hash
+import seqcraft.compiler as compiler
+from seqcraft.compiler.model import PlacedEvent
+from seqcraft.compiler.placement import place_events
+from seqcraft.design.events import content_hash
 
 
 def test_nested_offsets_keep_insertion_order_and_provenance(opts) -> None:
@@ -133,8 +133,14 @@ def test_placement_error_carries_stage_and_nested_source_without_changing_text(o
 
 
 def test_compiler_facade_uses_the_single_placement_implementation(opts) -> None:
-    """The migration alias points at the extracted function instead of retaining old traversal."""
-    assert compiler._place is place_events
-    placed = compiler._place(sc.LogicBlock('t').add(0.0, pp.make_delay(1e-3)), opts)
+    """
+    The compile path traverses the tree in exactly one place.
+
+    Placement was extracted from a second, inlined traversal inside ``compile_sequence``; the two
+    then had to be kept in step by hand.  The name the facade calls must therefore *be* the
+    extracted function, not a re-implementation that happens to agree today.
+    """
+    assert compiler.place_events is place_events
+    placed = compiler.place_events(sc.LogicBlock('t').add(0.0, pp.make_delay(1e-3)), opts)
     assert isinstance(placed, tuple)
     assert all(isinstance(event, PlacedEvent) for event in placed)

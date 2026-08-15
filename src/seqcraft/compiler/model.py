@@ -3,39 +3,34 @@
 The contracts deliberately hold references to PyPulseq events instead of copying them.  SeqCraft
 treats those event objects as read-only during compilation; tuples freeze the compiler-owned
 structure without pretending that third-party ``SimpleNamespace`` instances are deeply immutable.
+
+**Block-format policy only.**  What an event *is* -- which types carry a gradient, which are
+instants, which are labels, which the compiler handles at all -- is event identity rather than a
+compiler decision, and lives in :mod:`seqcraft.design.events` beside the functions that read pulseq's
+``type`` field.  The two constants here are the ones the compiler genuinely owns: they answer *may
+a boundary fall inside this* and *may two of these share a block*, which are properties of the
+pulseq block format, not of the event.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..logic import BARRIER
-from ..timing import EPS, exact_diff
+from ..design.timing import EPS, Raster, exact_diff
 
-# Event groups encode block-format constraints, not Python class relationships.  Keeping them in
-# one module makes every compiler stage use the same classification vocabulary.
-GRADIENT_KINDS = frozenset({'trap', 'grad'})
-POINT_KINDS = frozenset({'labelset', 'labelinc', 'trigger', 'output'})
+if TYPE_CHECKING:
+    from pypulseq.opts import Opts
+
+#: No block boundary may fall strictly inside one of these: each is a single hardware action --
+#: an RF's dead time and ringdown, an ADC's window and trailing dead time, a trigger's pulse --
+#: rather than a waveform, so a cut inside it has no meaning.
 INDIVISIBLE_KINDS = frozenset({'rf', 'adc', 'trigger', 'output'})
+
+#: A block holds at most one of these, so a boundary is *required* between two.  RF and ADC only:
+#: triggers are ``TRIGGERS`` extensions and pulseq accepts several per block, so treating them as
+#: exclusive would invent a constraint the hardware does not have.
 EXCLUSIVE_KINDS = frozenset({'rf', 'adc'})
-LABEL_KINDS = frozenset({'labelset', 'labelinc'})
-HANDLED_KINDS = frozenset(
-    {
-        BARRIER,
-        'adc',
-        'delay',
-        'grad',
-        'labelinc',
-        'labelset',
-        'output',
-        'rf',
-        'trap',
-        'trigger',
-    }
-)
-AXES = ('x', 'y', 'z')
-ADDRESS_KEYS = ('SLC', 'LIN', 'PAR', 'AVG', 'REP', 'SEG', 'ECO', 'SET')
 
 
 def time_equal(left: float, right: float) -> bool:
@@ -113,6 +108,29 @@ class PlacedEvent:
         return f'PlacedEvent({self.summary()})'
 
 
+def in_block_delay(p: PlacedEvent, block_start: float, opts: Opts) -> float:
+    """
+    Return an event's delay within its block, quantised onto that event's own raster.
+
+    Two reasons this cannot be a plain subtraction.  The absolute times come from arithmetic over
+    a sequence that may run for minutes, so by the last TR the float resolution is coarser than a
+    picosecond and ``p.start - block_start`` drifts -- pypulseq then reports an RF delay of
+    ``129.9999999986us`` and rejects the block.  And pulseq requires each event's delay to sit on
+    its own raster -- 1 us for RF, 100 ns for ADC and 10 us for gradients on Siemens, whatever
+    the scanner reports elsewhere.  Subtracting in integer ticks and then snapping satisfies both.
+
+    Time policy rather than a stage: legalization needs it to delay a gradient that passes
+    through untouched, and emission needs it for every RF, ADC and label it places.  Owning it
+    here is what keeps those two stages in one dependency direction.
+    """
+    dt = max(0.0, exact_diff(p.start, block_start))
+    raster = {
+        'rf': Raster(float(opts.rf_raster_time), 'RF'),
+        'adc': Raster(float(opts.adc_raster_time), 'ADC'),
+    }.get(p.kind, Raster(float(opts.grad_raster_time), 'gradient'))
+    return raster.nearest(dt)
+
+
 @dataclass(frozen=True)
 class PulseqReadyBlock:
     """An immutable block contract ready for mechanical PyPulseq emission."""
@@ -144,15 +162,10 @@ class PulseqReadyBlock:
 
 
 __all__ = [
-    'ADDRESS_KEYS',
-    'AXES',
     'EXCLUSIVE_KINDS',
-    'GRADIENT_KINDS',
-    'HANDLED_KINDS',
     'INDIVISIBLE_KINDS',
-    'LABEL_KINDS',
-    'POINT_KINDS',
     'PlacedEvent',
+    'in_block_delay',
     'PulseqReadyBlock',
     'interval_duration',
     'time_at_or_before',
