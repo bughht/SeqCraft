@@ -116,7 +116,7 @@ def test_ready_verifier_reports_timing_and_exclusivity() -> None:
     assert 'contains more than one ADC event' in messages
 
 
-def test_authoritative_compile_path_produces_both_contracts(monkeypatch, system, opts) -> None:
+def test_authoritative_compile_path_produces_both_contracts(monkeypatch, opts) -> None:
     """Phase 1 wraps the existing algorithm rather than adding a second compiler path."""
     seen_placed: list[PlacedEvent] = []
     seen_ready: list[PulseqReadyBlock] = []
@@ -136,7 +136,7 @@ def test_authoritative_compile_path_produces_both_contracts(monkeypatch, system,
 
     grad = pp.make_trapezoid('x', area=100.0, duration=1e-3, system=opts)
     tree = sc.LogicBlock('tr').add(0.0, grad).add(2e-3, pp.make_delay(1e-3))
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
 
     assert seen_placed and all(isinstance(event, PlacedEvent) for event in seen_placed)
     assert seen_ready and all(isinstance(block, PulseqReadyBlock) for block in seen_ready)

@@ -121,37 +121,17 @@ def stable_summary(compiled: CompiledSequence) -> dict[str, Any]:
 
 
 def _builders() -> dict[str, Callable[[], CompiledSequence]]:
-    """Load the existing integration recipes without copying them into this tool."""
+    """
+    Load the integration recipes without copying them into this tool.
+
+    Two recipes, both raw pypulseq.  The DTI and EPI-DWI entries went with the module library they
+    were built on; they return when a module set is written to rebuild them against.
+    """
     namespace = runpy.run_path(str(_ROOT / 'tests' / 'integration' / 'conftest.py'))
 
-    def gre() -> CompiledSequence:
-        return namespace['build_gre'](sc.System.preset('generic_3t'))
-
-    def spin_echo() -> CompiledSequence:
-        return namespace['build_se'](sc.System.preset('generic_3t'))
-
-    def dti_spiral() -> CompiledSequence:
-        system = sc.System.preset('generic_3t').derate('dwi', grad=0.85, slew=0.65)
-        return namespace['build_dti'](
-            system,
-            regime='dwi',
-            n_directions=6,
-            n_slices=2,
-        )
-
-    def epi_dwi() -> CompiledSequence:
-        return namespace['build_epi_dwi'](
-            namespace['epi_dwi_system'](),
-            regime='epi',
-            n_directions=6,
-            n_slices=2,
-        )
-
     return {
-        'epi_dwi': epi_dwi,
-        'gre_2d': gre,
-        'se_2d': spin_echo,
-        'spiral_dti': dti_spiral,
+        'gre_2d': namespace['build_gre'],
+        'se_2d': namespace['build_se'],
     }
 
 

@@ -112,7 +112,7 @@ def _recheck(out, placed, targets):
     return fresh.report
 
 
-def test_m1_catches_a_gradient_that_plays_at_the_wrong_time(system, opts) -> None:
+def test_m1_catches_a_gradient_that_plays_at_the_wrong_time(opts) -> None:
     """
     The failure m0 is blind to.
 
@@ -122,10 +122,10 @@ def test_m1_catches_a_gradient_that_plays_at_the_wrong_time(system, opts) -> Non
     """
     g = pp.make_trapezoid('x', area=500.0, duration=1e-3, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(3e-3, pp.make_delay(1e-3))
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     assert not out.report.of_kind('moment'), 'must be clean to begin with'
 
-    opts_ = system.limits('default')
+    opts_ = opts
     placed = _place(tree, opts_)
     shifted = [
         dataclasses.replace(p, node_t=p.node_t + 10e-6, start=p.start + 10e-6,
@@ -145,19 +145,19 @@ def test_m1_catches_a_gradient_that_plays_at_the_wrong_time(system, opts) -> Non
     )
 
 
-def test_m0_still_catches_a_lost_lobe(system, opts) -> None:
+def test_m0_still_catches_a_lost_lobe(opts) -> None:
     """The original invariant must keep working: dropping area is what it is for."""
     g = pp.make_trapezoid('x', area=500.0, duration=1e-3, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g)
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
 
-    placed = _place(tree, system.limits('default'))
+    placed = _place(tree, opts)
     doubled = [*placed, *[p for p in placed if p.kind == 'trap']]
     report = _recheck(out, doubled, _label_targets(doubled))
     assert any('m0' in i.message for i in report.of_kind('moment')), report
 
 
-def test_the_address_check_catches_a_label_on_the_wrong_readout(system, opts) -> None:
+def test_the_address_check_catches_a_label_on_the_wrong_readout(opts) -> None:
     """
     The check the duplicate-address test cannot do.
 
@@ -171,11 +171,11 @@ def test_the_address_check_catches_a_label_on_the_wrong_readout(system, opts) ->
         .add(2000e-6, pp.make_label('LIN', 'SET', 7))
         .add(5000e-6, adc)
     )
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     assert not out.report.of_kind('address'), 'must be clean to begin with'
     assert out.check().ok
 
-    placed = _place(tree, system.limits('default'))
+    placed = _place(tree, opts)
     adc_starts = sorted(p.res_start for p in placed if p.kind == 'adc')
     wrong = {
         i: adc_starts[0]                       # claim the label belongs to the first readout
@@ -189,7 +189,7 @@ def test_the_address_check_catches_a_label_on_the_wrong_readout(system, opts) ->
     assert 'LIN' in ' '.join(i.message for i in report.of_kind('address'))
 
 
-def test_the_duplicate_address_check_would_not_have_caught_it(system, opts) -> None:
+def test_the_duplicate_address_check_would_not_have_caught_it(opts) -> None:
     """
     Why the address invariant had to be added.
 
@@ -200,17 +200,17 @@ def test_the_duplicate_address_check_would_not_have_caught_it(system, opts) -> N
     tree = sc.LogicBlock('t')
     for i in range(3):
         tree.add(i * 5e-3, adc, pp.make_label('LIN', 'SET', i + 1))
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     labels = out.seq.evaluate_labels(evolution='adc')
     seen = [int(v) for v in np.atleast_1d(np.asarray(labels['LIN']))]
     assert len(set(seen)) == len(seen), 'unique, so the duplicate check is silent'
     assert not [i for i in out.check().issues if i.kind == 'label']
 
 
-def test_duration_is_still_checked(system, opts) -> None:
+def test_duration_is_still_checked(opts) -> None:
     """The oldest invariant, and the one that fences boundary merging (W6)."""
     tree = sc.LogicBlock('t').add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     object.__setattr__(out, 'tree_duration_s', out.tree_duration_s + 1e-3)
-    report = _recheck(out, _place(tree, system.limits('default')), {})
+    report = _recheck(out, _place(tree, opts), {})
     assert report.of_kind('duration'), report
