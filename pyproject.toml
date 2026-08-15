@@ -108,7 +108,6 @@ warn_redundant_casts = true
 [[tool.mypy.overrides]]
 module = [
   'seqcraft.compiler.boundaries',
-  'seqcraft.compiler.definitions',
   'seqcraft.compiler.model',
   'seqcraft.compiler.placement',
   'seqcraft.design.module',

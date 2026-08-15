@@ -82,7 +82,7 @@ import pypulseq as pp
 
 from ..design.events import GRADIENT_KINDS
 from ..design.timing import EPS, Raster
-from ..errors import CompileError, SeqCraftWarning, format_error
+from ..errors import CompileError, DefinitionConflict, SeqCraftWarning, format_error
 from ..result import CompiledSequence
 from .boundaries import (
     check_exclusive,
@@ -91,7 +91,6 @@ from .boundaries import (
     label_targets,
     orphan_label_notes,
 )
-from .definitions import merge_definitions
 from .emission import emit_blocks
 from .placement import place_events
 from .verification import (
@@ -342,11 +341,24 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
             )
             raise CompileError(msg)
 
-    # Named sources, so a conflict says *who* claimed the key twice rather than "already"/"also".
-    defs = merge_definitions({
-        'the sequence name': {'Name': name or root.tag or 'seqcraft'},
-        'the definitions= argument': dict(definitions or {}),
-    })
+    # Two sources, so a collision check is two lines rather than a merge algorithm.  It was a
+    # named-source merge while `Geometry` was a third source; that dataclass is in salvage/ now,
+    # and FOV and matrix arrive through `definitions=` like everything else.
+    defs = dict(definitions or {})
+    wanted = name or root.tag or 'seqcraft'
+    if defs.get('Name', wanted) != wanted:
+        raise DefinitionConflict(format_error(
+            f'two sources set Name: {wanted!r} and {defs["Name"]!r}.',
+            {'from name=/root.tag': wanted, 'from definitions=': defs['Name']},
+            ['pass one or the other, not both'],
+        ))
+    defs['Name'] = wanted
+
+    # This is what makes the returned pp.Sequence self-sufficient: the definitions are on it, so
+    # nothing has to survive until write time to put them there.
+    for key, value in defs.items():
+        seq.set_definition(key, value)
+    seq.set_definition('TotalDuration', float(seq.duration()[0]))
 
     out = CompiledSequence(
         seq=seq,

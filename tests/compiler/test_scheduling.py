@@ -357,6 +357,40 @@ def test_compile_does_not_mutate_the_input_tree_or_events(opts) -> None:
     assert out.check().ok
 
 
+# --------------------------------------------------------------------------------- definitions
+def test_the_definitions_reach_the_sequence(opts) -> None:
+    """
+    Set during the compile, not at write time.
+
+    That is what makes the returned ``pp.Sequence`` self-sufficient: nothing has to survive until
+    ``write()`` to put them there, so there is no wrapper to carry them.
+    """
+    tree = sc.LogicBlock('gre').add(0.0, pp.make_delay(1e-3))
+    out = sc.compile(tree, opts, definitions={'FOV': [0.25, 0.25, 0.005], 'TE': 8e-3})
+    assert out.seq.definitions['FOV'] == [0.25, 0.25, 0.005]
+    assert out.seq.definitions['Name'] == 'gre', 'the tag names the sequence by default'
+    assert out.seq.definitions['TotalDuration'] == pytest.approx(1e-3)
+
+
+def test_two_sources_claiming_Name_is_an_error(opts) -> None:
+    """
+    Last-writer-wins is how a file came to say kSpaceCenterLine = 73 while its own navigator
+    used 36.5: neither source was wrong about itself, and nothing compared them.
+    """
+    tree = sc.LogicBlock('gre').add(0.0, pp.make_delay(1e-3))
+    with pytest.raises(sc.DefinitionConflict) as err:
+        sc.compile(tree, opts, name='gre', definitions={'Name': 'something_else'})
+    text = str(err.value)
+    assert 'gre' in text and 'something_else' in text, 'the message must name both claimants'
+
+
+def test_a_Name_that_agrees_is_not_a_conflict(opts) -> None:
+    """Saying the same thing twice is not a disagreement, and stopping for it would be noise."""
+    tree = sc.LogicBlock('gre').add(0.0, pp.make_delay(1e-3))
+    out = sc.compile(tree, opts, name='gre', definitions={'Name': 'gre'})
+    assert out.seq.definitions['Name'] == 'gre'
+
+
 # ---------------------------------------------------------------------------------- invariants
 def test_compiled_duration_equals_the_tree_duration(opts) -> None:
     g = pp.make_trapezoid('x', area=100.0, system=opts)
