@@ -1,9 +1,10 @@
 # Phase 2 placement extraction
 
-- Status: Implemented; local evidence complete, hosted evidence pending
+- Status: Complete
 - Date: 2026-08-14
 - Branch: `refactor/compiler-phases`
 - Parent: `824f380`
+- Implementation: `1bef4ed`
 
 ## Scope delivered
 
@@ -46,10 +47,12 @@ Same-runner performance ratios relative to the Phase 0 baseline:
 | `se_2d` | 0.962 | 1.000 |
 | `spiral_dti` | 1.009 | 1.002 |
 
-All wall-time ratios remain below the 1.20 review threshold. The final candidate still requires the
-hosted Linux/Windows Python 3.11/3.12 matrix.
+All wall-time ratios remain below the 1.20 review threshold. GitHub Actions
+[run 31856549261](https://github.com/bughht/SeqCraft/actions/runs/31856549261) passed all seven jobs:
+lint, types, examples, and Ubuntu/Windows tests on Python 3.11/3.12.
 
 ## Exit status
 
-Pending the hosted gates. Phase 3 must not begin until the evidence is complete and the Phase 2
-merge recommendation has been reviewed.
+All Phase 2 local and hosted gates are complete. The implementation remains in Draft
+[PR #5](https://github.com/bughht/SeqCraft/pull/5); `main` is unchanged. Phase 3 must not begin until
+the Phase 2 merge recommendation has been reviewed.
