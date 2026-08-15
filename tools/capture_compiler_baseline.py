@@ -141,10 +141,18 @@ def _builders() -> dict[str, Callable[[], CompiledSequence]]:
 
 
 def _tracked_build(builder: Callable[[], CompiledSequence]) -> tuple[CompiledSequence, dict[str, int]]:
-    """Build one recipe while observing placement and split counts at existing seam points."""
+    """
+    Build one recipe while observing placement and split counts at existing seam points.
+
+    The two names are patched on their *consumers* rather than on the modules that define them:
+    ``compiler/__init__.py`` does ``from .placement import place_events`` and ``emission.py`` does
+    ``from .legalization import axis_gradient``, so rebinding the definition site would leave both
+    call sites holding the original function and the counts would come back zero.
+    """
     compiler = importlib.import_module('seqcraft.compiler')
-    original_place = compiler._place
-    original_axis_gradient = compiler._axis_gradient
+    emission = importlib.import_module('seqcraft.compiler.emission')
+    original_place = compiler.place_events
+    original_axis_gradient = emission.axis_gradient
     placed: list[Any] = []
     segments: collections.Counter[int] = collections.Counter()
 
@@ -166,13 +174,13 @@ def _tracked_build(builder: Callable[[], CompiledSequence]) -> tuple[CompiledSeq
                 segments[id(piece)] += 1
         return original_axis_gradient(axis, pieces, start, end, *args, **kwargs)
 
-    compiler._place = track_place
-    compiler._axis_gradient = track_axis_gradient
+    compiler.place_events = track_place
+    emission.axis_gradient = track_axis_gradient
     try:
         compiled = builder()
     finally:
-        compiler._place = original_place
-        compiler._axis_gradient = original_axis_gradient
+        compiler.place_events = original_place
+        emission.axis_gradient = original_axis_gradient
 
     gradients = [piece for piece in placed if piece.kind in ('grad', 'trap')]
     return compiled, {
