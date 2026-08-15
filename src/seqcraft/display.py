@@ -8,11 +8,11 @@ a notebook displays it, a script saves it, a test discards it.
 
 Examples
 --------
+>>> import pypulseq as pp
 >>> import seqcraft as sc
->>> system = sc.System.preset('generic_3t')
->>> exc = sc.modules.SincExcitation(system, flip_deg=15, duration_us=1000,
-...                                 slice_thickness_mm=5)
->>> figure = sc.plot_block(exc.build(), system)         # doctest: +SKIP
+>>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s')
+>>> block = sc.LogicBlock('spoiler').add(0.0, pp.make_trapezoid('z', area=500.0, system=opts))
+>>> figure = sc.plot_block(block, opts)                 # doctest: +SKIP
 """
 
 from __future__ import annotations
@@ -26,8 +26,11 @@ from .core.errors import MissingExtraError, format_error
 from .core.logic import BARRIER, LogicBlock, flatten
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from pypulseq.opts import Opts
+
     from .core.compiler import CompiledSequence
-    from .core.system import System
 
 __all__ = ['plot_block', 'plot_kspace', 'plot_sequence', 'plot_trajectory']
 
@@ -48,7 +51,7 @@ def _pyplot() -> Any:
     return plt
 
 
-def _sample(root: LogicBlock, system: System) -> tuple[np.ndarray, dict[str, np.ndarray], list[tuple]]:
+def _sample(root: LogicBlock, opts: Opts) -> tuple[np.ndarray, dict[str, np.ndarray], list[tuple]]:
     """
     Sample a tree onto a uniform grid: gradients per axis, plus the RF and ADC spans.
 
@@ -56,7 +59,7 @@ def _sample(root: LogicBlock, system: System) -> tuple[np.ndarray, dict[str, np.
     meant, before the compiler decided where the block boundaries go, which is what you want when
     the question is "did I place this correctly".
     """
-    raster = system.grad_raster.dt
+    raster = float(opts.grad_raster_time)
     placed = list(flatten(root))
     if not placed:
         return np.zeros(1), {}, []
@@ -85,15 +88,15 @@ def _sample(root: LogicBlock, system: System) -> tuple[np.ndarray, dict[str, np.
     return grid, grads, marks
 
 
-def plot_block(root: LogicBlock, system: System, *, title: str = '', figsize=(10.0, 4.5)) -> Any:
+def plot_block(root: LogicBlock, opts: Opts, *, title: str = '', figsize=(10.0, 4.5)) -> Any:
     """
     Plot one logic block: gradients per axis, with RF and ADC windows shaded.
 
     Parameters
     ----------
     root
-        The block to draw, typically ``module.build()``.
-    system
+        The block to draw, typically what a module call returned.
+    opts
         Supplies the raster and gamma, so gradients can be shown in mT/m.
     title
         Figure title.  Defaults to the block's tag.
@@ -111,8 +114,8 @@ def plot_block(root: LogicBlock, system: System, *, title: str = '', figsize=(10
     :func:`plot_sequence` shows those.
     """
     plt = _pyplot()
-    grid, grads, marks = _sample(root, system)
-    gamma = system.gamma
+    grid, grads, marks = _sample(root, opts)
+    gamma = float(opts.gamma)
 
     figure, axis = plt.subplots(figsize=figsize)
     for name in _AXES:
@@ -172,8 +175,8 @@ def plot_sequence(
     plt = _pyplot()
     seq = compiled.seq
     lo, hi = time_range if time_range is not None else (0.0, min(50e-3, compiled.duration_s))
-    gamma = compiled.system.gamma
-    raster = compiled.system.grad_raster.dt
+    gamma = float(compiled.opts.gamma)
+    raster = float(compiled.opts.grad_raster_time)
 
     figure, (top, bottom) = plt.subplots(
         2, 1, figsize=figsize, sharex=True, height_ratios=(1, 2)
@@ -271,14 +274,23 @@ def plot_kspace(compiled: CompiledSequence, *, figsize=(5.5, 5.5), max_points: i
     return figure
 
 
-def plot_trajectory(readout: Any, *, figsize=(5.5, 5.5)) -> Any:
+def plot_trajectory(
+    interleaves: Iterable[tuple[np.ndarray, np.ndarray]],
+    *,
+    title: str = '',
+    figsize=(5.5, 5.5),
+) -> Any:
     """
-    Plot every interleaf of a spiral readout, coloured by shot.
+    Plot a set of k-space interleaves, one colour per shot.
 
     Parameters
     ----------
-    readout
-        A :class:`~seqcraft.modules.readout.spiral.SpiralVDS`.
+    interleaves
+        An iterable of ``(kx, ky)`` array pairs in 1/m -- one pair per shot.  A spiral's shots, a
+        radial set's spokes, one segment of an EPI train: this takes the numbers, so it works for
+        any of them.
+    title
+        Figure title.  Defaults to the interleaf count.
     figsize
         Matplotlib figure size.
 
@@ -288,23 +300,36 @@ def plot_trajectory(readout: Any, *, figsize=(5.5, 5.5)) -> Any:
 
     Notes
     -----
-    The picture to look at when deciding `n_interleaves` and `density`: the radial gap between
+    Takes arrays rather than a readout object on purpose.  It previously took anything with
+    ``.trajectory()``, ``.n_interleaves`` and ``.k_max_per_m`` -- a duck type only one class in one
+    module library ever satisfied, which quietly made a plotting helper depend on that library.
+
+    The picture to look at when deciding an interleaf count and a density: the radial gap between
     adjacent turns of the *combined* set is what has to stay within ``1/FOV``, and undersampling
     shows up here as visible white space at the edge long before it shows up in an image.
+
+    Examples
+    --------
+    >>> import numpy as np, seqcraft as sc
+    >>> theta = np.linspace(0, 8 * np.pi, 512)
+    >>> shots = [(theta * np.cos(theta + p), theta * np.sin(theta + p)) for p in (0.0, 3.1)]
+    >>> figure = sc.plot_trajectory(shots)              # doctest: +SKIP
     """
     plt = _pyplot()
     figure, axis = plt.subplots(figsize=figsize)
-    for i in range(readout.n_interleaves):
-        kx, ky = readout.trajectory(i)
+    limit = 0.0
+    count = 0
+    for kx, ky in interleaves:
+        kx, ky = np.asarray(kx), np.asarray(ky)
         axis.plot(kx, ky, linewidth=0.7, alpha=0.85)
-    limit = readout.k_max_per_m * 1.05
-    axis.set_xlim(-limit, limit)
-    axis.set_ylim(-limit, limit)
+        limit = max(limit, float(np.max(np.abs(kx))), float(np.max(np.abs(ky))))
+        count += 1
+    if limit > 0.0:
+        axis.set_xlim(-limit * 1.05, limit * 1.05)
+        axis.set_ylim(-limit * 1.05, limit * 1.05)
     axis.set_xlabel('$k_x$ (1/m)')
     axis.set_ylabel('$k_y$ (1/m)')
-    axis.set_title(
-        f'{readout.n_interleaves} interleaves, {readout.readout_duration_us / 1e3:.2f} ms each'
-    )
+    axis.set_title(title or f'{count} interleaves')
     axis.set_aspect('equal')
     axis.grid(alpha=0.25)
     figure.tight_layout()

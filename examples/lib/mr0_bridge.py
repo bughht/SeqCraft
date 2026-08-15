@@ -44,9 +44,9 @@ Usage
     from mr0_bridge import to_mr0, simulate, phantom_with_diffusion
 
     seq, meta = to_mr0(compiled)                       # straight from the compiler
-    played = pypulseq.Sequence(system=system.limits('dwi'))
+    played = pypulseq.Sequence(system=opts)
     played.read('scan.seq')
-    seq, meta = to_mr0(played, system=system)          # or from the written file
+    seq, meta = to_mr0(played, opts=opts)              # or from the written file
     signal = simulate(seq, phantom_with_diffusion(size_m=..., matrix=64, d_1e_3_mm2_s=0.8))
 """
 
@@ -275,7 +275,7 @@ def _drop(moments: np.ndarray, axes: tuple[int, ...]) -> np.ndarray:
 def to_mr0(
     compiled: CompiledSequence | Any,
     *,
-    system: Any = None,
+    opts: Any = None,
     event_dt_s: float = 200e-6,
     first_rep: int = 0,
     max_reps: int | None = None,
@@ -289,15 +289,16 @@ def to_mr0(
     ----------
     compiled
         Either the result of :func:`~seqcraft.core.compiler.compile_sequence`, or a bare
-        ``pypulseq.Sequence`` -- in which case pass `system` as well, since a ``.seq`` file records
-        the rasters but not the :class:`~seqcraft.core.system.System` object they came from.
+        ``pypulseq.Sequence`` -- in which case pass `opts` as well, since a ``.seq`` file records
+        the raster *values* but not the ``Opts`` object they came from.
 
         Reading the written file back is the stronger check of the two: it simulates the bytes that
         will be handed to the scanner rather than an object that ought to correspond to them.  It is
         also the only way to simulate a spiral from a file at all, because MRzero's own ``.seq``
         reader handles trapezoid gradients only, while pypulseq's reads arbitrary waveforms.
-    system
-        Required when `compiled` is a plain ``pypulseq.Sequence``; ignored otherwise.
+    opts
+        The ``pypulseq.Opts`` the sequence was built against.  Required when `compiled` is a plain
+        ``pypulseq.Sequence``; taken from ``compiled.opts`` otherwise.
     event_dt_s
         Target event length for blocks with no ADC.  Diffusion lobes are integrated per event, so
         this has to be short enough to resolve them: a single event spanning a 15 ms lobe would
@@ -359,16 +360,16 @@ def to_mr0(
     torch = _torch()
 
     seq = getattr(compiled, 'seq', compiled)
-    resolved = system if system is not None else getattr(compiled, 'system', None)
+    resolved = opts if opts is not None else getattr(compiled, 'opts', None)
     if resolved is None:
         msg = format_error(
-            'a bare pypulseq.Sequence needs the System it was built for.',
+            'a bare pypulseq.Sequence needs the Opts it was built against.',
             {'given': type(compiled).__name__},
-            ['to_mr0(seq, system=my_system)'],
+            ['to_mr0(seq, opts=my_opts)'],
         )
         raise ValueError(msg)
-    raster = resolved.grad_raster.dt
-    rf_raster = resolved.rf_raster.dt
+    raster = float(resolved.grad_raster_time)
+    rf_raster = float(resolved.rf_raster_time)
     dropped = tuple(_AXES.index(a) for a in ignore_axes if a in _AXES)
     if k_reference not in ('first_sample', 'excitation'):
         msg = format_error(

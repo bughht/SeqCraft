@@ -15,8 +15,9 @@ Every push to `main` and every pull request runs four gates:
 1. `lint`: the established Ruff correctness baseline on Python 3.11.
 2. `types`: strict mypy checking of the pure-arithmetic core on Python 3.11.
 3. `test`: pytest and source doctests on Linux and Windows with Python 3.11 and 3.12.
-4. `examples`: isolated execution of the getting-started notebook and both build notebooks on
-   Linux with Python 3.11.
+4. `examples`: isolated execution of the getting-started notebook on Linux with Python 3.11.
+   The two DTI build notebooks are parked under `examples/_parked/` until a module library exists
+   to rebuild them against, and are deliberately not executed.
 
 The notebook runner copies `examples/` to a temporary directory before execution. Generated
 sequence files therefore never modify the working tree.
@@ -27,7 +28,8 @@ To reproduce the main gates locally from the repository root:
 python -m pip install --constraint ci/constraints.txt -e ".[dev,viz,rf]"
 ruff check .
 mypy src/seqcraft/core/timing.py src/seqcraft/core/units.py \
-  src/seqcraft/core/validate.py src/seqcraft/core/geometry.py src/seqcraft/ordering.py \
+  src/seqcraft/core/validate.py src/seqcraft/core/geometry.py \
+  src/seqcraft/module.py src/seqcraft/scanner/opts.py \
   src/seqcraft/core/_compiler/model.py src/seqcraft/core/_compiler/placement.py \
   src/seqcraft/core/_compiler/verification.py
 pytest -n auto \
@@ -50,9 +52,17 @@ by the build notebooks. Vendor hardware checks additionally require site-confide
 provided through `SEQCRAFT_ASC_DIR`. Those tiers run on a controlled lab or nightly environment,
 not on public GitHub-hosted runners.
 
-The public CI result therefore proves the compiler, modules, documentation snippets, file
-round-trip, and build notebooks on the supported matrix. It does not prove vendor hardware,
-full simulation, reconstruction, or external cross-validation.
+The public CI result therefore proves the compiler, the `Module` contract, documentation snippets,
+file round-trip, and the getting-started notebook on the supported matrix. It does not prove vendor
+hardware, full simulation, reconstruction, or external cross-validation.
+
+## What the fixtures are made of
+
+Every compiler and integration fixture is **raw pypulseq**. That is a standing rule, not an
+accident of the current tree: the previous suite built its realistic trees out of module-library
+classes, which made compiler coverage depend on whatever the library happened to contain and made
+the library impossible to replace without also rewriting the compiler's tests. `tests/conftest.py`
+supplies one `pp.Opts`, and the sequences are assembled from `pp.make_*` calls.
 
 ## Updating dependencies
 
@@ -63,10 +73,15 @@ transitive packages remain resolver-managed until a compatibility issue justifie
 
 ## Compiler refactor baseline
 
-The Phase 0 compiler baseline is documented in
+The original Phase 0 capture is documented in
 [`refactor/phase0_baseline.md`](refactor/phase0_baseline.md). Its machine-readable structural and
 performance artifact lives at `tests/baselines/compiler_phase0.json`; the integration suite checks
-the stable subset on every run. Regenerate it only after reviewing an approved behavior change:
+the stable subset on every run.
+
+**It was re-captured when the recipes moved to raw pypulseq**, so it no longer spans the Phase 0
+boundary — the four module-built recipes it froze no longer exist. What it guards from here is that
+the remaining refactor phases change block counts, boundaries and moments not at all. Regenerate it
+only after reviewing an approved behavior change:
 
 ```bash
 python tools/capture_compiler_baseline.py --iterations 3

@@ -1,37 +1,24 @@
 # Examples
 
-Each folder is a complete scan, start to finish: build it, check its physics, write the files,
-simulate them, reconstruct, quantify. Run a folder from inside it — the notebooks read and write
-`./seq/` and import `../lib`.
-
 | | What it covers |
 |---|---|
-| [`01_getting_started.ipynb`](01_getting_started.ipynb) | Blocks, modules and `compile`; the overlap rules, the escape hatches, writing a file. Not a scan. |
-| [`dti_spiral/`](dti_spiral/) | Single-shot spin-echo **spiral** DTI at 1.88 mm, and the two-echo field map its 67 ms readout cannot do without. |
-| [`dti_epi/`](dti_epi/) | The **same diffusion encoding** through a ramp-sampled **EPI** train — single-shot and two-shot, partial Fourier 0.75. |
+| [`01_getting_started.ipynb`](01_getting_started.ipynb) | Blocks, `Opts` and `compile`; the overlap rules, provenance, checking against physics, writing a file — and `sc.Module` at the end, once there is a reason for one. **Uses no modules**, which is the point: it is the demonstration that the compile path stands alone. |
+| [`_parked/`](_parked/) | Two complete DTI acquisitions — spiral and EPI, one diffusion encoding between them. **They do not run against this version.** |
+| [`lib/`](lib/) | Simulation and reconstruction helpers. Not part of the package; see [`lib/README.md`](lib/README.md). |
 
-Both DTI folders use one diffusion encoding and differ only in the readout, which is the point of
-having both: the ADC maps have to agree, and where they do not, that is the readout's error budget.
+## Why `_parked/` exists
 
-| Folder | Build | Simulate and reconstruct |
-|---|---|---|
-| `dti_spiral/` | [`01_build.ipynb`](dti_spiral/01_build.ipynb) | [`02_simulate_and_reconstruct.ipynb`](dti_spiral/02_simulate_and_reconstruct.ipynb) |
-| `dti_epi/` | [`01_build.ipynb`](dti_epi/01_build.ipynb) | [`02_simulate_and_reconstruct.ipynb`](dti_epi/02_simulate_and_reconstruct.ipynb) |
+Both DTI folders were built on `seqcraft.modules`, which has been deleted rather than migrated
+([ADR-003](../docs/adr/003-scanner-and-module-reform.md)). They are kept unmodified because they are the
+**acceptance test for whatever module set is written next**: a library chosen in the abstract
+acquires classes nobody needs and misses the ones everybody writes by hand, while one chosen by
+making these two scans work again does not.
 
-Run `01_build.ipynb` first; the reconstruction notebook reads the `.seq` files it writes. Within a
-folder, play the field map before the diffusion scan — it takes a few seconds and the diffusion
-reconstruction needs it.
-
-## What is deliberately duplicated
-
-**Each folder builds its own field map.** The dual-echo GRE cell is therefore in both build
-notebooks, and the two copies will drift. That is a real cost, taken so that a folder is runnable on
-its own with nothing above it, and so each map is parameterised to its own geometry — the EPI one is
-matched to the EPI matrix, and a mismatched grid is a moiré generator rather than a smooth error.
+Read [`_parked/README.md`](_parked/README.md) for what each covers and where their physics went.
 
 ## Requirements
 
 Building needs only `seqcraft`. Simulating and reconstructing need `MRzeroCore`, `torch` and
 `sigpy`, which are **not** part of the package — see [`lib/README.md`](lib/README.md).
 
-Outputs under each `seq/` are build products and are not tracked by git.
+Outputs under any `seq/` are build products and are not tracked by git.

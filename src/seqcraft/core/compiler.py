@@ -49,17 +49,23 @@ that in isolation: adding an area-100 and an area-200 trapezoid on a 40 mT/m, 15
 reaches 93 % of the amplitude limit but **189 %** of the slew limit.  So amplitude and slew are
 measured on the compiled waveform, which is the only place the truth is visible.
 
+What the compiler needs from the scanner
+----------------------------------------
+One :class:`pypulseq.Opts`, and eight fields of it: the two amplitude limits, the four rasters,
+the ADC dead time and the RF ringdown.  It takes that object directly rather than any seqcraft
+wrapper, so the same thing that configures ``pp.make_trapezoid`` configures the compile.
+
 Examples
 --------
 >>> import pypulseq as pp
 >>> import seqcraft as sc
->>> system = sc.System.preset('generic_3t')
->>> o = system.default
->>> gentle = {'area': 100.0, 'duration': 2e-3, 'rise_time': 200e-6, 'system': o}
+>>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+...                rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
+>>> gentle = {'area': 100.0, 'duration': 2e-3, 'rise_time': 200e-6, 'system': opts}
 >>> lb = sc.LogicBlock('demo')
 >>> _ = lb.add(0.0, pp.make_trapezoid('x', **gentle))
 >>> _ = lb.add(0.0, pp.make_trapezoid('y', **gentle))   # different axis: nothing to report
->>> out = sc.compile(lb, system)
+>>> out = sc.compile(lb, opts)
 >>> out.report.ok, len(out.report.warnings)
 (True, 0)
 >>> out.n_blocks
@@ -111,7 +117,6 @@ if TYPE_CHECKING:
 
     from .geometry import Geometry
     from .logic import LogicBlock
-    from .system import System
 
 __all__ = ['CompiledSequence', 'WriteResult', 'compile_sequence']
 
@@ -886,11 +891,10 @@ def _limit_issues(
 # ------------------------------------------------------------------------------- the pass
 def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     root: LogicBlock,
-    system: System,
+    opts: Opts,
     *,
     geometry: Geometry | None = None,
     name: str = '',
-    regime: str = 'default',
     definitions: dict[str, Any] | None = None,
 ) -> CompiledSequence:
     """
@@ -901,16 +905,16 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     root
         The tree to compile.  Usually built by adding module outputs to one
         :class:`~seqcraft.core.logic.LogicBlock`.
-    system
-        The scanner: rasters, dead times and limits.
+    opts
+        The scanner: rasters, dead times and limits.  A plain :class:`pypulseq.Opts`, the same
+        object passed to pypulseq's ``make_*`` functions.  This is the ceiling the *combined*
+        waveform has to respect; a part designed against a derated limit is designed against a
+        second ``Opts`` (:func:`seqcraft.opts.derate`), which does not change what is validated
+        here.
     geometry
         Optional; contributes ``[DEFINITIONS]`` to the written file.
     name
         Sequence name for the definitions.  Defaults to ``root.tag``.
-    regime
-        Which of `system`'s named limit regimes to validate against.  Modules may design
-        against a derated regime individually; this is the ceiling the *combined* waveform
-        has to respect.
     definitions
         Extra ``[DEFINITIONS]`` entries, merged with a collision check so two sources claiming
         the same key with different values raises rather than one silently winning.
@@ -936,14 +940,14 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     --------
     >>> import pypulseq as pp
     >>> import seqcraft as sc
-    >>> system = sc.System.preset('generic_3t')
+    >>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+    ...                rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
     >>> lb = sc.LogicBlock('t').add(0.0, pp.make_delay(1e-3))
-    >>> out = compile_sequence(lb, system)
+    >>> out = compile_sequence(lb, opts)
     >>> round(out.duration_s * 1e3, 1)
     1.0
     """
-    opts = system.limits(regime)
-    raster = system.block_raster
+    raster = Raster(float(opts.block_duration_raster), 'block')
     placed = _place(root, opts)
     require_valid_contract('placed-event', verify_placed_events(placed))
 
@@ -965,7 +969,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     # by up to half a raster -- a gradient asked for at 5 us played at 10 us, and m0 could not see
     # it because area does not depend on when a lobe plays.  There is no correct snap to make: the
     # tree asked for something the hardware cannot do, and only the caller knows which way to round.
-    grad_raster = system.grad_raster
+    grad_raster = Raster(float(opts.grad_raster_time), 'gradient')
     off = [p for p in placed if p.kind in _GRAD and not grad_raster.holds(p.start)]
     if off:
         worst = off[0]
@@ -979,7 +983,8 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
                 'others': len(off) - 1,
             },
             [
-                'round the start time where it is computed, with system.grad_raster.ceil(t)',
+                'round the start time where it is computed, with '
+                'seqcraft.Raster(opts.grad_raster_time).ceil(t)',
                 'a start derived from "te - module.time_to_echo" lands off the raster whenever TE '
                 'does, so quantise TE first',
             ],
@@ -1152,7 +1157,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
                     'from': origin,
                 },
                 ['this is a compiler bug unless the tree contains raw events built against '
-                 'a different System -- please report it with the tree that produced it'],
+                 'a different Opts -- please report it with the tree that produced it'],
             )
             raise CompileError(msg) from err
 
@@ -1165,8 +1170,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
 
     out = CompiledSequence(
         seq=seq,
-        system=system,
-        regime=regime,
+        opts=opts,
         report=Report(tuple(issues), subject=defs['Name']),
         origins=tuple(origins),
         definitions=defs,
@@ -1222,6 +1226,9 @@ class CompiledSequence:
     ----------
     seq
         The :class:`pypulseq.Sequence`.  Yours to use directly; seqcraft never hides it.
+    opts
+        The scanner it was compiled against, kept so the post-compile checks and the provenance
+        sidecar cannot disagree with what the boundaries were chosen for.
     report
         Everything the compile found: every same-axis merge, every limit violation, every
         snapped time.
@@ -1231,8 +1238,7 @@ class CompiledSequence:
     """
 
     seq: Any
-    system: System
-    regime: str
+    opts: Opts
     report: Report
     origins: tuple[tuple[str, ...], ...]
     definitions: dict[str, Any]
@@ -1259,10 +1265,11 @@ class CompiledSequence:
         --------
         >>> import pypulseq as pp
         >>> import seqcraft as sc
-        >>> system = sc.System.preset('generic_3t')
+        >>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+        ...                rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
         >>> inner = sc.LogicBlock('spoiler')
-        >>> _ = inner.add(0.0, pp.make_trapezoid('z', area=500.0, system=system.default))
-        >>> out = sc.compile(sc.LogicBlock('tr').add(0.0, inner), system)
+        >>> _ = inner.add(0.0, pp.make_trapezoid('z', area=500.0, system=opts))
+        >>> out = sc.compile(sc.LogicBlock('tr').add(0.0, inner), opts)
         >>> out.origin(0)
         ('tr', 'spoiler')
         """
@@ -1479,10 +1486,11 @@ class CompiledSequence:
         --------
         >>> import pypulseq as pp
         >>> import seqcraft as sc
-        >>> system = sc.System.preset('generic_3t')
+        >>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+        ...                rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
         >>> lb = sc.LogicBlock('t')
-        >>> _ = lb.add(0.0, pp.make_trapezoid('x', area=100.0, system=system.default))
-        >>> sc.compile(lb, system).check().ok
+        >>> _ = lb.add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
+        >>> sc.compile(lb, opts).check().ok
         True
         """
         if self._checked is not None:
@@ -1513,12 +1521,12 @@ class CompiledSequence:
         ArbX ArbY ADC`` -- a message that names the block type and says nothing about samples.
 
         The limit is the vendor interpreter's, not the amplifier's, so it has to be set from the
-        installation: ``System.preset`` puts 8192 on the Siemens entries, which is the common value.
-        A readout longer than one event's worth has to be split into several ADCs, at the cost of
-        ``adc_dead_time`` between them.
+        installation: :func:`seqcraft.opts.from_specs` takes ``adc_samples_limit=`` for exactly
+        this, and 8192 is the common Siemens value.  A readout longer than one event's worth has
+        to be split into several ADCs, at the cost of ``adc_dead_time`` between them.
         """
         out: list[Issue] = []
-        limits = self.system.limits(self.regime)
+        limits = self.opts
         for kind, attribute, count in (
             ('adc', 'adc_samples_limit', lambda block: int(block.adc.num_samples)),
             ('rf', 'rf_samples_limit', lambda block: int(np.size(block.rf.signal))),
@@ -1616,29 +1624,21 @@ class CompiledSequence:
             't_refocusing': np.asarray(t_refoc),
         }
 
-    def pns(self, hardware: SimpleNamespace | None = None) -> Report:
+    def pns(self, hardware: SimpleNamespace) -> Report:
         """
         Predict peripheral nerve stimulation against a gradient hardware model.
 
         Parameters
         ----------
         hardware
-            Defaults to the model attached to the :class:`~seqcraft.core.system.System`.
-            :func:`~seqcraft.core.system.synthetic_hardware` provides a vendor-free stand-in
-            for CI; it is **not** a real scanner and must never be used to clear a sequence for
-            human scanning.
+            The gradient response model, from :func:`seqcraft.hardware.load_hardware` or
+            :func:`seqcraft.hardware.synthetic_hardware`.  **Required**: PNS prediction is
+            analysis rather than compilation, and the model describes an amplifier's response
+            rather than its limits, so it has nothing to do with the ``Opts`` this was compiled
+            against and is not carried on it.  The synthetic model is a vendor-free stand-in for
+            CI; it is **not** a real scanner and must never be used to clear a human scan.
         """
-        model = hardware if hardware is not None else self.system.hardware
-        if model is None:
-            return Report((
-                Issue(
-                    'pns',
-                    'sequence',
-                    'no gradient hardware model attached; call System.with_hardware() with '
-                    'load_hardware() or synthetic_hardware()',
-                    'info',
-                ),
-            ))
+        model = hardware
         ok, pns_norm, _components, _t = self.seq.calculate_pns(model, do_plots=False)
         peak = float(np.max(pns_norm)) if np.size(pns_norm) else 0.0
         note = (
@@ -1691,8 +1691,9 @@ class CompiledSequence:
                 target,
                 {
                     'definitions': {k: _jsonable(v) for k, v in self.definitions.items()},
-                    'system': self.system.params(),
-                    'regime': self.regime,
+                    # Every Opts field is a plain float, int, bool or None, so the scanner the
+                    # sequence was built against records itself with no schema in between.
+                    'opts': dict(vars(self.opts)),
                     'n_blocks': self.n_blocks,
                     'duration_s': self.duration_s,
                     'sha256': digest,

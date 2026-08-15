@@ -22,21 +22,21 @@ from seqcraft.core._compiler.model import HANDLED_KINDS
 from seqcraft.core._compiler.placement import UNSUPPORTED_KINDS
 
 
-def test_a_rotation_extension_is_rejected_not_dropped(system, opts) -> None:
+def test_a_rotation_extension_is_rejected_not_dropped(opts) -> None:
     """The headline case: this used to compile clean and play unrotated."""
     rot = pp.make_rotation(np.pi / 4)
     tree = sc.LogicBlock('dwi').add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
     tree.add(0.0, rot)
     with pytest.raises(sc.CompileError, match='rotation extension'):
-        sc.compile(tree, system)
+        sc.compile(tree, opts)
 
 
-def test_the_rotation_error_says_how_to_get_the_rotation(system, opts) -> None:
+def test_the_rotation_error_says_how_to_get_the_rotation(opts) -> None:
     """An error that only says 'no' would leave a real sequence with nowhere to go."""
     tree = sc.LogicBlock('dwi').add(0.0, pp.make_rotation(np.pi / 4))
     tree.add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
     with pytest.raises(sc.CompileError) as err:
-        sc.compile(tree, system)
+        sc.compile(tree, opts)
     text = str(err.value)
     assert 'bakes rotations' in text
     assert 'rotate_3d' in text or 'rotate()' in text
@@ -53,30 +53,30 @@ def test_every_unsupported_type_names_itself_and_offers_a_way_round(kind) -> Non
     assert all(h and h[0].islower() for h in hints), 'hints read as continuations, lowercase'
 
 
-def test_a_soft_delay_is_rejected(system) -> None:
+def test_a_soft_delay_is_rejected(opts) -> None:
     sd = pp.make_soft_delay(numID=0, hint='TE', default_duration=1e-3)
     tree = sc.LogicBlock('t').add(0.0, sd)
     with pytest.raises(sc.CompileError, match='soft-delay'):
-        sc.compile(tree, system)
+        sc.compile(tree, opts)
 
 
-def test_a_typo_type_is_rejected_with_the_handled_list(system) -> None:
+def test_a_typo_type_is_rejected_with_the_handled_list(opts) -> None:
     """LogicBlock.add() accepts anything with a .type, so a hand-built namespace gets here."""
     bogus = SimpleNamespace(type='trapezoid', channel='x', delay=0.0)   # 'trap', not 'trapezoid'
     tree = sc.LogicBlock('t').add(0.0, bogus)
     with pytest.raises(sc.CompileError) as err:
-        sc.compile(tree, system)
+        sc.compile(tree, opts)
     text = str(err.value)
     assert "unknown event type 'trapezoid'" in text
     assert 'trap' in text, 'the handled list must be shown so the fix is obvious'
 
 
-def test_the_rejection_names_the_nested_tag_path(system, opts) -> None:
+def test_the_rejection_names_the_nested_tag_path(opts) -> None:
     inner = sc.LogicBlock('spoiler').add(0.0, pp.make_rotation(0.5))
     tree = sc.LogicBlock('tr').add(0.0, inner)
     tree.add(0.0, pp.make_trapezoid('z', area=100.0, system=opts))
     with pytest.raises(sc.CompileError, match=r'tr\.spoiler'):
-        sc.compile(tree, system)
+        sc.compile(tree, opts)
 
 
 # --------------------------------------------------------------------------------- coverage
@@ -120,7 +120,7 @@ def test_unsupported_and_handled_do_not_overlap() -> None:
     assert not (set(HANDLED_KINDS) & set(UNSUPPORTED_KINDS))
 
 
-def test_all_handled_types_actually_compile(system, opts) -> None:
+def test_all_handled_types_actually_compile(opts) -> None:
     """
     The other half of the whitelist's promise: everything on it works.
 
@@ -148,5 +148,5 @@ def test_all_handled_types_actually_compile(system, opts) -> None:
     )
     for kind, event in cases.items():
         tree = sc.LogicBlock('t').add(0.0, pp.make_delay(2e-3)).add(0.0, event)
-        out = sc.compile(tree, system)          # must not raise
+        out = sc.compile(tree, opts)          # must not raise
         assert out.n_blocks >= 1, kind

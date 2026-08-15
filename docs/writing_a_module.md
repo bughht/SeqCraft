@@ -2,7 +2,7 @@
 
 ## What seqcraft actually requires
 
-One thing: whatever takes part in a sequence returns a `LogicBlock`. There is no base class to
+One thing: whatever takes part in a sequence returns a `LogicBlock`. There is no base class you must
 inherit, no method name to match, no registry to join and no hook to override.
 
 A function is a component:
@@ -12,10 +12,10 @@ import pypulseq as pp
 import seqcraft as sc
 
 
-def spoiler(system, *, twists=4, voxel_mm=5.0, axis='z'):
+def spoiler(opts, *, twists=4, voxel_mm=5.0, axis='z'):
     """Dephase by `twists` cycles across a voxel."""
     area_per_m = twists / (voxel_mm / 1e3)
-    g = pp.make_trapezoid(channel=axis, area=area_per_m, system=system.default)
+    g = pp.make_trapezoid(channel=axis, area=area_per_m, system=opts)
     return sc.LogicBlock('spoil').add(0.0, g)
 ```
 
@@ -26,13 +26,9 @@ cannot tell:
 class VelocityEncode:
     """A bipolar pair straddling a refocusing pulse — two outputs, named for what they are."""
 
-    def __init__(self, system, *, venc_cm_s, axis='y'):
+    def __init__(self, opts, *, venc_cm_s, axis='y'):
         self.m1_s_per_m = 1.0 / (2.0 * venc_cm_s / 100.0)
-        self.lobe = pp.make_trapezoid(channel=axis, area=self._area(), system=system.default)
-
-    @property
-    def lobe_duration(self):
-        return float(pp.calc_duration(self.lobe))
+        self.lobe = pp.make_trapezoid(channel=axis, area=self._area(), system=opts)
 
     def pre(self):
         return sc.LogicBlock('venc_pre').add(0.0, self.lobe)
@@ -42,52 +38,66 @@ class VelocityEncode:
 ```
 
 ```python
-venc = VelocityEncode(system, venc_cm_s=50)
-seq.add(t0, venc.pre())
-seq.add(t0 + venc.lobe_duration + refoc.duration, venc.post())
+venc = VelocityEncode(opts, venc_cm_s=50)
+first = venc.pre()
+seq.add(t0, first)
+seq.add(t0 + first.duration + refoc_duration, venc.post())
 
-sc.testing.assert_output(venc.pre, system)     # the block-level contract, for any callable
+sc.testing.assert_output(venc.pre, opts)     # the block-level contract, for any callable
 ```
 
-The old shape for this was one `build(part='pre')` with a keyword that meant two different
-gradients. Where that reads better, keep it; where two methods read better, write two methods.
+Note the placement: `first.duration`, read off the block that was just built, rather than a
+`lobe_duration` property. Building is cheap, and a measured number cannot disagree with what plays.
 
 ---
 
-## The optional base
+## `sc.Module` — the shape for something you will reuse
 
-`sc.modules.Module` is a convenience base, and what the built-in library is written on. It holds the
-scanner, resolves the limit regime to design against, checks units when your `__init__` returns, and
-reports parameters for the provenance sidecar and `repr`. It declares no abstract method, so nothing
-is required of a subclass — inheriting it buys you those four things and asks for nothing.
+For a component you will use in several sequences, `sc.Module` is the standard shape: **parameters
+in, one `LogicBlock` out.** Four members, and each earns its place.
+
+```python
+class Module(ABC):
+    def __init__(self, *, opts: pp.Opts, tag: str | None = None) -> None
+    def __call__(self, *args, **kwargs) -> LogicBlock       # the interface
+    @abstractmethod
+    def build(self, *args, **kwargs) -> LogicBlock          # what you write
+```
+
+**`opts` is required**, and it is the official `pypulseq.Opts`. It is the only scanner input a
+module gets: rasters, dead times, ringdown, gradient and B1 limits, gamma, B0, sample limits. It is
+required rather than defaulted because pypulseq's fallback is the *process-global* `Opts.default`,
+which makes a sequence depend on import order. Pass it explicitly, always, including down to
+submodules.
+
+**`tag` is identity.** Tags become the provenance path `flatten` builds and the `from …` clause in
+every compiler warning. Two instances of one class doing different jobs — two readouts, two spoilers
+— are told apart by it. It defaults to the class name.
+
+**`__call__` is the interface; `build` is what you write.** `module(...)` reads correctly at the
+call site, next to `add`: `tr.add(t, readout(line=17))`. It is also the single place the framework
+gets to check and name what came back, which is why `build` is not the public entry point.
 
 ```python
 import pypulseq as pp
 import seqcraft as sc
 
 
-class VelocityEncode(sc.modules.Module):
+class VelocityEncode(sc.Module):
     """A bipolar gradient pair that encodes velocity along one axis."""
 
-    def __init__(self, system, *, venc_cm_s, axis='y', regime='default'):
-        super().__init__(system, regime=regime)
-        self.venc_cm_s = float(venc_cm_s)
-        self.axis = axis
+    def __init__(self, *, opts, venc_cm_s, axis='y', tag=None):
+        super().__init__(opts=opts, tag=tag)
         # A phase of pi at the target velocity needs m1 = 1 / (2 v), in s/m.
-        self.m1_s_per_m = 1.0 / (2.0 * self.venc_cm_s / 100.0)
-        self.lobe = pp.make_trapezoid(channel=axis, area=self._area(), system=self.opts)
+        self.m1_s_per_m = 1.0 / (2.0 * float(venc_cm_s) / 100.0)
+        self.lobe = pp.make_trapezoid(channel=axis, area=self._area(), system=opts)
 
-    @property
-    def duration(self):
-        return 2.0 * float(pp.calc_duration(self.lobe))
-
-    def build(self, *, sign=1.0):
+    def build(self, *, sign=1.0) -> sc.LogicBlock:
         first = _scaled(self.lobe, sign)
         second = _scaled(self.lobe, -sign)
-        out = sc.LogicBlock('venc')
-        out.add(0.0, first)
-        out.add(float(pp.calc_duration(first)), second)
-        return out
+        return (sc.LogicBlock()
+                .add(0.0, first)
+                .add(float(pp.calc_duration(first)), second))
 
 
 def _scaled(grad, factor):
@@ -99,28 +109,60 @@ def _scaled(grad, factor):
     )
 ```
 
-Then:
+```python
+venc = VelocityEncode(opts=opts, venc_cm_s=50)
+seq.add(t0, venc(sign=-1.0))
+sc.testing.assert_all(venc, sign=-1.0)
+```
+
+### The two failures the base catches
 
 ```python
-venc = VelocityEncode(system, venc_cm_s=50)
-sc.testing.assert_all(venc)      # the same contract checks the built-in modules get
+class Broken(sc.Module): pass
+Broken(opts=opts)
+# TypeError: Can't instantiate abstract class Broken with abstract method build
+
+class Wrong(sc.Module):
+    def build(self): return pp.make_delay(1e-3)
+Wrong(opts=opts)()
+# TypeError: Wrong.build() returned SimpleNamespace, not a LogicBlock
 ```
+
+The second is the one that matters. Without it, returning the wrong thing surfaces hundreds of lines
+later inside `add`, which can only report that it was handed a `SimpleNamespace` — not which module
+handed it over.
+
+### What the base deliberately does not do
+
+| Not there | Where the job goes |
+|---|---|
+| a `duration` property | `LogicBlock.duration`, measured from the block your call returned |
+| a unit check | your `__init__`, where the plausible range is actually known |
+| `params()` / provenance walking | a provenance writer that takes a mapping; nothing scrapes `__dict__` |
+| `submodules()` | `vars(self)`, if anything ever needs it |
+| a registry | nothing needs a string → class lookup |
+| a scanner class, named limit regimes | `pp.Opts`. A part designed derated takes a second `Opts` from `sc.opts.derate` — an object, not a name to look up |
+| a fixed timing vocabulary (`isodelay`, `time_to_echo`) | the individual module, where the physics is known |
+
+Each is a real feature; none is required by *every* module, and a base class that carries what only
+some subclasses need is how a small idea becomes a framework.
 
 ---
 
-## The three conventions the library follows
+## The conventions that are worth following
 
-These are how the built-in modules are written and why. None of them is enforced — `Module` has no
-abstract method and the compiler never sees a module at all — but each one exists because getting it
-wrong produced a specific bug, so they are worth knowing before departing from them.
+None is enforced — the compiler never sees a module at all — but each exists because getting it
+wrong produced a specific bug.
 
 ### `__init__` designs, `build` assembles
 
 Waveforms are created in `__init__` and stored on `self`, the way `nn.Conv2d` allocates its weights
-there. `build` is cheap and returns a value, so a 30-direction diffusion encoding costs **one**
-design and thirty cheap builds.
+there. A call is cheap and returns a value, so a 30-direction diffusion encoding costs **one**
+design and thirty cheap calls.
 
-`build` must not mutate the module or the events stored on it. It is called once per TR; a module
+### Calls are pure
+
+A call must not mutate the module or the events stored on it. It is called once per TR; a module
 that mutates itself makes TR 500 differ from TR 1, and the difference is usually a sign flip that
 produces a plausible but wrong image. Derive modified events with `sc.events.derive` — never assign
 to them.
@@ -129,45 +171,51 @@ to them.
 > event: `set_block` caches on it keyed by `id(sequence)`, and a stale key can silently
 > mis-attribute the event to a different `Sequence` that lands at the same address.
 
-### `build`'s arguments select the variant
+### One call returns one block
 
-`part='pre'`, `line=17`, `interleaf=3`, `slice_offset_m=z`. Ordinary keyword arguments with ordinary
-defaults, and Python reports a typo as a `TypeError`.
+Including when the parts are far apart in time. A diffusion encoding is one block with a hole in the
+middle, and the caller drops the refocusing pulse into the hole. Overlap in the tree costs nothing,
+so nothing has to be reserved and no artificial duration is added.
 
-**A build argument must not change the block's duration.** That is the one hard rule, and it exists
-because callers place the *next* thing using the module's timing properties — which cannot see the
-build argument. When `CartesianLine.build` accepted `prephase=False` it silently invalidated
-`time_to_echo` and moved the echo 280 µs early. Anything that changes the duration belongs on
-`__init__`:
+### A build argument *may* change the duration
+
+This rule used to be the opposite, and the inversion is the point. There is no declared `duration`
+any more, so there is no second number a build argument can invalidate. Build the block, then read
+it:
 
 ```python
-ro = sc.modules.CartesianLine(system, ..., prephase=False)   # right
-ro.build(prephase=False)                                     # was wrong; no longer exists
+exc_block = exc()
+tr.add(0.0, exc_block)
+tr.add(exc_block.duration + gap, readout(line=k))
 ```
 
-The rule is about *timing properties*, not about the word `build`. A component whose outputs have no
-shared duration to invalidate — `venc.pre()` and `venc.post()` above — does not have this problem,
-and a separate method per output is often the clearer way to say so.
+Building is cheap — the design happened in `__init__` — so nothing is lost by building before
+placing. What is gained is that a call argument is now free to change the duration, which the
+declared-duration design had to forbid: when `CartesianLine.build` accepted `prephase=False` it
+silently invalidated `time_to_echo` and moved the echo 280 µs early.
 
-### Timing a caller needs is a property
+### Semantic offsets are the module's, and are not standardised
 
-`exc.isodelay`, `readout.time_to_echo`, `diff.lobe_duration`. The module has the domain knowledge, so
-the module answers.
+`duration` is measurable and therefore belongs to the block. **Where k = 0 falls inside a readout is
+not.** The block knows times, not meanings, and pinning the answer into it would stop the same block
+being reused elsewhere — which is why `LogicBlock` has no marks or anchors.
 
-The block does not, and cannot: it does not know where it sits. Pinning the answer into it would also
-stop the same block being reused elsewhere — which is why `LogicBlock` has no marks or anchors.
+So it belongs to whatever module knows the physics, expressed however that module's domain wants.
+Where a build argument moves the echo, the query takes that argument too:
 
-A property has to be honest about what it points at:
+```python
+ro.time_to_echo(shot=1)
+```
 
-- **`duration`** — at least as long as the block `build` returns. It may exceed it (padding to the
-  raster); it may never fall short, or whatever is placed next silently overlaps.
+The base standardises no names for these. What a name has to be honest about:
+
 - **`isodelay`** — start of the block to the RF's effective centre. Read it from `rf.center`, not by
   recomputing a centre of mass: the two differ for asymmetric and minimum-phase pulses, and the
   designed value is the one timing needs.
-- **`time_to_echo`** — start of the block to k=0. **For a spiral that is the first sample**, not the
-  middle of the window; conflating the two shifts the diffusion weighting rather than the image. For
-  an EPI train it is neither: with partial Fourier 0.75 the `ky = 0` echo lands 17.2 ms into a 49.9 ms
-  train, so both the midpoint and the first sample are wrong, and by different amounts.
+- **`time_to_echo`** — start of the block to k = 0. **For a spiral that is the first sample**, not
+  the middle of the window; conflating the two shifts the diffusion weighting rather than the image.
+  For an EPI train it is neither: with partial Fourier 0.75 the `ky = 0` echo lands 17.2 ms into a
+  49.9 ms train, so both the midpoint and the first sample are wrong, and by different amounts.
 
 ---
 
@@ -188,13 +236,13 @@ out.add(lobe_start + offset, adc)
 The second form fails in two independent ways:
 
 - **`pp.make_adc` silently raises a `delay` below `adc_dead_time` up to it**, and seqcraft
-  *preserves* an event's own delay rather than folding it away. So `delay=0.0` becomes 10 µs, the node
-  offset adds to it, and sampling begins 40 µs into the lobe where 30 was intended.
-  `SpiralVDS.time_to_echo` returns `float(self.adc.delay)` rather than `0.0` for exactly this reason.
-- **An RF or ADC node off the block raster is snapped**, with a `raster` warning rather than an error.
-  The snap moves the event against the gradient by up to half a raster: at 2 MHz/m that is 10 1/m of
-  k, two and a half `dk`. Placing the node at the gradient's own start puts it on the raster by
-  construction, and leaves the offset free.
+  *preserves* an event's own delay rather than folding it away. So `delay=0.0` becomes 10 µs, the
+  node offset adds to it, and sampling begins 40 µs into the lobe where 30 was intended. A spiral's
+  `time_to_echo` must therefore return `float(self.adc.delay)`, not `0.0`.
+- **An RF or ADC node off the block raster is snapped**, with a `raster` warning rather than an
+  error. The snap moves the event against the gradient by up to half a raster: at 2 MHz/m that is
+  10 1/m of k, two and a half `dk`. Placing the node at the gradient's own start puts it on the
+  raster by construction, and leaves the offset free.
 
 The offset itself must land on the **RF** raster (1 µs), which is what pypulseq's own `check_timing`
 requires of an ADC `delay` — not the 100 ns ADC raster, which only the *dwell* answers to. A 33.2 µs
@@ -204,26 +252,23 @@ offset produces one error per echo.
 
 ## Nesting needs no mechanism
 
-A module that contains modules just nests their blocks:
+A module that holds modules just holds them, passes `opts` down, and calls them:
 
 ```python
-class FatSat(sc.modules.Module):
-    def __init__(self, system, *, voxel_mm):
-        super().__init__(system)
-        self.pulse = sc.modules.GaussSaturation(system, flip_deg=90, duration_us=8000, ...)
-        self.spoiler = sc.modules.Spoiler(system, twists=4, voxel_mm=voxel_mm)
+class FatSat(sc.Module):
+    def __init__(self, *, opts, voxel_mm, tag=None):
+        super().__init__(opts=opts, tag=tag)
+        self.pulse = GaussSaturation(opts=opts, flip_deg=90, duration_us=8000)
+        self.spoiler = Spoiler(opts=opts, twists=4, voxel_mm=voxel_mm)      # opts passed down
 
-    @property
-    def duration(self):
-        return self.pulse.duration + self.spoiler.duration
-
-    def build(self):
-        pulse = self.pulse.build()
-        return sc.LogicBlock('fatsat').add(0.0, pulse).add(pulse.duration, self.spoiler.build())
+    def build(self) -> sc.LogicBlock:
+        pulse = self.pulse()                                # place by what was just built
+        return sc.LogicBlock().add(0.0, pulse).add(pulse.duration, self.spoiler())
 ```
 
-`sc.flatten` then reports the whole path — `('gre', 'fatsat', 'spoil')` — so provenance is the tree
-and needs no bookkeeping.
+`sc.flatten` then reports the whole path — `('gre', 'FatSat', 'Spoiler')` — so provenance is the tree
+and needs no bookkeeping. **Not one tag string was written**, and every compiled block still traces
+back to the module that produced it.
 
 ---
 
@@ -233,9 +278,9 @@ Do not arrange your module so its gradients avoid other modules'. Place them whe
 let the compiler deal with it:
 
 ```python
-seq.add(t, exc.rephaser())          # z
-seq.add(t, pe.build(line=k))        # y   } one block, no coordination,
-seq.add(t, ro.prephaser_block())    # x   } and no warning
+seq.add(t, gz_reph)                 # z
+seq.add(t, pe(line=k))              # y   } one block, no coordination,
+seq.add(t, prephaser())             # x   } and no warning
 ```
 
 Different axes are silent. The same axis is summed with a warning naming both sources. Two RF or two
@@ -243,27 +288,23 @@ ADC events overlapping is an error. See [`compiler.md`](compiler.md).
 
 ---
 
-## Units are checked for you
+## Units, and where the check went
 
-Suffix a float attribute with its unit — `_mm`, `_us`, `_deg`, `_per_m`, `_s_per_mm2` — and
-`sc.validate.check_units` rejects an implausible value when the constructor returns, with a hint.
-`Module` runs it for you when a subclass's `__init__` returns; a component that inherits nothing
-calls `sc.validate.check_units(self)` itself, since it takes any object.
+The base no longer runs one. `sc.validate.check_fields` still exists for dataclasses, and the
+plausibility bands are still keyed off the unit suffix, but calling anything is your decision —
+because the base holds what is true of *every* module, and this is not.
 
+State the range where the range is actually known:
+
+```python
+if not 0.5 <= fov_mm <= 2000:
+    raise ConfigurationError(...)
 ```
-UnitSanityError: M.slice_thickness_mm = 0.005 is outside the plausible range 0.01 .. 1000 mm.
-  got  : 0.005
-  hint : 0.005 looks like m. Did you mean slice_thickness_mm=5?
-  note : seqcraft never auto-converts - a wrong unit is a wrong sequence.
-```
 
-The band comes from the suffix alone, so it is generous by design: `_mm` is checked against
-0.01–1000 mm, which catches metres on a slice thickness but not on a field of view. Where a tighter
-band is meaningful, state it — `require_in_range(self, 'fov_ro_mm', 0.5, 2000)`.
-
-Public parameters use researcher-natural units (`fov_mm`, `te_ms`, `flip_deg`, `b_value_s_per_mm2`);
-anything derived is strict SI with an SI suffix (`fov_m`, `te_s`, `flip_rad`). Convert exactly once,
-and never auto-convert.
+The convention that makes such a check possible is worth keeping either way: public parameters use
+researcher-natural units (`fov_mm`, `te_ms`, `flip_deg`, `b_value_s_per_mm2`); anything derived is
+strict SI with an SI suffix (`fov_m`, `te_s`, `flip_rad`). Convert exactly once, and never
+auto-convert — a wrong unit is a wrong sequence, and silently fixing it hides the mistake.
 
 ---
 
@@ -294,43 +335,46 @@ three parameters to change. That difference is most of what a module is for.
 
 Two tiers, and neither asks what your component inherits.
 
-**`sc.testing.assert_output(make, system)`** takes any callable returning a block, so it fits a
-function, one method of several, or a module's `build`. It covers a well-formed block, deterministic
+**`sc.testing.assert_output(make, opts)`** takes any callable returning a block, so it fits a
+function, one method of several, or a module call. It covers a well-formed block, deterministic
 output, gradients on the raster, per-axis limits, and a clean compile on its own:
 
 ```python
-sc.testing.assert_output(lambda: spoiler(system, twists=4), system)
-sc.testing.assert_output(venc.pre, system)
-sc.testing.assert_output(venc.post, system)
+sc.testing.assert_output(lambda: spoiler(opts, twists=4), opts)
+sc.testing.assert_output(venc.pre, opts)
+sc.testing.assert_output(venc.post, opts)
 ```
 
-**`sc.testing.assert_all(module, **build_args)`** adds the checks that only mean something for the
-`build()` convention — that the call mutates neither the module nor the events on it, that `duration`
-is not optimistic, and that `isodelay` / `time_to_echo` fall inside the block — then runs
-`assert_output` on the result. It reads `build`, `system`, `regime` and `duration` off the object and
-never checks its type, so a class shaped that way passes whether or not it inherits `Module`.
+**`sc.testing.assert_all(module, **build_args)`** adds the check that only means something for the
+`Module` convention — that the call mutates neither the module nor the events on it — then runs
+`assert_output` on the result. It reads `module(**args)` and `module.opts` off the object and never
+checks its type, so a class shaped that way passes whether or not it inherits `Module`.
 
 ```python
-sc.testing.assert_all(venc)                 # the same contract checks the built-in modules get
+sc.testing.assert_all(venc, sign=-1.0)
 ```
+
+There is no duration check, and deliberately so: a module declares no duration, so there is no
+second number that can disagree with the first, and nothing left to assert.
 
 Add the **known values** yourself, because those are the ones that catch physics errors:
 
 ```python
-def test_venc_encodes_the_right_velocity(system):
-    venc = VelocityEncode(system, venc_cm_s=50)
-    raster = system.grad_raster.dt
+def test_venc_encodes_the_right_velocity(opts):
+    venc = VelocityEncode(opts=opts, venc_cm_s=50)
+    raster = opts.grad_raster_time
     m1 = 0.0
-    for node in venc.build():
+    for node in venc():
         tt, wf = sc.events.waveform_of(node.item, raster)
         m1 += float(sc.events.trapz(wf * (tt + node.start), tt))
     assert m1 == pytest.approx(venc.m1_s_per_m, rel=1e-3)
 ```
 
-**Measure from the waveform, not from the parameter.** The built-in diffusion module's b-value is
+**Measure from the waveform, not from the parameter.** The deleted diffusion module's b-value was
 checked that way against numerical integration to 0.5 %, and it is what caught a published ramp
 correction being used with the wrong `delta` convention — a 2–4 % b-value error that would have
-biased every diffusivity by the same amount, invisibly.
+biased every diffusivity by the same amount, invisibly. (That integral survives, as a plain
+function, in [`salvage/bvalue.py`](../salvage/bvalue.py).)
 
 Two more that are worth writing for any module with a refocusing pulse:
 
@@ -345,5 +389,4 @@ Two more that are worth writing for any module with a refocusing pulse:
   produces a correct one that takes `n_slices` times longer.
 
 Use `calculate_kspacePP` as the oracle for the first, rather than writing your own integrator: it
-handles the refocusing conjugation itself. Mine got the sign convention wrong twice before I gave up
-and asked pypulseq.
+handles the refocusing conjugation itself.

@@ -39,7 +39,7 @@ def _blocking_gradient(opts):
                              rise_time=200e-6, system=opts)
 
 
-def test_a_label_between_two_adcs_reaches_the_later_one(system, opts) -> None:
+def test_a_label_between_two_adcs_reaches_the_later_one(opts) -> None:
     """
     The measured corruption: LIN was [7, 7] instead of [1, 7].
 
@@ -54,13 +54,13 @@ def test_a_label_between_two_adcs_reaches_the_later_one(system, opts) -> None:
         .add(1000e-6, pp.make_label('LIN', 'SET', 7))
         .add(5000e-6, adc)
     )
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     assert _lin(out) == [1, 7], (
         'the label at 1000 us addresses the second ADC, not the first'
     )
 
 
-def test_the_result_does_not_depend_on_where_the_boundary_lands(system, opts) -> None:
+def test_the_result_does_not_depend_on_where_the_boundary_lands(opts) -> None:
     """
     The property that makes this correct rather than merely fixed.
 
@@ -75,13 +75,13 @@ def test_the_result_does_not_depend_on_where_the_boundary_lands(system, opts) ->
             tree.add(500e-6, _blocking_gradient(opts))
         tree.add(1000e-6, pp.make_label('LIN', 'SET', 7))
         tree.add(5000e-6, adc)
-        return sc.compile(tree, system)
+        return sc.compile(tree, opts)
 
     assert _lin(build(blocker=False)) == _lin(build(blocker=True)) == [1, 7]
 
 
 @pytest.mark.parametrize('label_t_us', [660, 1000, 2000, 2830, 3000, 4990])
-def test_any_time_in_the_gap_gives_the_same_answer(system, opts, label_t_us) -> None:
+def test_any_time_in_the_gap_gives_the_same_answer(opts, label_t_us) -> None:
     """
     Every time strictly between the two reservations is equivalent, so all must agree.
 
@@ -96,18 +96,18 @@ def test_any_time_in_the_gap_gives_the_same_answer(system, opts, label_t_us) -> 
         .add(label_t_us * 1e-6, pp.make_label('LIN', 'SET', 7))
         .add(5000e-6, adc)
     )
-    assert _lin(sc.compile(tree, system)) == [1, 7]
+    assert _lin(sc.compile(tree, opts)) == [1, 7]
 
 
-def test_a_label_at_the_same_time_as_its_adc_still_reaches_it(system, opts) -> None:
+def test_a_label_at_the_same_time_as_its_adc_still_reaches_it(opts) -> None:
     """The ordinary case, and the one the previous behaviour got right."""
     adc = pp.make_adc(num_samples=64, dwell=10e-6, system=opts)
     g = pp.make_trapezoid('x', area=100.0, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(1e-3, adc, pp.make_label('LIN', 'SET', 5))
-    assert _lin(sc.compile(tree, system)) == [5]
+    assert _lin(sc.compile(tree, opts)) == [5]
 
 
-def test_a_label_before_the_first_adc_reaches_it(system, opts) -> None:
+def test_a_label_before_the_first_adc_reaches_it(opts) -> None:
     adc = pp.make_adc(num_samples=64, dwell=10e-6, system=opts)
     tree = (
         sc.LogicBlock('t')
@@ -115,10 +115,10 @@ def test_a_label_before_the_first_adc_reaches_it(system, opts) -> None:
         .add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
         .add(2e-3, adc)
     )
-    assert _lin(sc.compile(tree, system)) == [4]
+    assert _lin(sc.compile(tree, opts)) == [4]
 
 
-def test_several_labelincs_on_one_key_commute(system, opts) -> None:
+def test_several_labelincs_on_one_key_commute(opts) -> None:
     """
     Addition commutes, so grouping two increments onto one block is safe.
 
@@ -134,10 +134,10 @@ def test_several_labelincs_on_one_key_commute(system, opts) -> None:
         .add(2500e-6, pp.make_label('LIN', 'INC', 4))
         .add(5000e-6, adc)
     )
-    assert _lin(sc.compile(tree, system)) == [0, 7]
+    assert _lin(sc.compile(tree, opts)) == [0, 7]
 
 
-def test_labels_on_different_keys_share_a_block_safely(system, opts) -> None:
+def test_labels_on_different_keys_share_a_block_safely(opts) -> None:
     """Different keys do not interact, so order is irrelevant and grouping is free."""
     adc = pp.make_adc(num_samples=64, dwell=10e-6, system=opts)
     tree = (
@@ -147,13 +147,13 @@ def test_labels_on_different_keys_share_a_block_safely(system, opts) -> None:
         .add(2500e-6, pp.make_label('SLC', 'SET', 2))
         .add(5000e-6, adc)
     )
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     labels = out.seq.evaluate_labels(evolution='adc')
     assert [int(v) for v in np.atleast_1d(np.asarray(labels['LIN']))] == [0, 5]
     assert [int(v) for v in np.atleast_1d(np.asarray(labels['SLC']))] == [0, 2]
 
 
-def test_order_dependent_labels_for_one_readout_are_rejected(system, opts) -> None:
+def test_order_dependent_labels_for_one_readout_are_rejected(opts) -> None:
     """
     pypulseq discards intra-block label order, so this intent cannot be expressed.
 
@@ -171,13 +171,13 @@ def test_order_dependent_labels_for_one_readout_are_rejected(system, opts) -> No
         .add(5000e-6, adc)
     )
     with pytest.raises(sc.CompileError) as err:
-        sc.compile(tree, system)
+        sc.compile(tree, opts)
     text = str(err.value)
     assert 'order cannot be expressed' in text
     assert 'barrier' in text, 'the message must give a way to express it'
 
 
-def test_a_barrier_makes_an_order_dependent_pair_expressible(system, opts) -> None:
+def test_a_barrier_makes_an_order_dependent_pair_expressible(opts) -> None:
     """
     The remedy the error suggests has to actually work.
 
@@ -192,11 +192,11 @@ def test_a_barrier_makes_an_order_dependent_pair_expressible(system, opts) -> No
         .add(2500e-6, pp.make_label('LIN', 'INC', 3))
         .add(5000e-6, adc)
     )
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     assert _lin(out) == [0, 13], 'SET 10 then INC 3, ordered by block'
 
 
-def test_a_label_with_no_following_adc_is_emitted_and_reported(system, opts) -> None:
+def test_a_label_with_no_following_adc_is_emitted_and_reported(opts) -> None:
     """
     Nothing to address, so it keeps containment placement -- but it must not be lost, and the
     user has to be told, because containment can put it in the *preceding* readout's block and
@@ -209,7 +209,7 @@ def test_a_label_with_no_following_adc_is_emitted_and_reported(system, opts) -> 
         .add(3000e-6, pp.make_label('LIN', 'SET', 99))
         .add(3000e-6, pp.make_delay(1e-3))
     )
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     emitted = [
         lab.value
         for i in sorted(out.seq.block_events)
@@ -220,7 +220,7 @@ def test_a_label_with_no_following_adc_is_emitted_and_reported(system, opts) -> 
     assert orphan, f'expected a warning about the orphan label, got {out.report}'
 
 
-def test_a_multislice_address_survives_a_blocking_gradient(system, opts) -> None:
+def test_a_multislice_address_survives_a_blocking_gradient(opts) -> None:
     """
     The realistic version: unique-but-shifted addresses pass the duplicate check.
 
@@ -236,7 +236,7 @@ def test_a_multislice_address_survives_a_blocking_gradient(system, opts) -> None
         tree.add(t0 + 1000e-6, pp.make_label('LIN', 'SET', i + 1))
         tree.add(t0 + 1500e-6, _blocking_gradient(opts))
         tree.add(t0 + 3000e-6, adc)
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     assert _lin(out) == [1, 2, 3, 4], 'each readout gets the label written before it'
     assert out.check().ok, out.check()
     assert not out.report.of_kind('label'), 'no orphan warnings for a well-formed sequence'

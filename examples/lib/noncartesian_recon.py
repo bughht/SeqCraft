@@ -264,8 +264,8 @@ class Readout:
                     'readout_span_ms': span * 1e3,
                 },
                 [
-                    'pass t_echo_s= the time of k=0 within the readout '
-                    '(readout.time_to_echo for a seqcraft module)',
+                    'pass t_echo_s= the time of k=0 within the readout -- an offset the module '
+                    'that designed it knows and the block cannot measure',
                     'or subtract the readout block start from t_adc_s before constructing this',
                 ],
             )

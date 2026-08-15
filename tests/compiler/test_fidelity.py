@@ -21,99 +21,99 @@ import seqcraft as sc
 
 
 # ------------------------------------------------------------------------------- one gradient
-def test_single_trapezoid(system, opts) -> None:
+def test_single_trapezoid(opts) -> None:
     tree = sc.LogicBlock('t').add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_triangle_no_flat_top(system, opts) -> None:
+def test_triangle_no_flat_top(opts) -> None:
     g = pp.make_trapezoid('x', area=5.0, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_three_axes_at_once(system, opts) -> None:
+def test_three_axes_at_once(opts) -> None:
     gentle = {'area': 100.0, 'duration': 2e-3, 'rise_time': 200e-6, 'system': opts}
     tree = sc.LogicBlock('t')
     for ax in ('x', 'y', 'z'):
         tree.add(0.0, pp.make_trapezoid(ax, **gentle))
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_sequential_gradients_same_axis(system, opts) -> None:
+def test_sequential_gradients_same_axis(opts) -> None:
     """Disjoint lobes on one axis: nothing to sum, nothing to split."""
     g = pp.make_trapezoid('x', area=100.0, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(1e-3, g).add(2e-3, g)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
 # ------------------------------------------------------------------------------------ merging
-def test_two_trapezoids_summed(system, opts) -> None:
+def test_two_trapezoids_summed(opts) -> None:
     tree = (
         sc.LogicBlock('t')
         .add(0.0, pp.make_trapezoid('x', area=100.0, duration=2e-3, system=opts))
         .add(0.0, pp.make_trapezoid('x', area=200.0, duration=2e-3, system=opts))
     )
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_partially_overlapping_trapezoids(system, opts) -> None:
+def test_partially_overlapping_trapezoids(opts) -> None:
     """The hard merge: the sum has corners neither input has."""
     a = pp.make_trapezoid('x', area=100.0, duration=1e-3, rise_time=100e-6, system=opts)
     b = pp.make_trapezoid('x', area=-60.0, duration=1e-3, rise_time=100e-6, system=opts)
     tree = sc.LogicBlock('t').add(0.0, a).add(400e-6, b)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_three_overlapping_on_one_axis(system, opts) -> None:
+def test_three_overlapping_on_one_axis(opts) -> None:
     a = pp.make_trapezoid('x', area=80.0, duration=1e-3, rise_time=100e-6, system=opts)
     tree = sc.LogicBlock('t').add(0.0, a).add(200e-6, a).add(500e-6, a)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
 # ----------------------------------------------------------------------------------- splitting
-def test_barrier_split_preserves_the_waveform(system, opts) -> None:
+def test_barrier_split_preserves_the_waveform(opts) -> None:
     g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(2e-3, sc.barrier('mid'))
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_barrier_split_mid_ramp(system, opts) -> None:
+def test_barrier_split_mid_ramp(opts) -> None:
     """The seam lands part-way up a ramp, so both halves start and end off zero."""
     g = pp.make_trapezoid('x', amplitude=0.5 * opts.max_grad, duration=2e-3, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(float(g.rise_time) / 2.0, sc.barrier())
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_many_barriers_across_one_gradient(system, opts) -> None:
+def test_many_barriers_across_one_gradient(opts) -> None:
     g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g)
     for k in range(1, 8):
         tree.add(k * 500e-6, sc.barrier(f'b{k}'))
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
 # ------------------------------------------------------------------- gradients beside rf / adc
-def test_gradient_spanning_an_rf(system, opts) -> None:
+def test_gradient_spanning_an_rf(opts) -> None:
     rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=opts, use='excitation')
     g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(1.5e-3, rf)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_gradient_spanning_an_adc(system, opts) -> None:
+def test_gradient_spanning_an_adc(opts) -> None:
     adc = pp.make_adc(num_samples=64, dwell=10e-6, system=opts)
     g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(1.5e-3, adc)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_readout_with_prephaser(system, opts) -> None:
+def test_readout_with_prephaser(opts) -> None:
     ro = pp.make_trapezoid('x', amplitude=0.25 * opts.max_grad, duration=3.4e-3, system=opts)
     adc = pp.make_adc(num_samples=256, dwell=12e-6, delay=float(ro.rise_time), system=opts)
     pre = pp.make_trapezoid('x', area=-0.5 * float(ro.area), system=opts)
     tree = sc.LogicBlock('t').add(0.0, pre).add(float(pp.calc_duration(pre)), ro, adc)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
 # ------------------------------------------------------------------------ arbitrary waveforms
@@ -131,23 +131,23 @@ def _spiral_like(opts, n=200, scale=0.3, turns=2.0):
     return wx, wy
 
 
-def test_lone_arbitrary_gradient_untouched(system, opts) -> None:
+def test_lone_arbitrary_gradient_untouched(opts) -> None:
     """The fast path: a spiral alone in its interval must survive bit-for-bit."""
     wx, _ = _spiral_like(opts)
     g = pp.make_arbitrary_grad('x', waveform=wx, first=0.0, last=0.0, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_two_axis_arbitrary_pair(system, opts) -> None:
+def test_two_axis_arbitrary_pair(opts) -> None:
     wx, wy = _spiral_like(opts)
     gx = pp.make_arbitrary_grad('x', waveform=wx, first=0.0, last=0.0, system=opts)
     gy = pp.make_arbitrary_grad('y', waveform=wy, first=0.0, last=0.0, system=opts)
     tree = sc.LogicBlock('t').add(0.0, gx).add(0.0, gy)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_arbitrary_merged_with_a_trapezoid_is_reported_not_silent(system, opts) -> None:
+def test_arbitrary_merged_with_a_trapezoid_is_reported_not_silent(opts) -> None:
     """
     The one case pulseq's two gradient representations cannot both be held.
 
@@ -161,7 +161,7 @@ def test_arbitrary_merged_with_a_trapezoid_is_reported_not_silent(system, opts) 
     g = pp.make_arbitrary_grad('x', waveform=wx, first=0.0, last=0.0, system=opts)
     trap = pp.make_trapezoid('x', area=20.0, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(0.0, trap)
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
 
     reported = out.report.of_kind('grad_resample')
     assert reported, 'a resample that moves the waveform must never be silent'
@@ -180,14 +180,14 @@ def test_arbitrary_merged_with_a_trapezoid_is_reported_not_silent(system, opts) 
     assert not out.report.of_kind('moment')
 
 
-def test_arbitrary_gradient_split_by_a_barrier(system, opts) -> None:
+def test_arbitrary_gradient_split_by_a_barrier(opts) -> None:
     wx, _ = _spiral_like(opts, n=60)
     g = pp.make_arbitrary_grad('x', waveform=wx, first=0.0, last=0.0, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(300e-6, sc.barrier('mid'))
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_extended_trapezoid_passes_through(system, opts) -> None:
+def test_extended_trapezoid_passes_through(opts) -> None:
     g = pp.make_extended_trapezoid(
         'x',
         times=np.array([0.0, 200e-6, 600e-6, 700e-6]),
@@ -195,11 +195,11 @@ def test_extended_trapezoid_passes_through(system, opts) -> None:
         system=opts,
     )
     tree = sc.LogicBlock('t').add(0.0, g)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
 # -------------------------------------------------------------------------------- off raster
-def test_gradient_started_off_the_gradient_raster_is_an_error(system, opts) -> None:
+def test_gradient_started_off_the_gradient_raster_is_an_error(opts) -> None:
     """
     There is no correct snap, so the compiler must not pick one.
 
@@ -211,28 +211,28 @@ def test_gradient_started_off_the_gradient_raster_is_an_error(system, opts) -> N
     g = pp.make_trapezoid('x', area=100.0, system=opts)
     tree = sc.LogicBlock('t').add(5e-6, g)
     with pytest.raises(sc.CompileError, match='not a multiple of the 10 us gradient raster'):
-        sc.compile(tree, system)
+        sc.compile(tree, opts)
 
 
-def test_the_off_raster_error_names_both_neighbouring_rasters(system, opts) -> None:
+def test_the_off_raster_error_names_both_neighbouring_rasters(opts) -> None:
     """A message that only says "wrong" leaves the fix to be guessed."""
     g = pp.make_trapezoid('y', area=100.0, system=opts)
     tree = sc.LogicBlock('tr').add(0.0, sc.LogicBlock('spoiler').add(3e-6, g))
     with pytest.raises(sc.CompileError) as err:
-        sc.compile(tree, system)
+        sc.compile(tree, opts)
     text = str(err.value)
     assert 'tr.spoiler' in text
     assert '0.0 us' in text and '10.0 us' in text
 
 
-def test_a_gradient_on_the_raster_is_unaffected(system, opts) -> None:
+def test_a_gradient_on_the_raster_is_unaffected(opts) -> None:
     g = pp.make_trapezoid('x', area=100.0, system=opts)
     tree = sc.LogicBlock('t').add(20e-6, g)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
 # ---------------------------------------------------------------------------------- long runs
-def test_epi_like_train(system, opts) -> None:
+def test_epi_like_train(opts) -> None:
     """One readout gradient over many ADCs: every boundary lands inside the gradient."""
     adc = pp.make_adc(num_samples=64, dwell=4e-6, system=opts)
     n, period = 24, 500e-6
@@ -241,10 +241,10 @@ def test_epi_like_train(system, opts) -> None:
     tree = sc.LogicBlock('t').add(0.0, g)
     for i in range(n):
         tree.add(100e-6 + i * period, adc)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_repeated_tr_accumulates_no_drift(system, opts) -> None:
+def test_repeated_tr_accumulates_no_drift(opts) -> None:
     """40 TRs at a non-raster-friendly spacing: float drift would show as a shifted lobe."""
     rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=opts, use='excitation')
     g = pp.make_trapezoid('x', area=100.0, system=opts)
@@ -252,49 +252,62 @@ def test_repeated_tr_accumulates_no_drift(system, opts) -> None:
     tree = sc.LogicBlock('t')
     for i in range(40):
         tree.add(i * 5e-3, inner)
-    assert_matches(tree, sc.compile(tree, system))
+    assert_matches(tree, sc.compile(tree, opts))
 
 
-# ------------------------------------------------------------------------------- real modules
-def _gre_tree(system, n_tr: int = 3):
-    """A spoiled GRE, built the way tests/integration/conftest.py builds it."""
-    exc = sc.modules.SincExcitation(
-        system, flip_deg=15.0, duration_us=1000, slice_thickness_mm=5.0, rephase=False)
-    ro = sc.modules.CartesianLine(
-        system, fov_ro_mm=250.0, matrix_ro=32, readout_duration_us=3200, prephase=False)
-    pe = sc.modules.PhaseEncode(system, fov_pe_mm=250.0, matrix_pe=32)
-    spoil = sc.modules.Spoiler(system, twists=4, voxel_mm=5.0)
+# --------------------------------------------------------------------------- a realistic tree
+def _gre_tree(opts, n_tr: int = 3):
+    """
+    A spoiled GRE, out of raw pypulseq events.
 
-    raster = system.block_raster
-    t_winders = exc.duration
-    t_readout = raster.ceil(exc.isodelay + 8e-3 - ro.time_to_echo)
-    t_spoil = raster.ceil(t_readout + ro.duration)
+    Deliberately not built from a module library.  This suite tests the *compiler*, and building
+    its realistic fixtures out of library classes is how the compiler came to be untestable
+    without whatever the library happened to contain -- so the coupling is designed out rather
+    than merely tidied.
+    """
+    raster = sc.Raster(opts.block_duration_raster, 'block')
+    rf, gz, gzr = pp.make_sinc_pulse(
+        flip_angle=0.26, duration=1e-3, slice_thickness=5e-3, apodization=0.5,
+        time_bw_product=4, delay=opts.rf_dead_time, use='excitation',
+        system=opts, return_gz=True,
+    )
+    gx = pp.make_trapezoid('x', flat_area=128.0, flat_time=3.2e-3, system=opts)
+    gx_pre = pp.make_trapezoid('x', area=-gx.area / 2.0, duration=1e-3, system=opts)
+    adc = pp.make_adc(num_samples=32, duration=3.2e-3, delay=gx.rise_time, system=opts)
+    spoil = pp.make_trapezoid('z', area=4.0 / 5e-3, system=opts)
+
+    # k = 0 arrives half a flat top after the readout starts, which is what fixes TE here.
+    time_to_echo = float(gx.rise_time) + 0.5 * float(gx.flat_time)
+    t_winders = float(pp.calc_duration(gz))
+    t_readout = raster.ceil(t_winders + 8e-3 - time_to_echo)
+    t_spoil = raster.ceil(t_readout + float(pp.calc_duration(gx)))
+    dk = 1e3 / 250.0                                    # 1/FOV in 1/m, for the phase encode
 
     tree = sc.LogicBlock('gre')
     for index in range(n_tr):
         t0 = index * 20e-3
-        tree.add(t0, exc.build())
-        tree.add(t0 + t_winders, exc.rephaser())
-        tree.add(t0 + t_winders, pe.build(line=index - n_tr // 2))
-        tree.add(t0 + t_winders, ro.prephaser_block())
-        tree.add(t0 + t_readout, ro.build())
-        tree.add(t0 + t_spoil, spoil.build())
+        line = index - n_tr // 2
+        pe = pp.make_trapezoid('y', area=line * dk, duration=1e-3, system=opts)
+        tree.add(t0, rf, gz)
+        tree.add(t0 + t_winders, gzr, pe, gx_pre)     # three winders at one time, three axes
+        tree.add(t0 + t_readout, gx, adc)
+        tree.add(t0 + t_spoil, spoil)
     return tree
 
 
-def test_gre_tr_from_modules(system) -> None:
+def test_gre_tr(opts) -> None:
     """
     A whole TR built the way a user would: three winders at one time on three axes.
 
     The case the design exists to support, and the one where a boundary chosen for the RF or the
     ADC has to leave three unrelated gradients intact.
     """
-    tree = _gre_tree(system)
-    assert_matches(tree, sc.compile(tree, system))
+    tree = _gre_tree(opts)
+    assert_matches(tree, sc.compile(tree, opts))
 
 
 # ------------------------------------------------------------------------ seam continuity
-def _seam_trees(system, opts):
+def _seam_trees(opts):
     """Trees whose block seams are the interesting part."""
     long_g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=opts)
     ramp = pp.make_trapezoid('x', amplitude=0.5 * opts.max_grad, duration=2e-3, system=opts)
@@ -310,11 +323,11 @@ def _seam_trees(system, opts):
         'barrier_mid_ramp': sc.LogicBlock('t').add(
             0.0, ramp).add(float(ramp.rise_time) / 2.0, sc.barrier()),
         'epi_train': epi,
-        'gre': _gre_tree(system, n_tr=2),
+        'gre': _gre_tree(opts, n_tr=2),
     }
 
 
-def test_no_amplitude_jumps_at_block_seams(system, opts) -> None:
+def test_no_amplitude_jumps_at_block_seams(opts) -> None:
     """
     A split must not become a kink: the amplitude leaving one block must equal the amplitude
     entering the next, and the sequence must start and end at zero.
@@ -322,8 +335,8 @@ def test_no_amplitude_jumps_at_block_seams(system, opts) -> None:
     pypulseq enforces this when building, so this is a second opinion -- but it is the exact
     invariant a bad split breaks, and it is cheap.
     """
-    for name, tree in _seam_trees(system, opts).items():
-        bad = seam_discontinuities(sc.compile(tree, system))
+    for name, tree in _seam_trees(opts).items():
+        bad = seam_discontinuities(sc.compile(tree, opts))
         assert not bad, (
             f'{name}: amplitude jumps at block seams: '
             + '; '.join(f'{t * 1e6:.1f} us on {ax}: {a:.6g} -> {b:.6g}' for t, ax, a, b in bad)
@@ -331,7 +344,7 @@ def test_no_amplitude_jumps_at_block_seams(system, opts) -> None:
 
 
 # --------------------------------------------------------------------------- the oracle itself
-def test_the_oracle_catches_a_corrupted_waveform(system, opts) -> None:
+def test_the_oracle_catches_a_corrupted_waveform(opts) -> None:
     """
     An oracle that cannot fail proves nothing.
 
@@ -340,7 +353,7 @@ def test_the_oracle_catches_a_corrupted_waveform(system, opts) -> None:
     """
     g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(2e-3, sc.barrier('mid'))
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     assert_matches(tree, out)                                   # clean to begin with
 
     block = out.seq.get_block(1)
@@ -357,7 +370,7 @@ def test_the_oracle_catches_a_corrupted_waveform(system, opts) -> None:
         assert_matches(tree, out)
 
 
-def test_the_oracle_reconstructs_a_continuous_waveform(system, opts) -> None:
+def test_the_oracle_reconstructs_a_continuous_waveform(opts) -> None:
     """
     Blocks are concatenated, not summed.
 
@@ -366,7 +379,7 @@ def test_the_oracle_reconstructs_a_continuous_waveform(system, opts) -> None:
     """
     g = pp.make_trapezoid('x', amplitude=0.4 * opts.max_grad, duration=2e-3, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(1e-3, sc.barrier())
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     times, amps = compiled_knots(out)['x']
     assert times == sorted(times), 'knot times must be strictly increasing'
     assert len(times) == len(set(times)), 'seam knots must be collapsed, not duplicated'
@@ -377,7 +390,7 @@ def test_the_oracle_reconstructs_a_continuous_waveform(system, opts) -> None:
     )
 
 
-# ------------------------------------------------------------------------- the real modules
+# ------------------------------------------------- arbitrary waveforms against pypulseq's floor
 def _roundtrip_floor(event, opts) -> float:
     """
     Return pypulseq's own shape-library round-trip error for `event`, in Hz/m.
@@ -395,61 +408,80 @@ def _roundtrip_floor(event, opts) -> float:
     return float(np.max(np.abs(before - after)))
 
 
-def test_spiral_module_survives_compilation(system, opts) -> None:
+def _spiral_pair(opts, rotation: float = 0.0, n: int = 1200):
     """
-    The real SpiralVDS, not a synthetic stand-in: its readout must reach the .seq unmoved.
+    A long two-axis arbitrary waveform, rotated by `rotation` radians.
+
+    The shape a spiral readout has, without a spiral module: 1200 raster-centre samples per axis,
+    smooth, zero at both ends.  Rotating it bakes a different shape into each "interleaf", which
+    is what makes each one a separate thing for the compiler to preserve.
+    """
+    wx, wy = _spiral_like(opts, n=n, scale=0.25, turns=16.0)
+    rx = wx * np.cos(rotation) - wy * np.sin(rotation)
+    ry = wx * np.sin(rotation) + wy * np.cos(rotation)
+    return (
+        pp.make_arbitrary_grad('x', waveform=rx, first=0.0, last=0.0, system=opts),
+        pp.make_arbitrary_grad('y', waveform=ry, first=0.0, last=0.0, system=opts),
+    )
+
+
+def test_a_long_arbitrary_readout_survives_compilation(opts) -> None:
+    """
+    A spiral-shaped readout must reach the ``.seq`` unmoved.
 
     The residual is pypulseq's shape compression, so the tolerance is *derived* from that floor
     rather than picked.  If seqcraft ever starts moving the waveform itself, this fails even
     though the absolute number is tiny.
     """
-    ro = sc.modules.SpiralVDS(system, fov_mm=240, matrix=96, n_interleaves=8,
-                              density=0.6, regime='default')
-    tree = sc.LogicBlock('t').add(0.0, ro.build(interleaf=3))
-    out = sc.compile(tree, system)
+    gx, gy = _spiral_pair(opts)
+    tree = sc.LogicBlock('t').add(0.0, gx, gy)
+    out = sc.compile(tree, opts)
 
-    floor = _roundtrip_floor(ro.gx, opts)
+    floor = _roundtrip_floor(gx, opts)
     report = compare(tree, out, atol=10.0 * max(floor, 1e-9), rtol=0.0)
     for ax, r in report.items():
         assert r['max_abs_error'] <= r['tolerance'], (
             f'axis {ax}: {r["max_abs_error"]:.4g} Hz/m exceeds 10x pypulseq\'s own '
             f'{floor:.4g} Hz/m round-trip floor -- seqcraft moved the waveform'
         )
-    assert not out.report.of_kind('grad_resample'), 'a spiral alone must never be resampled'
+    assert not out.report.of_kind('grad_resample'), 'a lone readout must never be resampled'
 
 
-def test_every_interleaf_of_a_spiral_is_faithful(system, opts) -> None:
-    """Rotation is baked into the waveform, so each interleaf is a different shape to preserve."""
-    ro = sc.modules.SpiralVDS(system, fov_mm=240, matrix=64, n_interleaves=4,
-                              density=0.6, regime='default')
-    floor = 10.0 * max(_roundtrip_floor(ro.gx, opts), 1e-9)
+def test_every_rotation_of_an_arbitrary_readout_is_faithful(opts) -> None:
+    """Rotation is baked into the waveform, so each shot is a different shape to preserve."""
+    floor = 10.0 * max(_roundtrip_floor(_spiral_pair(opts)[0], opts), 1e-9)
     for k in range(4):
-        tree = sc.LogicBlock('t').add(0.0, ro.build(interleaf=k))
-        out = sc.compile(tree, system)
+        gx, gy = _spiral_pair(opts, rotation=k * np.pi / 2.0)
+        tree = sc.LogicBlock('t').add(0.0, gx, gy)
+        out = sc.compile(tree, opts)
         for ax, r in compare(tree, out, atol=floor, rtol=0.0).items():
-            assert r['max_abs_error'] <= r['tolerance'], f'interleaf {k}, axis {ax}'
+            assert r['max_abs_error'] <= r['tolerance'], f'rotation {k}, axis {ax}'
 
 
-def test_a_diffusion_prepared_spiral_tr_is_faithful(system, opts) -> None:
+def test_a_prepared_tr_mixing_traps_and_arbitrary_is_faithful(opts) -> None:
     """
-    The shape the DTI notebooks actually build: diffusion lobes, an excitation, a spiral readout.
+    The shape a diffusion-prepared spiral TR has: trapezoid lobes, an RF, an arbitrary readout.
 
     Traps and a raster-centre waveform on the same axes, in one tree -- the combination every
     individual test above isolates one part of.
     """
     rf = pp.make_sinc_pulse(flip_angle=1.57, duration=2e-3, system=opts, use='excitation',
-                            slice_thickness=5e-3, apodization=0.5, time_bw_product=4)
-    diff = sc.modules.MonopolarDiffusion(system, b_value_s_per_mm2=1000.0,
-                                         refocus_duration_us=3000.0, regime='default')
-    ro = sc.modules.SpiralVDS(system, fov_mm=240, matrix=96, n_interleaves=8,
-                              density=0.6, regime='default')
+                            delay=opts.rf_dead_time, slice_thickness=5e-3, apodization=0.5,
+                            time_bw_product=4)
+    lobe = {'amplitude': 0.7 * opts.max_grad, 'duration': 6e-3, 'rise_time': 600e-6,
+            'system': opts}
+    gx, gy = _spiral_pair(opts)
+    t_readout = 3e-3 + 2 * 6e-3 + 4e-3
+
     tree = sc.LogicBlock('tr')
     tree.add(0.0, rf)
-    tree.add(3e-3, diff.build(part='pre', direction=(1.0, 1.0, 0.0)))
-    tree.add(3e-3 + diff.duration + 1e-3, ro.build(interleaf=2))
-    out = sc.compile(tree, system)
+    tree.add(3e-3, pp.make_trapezoid('x', **lobe), pp.make_trapezoid('y', **lobe))
+    tree.add(3e-3 + 6e-3 + 3e-3, pp.make_trapezoid('x', **lobe),
+             pp.make_trapezoid('y', **lobe))
+    tree.add(t_readout + 3e-3, gx, gy)
+    out = sc.compile(tree, opts)
 
-    floor = 10.0 * max(_roundtrip_floor(ro.gx, opts), 1e-9)
+    floor = 10.0 * max(_roundtrip_floor(gx, opts), 1e-9)
     for ax, r in compare(tree, out, atol=floor, rtol=0.0).items():
         assert r['max_abs_error'] <= r['tolerance'], (
             f'axis {ax}: {r["max_abs_error"]:.4g} Hz/m > {r["tolerance"]:.4g}'

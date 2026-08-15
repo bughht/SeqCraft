@@ -119,15 +119,16 @@ def test_ppm_to_hz_matches_the_hand_calculation() -> None:
     assert convert(-434.0, 'Hz', 'ppm', f0=f0) == pytest.approx(-434.0 / f0 * 1e6)
 
 
-def test_system_convert_supplies_gamma_and_f0() -> None:
-    """The scanner's own values, so a non-proton system cannot silently use the proton ones."""
-    system = sc.System.preset('generic_3t')
-    assert system.convert(-3.4, 'ppm', 'Hz') == pytest.approx(
-        convert(-3.4, 'ppm', 'Hz', gamma=system.gamma, f0=system.gamma * system.b0_T)
+def test_the_scanners_own_gamma_is_passed_not_assumed(opts) -> None:
+    """
+    ``gamma`` and ``f0`` are arguments rather than globals, so a non-proton scanner cannot
+    silently pick up the proton values.  There is no scanner object to fill them in -- the
+    ``Opts`` carries them, and the call site passes them.
+    """
+    assert convert(-3.4, 'ppm', 'Hz', f0=opts.gamma * opts.B0) == pytest.approx(
+        -3.4e-6 * opts.gamma * opts.B0
     )
-    assert system.convert(40.0, 'mT/m', 'Hz/m') == pytest.approx(
-        convert(40.0, 'mT/m', 'Hz/m', gamma=system.gamma)
-    )
+    assert convert(opts.max_grad, 'Hz/m', 'mT/m', gamma=opts.gamma) == pytest.approx(40.0)
 
 
 # ---------------------------------------------------------------------------------- arrays

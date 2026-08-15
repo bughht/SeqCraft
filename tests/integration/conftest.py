@@ -1,13 +1,19 @@
 """
 Sequence builders for the integration tests.
 
-These live **in the tests**, not in the package. seqcraft ships modules and a compiler; a sequence is
-something you assemble, and baking one into library code would mean changing a package to change
-your own scan. The notebooks in ``examples/`` do the same thing at greater length and with the
-reasoning spelled out.
+These live **in the tests**, not in the package.  seqcraft ships a tree, a compiler and a contract;
+a sequence is something you assemble, and baking one into library code would mean changing a
+package to change your own scan.
 
-Each builder here is deliberately the shortest honest version -- enough to exercise the compiler and
-the physics checks, with none of the notebook's configurability.
+They are also built out of **raw pypulseq events and nothing else**.  That is the point of this
+file after the module reform: it is the standing proof that the compile path stands alone, needing
+no module layer at all.  Two sequences, a gradient echo and a spin echo, chosen because between
+them they exercise everything the compiler has to get right -- three winders overlapping on three
+axes, an RF that forces a boundary, an ADC that forbids one, labels that must reach the right
+readout, and a refocusing pulse that inverts the sign of everything before it.
+
+Each is deliberately the shortest honest version: enough to check against physics, with none of a
+notebook's configurability.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ from typing import TYPE_CHECKING
 
 import pypulseq as pp
 import pytest
+from pypulseq.opts import Opts
 
 import seqcraft as sc
 
@@ -28,9 +35,56 @@ MATRIX = 32
 FOV_MM = 250.0
 SLICE_MM = 5.0
 
+#: The scanner every recipe here is built against.  Stated in full, including the dead times
+#: pypulseq would otherwise default to zero.
+OPTS = Opts(
+    max_grad=40, grad_unit='mT/m',
+    max_slew=150, slew_unit='T/m/s',
+    B0=3.0,
+    rf_dead_time=100e-6,
+    rf_ringdown_time=30e-6,
+    adc_dead_time=10e-6,
+)
+
+
+def interleaved_slice_order(n: int) -> list[int]:
+    """
+    Even slices then odd ones, so no two consecutive excitations are neighbours.
+
+    Adjacent slices share their profile's tails, and exciting one right after the other saturates
+    that overlap -- which shows up as alternating bright and dark slices in the image.
+    """
+    return [*range(0, n, 2), *range(1, n, 2)]
+
+
+def rf_spoil_phase(index: int, increment_rad: float) -> float:
+    """
+    Quadratic RF-spoiling phase ``phi_n = increment * n(n+1)/2``, wrapped into ``[0, 2 pi)``.
+
+    Evaluated in closed form rather than accumulated: an accumulator makes shot 900 depend on
+    shots 1 to 899 having been built first, which is a reproducibility hazard rather than a physics
+    one -- but a real one.
+    """
+    return (increment_rad * index * (index + 1) / 2.0) % (2.0 * math.pi)
+
+
+def _readout(opts: Opts, *, fov_mm: float, matrix: int, duration_s: float = 3.2e-3):
+    """
+    A frequency-encoding lobe, its ADC, and where k = 0 falls inside it.
+
+    ``time_to_echo`` is the module-layer question the block cannot answer -- an offset into the
+    readout, not a duration -- so it is computed here beside the gradient it describes.  Sampling
+    starts when the ramp ends, so the echo is half a flat top later.
+    """
+    dk = 1e3 / fov_mm                                       # 1/FOV, in 1/m
+    gx = pp.make_trapezoid('x', flat_area=matrix * dk, flat_time=duration_s, system=opts)
+    adc = pp.make_adc(num_samples=matrix, duration=duration_s, delay=gx.rise_time, system=opts)
+    time_to_echo = float(gx.rise_time) + 0.5 * float(gx.flat_time)
+    return gx, adc, time_to_echo, dk
+
 
 def build_gre(
-    system: sc.System,
+    opts: Opts = OPTS,
     *,
     fov_mm: float = FOV_MM,
     matrix: int = MATRIX,
@@ -50,45 +104,57 @@ def build_gre(
         fov_mm=(fov_mm, fov_mm, slice_mm), matrix=(matrix, matrix, 1),
         slice_thickness_mm=slice_mm, n_slices=n_slices,
     )
-    exc = sc.modules.SincExcitation(
-        system, flip_deg=flip_deg, duration_us=1000, slice_thickness_mm=slice_mm, rephase=False)
-    ro = sc.modules.CartesianLine(
-        system, fov_ro_mm=fov_mm, matrix_ro=matrix, readout_duration_us=3200, prephase=False)
-    pe = sc.modules.PhaseEncode(system, fov_pe_mm=fov_mm, matrix_pe=matrix)
-    spoil = sc.modules.Spoiler(system, twists=4, voxel_mm=slice_mm)
+    raster = sc.Raster(opts.block_duration_raster, 'block')
 
-    raster = system.block_raster
-    t_winders = exc.duration
-    t_readout = raster.ceil(exc.isodelay + te_s - ro.time_to_echo)
-    t_spoil = raster.ceil(t_readout + ro.duration)
+    rf, gz, gz_reph = pp.make_sinc_pulse(
+        flip_angle=math.radians(flip_deg), duration=1e-3, slice_thickness=slice_mm * 1e-3,
+        apodization=0.5, time_bw_product=4, delay=opts.rf_dead_time, use='excitation',
+        system=opts, return_gz=True,
+    )
+    gx, adc, time_to_echo, dk = _readout(opts, fov_mm=fov_mm, matrix=matrix)
+    gx_pre = pp.make_trapezoid('x', area=-float(gx.area) / 2.0, duration=1e-3, system=opts)
+    # Four twists of phase across a voxel is enough to spoil the transverse magnetisation.
+    spoil = pp.make_trapezoid('z', area=4.0 / (slice_mm * 1e-3), system=opts)
+
+    # The RF's effective centre: a symmetric sinc refocuses half a pulse after its own start.
+    isodelay = float(rf.delay) + 0.5 * float(rf.shape_dur)
+    t_winders = float(pp.calc_duration(gz))
+    t_readout = raster.ceil(isodelay + te_s - time_to_echo)
+    t_spoil = raster.ceil(t_readout + float(pp.calc_duration(gx)))
 
     seq = sc.LogicBlock('gre_2d')
     index = 0
-    for slice_index in sc.interleaved_slice_order(n_slices):
+    for slice_index in interleaved_slice_order(n_slices):
         z = geometry.slice_positions_m[slice_index]
         for line in geometry.pe_lines:
             t0 = index * tr_s
-            phase = sc.rf_spoil_phase(index, math.radians(117.0))
-            seq.add(t0, exc.build(slice_offset_m=z, rf_phase_rad=phase))
-            seq.add(t0 + t_winders, exc.rephaser())
-            seq.add(t0 + t_winders, pe.build(line=line - geometry.kspace_center_line))
-            seq.add(t0 + t_winders, ro.prephaser_block())
-            seq.add(t0 + t_readout, ro.build())
-            seq.add(t0 + t_spoil, spoil.build())
+            phase = rf_spoil_phase(index, math.radians(117.0))
+            # A slice is selected by offsetting the RF's frequency, not by moving the gradient.
+            shifted = sc.events.derive(
+                rf,
+                freq_offset=float(gz.amplitude) * z,
+                phase_offset=phase - 2.0 * math.pi * float(gz.amplitude) * z * float(rf.delay),
+            )
+            pe = pp.make_trapezoid(
+                'y', area=(line - geometry.kspace_center_line) * dk, duration=1e-3, system=opts)
+            seq.add(t0, shifted, gz)
+            seq.add(t0 + t_winders, gz_reph, pe, gx_pre)
+            seq.add(t0 + t_readout, gx, adc)
+            seq.add(t0 + t_spoil, spoil)
             seq.add(t0 + t_readout,
                     pp.make_label('LIN', 'SET', line),
                     pp.make_label('SLC', 'SET', slice_index))
             index += 1
 
     return sc.compile(
-        seq, system, geometry=geometry, name='gre_2d',
+        seq, opts, geometry=geometry, name='gre_2d',
         definitions={'TE': te_s, 'TR': tr_s, 'FlipAngle': flip_deg,
-                     'RfSpoilIncrementDeg': 117.0, **ro.definitions()},
+                     'RfSpoilIncrementDeg': 117.0},
     )
 
 
 def build_se(
-    system: sc.System,
+    opts: Opts = OPTS,
     *,
     fov_mm: float = FOV_MM,
     matrix: int = MATRIX,
@@ -103,326 +169,82 @@ def build_se(
     Both winders sit before the refocusing pulse and therefore carry the **opposite** sign: a 180
     inverts accumulated phase, so a prephaser ahead of it must prephase the other way.  With the
     conventional sign the readout ends at 3*k_max and the phase encode is mirrored -- the second
-    invisible in a k-space extent check, because |k| is symmetric.
+    invisible in a k-space extent check, because ``|k|`` is symmetric.
     """
     geometry = sc.Geometry(
         fov_mm=(fov_mm, fov_mm, slice_mm), matrix=(matrix, matrix, 1),
         slice_thickness_mm=slice_mm, n_slices=n_slices,
     )
-    exc = sc.modules.SincExcitation(
-        system, flip_deg=90, duration_us=2000, slice_thickness_mm=slice_mm, rephase=False)
-    refoc = sc.modules.SincRefocusing(
-        system, flip_deg=180, duration_us=4000, slice_thickness_mm=slice_mm,
-        crusher_twists=4, crusher_voxel_mm=slice_mm)
-    ro = sc.modules.CartesianLine(
-        system, fov_ro_mm=fov_mm, matrix_ro=matrix, readout_duration_us=3200, prephase=False)
-    pe = sc.modules.PhaseEncode(system, fov_pe_mm=fov_mm, matrix_pe=matrix)
+    raster = sc.Raster(opts.block_duration_raster, 'block')
 
-    raster = system.block_raster
-    winders = raster.ceil(max(pe.duration, ro.prephase_duration))
-    first = raster.ceil((exc.duration - exc.isodelay) + winders + refoc.isodelay)
-    second = raster.ceil((refoc.duration - refoc.isodelay) + ro.time_to_echo)
-    te_min = 2 * max(first, second)
-    te = max(te_s, te_min)
+    rf, gz, _ = pp.make_sinc_pulse(
+        flip_angle=math.pi / 2, duration=2e-3, slice_thickness=slice_mm * 1e-3,
+        apodization=0.5, time_bw_product=4, delay=opts.rf_dead_time, use='excitation',
+        system=opts, return_gz=True,
+    )
+    rf180, gz180, _ = pp.make_sinc_pulse(
+        flip_angle=math.pi, duration=4e-3, slice_thickness=slice_mm * 1e-3,
+        apodization=0.5, time_bw_product=4, delay=opts.rf_dead_time, use='refocusing',
+        system=opts, return_gz=True,
+    )
+    # Crushers straddle the 180 so anything it fails to invert is dephased rather than imaged.
+    crusher = pp.make_trapezoid('z', area=4.0 / (slice_mm * 1e-3), system=opts)
+    gx, adc, time_to_echo, dk = _readout(opts, fov_mm=fov_mm, matrix=matrix)
+    gx_pre = pp.make_trapezoid('x', area=float(gx.area) / 2.0, duration=1e-3, system=opts)
 
-    t_refoc = raster.ceil(exc.isodelay + te / 2 - refoc.isodelay)
-    t_readout = raster.ceil(exc.isodelay + te - ro.time_to_echo)
+    isodelay = float(rf.delay) + 0.5 * float(rf.shape_dur)
+    isodelay180 = float(rf180.delay) + 0.5 * float(rf180.shape_dur)
+    t_winders = float(pp.calc_duration(gz))
+    refoc_duration = float(pp.calc_duration(gz180)) + 2.0 * float(pp.calc_duration(crusher))
+
+    # TE is bounded from below at both halves; take whichever binds.
+    first = raster.ceil(t_winders - isodelay + 1e-3 + float(pp.calc_duration(crusher))
+                        + isodelay180)
+    second = raster.ceil(refoc_duration - isodelay180 + time_to_echo)
+    te = max(te_s, 2 * max(first, second))
+
+    t_refoc = raster.ceil(isodelay + te / 2 - isodelay180 - float(pp.calc_duration(crusher)))
+    t_readout = raster.ceil(isodelay + te - time_to_echo)
 
     seq = sc.LogicBlock('se_2d')
     index = 0
-    for slice_index in sc.interleaved_slice_order(n_slices):
+    for slice_index in interleaved_slice_order(n_slices):
         z = geometry.slice_positions_m[slice_index]
         for line in geometry.pe_lines:
             t0 = index * tr_s
-            seq.add(t0, exc.build(slice_offset_m=z))
-            seq.add(t0 + exc.duration,
-                    pe.build(line=line - geometry.kspace_center_line, scale=-1.0))
-            seq.add(t0 + exc.duration, ro.prephaser_block(polarity=-1))
-            seq.add(t0 + t_refoc, refoc.build(slice_offset_m=z))
-            seq.add(t0 + t_readout, ro.build())
+            offsets = {'freq_offset': float(gz.amplitude) * z}
+            pe = pp.make_trapezoid(
+                'y', area=-(line - geometry.kspace_center_line) * dk, duration=1e-3, system=opts)
+            seq.add(t0, sc.events.derive(rf, **offsets), gz)
+            seq.add(t0 + t_winders, pe, gx_pre)
+            seq.add(t0 + t_refoc, crusher)
+            seq.add(t0 + t_refoc + float(pp.calc_duration(crusher)),
+                    sc.events.derive(rf180, freq_offset=float(gz180.amplitude) * z), gz180)
+            seq.add(t0 + t_refoc + float(pp.calc_duration(crusher))
+                    + float(pp.calc_duration(gz180)), crusher)
+            seq.add(t0 + t_readout, gx, adc)
             seq.add(t0 + t_readout,
                     pp.make_label('LIN', 'SET', line),
                     pp.make_label('SLC', 'SET', slice_index))
             index += 1
 
     return sc.compile(
-        seq, system, geometry=geometry, name='se_2d',
-        definitions={'TE': te, 'TR': tr_s, **ro.definitions()},
-    )
-
-
-def build_dti(
-    system: sc.System,
-    *,
-    fov_mm: float = 240.0,
-    matrix: int = MATRIX,
-    slice_mm: float = 4.0,
-    b_values: tuple[float, ...] = (0.0, 1000.0),
-    directions: tuple[tuple[float, float, float], ...] | None = None,
-    n_directions: int = 6,
-    n_interleaves: int = 1,
-    density: float = 0.5,
-    n_slices: int = 2,
-    slices_per_tr: int = 1,
-    tr_s: float = 6.0,
-    te_s: float | None = None,
-    fat_sat: bool = False,
-    spoil_axes: tuple[str, ...] = ('z',),
-    rephase: bool = True,
-    regime: str = 'default',
-) -> CompiledSequence:
-    """
-    A spin-echo spiral DTI shot set.
-
-    ``rephase`` is exposed so a test can show what happens without the excitation's slice rewinder:
-    the refocusing pulse does **not** undo the excitation gradient's tail, because that pulse's own
-    slice-select gradient is symmetric about its centre and its lead and tail cancel each other.
-    """
-    geometry = sc.Geometry(
-        fov_mm=(fov_mm, fov_mm, 0.0), matrix=(matrix, matrix, 1),
-        slice_thickness_mm=slice_mm, n_slices=n_slices,
-    )
-    exc = sc.modules.SincExcitation(
-        system, flip_deg=90, duration_us=2000, slice_thickness_mm=slice_mm,
-        rephase=rephase, regime=regime)
-    refoc = sc.modules.SincRefocusing(
-        system, flip_deg=180, duration_us=4000, slice_thickness_mm=slice_mm,
-        crusher_twists=4, crusher_voxel_mm=slice_mm, regime=regime)
-    readout = sc.modules.SpiralVDS(
-        system, fov_mm=fov_mm, matrix=matrix, n_interleaves=n_interleaves,
-        density=density, regime=regime)
-    spoiler = sc.modules.Spoiler(
-        system, twists=4, voxel_mm=slice_mm, axes=spoil_axes, regime=regime)
-    fat = sc.modules.FatSat(system, voxel_mm=slice_mm, regime=regime) if fat_sat else None
-
-    reference = sc.modules.MonopolarDiffusion(
-        system, b_value_s_per_mm2=max(b_values),
-        refocus_duration_us=refoc.duration * 1e6, regime=regime)
-    encoders = {
-        b: sc.modules.MonopolarDiffusion(
-            system, b_value_s_per_mm2=b, refocus_duration_us=refoc.duration * 1e6,
-            lobe_duration_us=reference.lobe_duration * 1e6, regime=regime)
-        for b in b_values
-    }
-
-    raster = system.block_raster
-    delta = reference.lobe_duration
-    first = raster.ceil((exc.duration - exc.isodelay) + delta + refoc.isodelay)
-    second = raster.ceil((refoc.duration - refoc.isodelay) + delta + readout.time_to_echo)
-    te_min = 2 * max(first, second)
-    te = te_min if te_s is None else raster.ceil(te_s)
-    if te < te_min - 1e-12:
-        msg = (f'TE {te * 1e3:.2f} ms is below the minimum {te_min * 1e3:.2f} ms; the diffusion '
-               f'lobe contributes {delta * 1e3:.2f} ms to each half')
-        raise sc.ConfigurationError(msg)
-
-    t_refoc = raster.ceil(exc.isodelay + te / 2 - refoc.isodelay)
-    t_lobe1 = raster.ceil(t_refoc - delta)
-    t_lobe2 = raster.ceil(t_refoc + refoc.duration)
-    t_readout = raster.ceil(exc.isodelay + te - readout.time_to_echo)
-    shot_s = raster.ceil(t_readout + readout.duration + spoiler.duration)
-    prep_s = fat.duration if fat is not None else 0.0
-    period_s = raster.ceil(prep_s + shot_s)
-    if tr_s < period_s * slices_per_tr:
-        msg = (f'TR {tr_s * 1e3:.0f} ms cannot hold {slices_per_tr} shot(s) of '
-               f'{period_s * 1e3:.2f} ms')
-        raise sc.ConfigurationError(msg)
-
-    table = directions if directions is not None else sc.modules.dti_directions(n_directions)
-    volumes = [(b, (0.0, 0.0, 1.0)) for b in b_values if b == 0.0]
-    volumes += [(b, d) for b in b_values if b != 0.0 for d in table]
-
-    plan = [
-        (volume, b, direction, interleaf, slice_index)
-        for volume, (b, direction) in enumerate(volumes)
-        for interleaf in range(n_interleaves)
-        for slice_index in sc.interleaved_slice_order(n_slices)
-    ]
-
-    seq = sc.LogicBlock('spiral_dti')
-    for shot, (volume, b, direction, interleaf, slice_index) in enumerate(plan):
-        period, position = divmod(shot, slices_per_tr)
-        t0 = period * tr_s + position * period_s
-        z = geometry.slice_positions_m[slice_index]
-        diff = encoders[b]
-        if fat is not None:
-            seq.add(t0, fat.build())
-        t = t0 + prep_s
-        seq.add(t, exc.build(slice_offset_m=z))
-        seq.add(t + t_lobe1, diff.build(part='pre', direction=direction))
-        seq.add(t + t_refoc, refoc.build(slice_offset_m=z))
-        seq.add(t + t_lobe2, diff.build(part='post', direction=direction))
-        seq.add(t + t_readout, readout.build(interleaf=interleaf))
-        seq.add(t + t_readout + readout.duration, spoiler.build())
-        seq.add(t + t_readout,
-                pp.make_label('SLC', 'SET', slice_index),
-                pp.make_label('SET', 'SET', volume),
-                pp.make_label('SEG', 'SET', interleaf))
-
-    return sc.compile(
-        seq, system, geometry=geometry, name='spiral_dti', regime=regime,
-        definitions={
-            'TE': te, 'TR': tr_s,
-            'bValues': [float(b) for b in b_values],
-            'AchievedbValues': [round(encoders[b].achieved_b_s_per_mm2(), 2) for b in b_values],
-            'DiffusionScheme': 'monopolar',
-            'DiffusionDirections': len(table),
-            'DiffusionLobeDuration': reference.lobe_duration,
-            'DiffusionBigDelta': reference.big_delta,
-            'SpiralInterleaves': n_interleaves,
-            'SpiralDensity': density,
-            'SlicesPerTR': slices_per_tr,
-        },
-    )
-
-
-def build_epi_dwi(
-    system: sc.System,
-    *,
-    fov_mm: float = 240.0,
-    matrix: int = MATRIX,
-    slice_mm: float = 4.0,
-    b_values: tuple[float, ...] = (0.0, 1000.0),
-    n_directions: int = 6,
-    n_shots: int = 1,
-    partial_fourier_pe: float = 0.75,
-    partial_echo: float = 1.0,
-    pe_polarity: int = 1,
-    n_slices: int = 2,
-    slices_per_tr: int = 1,
-    tr_s: float = 6.0,
-    regime: str = 'default',
-) -> CompiledSequence:
-    """
-    A spin-echo EPI DWI shot set: the same diffusion encoding as :func:`build_dti`, a new readout.
-
-    Which is the point of having both.  The diffusion modules, the pulses, the spoiler and the TE
-    arithmetic are untouched; only ``readout`` changes, and ``readout.time_to_echo`` now points a
-    third of the way into a 96-echo train rather than at a spiral's first sample.
-    """
-    geometry = sc.Geometry(
-        fov_mm=(fov_mm, fov_mm, 0.0), matrix=(matrix, matrix, 1),
-        slice_thickness_mm=slice_mm, n_slices=n_slices,
-        partial_fourier_pe=partial_fourier_pe, n_shots=n_shots,
-    )
-    exc = sc.modules.SincExcitation(
-        system, flip_deg=90, duration_us=2000, slice_thickness_mm=slice_mm,
-        rephase=True, regime=regime)
-    refoc = sc.modules.SincRefocusing(
-        system, flip_deg=180, duration_us=4000, slice_thickness_mm=slice_mm,
-        crusher_twists=4, crusher_voxel_mm=slice_mm, regime=regime)
-    readout = sc.modules.EPIReadout(
-        system, fov_ro_mm=fov_mm, matrix_ro=matrix, fov_pe_mm=fov_mm, matrix_pe=matrix,
-        n_shots=n_shots, partial_fourier_pe=partial_fourier_pe, partial_echo=partial_echo,
-        regime=regime)
-    spoiler = sc.modules.Spoiler(
-        system, twists=4, voxel_mm=slice_mm, axes=('z',), regime=regime)
-
-    reference = sc.modules.MonopolarDiffusion(
-        system, b_value_s_per_mm2=max(b_values),
-        refocus_duration_us=refoc.duration * 1e6, regime=regime)
-    encoders = {
-        b: sc.modules.MonopolarDiffusion(
-            system, b_value_s_per_mm2=b, refocus_duration_us=refoc.duration * 1e6,
-            lobe_duration_us=reference.lobe_duration * 1e6, regime=regime)
-        for b in b_values
-    }
-
-    raster = system.block_raster
-    delta = reference.lobe_duration
-    first = raster.ceil((exc.duration - exc.isodelay) + delta + refoc.isodelay)
-    second = raster.ceil((refoc.duration - refoc.isodelay) + delta + readout.time_to_echo)
-    te = 2 * max(first, second)
-
-    t_refoc = raster.ceil(exc.isodelay + te / 2 - refoc.isodelay)
-    t_lobe1 = raster.ceil(t_refoc - delta)
-    t_lobe2 = raster.ceil(t_refoc + refoc.duration)
-    t_readout = raster.ceil(exc.isodelay + te - readout.time_to_echo)
-    period_s = raster.ceil(t_readout + readout.duration + spoiler.duration)
-    if tr_s < period_s * slices_per_tr:
-        msg = (f'TR {tr_s * 1e3:.0f} ms cannot hold {slices_per_tr} shot(s) of '
-               f'{period_s * 1e3:.2f} ms')
-        raise sc.ConfigurationError(msg)
-
-    table = sc.modules.dti_directions(n_directions)
-    volumes = [(b, (0.0, 0.0, 1.0)) for b in b_values if b == 0.0]
-    volumes += [(b, d) for b in b_values if b != 0.0 for d in table]
-
-    plan = [
-        (volume, b, direction, shot, slice_index)
-        for volume, (b, direction) in enumerate(volumes)
-        for shot in range(n_shots)
-        for slice_index in sc.interleaved_slice_order(n_slices)
-    ]
-
-    seq = sc.LogicBlock('epi_dwi')
-    for index, (volume, b, direction, shot, slice_index) in enumerate(plan):
-        period, position = divmod(index, slices_per_tr)
-        t0 = period * tr_s + position * period_s
-        z = geometry.slice_positions_m[slice_index]
-        diff = encoders[b]
-        seq.add(t0, exc.build(slice_offset_m=z))
-        seq.add(t0 + t_lobe1, diff.build(part='pre', direction=direction))
-        seq.add(t0 + t_refoc, refoc.build(slice_offset_m=z))
-        seq.add(t0 + t_lobe2, diff.build(part='post', direction=direction))
-        seq.add(t0 + t_readout, readout.build(shot=shot, pe_polarity=pe_polarity))
-        seq.add(t0 + t_readout + readout.duration, spoiler.build())
-        seq.add(t0 + t_readout,
-                pp.make_label('SLC', 'SET', slice_index),
-                pp.make_label('SET', 'SET', volume))
-
-    return sc.compile(
-        seq, system, geometry=geometry, name='epi_dwi', regime=regime,
-        definitions={
-            'TE': te, 'TR': tr_s,
-            'bValues': [float(b) for b in b_values],
-            'AchievedbValues': [round(encoders[b].achieved_b_s_per_mm2(), 2) for b in b_values],
-            'DiffusionScheme': 'monopolar',
-            'DiffusionDirections': len(table),
-            'DiffusionLobeDuration': reference.lobe_duration,
-            'DiffusionBigDelta': reference.big_delta,
-            'SlicesPerTR': slices_per_tr,
-            'PhaseEncodePolarity': pe_polarity,
-            **readout.definitions(),
-        },
+        seq, opts, geometry=geometry, name='se_2d',
+        definitions={'TE': te, 'TR': tr_s},
     )
 
 
 @pytest.fixture(scope='module')
-def gre(system: sc.System) -> CompiledSequence:
-    return build_gre(system)
+def gre() -> CompiledSequence:
+    return build_gre()
 
 
 @pytest.fixture(scope='module')
-def se(system: sc.System) -> CompiledSequence:
-    return build_se(system)
+def se() -> CompiledSequence:
+    return build_se()
 
 
-@pytest.fixture(scope='module')
-def dti() -> CompiledSequence:
-    scanner = sc.System.preset('generic_3t').derate('dwi', grad=0.85, slew=0.65)
-    return build_dti(scanner, regime='dwi', n_directions=6, n_slices=2)
-
-
-def epi_dwi_system() -> sc.System:
-    """
-    A Cima.X with two regimes, as the EPI example uses.
-
-    The diffusion lobes want full amplitude and the readout wants full slew, so they are separate
-    regimes of one system rather than one compromise -- which is what named regimes are for.
-    """
-    return (
-        sc.System.preset('cima_x')
-        .derate('epi', grad=0.85, slew=1.0)
-        .derate('diffusion', grad=0.85, slew=0.3)
-    )
-
-
-@pytest.fixture(scope='module')
-def epi_dwi() -> CompiledSequence:
-    return build_epi_dwi(epi_dwi_system(), regime='epi', n_directions=6, n_slices=2)
-
-
-@pytest.fixture(params=['gre', 'se', 'dti', 'epi_dwi'])
+@pytest.fixture(params=['gre', 'se'])
 def compiled(request) -> CompiledSequence:
+    """Every recipe, for the checks that must hold of all of them."""
     return request.getfixturevalue(request.param)

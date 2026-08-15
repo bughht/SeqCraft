@@ -1,104 +1,41 @@
 {
   "environment": {
     "ci_run": "https://github.com/bughht/SeqCraft/actions/runs/31848625433",
-    "commit": "afe576bafe17e9cce3edfc768b343ad958994560",
-    "machine": "arm64",
-    "mypy": "1.11.2",
-    "numpy": "2.4.6",
-    "platform": "macOS-15.7.1-arm64-arm-64bit",
+    "commit": "aaeef238b04088c38ff2e45376ef219be3f89385",
+    "machine": "AMD64",
+    "mypy": "2.3.0",
+    "numpy": "2.2.6",
+    "platform": "Windows-10-10.0.26200-SP0",
     "pypulseq": "1.5.1",
-    "pytest": "8.3.3",
-    "python": "3.12.13",
-    "ruff": "0.6.9",
+    "pytest": "9.0.3",
+    "python": "3.11.13",
+    "ruff": "0.16.1",
     "seqcraft": "0.3.0"
   },
   "recipes": {
-    "epi_dwi": {
-      "observed": {
-        "emitted_content_sha256": "087211d7046f94fd66b0881e614bde0a86f3b768a1af72eae074ec730aea4cc9",
-        "gradient_splits": 644,
-        "input_gradients": 212,
-        "performance": {
-          "iterations": 3,
-          "max_wall_s": 0.300055,
-          "median_wall_s": 0.300013,
-          "min_wall_s": 0.291898,
-          "peak_python_bytes": 4891921,
-          "wall_s": [
-            0.300055,
-            0.300013,
-            0.291898
-          ]
-        },
-        "placed_events": 1294,
-        "python_warning_counts": {
-          "Specified RF delay 0.00 us is less than the dead time 100 us. Delay was increased to the dead time.": 6
-        },
-        "seq_size_bytes": 96283
-      },
-      "stable": {
-        "block_duration_sha256": "e70954e869760ff3ec95eca83ef2744c481704bf44da20efd60aeac83c1090ce",
-        "checked_issue_counts": {
-          "warning:slew_norm_limit": 14
-        },
-        "compile_issue_counts": {
-          "warning:slew_norm_limit": 14
-        },
-        "duration_ticks": 78032490000000,
-        "event_counts": {
-          "adc": 336,
-          "gx": 374,
-          "gy": 374,
-          "gz": 108,
-          "labelset": 714,
-          "rf": 28
-        },
-        "moments": {
-          "m0": {
-            "x": -3164.52459329,
-            "y": -96177.22897,
-            "z": 625233.093785
-          },
-          "m1": {
-            "x": -895734.664714,
-            "y": -8705690.26429,
-            "z": 20568965.1266
-          },
-          "m2": {
-            "x": 60427129.1801,
-            "y": -710923819.912,
-            "z": 851821038.626
-          }
-        },
-        "n_blocks": 487,
-        "origins_sha256": "5b0341ca952b115219dc6504f1b5971c9b11dd9e9d2a4f1ff0c9613a4cd3253d"
-      }
-    },
     "gre_2d": {
       "observed": {
-        "emitted_content_sha256": "29452102ccf64a39ea123467dbe1488fa809ae475a5885d241bb46702863fff8",
+        "emitted_content_sha256": "53ba8624dc92d480e7bfaa10ad576217f5535d89207d935a0fef6caad787be72",
         "gradient_splits": 0,
-        "input_gradients": 382,
+        "input_gradients": 384,
         "performance": {
           "iterations": 3,
-          "max_wall_s": 0.11958,
-          "median_wall_s": 0.119282,
-          "min_wall_s": 0.119051,
-          "peak_python_bytes": 2865040,
+          "max_wall_s": 0.328711,
+          "median_wall_s": 0.327407,
+          "min_wall_s": 0.319487,
+          "peak_python_bytes": 2794624,
           "wall_s": [
-            0.119051,
-            0.119282,
-            0.11958
+            0.328711,
+            0.319487,
+            0.327407
           ]
         },
         "placed_events": 640,
-        "python_warning_counts": {
-          "Specified RF delay 0.00 us is less than the dead time 100 us. Delay was increased to the dead time.": 3
-        },
-        "seq_size_bytes": 30663
+        "python_warning_counts": {},
+        "seq_size_bytes": 30677
       },
       "stable": {
-        "block_duration_sha256": "4cf6b8ed6a27e302037efceee4367743894acc2a4c0c840396f2c2c062300b13",
+        "block_duration_sha256": "8ebc72d69fb1d5133b0eede337ea82500566ab9677a327d6ad313aa40c5cce6c",
         "checked_issue_counts": {
           "warning:slew_norm_limit": 64
         },
@@ -109,7 +46,7 @@
         "event_counts": {
           "adc": 64,
           "gx": 128,
-          "gy": 62,
+          "gy": 64,
           "gz": 192,
           "labelset": 128,
           "rf": 64
@@ -121,56 +58,54 @@
             "z": 80128.0
           },
           "m1": {
-            "x": 2653.832832,
-            "y": 355.66464,
+            "x": 2652.2304,
+            "y": 355.61472,
             "z": 51016.06144
           },
           "m2": {
-            "x": 2274.50920592,
-            "y": 482.664361099,
+            "x": 2272.48480529,
+            "y": 482.941750059,
             "z": 43420.6322913
           }
         },
         "n_blocks": 383,
-        "origins_sha256": "e56d95f88cbf5a3924decc1661324b522e17f7c0549770d168858281247b0853"
+        "origins_sha256": "cf1a79355a05e4b59cd580ef540f70041a8285d3252324a25fabaa578da2cee5"
       }
     },
     "se_2d": {
       "observed": {
-        "emitted_content_sha256": "3a39f642f8ea9ecc46c2fcc8037c9878eb37383056cb910ee6e409c4ac23c703",
+        "emitted_content_sha256": "07a2299115822a61e721d8cf351bfc4069cc5ed434907294c8760cf3510a3624",
         "gradient_splits": 0,
-        "input_gradients": 446,
+        "input_gradients": 448,
         "performance": {
           "iterations": 3,
-          "max_wall_s": 0.299897,
-          "median_wall_s": 0.298529,
-          "min_wall_s": 0.284196,
-          "peak_python_bytes": 11136212,
+          "max_wall_s": 0.742767,
+          "median_wall_s": 0.736036,
+          "min_wall_s": 0.731588,
+          "peak_python_bytes": 11009177,
           "wall_s": [
-            0.299897,
-            0.298529,
-            0.284196
+            0.742767,
+            0.731588,
+            0.736036
           ]
         },
         "placed_events": 768,
-        "python_warning_counts": {
-          "Specified RF delay 0.00 us is less than the dead time 100 us. Delay was increased to the dead time.": 6
-        },
-        "seq_size_bytes": 98273
+        "python_warning_counts": {},
+        "seq_size_bytes": 98269
       },
       "stable": {
-        "block_duration_sha256": "a8d1e6dc5b5bfc92bbb5979e32ea0cc7d6ef302e4803ef0dff3f1b3dd18a5a3c",
+        "block_duration_sha256": "10ad3c848ba9770068112d7f0636c970cc8d2ee34174e370af80b51dc8a883e8",
         "checked_issue_counts": {
-          "warning:slew_norm_limit": 22
+          "warning:slew_norm_limit": 8
         },
         "compile_issue_counts": {
-          "warning:slew_norm_limit": 22
+          "warning:slew_norm_limit": 8
         },
         "duration_ticks": 31522710000000,
         "event_counts": {
           "adc": 64,
           "gx": 128,
-          "gy": 62,
+          "gy": 64,
           "gz": 256,
           "labelset": 128,
           "rf": 128
@@ -178,79 +113,22 @@
         "moments": {
           "m0": {
             "x": 12326.4,
-            "y": 128.000000003,
+            "y": 128.0,
             "z": 207104.0
           },
           "m1": {
-            "x": 194323.559424,
-            "y": -8895.70815994,
+            "x": 194325.161856,
+            "y": -8895.65823999,
             "z": 3263653.8624
           },
           "m2": {
-            "x": 4115074.20883,
-            "y": -301096.565093,
+            "x": 4115124.6937,
+            "y": -301103.503717,
             "z": 69098940.3512
           }
         },
         "n_blocks": 575,
-        "origins_sha256": "5c9dd42bfb3deff4f587d9a133e9bbfbadc320b8ebc6360432f34640706f8d82"
-      }
-    },
-    "spiral_dti": {
-      "observed": {
-        "emitted_content_sha256": "48780a4d7771a7408f69f7071670b038e5ef339b98e612cd2ff046f3fd84d3f7",
-        "gradient_splits": 0,
-        "input_gradients": 212,
-        "performance": {
-          "iterations": 3,
-          "max_wall_s": 0.117687,
-          "median_wall_s": 0.117378,
-          "min_wall_s": 0.116379,
-          "peak_python_bytes": 3294374,
-          "wall_s": [
-            0.117378,
-            0.116379,
-            0.117687
-          ]
-        },
-        "placed_events": 300,
-        "python_warning_counts": {
-          "Specified RF delay 0.00 us is less than the dead time 100 us. Delay was increased to the dead time.": 6
-        },
-        "seq_size_bytes": 96093
-      },
-      "stable": {
-        "block_duration_sha256": "5d4b62d9442193d917cc9fd6e4b83783e1e7c0dac41d1b2f959ba54e8691ac8f",
-        "checked_issue_counts": {},
-        "compile_issue_counts": {},
-        "duration_ticks": 78064310000000,
-        "event_counts": {
-          "adc": 14,
-          "gx": 52,
-          "gy": 52,
-          "gz": 108,
-          "labelset": 42,
-          "rf": 28
-        },
-        "moments": {
-          "m0": {
-            "x": -1518.49737015,
-            "y": -67784.5893497,
-            "z": 456162.77638
-          },
-          "m1": {
-            "x": -598637.048724,
-            "y": -6105269.97032,
-            "z": 15133330.1218
-          },
-          "m2": {
-            "x": 43643975.3082,
-            "y": -498014008.915,
-            "z": 636471789.176
-          }
-        },
-        "n_blocks": 165,
-        "origins_sha256": "edf2f69e08a22688f42f888f833c46928c59914907f042456f2250250ff9d1f9"
+        "origins_sha256": "3deaa6b5c09b2017a9cafe493dbb54cd16df46e22a1848150ae8fe808ee0a400"
       }
     }
   },

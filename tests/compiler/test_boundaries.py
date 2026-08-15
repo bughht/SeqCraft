@@ -35,9 +35,9 @@ def _epi_tree(opts, n_echo: int) -> sc.LogicBlock:
     return lb
 
 
-def _time_boundaries(system, opts, n_echo: int) -> float:
+def _time_boundaries(opts, n_echo: int) -> float:
     placed = _place(_epi_tree(opts, n_echo), opts)
-    raster = system.block_raster
+    raster = sc.Raster(opts.block_duration_raster)
     total = raster.ceil(max(p.res_end for p in placed))
     max_block = float(opts.block_duration_raster) * 2**24
     best = float('inf')
@@ -48,7 +48,7 @@ def _time_boundaries(system, opts, n_echo: int) -> float:
     return best
 
 
-def test_boundary_selection_is_not_quadratic(system, opts) -> None:
+def test_boundary_selection_is_not_quadratic(opts) -> None:
     """
     Quadrupling the echo count must not multiply the work by ~16.
 
@@ -57,8 +57,8 @@ def test_boundary_selection_is_not_quadratic(system, opts) -> None:
     the whole mark set once per echo: 253 ms at 3200 echoes against 17 ms after, and the ratio
     per doubling was 3.7 rather than 2.
     """
-    small = _time_boundaries(system, opts, 400)
-    large = _time_boundaries(system, opts, 1600)
+    small = _time_boundaries(opts, 400)
+    large = _time_boundaries(opts, 1600)
     ratio = large / max(small, 1e-9)
     assert ratio < 8.0, (
         f'boundary selection scaled by {ratio:.1f}x for a 4x larger EPI train '
@@ -66,7 +66,7 @@ def test_boundary_selection_is_not_quadratic(system, opts) -> None:
     )
 
 
-def test_every_reservation_gap_gets_a_boundary(system, opts) -> None:
+def test_every_reservation_gap_gets_a_boundary(opts) -> None:
     """
     The invariant the midpoint fallback exists to guarantee.
 
@@ -75,7 +75,7 @@ def test_every_reservation_gap_gets_a_boundary(system, opts) -> None:
     """
     n = 40
     tree = _epi_tree(opts, n)
-    out = sc.compile(tree, system)
+    out = sc.compile(tree, opts)
     per_block = []
     for index in sorted(out.seq.block_events):
         block = out.seq.get_block(index)
@@ -88,8 +88,8 @@ def test_every_reservation_gap_gets_a_boundary(system, opts) -> None:
     assert all(r <= 1 for _, r in per_block), 'no block may hold two RF pulses'
 
 
-def test_a_long_empty_stretch_is_subdivided_to_fit_the_duration_field(system) -> None:
+def test_a_long_empty_stretch_is_subdivided_to_fit_the_duration_field(opts) -> None:
     """pulseq stores a block duration in a fixed-width field, so one long delay must split."""
-    out = sc.compile(sc.LogicBlock('t').add(0.0, pp.make_delay(1.0)), system)
+    out = sc.compile(sc.LogicBlock('t').add(0.0, pp.make_delay(1.0)), opts)
     assert out.duration_s == pytest.approx(1.0)
     assert out.check().ok

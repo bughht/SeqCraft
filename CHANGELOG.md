@@ -1,6 +1,135 @@
 # Changelog
 
-## Unreleased — a batch form for `LogicBlock.add`
+## Unreleased — `pp.Opts` is the scanner, and there is no module library
+
+Three concepts are removed, and none could go alone: they held each other up. Full rationale in
+[ADR-003](docs/adr/003-scanner-and-module-reform.md).
+
+### Removed — `System`, `Limits`, presets and named regimes (`core/system.py`, 652 lines)
+
+The scanner is described by the **official `pypulseq.Opts`** and nothing else. The compiler reads
+eight fields of it and touched `System` at three call sites; everything `System` stored was already
+an `Opts` field.
+
+```python
+out = sc.compile(tree, system, regime='epi')     # was
+out = sc.compile(tree, opts)                     # is
+```
+
+- `CompiledSequence` stores `opts` instead of `system` + `regime`.
+- `pns(hardware)` now **requires** the model: PNS prediction is analysis, not compilation, and a
+  response model has nothing to do with a limit set.
+- The provenance sidecar records `vars(opts)` under `opts`, replacing `system` and `regime`.
+- Named regimes become a second `Opts`: `sc.opts.derate(opts, grad=0.85)`. It copies every field it
+  was not asked to change, which is what the multi-regime consistency check used to guarantee.
+  **Do not hand-write `pp.Opts(max_grad=...)` to derate** — `Opts` fills every omitted argument from
+  the *process-global* default, so the hand-written version silently returns your dead times to zero.
+- **No compatibility shim.** A `System` forwarding to `Opts` would preserve exactly the concept being
+  removed.
+
+`sc.opts` holds the two operations `Opts` makes awkward or unsafe — `derate`, and `from_scanner`,
+which looks a scanner up in [PulseqSystems](https://github.com/nimpulseq/PulseqSystems) (optional
+extra `seqcraft[systems]`). There is deliberately **no wrapper around the `Opts` constructor**:
+build one the ordinary way. `from_scanner` takes `rf_dead_time`, `rf_ringdown_time`, `adc_dead_time`
+and `max_b1` as *required* keyword arguments, because a vendor database cannot supply them and
+pypulseq defaults the first three to **zero** — a sequence built on those compiles cleanly,
+validates cleanly, and is refused or silently mangled at the console.
+
+`load_hardware` / `synthetic_hardware` moved to `sc.hardware`, out of `core`. `load_hardware` now
+returns just the model, with its provenance string on `.source`; the acoustic-resonance bands it
+used to return had no consumer anywhere.
+
+### Removed — the module library (`seqcraft/modules/`, 27 classes, 5 762 lines)
+
+**seqcraft ships no concrete modules.** `sc.modules.SincExcitation`, `EPIReadout`, `SpiralVDS`,
+`MonopolarDiffusion` and the rest are gone, along with the flat `sc.*` re-exports.
+
+The physics worth keeping was **lifted out as plain functions** into `salvage/` before the deletion,
+with no scanner object and no base class in their signatures: the exact b-value integral and its two
+solvers, the variable-density spiral trajectory, the EPI ramp-sampling moment integral, and the DTI
+direction tables.
+
+### Added — `sc.Module`, the contract, at `src/seqcraft/module.py`
+
+Parameters in, one `LogicBlock` out. Four members, and each earns its place:
+
+```python
+class PhaseEncode(sc.Module):
+    def __init__(self, *, opts, fov_mm, matrix, tag=None):
+        super().__init__(opts=opts, tag=tag)
+        ...
+    def build(self, *, line=0) -> sc.LogicBlock:
+        ...
+
+pe = PhaseEncode(opts=opts, fov_mm=250, matrix=64)
+tr.add(t, pe(line=17))                       # __call__ is the interface; build is what you write
+```
+
+- `opts` is **required**, because pypulseq's fallback is the process-global `Opts.default`.
+- `build` is **abstract** — a subclass that does not produce a block is not a module. The old base
+  declared no abstract method and so guaranteed nothing.
+- A `build` returning a non-block raises `TypeError` **naming your class**, rather than failing
+  hundreds of lines later inside `add`.
+- It lives beside `core`, not inside it. A test asserts `seqcraft.core` never imports it.
+
+### Changed — a module declares no duration, so a build argument may change one
+
+The rule is **inverted**. There is no `duration` property, so there is no second source of truth for
+a build argument to invalidate. Build the block, then place by it:
+
+```python
+exc_block = exc()
+tr.add(0.0, exc_block)
+tr.add(exc_block.duration + gap, readout(line=k))
+```
+
+Building is cheap — the design happened in `__init__` — so nothing is lost. `sc.testing`'s
+`assert_duration_is_honest` and `assert_timing_properties_in_range` are deleted with the property
+they policed.
+
+### Changed — `sc.testing` and `sc.display` take an `Opts`
+
+`assert_raster`, `assert_within_limits`, `assert_compiles` and `assert_output` take `opts` and lose
+every `regime=` parameter. `assert_all(module, **args)` calls `module(**args)` and reads
+`module.opts`. `plot_block(root, opts)` likewise.
+
+`plot_trajectory` now takes **an iterable of `(kx, ky)` array pairs** instead of an object with
+`.trajectory()`, `.n_interleaves` and `.k_max_per_m` — a duck type only one class in one library ever
+satisfied, which quietly made a plotting helper depend on that library.
+
+### Removed — `seqcraft.ordering`, and five unused validators
+
+Four of `ordering`'s six functions had never had a caller, and ordering tables are
+sequence-programming choices rather than physics. The module moves to `salvage/`; the two the tests
+used are three lines each and are written out where they are needed.
+
+`validate.py` loses `check_units`, `require_positive`, `require_int_in`, `require_divides` and
+`suggest_field` — the deleted base was their only consumer. `merge_definitions` (the compile path)
+and the plausibility bands `geometry` uses remain.
+
+### Changed — every test fixture is raw pypulseq
+
+`tests/compiler/test_fidelity.py` built its realistic trees out of library classes, which made
+compiler coverage depend on whatever the library contained. All fixtures are now `pp.make_*` calls,
+and that is a standing rule rather than a state of the tree. The integration tier keeps a gradient
+echo and a spin echo, both raw; the DTI and EPI-DWI tiers went with the library they were built on.
+
+The compiler baseline was re-captured, since the four module-built recipes it froze no longer exist.
+
+### Changed — examples
+
+`01_getting_started.ipynb` is rewritten and **uses no modules at all** — raw pypulseq events into a
+`LogicBlock`, then `sc.compile`. It doubles as the proof that the core stands alone. `sc.Module`
+appears at the end, once there is a reason for one.
+
+`dti_spiral/` and `dti_epi/` are **parked** under `examples/_parked/`. They do not run against this
+version. They are kept because they are the acceptance test for whatever module set is written next
+— rewriting them is what should *drive* that library rather than follow it.
+
+`examples/lib/` survives: `to_mr0` takes `opts=` instead of `system=`, and the reconstruction helpers
+already took explicit arguments rather than reading attributes off module objects.
+
+## Earlier unreleased work — a batch form for `LogicBlock.add`
 
 ### Added — `add` accepts a table of `[time, *items]` rows
 

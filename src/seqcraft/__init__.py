@@ -1,7 +1,7 @@
 """
 seqcraft -- composable, verifiable MRI pulse sequence programming on top of pypulseq.
 
-Two concepts, and no more.
+Three things, and one of them is pypulseq's.
 
 :class:`~seqcraft.core.logic.LogicBlock`
     A tree of pulseq events and nested blocks, each with a start time.  Two attributes and one
@@ -9,28 +9,40 @@ Two concepts, and no more.
 :func:`~seqcraft.core.compiler.compile_sequence`
     Turns a tree into legal pulseq blocks: finds block boundaries, sums gradients that share an
     axis, and validates the result against the amplifier.
+:class:`pypulseq.Opts`
+    The scanner.  Not wrapped, not subclassed, not hidden behind a seqcraft class -- the same
+    object you pass to ``pp.make_trapezoid`` is the one you pass to ``sc.compile``.
 
-Everything else is a convenience for producing logic blocks.  :mod:`seqcraft.modules` is a
-library of reusable ones -- excitations, readouts, encodings -- and
-:class:`seqcraft.modules.base.Module` is the optional base they share.  Your own components owe
-seqcraft nothing beyond returning a ``LogicBlock``: a plain function will do, and so will a class
-with as many domain-shaped methods as it likes.
+:class:`~seqcraft.module.Module` is the standard shape for a *reusable* component that produces
+blocks.  It is a convention, not a gate: the compiler never asks what produced a tree, so a plain
+function is a component too.
 
 Getting started
 ---------------
 >>> import pypulseq as pp
 >>> import seqcraft as sc
->>> system = sc.System.preset('generic_3t')
->>> exc = sc.modules.SincExcitation(system, flip_deg=15, duration_us=1000,
-...                                 slice_thickness_mm=5)
->>> ro = sc.modules.CartesianLine(system, fov_ro_mm=250, matrix_ro=64,
-...                               readout_duration_us=3200)
->>> seq = sc.LogicBlock('demo')
->>> _ = seq.add(0.0, exc.build())
->>> _ = seq.add(8e-3 - ro.time_to_echo, ro.build())     # this defines TE
->>> out = sc.compile(seq, system)
+>>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+...                rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
+>>> rf, gz, gzr = pp.make_sinc_pulse(flip_angle=0.26, duration=1e-3, slice_thickness=5e-3,
+...                                  delay=opts.rf_dead_time, use='excitation',
+...                                  system=opts, return_gz=True)
+>>> gx = pp.make_trapezoid('x', flat_area=256.0, flat_time=3.2e-3, system=opts)
+>>> adc = pp.make_adc(num_samples=64, duration=3.2e-3, delay=gx.rise_time, system=opts)
+>>>
+>>> tr = sc.LogicBlock('demo')
+>>> _ = tr.add(0.0, rf).add(0.0, gz)
+>>> _ = tr.add(pp.calc_duration(gz), gzr)
+>>> _ = tr.add(5e-3, gx).add(5e-3, adc)             # 5 ms after excitation
+>>> out = sc.compile(tr, opts)
 >>> out.check().ok
 True
+
+**Set the dead times.**  pypulseq defaults ``rf_dead_time``, ``rf_ringdown_time`` and
+``adc_dead_time`` to zero, which is wrong on every real scanner: the sequence compiles cleanly,
+validates cleanly, and is refused or silently mangled at the console.  They are properties of your
+installation, not of the scanner model, so no preset and no vendor database can supply them.
+:func:`seqcraft.scanner.opts.from_scanner` looks the amplitudes up in PulseqSystems and requires
+the rest.
 
 When to reach for this
 ----------------------
@@ -40,10 +52,16 @@ overlap without you hand-splitting blocks, or files that have to be reproducible
 later.
 
 There are no recipes here on purpose.  A recipe is somebody else's sequence choices baked into
-library code, and changing your own sequence should never mean editing a package.  The notebooks in
-``examples/`` build their sequences from modules, start to finish -- copy one and edit it.  And when
-it does not fit, :class:`~seqcraft.modules.control.basic.RawEvents` and the ``CompiledSequence.seq``
-attribute are always there.
+library code, and changing your own sequence should never mean editing a package.  seqcraft ships
+**no concrete modules at all**: what it ships is the tree, the compiler, and the contract.
+
+Layout
+------
+``core/`` is the compile path -- the tree, the compiler, and the arithmetic they rest on --
+and holds nothing else.  Everything beside it is deliberately *not* on that path:
+:mod:`~seqcraft.scanner` describes the machine, :mod:`~seqcraft.module` is the component
+contract, and :mod:`~seqcraft.display`, :mod:`~seqcraft.provenance` and :mod:`~seqcraft.testing`
+are tools around it.
 
 Notes
 -----
@@ -55,7 +73,7 @@ from __future__ import annotations
 
 import importlib
 
-from . import _compat, modules, ordering
+from . import _compat
 from ._version import __version__
 from .core import events, timing, units, validate
 from .core.compiler import CompiledSequence, WriteResult
@@ -74,19 +92,12 @@ from .core.errors import (
 from .core.geometry import Geometry
 from .core.logic import Item, LogicBlock, Node, barrier, flatten, span
 from .core.report import Issue, Report, ReportFailed
-from .core.system import Limits, System, load_hardware, synthetic_hardware
 from .core.timing import Raster
 from .core.units import convert
-from .ordering import (
-    bit_reversed_order,
-    centric_order,
-    golden_angle,
-    interleaved_slice_order,
-    linear_order,
-    rf_spoil_phase,
-)
+from .module import Module
+from .scanner import hardware, opts
 
-# Fail once with a complete list, rather than letting the first module that needs a missing
+# Fail once with a complete list, rather than letting the first caller that needs a missing
 # pypulseq function fail with an opaque AttributeError halfway through a build.
 _compat.require()
 
@@ -97,8 +108,8 @@ compile_sequence = compile
 #: Attributes resolved on first access rather than at import time.
 #:
 #: ``display`` is the only module allowed to import matplotlib, and ``import seqcraft`` must not
-#: pull matplotlib in -- so ``sc.plot_block(exc.build())`` works without paying that cost until
-#: it is used.  ``testing`` is deferred for tidiness: the contract assertions are documented as
+#: pull matplotlib in -- so ``sc.plot_block(block, opts)`` works without paying that cost until it
+#: is used.  ``testing`` is deferred for tidiness: the contract assertions are documented as
 #: available downstream, but they are not part of the sequence-building API.
 _LAZY: dict[str, tuple[str, str | None]] = {
     'display': ('.display', None),
@@ -138,43 +149,35 @@ __all__ = [
     'HardwareLimitError',
     'Issue',
     'Item',
-    'Limits',
     'LogicBlock',
     'MissingExtraError',
+    'Module',
     'Node',
     'Raster',
     'RasterError',
     'Report',
     'ReportFailed',
     'SeqCraftError',
-    'System',
     'UnitSanityError',
     'UnknownFieldError',
     'WriteResult',
     '__version__',
     'barrier',
-    'bit_reversed_order',
-    'centric_order',
     'compile',
     'compile_sequence',
     'convert',
     'display',
     'events',
     'flatten',
-    'golden_angle',
-    'interleaved_slice_order',
-    'linear_order',
-    'load_hardware',
-    'modules',
-    'ordering',
+    'hardware',
+    'opts',
     'plot_block',
     'plot_kspace',
     'plot_sequence',
     'plot_trajectory',
     'provenance',
-    'rf_spoil_phase',
+    'scanner',
     'span',
-    'synthetic_hardware',
     'testing',
     'timing',
     'units',

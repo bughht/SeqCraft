@@ -1,21 +1,26 @@
 # Architecture
 
-Two concepts, and no more.
+Two concepts, and no more — plus one object that is pypulseq's.
 
 ```
    any Python you like                                  seqcraft does this
   ─────────────────────────                          ──────────────────────────
   a function                ─┐
-  a class of your own shape  ├─►  LogicBlock  ──►    sc.compile()
-  sc.modules.SincExcitation ─┘    lb.add(t, ...)       finds block boundaries
+  a class of your own shape  ├─►  LogicBlock  ──►    sc.compile(tree, opts)
+  an sc.Module subclass     ─┘    lb.add(t, ...)       finds block boundaries
                                                        sums same-axis gradients
                                                        checks the amplifier
                                                        ──► pypulseq.Sequence
 ```
 
 **`LogicBlock` is the interface.** It is where seqcraft imposes structure, and the only place. What
-produces one — a function, a class, a notebook cell, a module from the library — is not seqcraft's
-business, and nothing on the path from a tree to a `.seq` inspects the producer's type.
+produces one — a function, a class, a notebook cell — is not seqcraft's business, and nothing on the
+path from a tree to a `.seq` inspects the producer's type.
+
+**The scanner is a `pypulseq.Opts`.** Not a seqcraft class wrapping one. The compiler reads eight
+fields of it; the same object configures `pp.make_trapezoid`. A part designed against derated limits
+carries a second `Opts` (`sc.opts.derate`), which is one object more and one concept fewer than the
+named "regimes" it replaced.
 
 ---
 
@@ -73,8 +78,8 @@ Returns a `CompiledSequence` holding the `pypulseq.Sequence`, the compile report
 provenance. There is **no `Sequence` class** in seqcraft — a sequence *is* a logic block, and
 compiling it produces the artifact.
 
-Its signature is `compile(root: LogicBlock, system: System, ...)`, and that is the whole of what it
-knows about the world upstream of it. A test asserts that `core` never imports `seqcraft.modules`,
+Its signature is `compile(root: LogicBlock, opts: pp.Opts, ...)`, and that is the whole of what it
+knows about the world upstream of it. A test asserts that `core` never imports `seqcraft.module`,
 because the direction of that arrow is the design.
 
 The compatible implementation boundary is:
@@ -95,39 +100,44 @@ users to import stage types.
 
 ---
 
-## Modules — a library, not an interface
+## `Module` — a contract, and no library behind it
 
-`sc.modules` is a **provided library of reusable design components**: excitations, readouts, phase
-encodes, spoilers, diffusion encodings. Everything in it is written on `sc.modules.Module`, an
-**optional** base:
+**seqcraft ships no concrete modules.** There is no `SincExcitation`, no `EPIReadout`, no
+`MonopolarDiffusion`. What it ships is the shape a reusable component takes when you write one:
 
 ```python
-class Module:
-    def __init__(self, system, *, regime='default') -> None
-    @property
-    def opts(self) -> Opts       # the resolved pypulseq limits for `regime`
-    def params(self) -> dict     # for the provenance sidecar and repr
-    def submodules(self) -> dict[str, Module]
+class Module(ABC):
+    def __init__(self, *, opts: pp.Opts, tag: str | None = None) -> None
+    def __call__(self, *args, **kwargs) -> LogicBlock     # the interface
+    @abstractmethod
+    def build(self, *args, **kwargs) -> LogicBlock        # what you write
 ```
 
-It declares no abstract method. There is no `build()` requirement, no class variable to declare, no
-category to register and no hook to override — inheriting it is a way of not rewriting the same
-bookkeeping, and nothing more. What it does behind your back is unit validation: `check_units` runs
-when a subclass's `__init__` returns, so `fov_mm=0.22` fails at construction with a hint rather than
-producing a sequence with a 22 cm error in it. `check_units` takes any object, so a component that
-inherits nothing can call it itself.
+Four members, and each earns its place. `opts` is required rather than defaulted, because
+pypulseq's fallback is the *process-global* `Opts.default` and a module designing against that makes
+a sequence depend on import order. `tag` is identity, and becomes the provenance path. `__call__` is
+the single place the framework gets to check and name what came back. `build` is abstract, because a
+subclass that does not produce a block is not a module.
 
-The library's own modules follow one convention that the base does not enforce: `__init__` designs
-once, `build(**args)` is cheap and returns a block, and its arguments select the *variant* — which
-diffusion lobe, which line, which slice, what phase — without changing the block's duration. That
-convention suits a module with one output. A component with two — `diffusion.pre()` and
-`diffusion.post()`, `readout.readout()` and `readout.prephaser()` — should say so in its method
-names, and seqcraft has no opinion about it either way. See
-[`writing_a_module.md`](writing_a_module.md).
+**Three things it deliberately does not do.** It declares no `duration` — the block measures itself,
+so there is no second source of truth, and a build argument may therefore change the duration
+freely. It checks no units. It scrapes no `__dict__` for provenance. Each of those was a real
+feature; none is required by *every* module, and a base class carrying what only some subclasses
+need is how a small idea becomes a framework.
 
-**Why it is not in `core`.** `core` is what gets a logic block to a validated `.seq`. A convenience
-base for writing components is not on that path, and while it lived there it read as a requirement:
+**It is also not a requirement.** The compiler takes a `LogicBlock` and never asks what produced it,
+so a plain function is a component. A class with two outputs — `diffusion.pre()` and
+`diffusion.post()` — names them for what they are rather than passing `build(part=…)`, and seqcraft
+has no opinion about it. See [`writing_a_module.md`](writing_a_module.md).
+
+**Why it is not in `core`.** `core` is what gets a logic block to a validated `.seq`. A base class
+for writing components is not on that path, and while it lived there it read as a requirement:
 "three concepts" implied a sequence had to be expressed as modules. It never did.
+
+**Why there is no library.** The previous one — 27 classes, 5 762 lines — grew from whichever
+sequences happened to get built, and the compiler's own tests came to depend on it. It was deleted
+rather than migrated. What replaces it should be *chosen*: each primitive written only when a real
+sequence needs it, with the raw-pypulseq path kept beside it so the module has to earn its place.
 
 ---
 
@@ -151,37 +161,43 @@ flow stays authoritative. Time arithmetic and shallow immutability policies are 
 
 | Module | What it is for |
 |---|---|
-| `system` | `System` holding **named `Opts` regimes**, so a diffusion encoding can run at full amplitude while the readout is derated. Asserts every regime agrees on the rasters, gamma and B0 — nothing upstream checks that, and a disagreement produces an unplayable file. Also the source of every `Raster` and of `system.convert`. |
-| `timing` | `Raster` — the raster as an object, with `ceil / floor / nearest / count / at / holds / require`. Arithmetic in integer ticks, because `1.5e-3 / 1e-5` is `149.99999999999997` and `250 * 1e-7` is not `2.5e-5`; both errors propagate into ADC dwells and off-raster block durations. Nothing here assumes 10 µs: rasters are values the scanner supplies. |
+| `timing` | `Raster` — the raster as an object, with `ceil / floor / nearest / count / at / holds / require`. Arithmetic in integer ticks, because `1.5e-3 / 1e-5` is `149.99999999999997` and `250 * 1e-7` is not `2.5e-5`; both errors propagate into ADC dwells and off-raster block durations. Nothing here assumes 10 µs: rasters are read from the `Opts` at each call site. |
 | `units` | One function — `convert(value, from_unit, to_unit, gamma=, f0=)` — over eleven dimensions, in both directions, the shape `pypulseq.convert` uses. Scales are exact `Fraction`s, so `4200 us` is `0.0042 s` and not `0.004200000000000001 s`. |
 | `events` | `derive()` — the one sanctioned way to copy a pypulseq event. Also `knots_of` and `pwl_moment` (the exact-gradient primitives), `waveform_of` (a curve to plot, **not** a uniform raster — a `grad` event carries its own sample times), `moment_of`, `content_hash`, `check_limits`. |
-| `geometry` | FOV, matrix, slices, and one authoritative phase-encode index computation shared by `kspace_center_line` and the `LIN` label values, so the two cannot disagree. |
-| `validate` | Unit plausibility bands inferred from a field's name suffix, plus explicit `require_*` helpers. Its unit names are the ones `convert` knows, asserted by a test — one vocabulary, not two. |
+| `geometry` | FOV, matrix, slices, and one authoritative phase-encode index computation shared by `kspace_center_line` and the `LIN` label values, so the two cannot disagree. Reached only through the optional `geometry=` argument, which contributes `[DEFINITIONS]`; it is a candidate to leave `core`. |
+| `validate` | `merge_definitions`, which is on the compile path, plus the unit-plausibility bands `geometry` uses. Its unit names are the ones `convert` knows, asserted by a test — one vocabulary, not two. |
 | `report` | `Issue` and `Report`. Immutable; `ok` is true when there are no errors, so warnings inform without failing. |
+
+**`system.py` is gone.** 652 lines of `System`, `Limits`, presets, regimes and hardware loading,
+replaced by `pp.Opts`. Everything it held is already a field of `Opts`, the compiler read exactly
+eight of them, and it touched `System` at three call sites. What is genuinely lost is a named
+scanner catalogue — which moves to
+[PulseqSystems](https://github.com/nimpulseq/PulseqSystems), reached through
+`sc.opts.from_scanner` — and the guarantee that several regimes agree, which went with the regimes.
 
 ## What sits *outside* `core`, and why
 
-None of these is on the path from a tree to a file, so none of them is core. They are ordinary
-top-level modules, and `sc.ordering`, `sc.plot_block`, `sc.testing` are unchanged as import paths.
+None of these is on the path from a tree to a file, so none of them is core.
 
 | Module | What it is for |
 |---|---|
-| `modules` | The library of reusable design components, and `Module`, the optional base they share. |
-| `ordering` | `interleaved_slice_order`, `centric_order`, `golden_angle`, `rf_spoil_phase` — sequence-programming vocabulary, the closed forms that otherwise get copy-pasted per notebook. Becomes a package when the trajectory work adds a second file beside it. |
-| `provenance` | The JSON sidecar: versions, git commit and dirty flag, definitions, sha256. Output tooling; the compiler imports it lazily at `write()` time. Takes a mapping, so a component that reports its own parameters however it likes is not shut out. |
-| `display` | **The only module allowed to import matplotlib**, and lazily at that, so `import seqcraft` stays cheap. Every function returns a figure and never calls `show()`. |
-| `testing` | Two tiers. `assert_output(make, system)` and the block-level assertions it composes take a callable and a block, so they ask nothing about ancestry; `assert_all(module, **build_args)` adds the checks that only mean something for the `build()` convention. `module_subclasses()` enumerates what inherits the base, which is what the library's own contract suite parametrises over. |
+| `module` | `sc.Module`: the standard shape for a reusable component. Four members. Beside `core`, not inside it, and not inside any library. |
+| `scanner` | `sc.opts` — `derate` and `from_scanner`, the two operations `pp.Opts` makes awkward or unsafe. And `sc.hardware` — the PNS response model, which is not a limit and which only post-compile analysis reads. |
+| `provenance` | The JSON sidecar: versions, git commit and dirty flag, definitions, the `Opts`, sha256. Output tooling; the compiler imports it lazily at `write()` time. Takes a mapping, so a component that reports its own parameters however it likes is not shut out. |
+| `display` | **The only module allowed to import matplotlib**, and lazily at that, so `import seqcraft` stays cheap. Every function returns a figure and never calls `show()`. Takes arrays and an `Opts`, never a module object. |
+| `testing` | Two tiers. `assert_output(make, opts)` and the block-level assertions it composes take a callable and a block, so they ask nothing about ancestry; `assert_all(module, **args)` adds the checks that only mean something for the `Module` convention. |
 
 **There is no registry.** A registry earns its place when something must turn a *string* into a
 *class* at run time: a YAML front end, plugin entry points, a `--readout=spiral_vds` flag. seqcraft
-has none of those, on purpose. Its one consumer was the contract suite's `parametrize`, and
-`Module.__subclasses__()` serves that with no decorator anywhere — and cannot be forgotten, because
-subclassing *is* the registration. A `@register()` that a new module omitted silently lost the whole
-contract suite, which is the failure a registry was supposed to prevent.
+has none of those, on purpose. `module_subclasses()` serves the one real consumer — parametrising a
+contract suite — with no decorator anywhere, and cannot be forgotten, because subclassing *is* the
+registration. A `@register()` that a new module omitted silently lost the whole contract suite,
+which is the failure a registry was supposed to prevent.
 
-`module_subclasses()` is scoped accordingly: it answers *what inherits the base*, which is the right
-question for parametrising the library's contract suite and the wrong one for deciding what seqcraft
-accepts. Nothing outside the tests consults it.
+**There is no ordering module either.** `interleaved_slice_order`, `centric_order`, `golden_angle`
+and the rest were removed: four of the six had never had a caller, and ordering tables are
+sequence-programming choices rather than physics. They live in [`salvage/`](../salvage/) until the
+opinionated library exists to hold them.
 
 ---
 
@@ -193,42 +209,42 @@ reconstructing them are downstream jobs with heavy dependencies of their own. Fo
 make every user pay for them.
 
 **There are no recipes either.** A recipe is somebody else's sequence choices in library code: to
-change your scan you would edit a package, and the package would accumulate everyone's variants. The
-notebooks assemble sequences from modules instead. With module properties the timing is four lines --
+change your scan you would edit a package, and the package would accumulate everyone's variants. A
+sequence is assembled where it is used, and the timing is arithmetic you can read --
 
 ```python
-first_half  = (exc.duration - exc.isodelay) + delta + refoc.isodelay
-second_half = (refoc.duration - refoc.isodelay) + delta + readout.time_to_echo
+first_half  = (exc_block.duration - isodelay) + delta + isodelay_180
+second_half = (refoc_duration - isodelay_180) + delta + time_to_echo
 te = 2 * max(first_half, second_half)
 ```
 
 -- so a `solve_timing` function was never earning its place.
 
-Also deliberately absent: any solver for gap timing (`t0 + te - ro.time_to_echo` is arithmetic you
-can read), a YAML or GUI front end, and a `.seq` importer.
+Also deliberately absent: any solver for gap timing (`t0 + te - time_to_echo` is arithmetic you can
+read), a YAML or GUI front end, and a `.seq` importer.
 
 ---
 
 ## Layout
 
-The current public layout remains:
-
 ```
 src/seqcraft/
-  core/          logic  compiler  system  geometry  events
-                 timing  units  validate  errors  report
-  modules/       base.py (the optional Module)
-                 rf/  readout/ (cartesian, epi, spiral)  encoding/  prep/  control/
-  ordering.py    view orders, golden angle, RF-spoil phase
+  core/          the compile path, and nothing else
+                 logic  compiler  _compiler/  events
+                 timing  units  validate  errors  report  geometry
+  module.py      sc.Module -- the component contract
+  scanner/       opts.py     derate, from_scanner
+                 hardware.py PNS response models
   provenance.py  the JSON sidecar
   display.py     the only matplotlib importer
   testing.py     assertions you can point at any component of your own
 
-tests/        core/  logic/  compiler/  modules/  integration/
-examples/     01_getting_started
-              dti_spiral/  dti_epi/   one scan each: 01_build, 02_simulate_and_reconstruct, seq/
-              lib/                    sim + recon helpers, not the package
-docs/         architecture  compiler  writing_a_module
+tests/        core/  logic/  compiler/  module/  opts/  integration/
+examples/     01_getting_started.ipynb   uses no modules, on purpose
+              _parked/                   two DTI scans, kept as the spec for the next library
+              lib/                       sim + recon helpers, not the package
+salvage/      physics lifted out of the deleted library; not packaged, not imported
+docs/         architecture  compiler  writing_a_module  testing
 ```
 
 During the compiler refactor, `core/compiler.py` remains import-compatible while private stage files

@@ -20,9 +20,11 @@ Two mechanisms:
 
        fov_mm: float = field(metadata={'range': Range(5.0, 600.0, 'mm')})
 
-Both entry points take an ordinary object: :func:`check_fields` for a dataclass,
-:func:`check_units` for anything that sets attributes in ``__init__``.  Neither asks what
-class it was handed, so a component of your own gets the check by calling it.
+:func:`check_fields` takes an ordinary dataclass and asks nothing about its type, so a component
+of your own gets the check by calling it.
+
+This file also holds :func:`merge_definitions`, which is on the compile path proper: it is how the
+compiler merges ``[DEFINITIONS]`` from several sources with a collision check.
 
 Examples
 --------
@@ -47,7 +49,7 @@ import dataclasses
 import difflib
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from .errors import ConfigurationError, UnitSanityError, UnknownFieldError, format_error
+from .errors import ConfigurationError, UnitSanityError, format_error
 from .units import GAMMA_1H
 
 if TYPE_CHECKING:
@@ -58,13 +60,11 @@ __all__ = [
     'DIMENSIONLESS',
     'Range',
     'check_fields',
-    'check_units',
-    'require_divides',
+    'check_value',
+    'merge_definitions',
+    'range_for',
     'require_in',
     'require_in_range',
-    'require_int_in',
-    'require_positive',
-    'suggest_field',
 ]
 
 
@@ -219,7 +219,7 @@ def check_fields(obj: object) -> None:
     """
     Validate every numeric field of a dataclass instance against its range.
 
-    The dataclass counterpart of :func:`check_units`.  Fields that are ``None``, boolean,
+    Fields that are ``None``, boolean,
     or non-numeric are skipped; numpy arrays are skipped (they are waveforms, validated
     elsewhere).
 
@@ -243,8 +243,7 @@ def check_fields(obj: object) -> None:
         # Exactly zero is never a unit confusion: a wrong unit changes the magnitude, and
         # zero has no magnitude to get wrong.  0 mm is 0 m.  Skipping it lets gaps,
         # offsets and "derive this" sentinels keep their natural default without needing a
-        # bespoke range each.  A zero that is genuinely invalid is caught by
-        # require_positive(), which the built-in modules call for their mandatory fields.
+        # bespoke range each.  A zero that is genuinely invalid is a range check of its own.
         if value == 0:
             continue
         rng = range_for(f.name, f.metadata.get('range'))
@@ -252,97 +251,7 @@ def check_fields(obj: object) -> None:
             check_value(owner, f.name, float(value), rng)
 
 
-def check_units(obj: object) -> None:
-    """
-    Validate every numeric attribute of any object against the range its name implies.
-
-    The plain-object counterpart of :func:`check_fields`: modules are ordinary classes that set
-    their parameters in ``__init__``, so there are no ``dataclasses.fields`` to walk.
-    :class:`~seqcraft.modules.base.Module` calls this automatically once a subclass's ``__init__``
-    returns; a component that does not inherit it calls this itself, since it takes any object.
-
-    Attributes starting with ``_`` are skipped, as are booleans, non-numerics and exact zeros -- a
-    wrong unit changes the magnitude, and zero has no magnitude to get wrong.
-
-    Parameters
-    ----------
-    obj
-        Any object.
-
-    Raises
-    ------
-    UnitSanityError
-        On the first attribute found outside its plausible range.
-
-    Notes
-    -----
-    The band comes from the name's **unit suffix alone**, so it is deliberately generous: a
-    ``_mm`` field is checked against 0.01 to 1000 mm, which catches metres-for-millimetres on a
-    slice thickness but not on a field of view, since 0.22 mm is a plausible length in general.
-    Where a tighter band is meaningful the module states it -- ``CartesianLine`` calls
-    ``require_in_range(self, 'fov_ro_mm', 0.5, 2000)``.  This function is the free safety net, not
-    the whole story.
-
-    Examples
-    --------
-    >>> class M:
-    ...     def __init__(self):
-    ...         self.slice_thickness_mm = 0.005       # 5 um: metres mistaken for millimetres
-    >>> check_units(M())
-    Traceback (most recent call last):
-        ...
-    seqcraft.core.errors.UnitSanityError: M.slice_thickness_mm = 0.005 is outside ...
-
-    The hint names the likely mistake and the value that was probably meant:
-
-    >>> try:
-    ...     check_units(M())
-    ... except UnitSanityError as err:
-    ...     print([line.strip() for line in str(err).splitlines() if 'looks like' in line][0])
-    hint: 0.005 looks like m. Did you mean slice_thickness_mm=5?
-    """
-    owner = type(obj).__name__
-    for name, value in vars(obj).items():
-        if name.startswith('_') or isinstance(value, bool):
-            continue
-        if not isinstance(value, (int, float)):
-            continue
-        # Exactly zero is never a unit confusion: a wrong unit changes the magnitude, and zero
-        # has no magnitude to get wrong.  0 mm is 0 m.  A zero that is genuinely invalid is
-        # caught by require_positive(), which modules call for their mandatory fields.
-        if value == 0:
-            continue
-        rng = range_for(name)
-        if rng is not None:
-            check_value(owner, name, float(value), rng)
-
-
 # ------------------------------------------------------------------ explicit helpers
-def require_positive(obj: object, *names: str) -> None:
-    """
-    Require the named fields to be strictly positive.
-
-    Examples
-    --------
-    >>> from dataclasses import dataclass
-    >>> @dataclass
-    ... class D:
-    ...     duration_us: float
-    >>> require_positive(D(duration_us=-1), 'duration_us')
-    Traceback (most recent call last):
-        ...
-    seqcraft.core.errors.ConfigurationError: D.duration_us must be > 0, got -1.
-    """
-    owner = type(obj).__name__
-    for name in names:
-        value = getattr(obj, name)
-        if value is None:
-            continue
-        if value <= 0:
-            msg = f'{owner}.{name} must be > 0, got {value:g}.'
-            raise ConfigurationError(msg)
-
-
 def require_in_range(obj: object, name: str, lo: float, hi: float, *, unit: str = '') -> None:
     """Require ``lo <= obj.name <= hi``."""
     owner = type(obj).__name__
@@ -352,18 +261,6 @@ def require_in_range(obj: object, name: str, lo: float, hi: float, *, unit: str 
     if not lo <= value <= hi:
         suffix = f' {unit}' if unit else ''
         msg = f'{owner}.{name} must be in [{lo:g}, {hi:g}]{suffix}, got {value:g}{suffix}.'
-        raise ConfigurationError(msg)
-
-
-def require_int_in(obj: object, name: str, *, lo: int, hi: int) -> None:
-    """Require the named field to be an integer within ``[lo, hi]``."""
-    owner = type(obj).__name__
-    value = getattr(obj, name)
-    if not isinstance(value, int) or isinstance(value, bool):
-        msg = f'{owner}.{name} must be an int, got {type(value).__name__}.'
-        raise ConfigurationError(msg)
-    if not lo <= value <= hi:
-        msg = f'{owner}.{name} must be in [{lo}, {hi}], got {value}.'
         raise ConfigurationError(msg)
 
 
@@ -393,43 +290,6 @@ def require_in(obj: object, name: str, allowed: Iterable[Any]) -> None:
         if close:
             msg += f' Did you mean {close[0]!r}?'
     raise ConfigurationError(msg)
-
-
-def require_divides(obj: object, name: str, divisor_name: str) -> None:
-    """
-    Require ``obj.name % obj.divisor_name == 0``, loudly rather than by silent rounding.
-
-    Silent rounding here is how an acceleration factor that does not divide the matrix
-    turns into a phase-encode table that is one line short.
-    """
-    owner = type(obj).__name__
-    value = getattr(obj, name)
-    divisor = getattr(obj, divisor_name)
-    if divisor and value % divisor:
-        msg = (
-            f'{owner}.{name} = {value} is not divisible by {divisor_name} = {divisor}. '
-            f'Nearest usable values: {value - value % divisor} or '
-            f'{value + divisor - value % divisor}.'
-        )
-        raise ConfigurationError(msg)
-
-
-def suggest_field(obj_or_cls: object, bad: str, *, extra: Iterable[str] = ()) -> UnknownFieldError:
-    """
-    Build an :class:`~seqcraft.core.errors.UnknownFieldError` naming the closest match.
-
-    This is the loud opposite of the reference implementation's
-    ``if key in Opts.default.__dict__: opt_args[key] = val``, which silently discarded
-    every keyword it did not recognise -- observed to drop ``b0=2.89`` and ``Rsegment=2``
-    with no error at all.
-    """
-    cls = obj_or_cls if isinstance(obj_or_cls, type) else type(obj_or_cls)
-    known = sorted({*(f.name for f in dataclasses.fields(cls)), *extra})
-    fields: dict[str, object] = {'known fields': ', '.join(known)}
-    close = difflib.get_close_matches(bad, known, n=3)
-    if close:
-        fields['did you mean'] = ', '.join(close)
-    return UnknownFieldError(format_error(f'{cls.__name__} has no field {bad!r}.', fields))
 
 
 def merge_definitions(sources: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:

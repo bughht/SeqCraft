@@ -2,39 +2,46 @@
 
 Composable, verifiable MRI pulse sequence programming on top of [pypulseq](https://github.com/imr-framework/pypulseq).
 
-Two concepts, and no more.
+Three things, and one of them is pypulseq's.
 
 | | |
 |---|---|
-| **`LogicBlock`** | A tree of pulseq events, each with a start time. Two attributes, one method. Anything may overlap anything. |
+| **`sc.LogicBlock`** | A tree of pulseq events, each with a start time. Two attributes, one method. Anything may overlap anything. |
 | **`sc.compile`** | Turns the tree into legal pulseq blocks: finds boundaries, sums gradients that share an axis, and validates the result against the amplifier. |
+| **`pp.Opts`** | The scanner. Not wrapped, not subclassed — the same object you pass to `pp.make_trapezoid`. |
 
-Everything else is a way of producing logic blocks. `sc.modules` is a library of reusable ones —
-excitations, readouts, encodings, diffusion — and seqcraft imposes no structure on the code that
-produces a block beyond the block itself, so a plain function or a class of your own shape works
-just as well. See [*Writing your own*](#writing-your-own).
+Everything else is a way of producing logic blocks, and seqcraft imposes no structure on the code
+that produces one beyond the block itself. `sc.Module` is the standard shape for a *reusable*
+component you write; a plain function works just as well. See [*Writing your own*](#writing-your-own).
 
 ```python
+import math
 import pypulseq as pp
 import seqcraft as sc
 
-system = sc.System.preset('prisma')
-exc = sc.modules.SincExcitation(system, flip_deg=15, duration_us=1000, slice_thickness_mm=5,
-                                rephase=False)
-ro = sc.modules.CartesianLine(system, fov_ro_mm=250, matrix_ro=64, readout_duration_us=3200,
-                              prephase=False)
-pe = sc.modules.PhaseEncode(system, fov_pe_mm=250, matrix_pe=64)
+opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+               rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
+
+rf, gz, gz_reph = pp.make_sinc_pulse(flip_angle=math.radians(15), duration=1e-3,
+                                     slice_thickness=5e-3, apodization=0.5, time_bw_product=4,
+                                     delay=opts.rf_dead_time, use='excitation',
+                                     system=opts, return_gz=True)
+gx = pp.make_trapezoid('x', flat_area=64 * 4.0, flat_time=3.2e-3, system=opts)
+adc = pp.make_adc(num_samples=64, duration=3.2e-3, delay=gx.rise_time, system=opts)
+gx_pre = pp.make_trapezoid('x', area=-gx.area / 2, duration=1e-3, system=opts)
+
+time_to_echo = gx.rise_time + gx.flat_time / 2          # where k = 0 sits inside the readout
+t_winders = pp.calc_duration(gz)
 
 seq = sc.LogicBlock('gre')
 for i, line in enumerate(range(-32, 32)):
     t0 = i * 20e-3
-    seq.add(t0, exc.build(rf_phase_rad=sc.rf_spoil_phase(i)))
-    seq.add(t0 + exc.duration, exc.rephaser())          # z  ─┐
-    seq.add(t0 + exc.duration, pe.build(line=line))     # y   │ one block,
-    seq.add(t0 + exc.duration, ro.prephaser_block())    # x  ─┘ no coordination
-    seq.add(t0 + 8e-3 - ro.time_to_echo, ro.build())    # this *is* the definition of TE
+    pe = pp.make_trapezoid('y', area=line * 4.0, duration=1e-3, system=opts)
+    seq.add(t0, rf, gz)
+    seq.add(t0 + t_winders, gz_reph, pe, gx_pre)        # z, y, x — one block, no coordination
+    seq.add(t0 + 8e-3 - time_to_echo, gx, adc)          # this *is* the definition of TE
 
-out = sc.compile(seq, system)
+out = sc.compile(seq, opts)
 out.check().raise_if_failed()
 out.write('gre.seq')
 ```
@@ -42,6 +49,11 @@ out.write('gre.seq')
 The three winders land in one pulseq block because they coincide, and the compiler says nothing —
 they are on different axes, so there is nothing wrong. That is the point of the design: you say
 what you mean, and never think about block boundaries.
+
+**Set the dead times.** pypulseq defaults `rf_dead_time`, `rf_ringdown_time` and `adc_dead_time` to
+**zero**, which is wrong on every real scanner. A sequence built on those compiles cleanly, passes
+every check, and is refused or silently mangled at the console. They belong to your installation,
+not to the scanner model, so no preset and no vendor database can supply them.
 
 ---
 
@@ -51,8 +63,9 @@ what you mean, and never think about block boundaries.
 pip install -e ".[dev,viz]"
 ```
 
-Requires `pypulseq>=1.5.0` and `numpy>=1.24`. Optional extras: `viz` (matplotlib), `dev` (pytest,
-ruff), `docs`.
+Requires the pinned `pypulseq` fork and `numpy>=1.24`. Optional extras: `viz` (matplotlib),
+`systems` ([PulseqSystems](https://github.com/nimpulseq/PulseqSystems) vendor limits), `dev`
+(pytest, ruff), `docs`.
 
 The simulation and reconstruction helpers in `examples/lib/` need `MRzeroCore`, `torch` and `sigpy`.
 They are **not** part of the package — seqcraft builds sequences, and simulating or reconstructing
@@ -70,30 +83,22 @@ touch, which pypulseq would otherwise reject 40 000 blocks later.
 
 **Limits checked where the truth is.** Two individually legal gradients on one axis can sum to an
 illegal one: an area-100 and an area-200 trapezoid on a 40 mT/m, 150 T/m/s system reach 93 % of the
-amplitude limit and **189 % of the slew limit**. No module can see that in isolation, so amplitude
-and slew are measured on the compiled waveform.
+amplitude limit and **189 % of the slew limit**. No component can see that in isolation, so
+amplitude and slew are measured on the compiled waveform.
 
 **Errors that name what to change.** pypulseq says `Amplitude violation (117%)`. seqcraft says which
 of the three parameters fixes it, and what value would work.
 
-**Physics you can check rather than trust.** The diffusion b-value is verified against numerical
-integration of the built waveform to 0.5 %; `k` at the echo is checked on every axis, which is what
-catches a missing slice rewinder; and the spiral generator solves the **discrete** amplitude and slew
-constraints the hardware actually applies rather than a continuous-time model of them, so it runs at
-100 % of peak slew and 99.8 % of it on average. That last one is the difference between a 19 ms
-readout and a 29 ms one, and every limit check passed in both cases — which is the point: a sequence
-being legal says nothing about it being efficient, and neither is visible without measuring.
-
-**Timing properties that point where they say.** `EPIReadout.time_to_echo` lands 17.26 ms into a
-49.92 ms train — the echo whose `ky` is zero, not the train's midpoint, which partial Fourier moves by
-7.7 ms. What the ADC must cover is the *sampled* extent, so the readout lobe carries 540.53 1/m to
-deliver 533.33 1/m and the prephaser cancels the difference; a prephaser of minus `k_max` would put
-every shot 1.7 `dk` off-centre, which is a linear phase ramp across an image that looks perfectly
-normal.
+**Waveform fidelity you can check rather than trust.** What the compiler emits is compared against
+what the tree said, exactly — including a boundary landing inside a waveform, two gradients summed,
+an arbitrary waveform that must not be resampled, and long trains where float error accumulates. The
+one case where pulseq's two gradient representations genuinely cannot both be held is *reported*
+with a bound, rather than being inexact quietly.
 
 **Files that cannot lie about themselves.** `write()` takes no geometry, matrix or FOV arguments —
 everything written comes from what was compiled. A JSON sidecar records the versions, the git commit
-and dirty flag, the definitions and the file's sha256.
+and dirty flag, the definitions, the file's sha256, and every field of the `Opts` it was built
+against.
 
 ---
 
@@ -103,68 +108,42 @@ For one sequence, once, write raw pypulseq — it is a fine tool for that.
 
 seqcraft pays for itself when you have a *family* of sequences, a loop over more than two axes,
 gradients that must overlap without you hand-splitting blocks, or files that have to be reproducible
-six months later. And when it does not fit, `RawEvents` wraps arbitrary pypulseq events as a module
-and `CompiledSequence.seq` is the pypulseq object itself.
-
----
-
-## Examples
-
-Each folder is one complete scan — build, check, write, simulate, reconstruct, quantify. See
-[`examples/README.md`](examples/README.md).
-
-| | What it covers |
-|---|---|
-| [`01_getting_started.ipynb`](examples/01_getting_started.ipynb) | Blocks, modules and `compile`; the overlap rules, the escape hatches, writing a file. |
-| [`dti_spiral/`](examples/dti_spiral/) | The single-shot spin-echo **spiral** DTI at 1.88 mm, and the two-echo field map its 67 ms readout cannot do without. b-value against numerical integration, k at the echo on every axis, PNS against the site's own `.asc`. Then simulate and go through to an ADC map. |
-| [`dti_epi/`](examples/dti_epi/) | The **same diffusion encoding** through a ramp-sampled **EPI** train — single-shot and two-shot, partial Fourier 0.75, no flat top at all. 20 Hz per pixel of phase-encode bandwidth, so 100 Hz of off-resonance displaces by five pixels — and the same operator that deblurs the spiral removes it. |
-
-Two readouts, one encoding: the diffusivities have to agree, and where they do not, that is the
-readout's error budget.
-
-Each build notebook writes into its folder's `seq/`: the `.seq` files, a provenance `.seq.json` for
-each, and one sidecar apiece. The `.traj.npz` carries the trajectory at **ADC sample times** with the
-echo's own position recorded — neither readout's k-space is in the `.seq` in a form a reconstruction
-can use — cross-checked against pypulseq's own calculation to 0.0000 1/m. The field map's `.meta.npz`
-carries its echo times and line order.
-
-Play the field map first: it takes five seconds and the diffusion reconstruction needs it.
+six months later. And when it does not fit, `CompiledSequence.seq` is the pypulseq object itself.
 
 ---
 
 ## The module library
 
-```
-rf/         SincExcitation  SlabExcitation  HardExcitation  SincRefocusing  HardRefocusing
-            SLRExcitation  SLRRefocusing  GaussSaturation  AdiabaticInversion
-readout/    CartesianLine  EPIReadout  SpiralVDS  NoiseAcquisition
-encoding/   PhaseEncode  PartitionEncode  Prephaser  Spoiler  Crusher
-            MonopolarDiffusion  BipolarDiffusion  ArbitraryDiffusion  dti_directions
-prep/       FatSat  InversionRecovery
-control/    Delay  Trigger  Barrier  RawEvents
-```
+**There isn't one, on purpose.** seqcraft ships no concrete modules at all: no `SincExcitation`, no
+`EPIReadout`, no `MonopolarDiffusion`. What it ships is the tree, the compiler, and the contract.
 
-**There are no recipes.** A recipe is somebody else's sequence choices baked into library code, and
-changing your own scan should never mean editing a package. The notebooks build their sequences from
-modules, start to finish — the DTI one is about twenty lines of placement, and every number in it is
-yours to change.
+The previous library — 27 classes, 5 762 lines — was removed rather than migrated. A recipe is
+somebody else's sequence choices baked into library code, and changing your own scan should never
+mean editing a package. The physics worth keeping from it (the b-value solve, the variable-density
+spiral trajectory, the EPI ramp-sampling moment integral) was lifted out as plain functions into
+[`salvage/`](salvage/) before the deletion.
+
+[ADR-003](docs/adr/003-scanner-and-module-reform.md) records what was decided and why. What replaces
+the library, and on what principle, is deliberately still open — each primitive should be written
+only when a real sequence needs it, with the raw-pypulseq path kept beside it so the module has to
+earn its place.
 
 ---
 
 ## Writing your own
 
 A component takes part in a sequence by returning a `LogicBlock`. That is the entire contract:
-there is no base class to inherit, no method name to match, and no registry to join.
+there is no method name to match and no registry to join.
 
 ```python
-def spoiler(system, *, area_per_m=800.0):                # a function is a component
-    g = pp.make_trapezoid('z', area=area_per_m, system=system.default)
+def spoiler(opts, *, area_per_m=800.0):                  # a function is a component
+    g = pp.make_trapezoid('z', area=area_per_m, system=opts)
     return sc.LogicBlock('spoil').add(0.0, g)
 
 
 class VelocityEncode:                                    # so is a class of any shape
-    def __init__(self, system, *, m1_s_per_m, axis='y'):
-        self.lobe = pp.make_trapezoid(axis, area=..., system=system.default)
+    def __init__(self, opts, *, m1_s_per_m, axis='y'):
+        self.lobe = pp.make_trapezoid(axis, area=..., system=opts)
 
     def pre(self):
         return sc.LogicBlock('venc_pre').add(0.0, self.lobe)
@@ -176,23 +155,47 @@ class VelocityEncode:                                    # so is a class of any 
 Two outputs named for what they are, rather than one `build(part=...)` — seqcraft has no opinion
 either way.
 
-`sc.testing.assert_output(component.pre, system)` gives either of them the block-level contract
+`sc.testing.assert_output(component.pre, opts)` gives either of them the block-level contract
 checks — a well-formed block, deterministic output, gradients on the raster, per-axis limits, and a
 clean compile on its own.
 
-`sc.modules.Module` is an **optional** base for reusable modules, and what the built-in library is
-written on: it holds the scanner, resolves the limit regime to design against, checks units when
-your `__init__` returns, and reports parameters for the provenance sidecar. Inherit it when those
-are worth having; `sc.testing.assert_all(your_module)` then adds the checks for the convention it
-comes with. See [`docs/writing_a_module.md`](docs/writing_a_module.md).
+`sc.Module` is the standard shape for a component you intend to *reuse*: parameters in, one
+`LogicBlock` out. Four members, and no more — `opts`, `tag`, `__call__`, and the abstract `build`
+you write. It declares no duration (the block measures itself), checks no units, and holds no
+scanner wrapper.
+
+```python
+class PhaseEncode(sc.Module):
+    def __init__(self, *, opts, fov_mm, matrix, axis='y', tag=None):
+        super().__init__(opts=opts, tag=tag)
+        self.dk = 1e3 / fov_mm
+        self.g = pp.make_trapezoid(axis, area=self.dk * matrix / 2, system=opts)
+
+    def build(self, *, line=0) -> sc.LogicBlock:
+        scale = line * self.dk / float(self.g.area)
+        return sc.LogicBlock().add(0.0, sc.events.derive(self.g, ...))
+```
+
+`sc.testing.assert_all(pe, line=17)` then runs the whole suite against it. See
+[`docs/writing_a_module.md`](docs/writing_a_module.md).
+
+---
+
+## Examples
+
+| | What it covers |
+|---|---|
+| [`01_getting_started.ipynb`](examples/01_getting_started.ipynb) | Blocks, `Opts` and `compile`; the overlap rules, provenance, the escape hatches, writing a file — and `sc.Module` at the end, once there is a reason for it. Uses no modules. |
+| [`_parked/`](examples/_parked/) | Two complete DTI acquisitions, spiral and EPI. **They do not run against this version** — they were built on the deleted library, and are kept as the specification for what replaces it. |
 
 ---
 
 ## Documentation
 
-- [`docs/architecture.md`](docs/architecture.md) — the two concepts, where modules sit, and what each core module is for.
+- [`docs/architecture.md`](docs/architecture.md) — the layering, and what is deliberately absent.
 - [`docs/compiler.md`](docs/compiler.md) — how block boundaries are chosen, how an event's own `delay` is handled, and what every warning means.
-- [`docs/writing_a_module.md`](docs/writing_a_module.md) — components that inherit nothing, the conventions the library follows, and what to assert.
+- [`docs/writing_a_module.md`](docs/writing_a_module.md) — the `Module` contract, components that inherit nothing, and what to assert.
+- [`docs/testing.md`](docs/testing.md) — the test tiers and what each is for.
 
 ---
 
@@ -202,20 +205,22 @@ comes with. See [`docs/writing_a_module.md`](docs/writing_a_module.md).
 pytest tests --doctest-modules src/seqcraft
 ```
 
-765 tests and doctests. The compiler directory is the heart of it: one case per rule, plus the
-adversarial ones — a gradient straddling an RF, a boundary that would fall inside an ADC window, a
-split mid-ramp, two RFs whose dead times overlap. Every physics assertion is a number an independent
-calculation gives, not a number the code happened to produce.
+The compiler directory is the heart of it: one case per rule, plus the adversarial ones — a gradient
+straddling an RF, a boundary that would fall inside an ADC window, a split mid-ramp, two RFs whose
+dead times overlap. Every fixture is raw pypulseq, so compiler coverage never depends on whatever a
+module library happens to contain. Every physics assertion is a number an independent calculation
+gives, not a number the code happened to produce.
 
 ---
 
 ## A note on vendor data
 
 Siemens `.asc` gradient descriptors carry proprietary PNS and acoustic-resonance coefficients. They
-are **never** stored in, copied into or read from this repository: `load_hardware()` resolves them
-only through `$SEQCRAFT_ASC_DIR` and rejects anything that looks like a path.
-`synthetic_hardware()` provides a vendor-free stand-in so PNS checks can run anywhere — it is not a
-real scanner and must never be used to clear a sequence for human scanning.
+are **never** stored in, copied into or read from this repository:
+`sc.hardware.load_hardware()` resolves them only through `$SEQCRAFT_ASC_DIR` and rejects anything
+that looks like a path. `sc.hardware.synthetic_hardware()` provides a vendor-free stand-in so PNS
+checks can run anywhere — it is not a real scanner and must never be used to clear a sequence for
+human scanning.
 
 ## Licence
 

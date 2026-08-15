@@ -9,6 +9,9 @@ call site, because the call site never sees the arithmetic.
 
 from __future__ import annotations
 
+import math
+
+import pypulseq as pp
 import pytest
 
 import seqcraft as sc
@@ -205,27 +208,25 @@ def test_repr_reads_as_a_duration() -> None:
     assert repr(Raster(6.4e-6)) == 'Raster(6.4 us)'
 
 
-# ---------------------------------------------------------------------------- System wiring
-def test_system_exposes_its_rasters_as_objects() -> None:
-    system = sc.System.preset('prisma')
-    assert system.block_raster == Raster(10e-6)
-    assert system.grad_raster == Raster(10e-6)
-    assert system.rf_raster == Raster(1e-6)
-    assert system.adc_raster == Raster(100e-9)
-    assert system.grad_raster.dt == 1e-5
-
-
+# ------------------------------------------------------------------------------ Opts wiring
 def test_a_scanner_with_unusual_rasters_works_end_to_end() -> None:
     """
-    The user's point: 10 us is today's value, not an assumption.  A 4 us / 2 us system compiles.
+    10 us is today's value, not an assumption.  A 4 us / 2 us scanner compiles.
+
+    Every raster the compiler uses is read from the ``Opts`` it was handed, so this is the test
+    that no raster is written down anywhere in the compile path.
     """
-    system = sc.System.from_limits(
-        sc.Limits(50.0, 180.0), name='four_us', grad_raster_us=4.0, rf_raster_us=2.0,
-        block_raster_us=4.0,
+    opts = pp.Opts(
+        max_grad=50, grad_unit='mT/m', max_slew=180, slew_unit='T/m/s',
+        grad_raster_time=4e-6, rf_raster_time=2e-6, block_duration_raster=4e-6,
+        rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6,
     )
-    assert system.grad_raster == Raster(4e-6)
-    exc = sc.modules.HardExcitation(system, flip_deg=90, duration_us=500)
-    out = sc.compile(sc.LogicBlock('t').add(0.0, exc.build()), system)
+    assert Raster(opts.grad_raster_time) == Raster(4e-6)
+
+    rf = pp.make_block_pulse(flip_angle=math.pi / 2, duration=500e-6, system=opts,
+                             use='excitation')
+    out = sc.compile(sc.LogicBlock('t').add(0.0, rf), opts)
+
     assert out.check().ok
     for duration in out.seq.block_durations.values():
-        assert system.block_raster.holds(float(duration))
+        assert Raster(opts.block_duration_raster).holds(float(duration))
