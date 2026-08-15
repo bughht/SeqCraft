@@ -1,9 +1,10 @@
 # Phase 1 compiler contracts
 
-- Status: Implemented; hosted CI evidence pending
+- Status: Complete
 - Date: 2026-08-14
 - Branch: `refactor/compiler-phases`
 - Parent: `dd5ec6a`
+- Implementation commit: `a609fa4`
 
 ## Scope delivered
 
@@ -36,11 +37,11 @@ The same-runner median compile-time ratios versus Phase 0 range from 0.966 to 1.
 investigation threshold. Streaming ready-block verification keeps peak Python allocation ratios
 between 1.001 and 1.025 rather than retaining the full intermediate block list.
 
-The final phase commit also requires the complete Phase 0 regression gates and the hosted
-Linux/Windows, Python 3.11/3.12 GitHub Actions matrix. Results are recorded here before the phase is
-declared complete.
+Hosted [GitHub Actions run 31854985214](https://github.com/bughht/SeqCraft/actions/runs/31854985214)
+passed all seven jobs: lint, types, examples, and Ubuntu/Windows tests on Python 3.11 and 3.12.
 
 ## Exit status
 
-Pending the full local and hosted gates. Phase 2 must not begin until this section records their
-results and the Phase 1 commit is pushed without changing `main`.
+All Phase 1 local and hosted gates are complete. The implementation remains on
+`refactor/compiler-phases`; `main` was not changed. Phase 2 may begin after the Phase 1 merge
+recommendation is reviewed.
