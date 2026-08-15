@@ -65,11 +65,24 @@ Examples
 >>> lb = sc.LogicBlock('demo')
 >>> _ = lb.add(0.0, pp.make_trapezoid('x', **gentle))
 >>> _ = lb.add(0.0, pp.make_trapezoid('y', **gentle))   # different axis: nothing to report
->>> out = sc.compile(lb, opts)
->>> out.report.ok, len(out.report.warnings)
-(True, 0)
->>> out.n_blocks
+>>> seq = sc.compile(lb, opts)
+>>> type(seq).__module__.startswith('pypulseq')
+True
+>>> len(seq.block_events)
 1
+
+What a compile returns
+----------------------
+A :class:`pypulseq.Sequence`, and nothing else.  Not a wrapper, not a result object, not a pair of
+a sequence and a report.  ``seq.write(...)``, ``seq.plot()``, ``seq.block_events`` and
+``seq.definitions`` are pypulseq's own and are what the rest of the ecosystem already reads.
+
+That is only tenable because **every legality failure raises**.  A returned object carrying a
+report is a way of not noticing: it writes a ``.seq`` the console refuses an hour later, and the
+explanation is on an object nobody looked at.  What the compile *did* rather than refused -- summed
+two gradients on an axis, resampled one onto the raster -- is a
+:class:`~seqcraft.errors.SeqCraftWarning`, one per category, so the standard ``warnings`` machinery
+decides what happens to it.
 """
 
 from __future__ import annotations
@@ -83,7 +96,6 @@ import pypulseq as pp
 from ..design.events import GRADIENT_KINDS
 from ..design.timing import EPS, Raster
 from ..errors import SeqCraftWarning, format_error
-from ..result import CompiledSequence
 from .boundaries import (
     check_exclusive,
     find_boundaries,
@@ -120,14 +132,18 @@ __all__ = ['compile_sequence']
 #: which makes it a knob whose only effect is to let a real timing failure through.
 _ALLOWED_TIMING = ('TotalDuration',)
 
-#: What each note category is called in its warning.  Every category the compiler can produce
-#: appears here, so adding one without naming it is a visible omission rather than a bare key.
+#: What each note category is called in its warning, singular and plural.  Every category the
+#: compiler can produce appears here, so adding one without naming it is a visible omission rather
+#: than a bare key -- and both forms are spelled out because the plural is not always on the last
+#: word ("blocks over the ... limit").
 _WARNING_TEXT = {
-    'merge': 'same-axis gradient merges',
-    'norm': 'blocks over the vector-norm limit (legal on real amplifiers)',
-    'orphan_label': 'labels with no ADC after them',
-    'resample': 'gradients resampled onto the raster',
-    'snap': 'reservations snapped to the block raster',
+    'merge': ('same-axis gradient merge', 'same-axis gradient merges'),
+    'norm': ('block over the vector-norm limit (legal on real amplifiers)',
+             'blocks over the vector-norm limit (legal on real amplifiers)'),
+    'orphan_label': ('label with no ADC after it', 'labels with no ADC after them'),
+    'resample': ('gradient resampled onto the raster', 'gradients resampled onto the raster'),
+    'snap': ('reservation snapped to the block raster',
+             'reservations snapped to the block raster'),
 }
 
 #: How many distinct sites a warning names before it starts counting.
@@ -159,9 +175,10 @@ def _warn(notes: dict[str, list[str]]) -> None:
             for site, n in counted.most_common(_WARNING_SITES)
         )
         extra = len(counted) - _WARNING_SITES
+        names = _WARNING_TEXT.get(category, (category, category))
         warnings.warn(
-            f'{len(entries)} {_WARNING_TEXT.get(category, category)}: {shown}'
-            + (f' (+{extra} more site(s))' if extra > 0 else ''),
+            f'{len(entries)} {names[len(entries) != 1]}: {shown}'
+            + (f' (+{extra} more sites)' if extra > 0 else ''),
             SeqCraftWarning,
             stacklevel=3,        # _warn -> compile_sequence -> the caller
         )
@@ -173,7 +190,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     *,
     name: str = '',
     definitions: Mapping[str, Any] | None = None,
-) -> CompiledSequence:
+) -> pp.Sequence:
     """
     Turn a logic-block tree into a :class:`pypulseq.Sequence`.
 
@@ -199,14 +216,24 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
 
     Returns
     -------
-    CompiledSequence
-        The pypulseq sequence, the compile report, and per-block provenance.
+    pypulseq.Sequence
+        Yours to use directly.  The definitions you passed are already set on it, along with
+        ``Name`` and ``TotalDuration``, so ``seq.write(path)`` needs nothing else.
 
     Raises
     ------
     CompileError
-        Two RF or ADC events overlap in time, an absolute start is negative, or a block
-        boundary would have to fall inside a gradient an ADC is sampling.
+        Two RF or ADC events overlap in time, an absolute start is negative, a gradient starts off
+        the gradient raster, no boundary can be cut in the gap between two exclusive events, a
+        block boundary would fall inside a gradient an ADC is sampling, two ADCs write the same
+        k-space address, or ``check_timing`` fails.
+    HardwareLimitError
+        The *summed* waveform exceeds ``max_grad`` or ``max_slew`` on an axis, or an ADC or RF
+        event exceeds the interpreter's per-event sample limit.
+    DefinitionConflict
+        ``name=`` and ``definitions['Name']`` disagree.
+    CompilerContractError
+        The compiled sequence does not match the tree.  A compiler bug; report it with the tree.
 
     Notes
     -----
@@ -233,8 +260,8 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     >>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
     ...                rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
     >>> lb = sc.LogicBlock('t').add(0.0, pp.make_delay(1e-3))
-    >>> out = compile_sequence(lb, opts, definitions={'FOV': [0.25, 0.25, 0.005]})
-    >>> round(out.duration_s * 1e3, 1), out.definitions['FOV']
+    >>> seq = compile_sequence(lb, opts, definitions={'FOV': [0.25, 0.25, 0.005]})
+    >>> round(seq.duration()[0] * 1e3, 1), seq.definitions['FOV']
     (1.0, [0.25, 0.25, 0.005])
     """
     raster = Raster(float(opts.block_duration_raster), 'block')
@@ -361,24 +388,17 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
         seq.set_definition(key, value)
     seq.set_definition('TotalDuration', float(seq.duration()[0]))
 
-    out = CompiledSequence(
-        seq=seq,
-        opts=opts,
-        origins=tuple(origins),
-        definitions=defs,
-        tree_duration_s=total,
-    )
-    # The last compile stage: check the produced sequence against the tree it came from.  It runs
-    # here, on the object just built, rather than as a method on it -- it reads the private IR,
-    # which is the compiler's, not the result's.
+    # The last compile stage: check the produced sequence against the tree it came from.  It reads
+    # the private IR, so it is a compile stage that happens to run last rather than an accessor
+    # somebody has to remember to call.
     verify_against_tree(
         placed,
         targets,
-        duration_s=out.duration_s,
+        duration_s=float(seq.duration()[0]),
         tree_duration_s=total,
         moments=lambda order: _sequence_moments(seq, order),
         label_states=lambda: seq.evaluate_labels(evolution='adc'),
     )
     # Last, so that nothing warns about a compile that then failed.
     _warn(notes)
-    return out
+    return seq

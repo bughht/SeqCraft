@@ -372,10 +372,10 @@ def test_the_oracle_catches_a_corrupted_waveform(opts) -> None:
     out = sc.compile(tree, opts)
     assert_matches(tree, out)                                   # clean to begin with
 
-    block = out.seq.get_block(1)
+    block = out.get_block(1)
     block.gx.waveform = np.asarray(block.gx.waveform) * 1.01    # 1 % too strong
     # get_block() rebuilds from the library, so patch the library entry the block came from.
-    out.seq.get_block = lambda i, _b=block, _o=out.seq.get_block: (  # type: ignore[method-assign]
+    out.get_block = lambda i, _b=block, _o=out.get_block: (  # type: ignore[method-assign]
         _b if i == 1 else _o(i)
     )
     report = compare(tree, out)

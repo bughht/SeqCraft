@@ -1,5 +1,16 @@
 """
-Plotting helpers.
+The one picture pypulseq cannot draw.
+
+:func:`plot_block` shows a **tree**, before the compiler chose block boundaries -- which is what
+you want when the question is "did I place this correctly".  For a compiled sequence use
+``seq.plot()``: pypulseq's own plotter is better maintained and it is the picture everyone else in
+the ecosystem reads.  The difference between the two is exactly the block structure the compiler
+chose.
+
+Two plotters used to live here and no longer do.  ``plot_sequence`` drew a compiled sequence,
+which ``Sequence.plot()`` already does; ``plot_trajectory`` took bare ``(kx, ky)`` arrays, and
+``sc.kspace(...)`` plus three lines of matplotlib draws them at the call site, where it is visible
+which two of the three axes are being shown.
 
 **The only module in seqcraft allowed to import matplotlib**, and it is imported lazily inside
 each function so that ``import seqcraft`` stays cheap and side-effect free.  Every function
@@ -19,22 +30,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
-from .design import events as ev
+from .analysis import sample
 from .design.events import AXES
-from .design.sampling import sample
 from .errors import MissingExtraError, format_error
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
     from pypulseq.opts import Opts
 
     from .design.logic import LogicBlock
-    from .result import CompiledSequence
 
-__all__ = ['plot_block', 'plot_sequence', 'plot_trajectory']
+__all__ = ['plot_block']
 
 
 def _pyplot() -> Any:
@@ -73,8 +78,8 @@ def plot_block(root: LogicBlock, opts: Opts, *, title: str = '', figsize=(10.0, 
     Notes
     -----
     Draws the **tree**, not the compiled sequence.  When a block looks right here but the compiled
-    sequence does not, the difference is the compiler's block boundaries -- and
-    :func:`plot_sequence` shows those.
+    sequence does not, the difference is the compiler's block boundaries -- and ``seq.plot()``
+    shows those.
     """
     plt = _pyplot()
     grid, grads, marks = sample(root, opts)
@@ -102,175 +107,5 @@ def plot_block(root: LogicBlock, opts: Opts, *, title: str = '', figsize=(10.0, 
     axis.grid(alpha=0.25)
     if grads:
         axis.legend(loc='upper right', fontsize=8)
-    figure.tight_layout()
-    return figure
-
-
-def plot_sequence(
-    compiled: CompiledSequence,
-    *,
-    time_range: tuple[float, float] | None = None,
-    figsize=(11.0, 6.0),
-) -> Any:
-    """
-    Plot a compiled sequence, with the block boundaries the compiler chose marked.
-
-    Parameters
-    ----------
-    compiled
-        The result of :func:`~seqcraft.compiler.compile_sequence`.
-    time_range
-        ``(start, end)`` in seconds.  Defaults to the first 50 ms, because a whole acquisition is
-        minutes long and drawing all of it says nothing.
-    figsize
-        Matplotlib figure size.
-
-    Returns
-    -------
-    matplotlib.figure.Figure
-
-    Notes
-    -----
-    The dotted vertical lines are block boundaries.  Seeing them is the point: they are what the
-    compiler decided, and a surprising one is usually the explanation for a surprising merge
-    warning.
-    """
-    plt = _pyplot()
-    seq = compiled.seq
-    lo, hi = time_range if time_range is not None else (0.0, min(50e-3, compiled.duration_s))
-    gamma = float(compiled.opts.gamma)
-    raster = float(compiled.opts.grad_raster_time)
-
-    figure, (top, bottom) = plt.subplots(
-        2, 1, figsize=figsize, sharex=True, height_ratios=(1, 2)
-    )
-    t = 0.0
-    boundaries: list[float] = []
-    traces: dict[str, list[tuple[np.ndarray, np.ndarray]]] = {a: [] for a in AXES}
-    rf_spans: list[tuple[float, float]] = []
-    adc_spans: list[tuple[float, float]] = []
-
-    for index in sorted(seq.block_events):
-        duration = float(seq.block_durations[index])
-        if t + duration >= lo and t <= hi:
-            boundaries.append(t)
-            block = seq.get_block(index)
-            for name in AXES:
-                grad = getattr(block, f'g{name}', None)
-                if grad is not None:
-                    tt, wf = ev.waveform_of(grad, raster)
-                    traces[name].append((tt + t, wf / gamma * 1e3))
-            if getattr(block, 'rf', None) is not None:
-                rf = block.rf
-                rf_spans.append((t + float(rf.delay), t + float(rf.delay) + float(rf.shape_dur)))
-            if getattr(block, 'adc', None) is not None:
-                adc = block.adc
-                start = t + float(adc.delay)
-                adc_spans.append((start, start + float(adc.num_samples) * float(adc.dwell)))
-        t += duration
-        if t > hi:
-            break
-    boundaries.append(min(t, hi))
-
-    for start, end in rf_spans:
-        top.axvspan(start * 1e3, end * 1e3, color='tab:red', alpha=0.5)
-    for start, end in adc_spans:
-        top.axvspan(start * 1e3, end * 1e3, color='tab:green', alpha=0.5)
-    top.set_yticks([])
-    top.set_ylabel('RF / ADC')
-    top.set_title(
-        f'{compiled.definitions.get("Name", "sequence")}  --  {compiled.n_blocks} blocks, '
-        f'{compiled.duration_s:.3f} s'
-    )
-
-    for name, colour in zip(AXES, ('tab:blue', 'tab:orange', 'tab:purple')):
-        first = True
-        for times, values in traces[name]:
-            bottom.plot(
-                times * 1e3, values, color=colour, linewidth=1.1,
-                label=f'G{name}' if first else None,
-            )
-            first = False
-    for edge in boundaries:
-        bottom.axvline(edge * 1e3, color='0.75', linestyle=':', linewidth=0.8, zorder=0)
-
-    bottom.set_xlabel('time (ms)')
-    bottom.set_ylabel('gradient (mT/m)')
-    bottom.set_xlim(lo * 1e3, hi * 1e3)
-    bottom.grid(alpha=0.25)
-    bottom.legend(loc='upper right', fontsize=8)
-    figure.tight_layout()
-    return figure
-
-
-def plot_trajectory(
-    interleaves: Iterable[tuple[np.ndarray, np.ndarray]],
-    *,
-    title: str = '',
-    figsize=(5.5, 5.5),
-    max_points: int = 200_000,
-) -> Any:
-    """
-    Plot a set of k-space interleaves, one colour per shot.
-
-    Parameters
-    ----------
-    interleaves
-        An iterable of ``(kx, ky)`` array pairs in 1/m -- one pair per shot.  A spiral's shots, a
-        radial set's spokes, one segment of an EPI train: this takes the numbers, so it works for
-        any of them.  A whole acquisition is one pair::
-
-            sc.plot_trajectory([compiled.kspace()['k_adc'][:2]])
-
-    title
-        Figure title.  Defaults to the interleaf count.
-    figsize
-        Matplotlib figure size.
-    max_points
-        Decimate any interleaf longer than this, so a full acquisition still draws in a second.
-
-    Returns
-    -------
-    matplotlib.figure.Figure
-
-    Notes
-    -----
-    Takes arrays rather than a readout object on purpose.  It previously took anything with
-    ``.trajectory()``, ``.n_interleaves`` and ``.k_max_per_m`` -- a duck type only one class in one
-    module library ever satisfied, which quietly made a plotting helper depend on that library.
-    A ``plot_kspace(compiled)`` that took a whole sequence went the same way: it was this function
-    applied to ``compiled.kspace()['k_adc'][:2]``, and spelling that out at the call site is one
-    line that says which two of the three axes are being drawn.
-
-    The picture to look at when deciding an interleaf count and a density: the radial gap between
-    adjacent turns of the *combined* set is what has to stay within ``1/FOV``, and undersampling
-    shows up here as visible white space at the edge long before it shows up in an image.
-
-    Examples
-    --------
-    >>> import numpy as np, seqcraft as sc
-    >>> theta = np.linspace(0, 8 * np.pi, 512)
-    >>> shots = [(theta * np.cos(theta + p), theta * np.sin(theta + p)) for p in (0.0, 3.1)]
-    >>> figure = sc.plot_trajectory(shots)              # doctest: +SKIP
-    """
-    plt = _pyplot()
-    figure, axis = plt.subplots(figsize=figsize)
-    limit = 0.0
-    count = 0
-    for kx, ky in interleaves:
-        kx, ky = np.asarray(kx), np.asarray(ky)
-        step = max(1, kx.size // max_points)
-        kx, ky = kx[::step], ky[::step]
-        axis.plot(kx, ky, linewidth=0.7, alpha=0.85)
-        limit = max(limit, float(np.max(np.abs(kx))), float(np.max(np.abs(ky))))
-        count += 1
-    if limit > 0.0:
-        axis.set_xlim(-limit * 1.05, limit * 1.05)
-        axis.set_ylim(-limit * 1.05, limit * 1.05)
-    axis.set_xlabel('$k_x$ (1/m)')
-    axis.set_ylabel('$k_y$ (1/m)')
-    axis.set_title(title or f'{count} interleaves')
-    axis.set_aspect('equal')
-    axis.grid(alpha=0.25)
     figure.tight_layout()
     return figure

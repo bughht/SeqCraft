@@ -13,7 +13,7 @@ from noncartesian_recon import Readout, reconstruct_shot
 
 | File | What it does | Needs |
 |---|---|---|
-| `mr0_bridge.py` | Converts a `CompiledSequence` into an MRzeroCore sequence, with diffusion and B0. MRzero's own `.seq` reader is trapezoid-only, so a spiral cannot be imported through a file. | `MRzeroCore`, `torch` |
+| `mr0_bridge.py` | Converts a compiled `pypulseq.Sequence` into an MRzeroCore sequence, with diffusion and B0. MRzero's own `.seq` reader is trapezoid-only, so a spiral cannot be imported through a file. | `MRzeroCore`, `torch` |
 | `noncartesian_recon.py` | Exact phase-accumulation reconstruction with off-resonance correction, solved by conjugate gradient. Serves both readouts: a spiral's blur and an EPI's phase-encode shift are the same `exp(-2πi·df·t)` term. | `sigpy` |
 
 ## Two things that are per-readout, and are passed rather than guessed

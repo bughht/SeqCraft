@@ -190,14 +190,17 @@ def test_a_constant_duration_across_lines_is_the_modules_own_doing(opts) -> None
 # ---------------------------------------------------------------------------- provenance
 def test_nesting_produces_the_provenance_path(opts) -> None:
     """
-    The payoff of auto-tagging: not one tag string is written by hand, and every compiled block
-    still traces back to the module that produced it.
+    The payoff of auto-tagging: not one tag string is written by hand, and every event still
+    names the module that produced it -- which is what an error message quotes.
     """
     tree = sc.LogicBlock('tr').add(0.0, Pair(opts=opts)(line=10))
 
-    out = sc.compile(tree, opts)
+    assert {path for _, _, path in sc.flatten(tree)} == {('tr', 'Pair', 'Blip')}
 
-    assert out.origin(0) == ('tr', 'Pair', 'Blip')
+    # And the compiler reads that path, rather than a block index, when it has to complain.
+    off_raster = sc.LogicBlock('tr').add(3e-6, Pair(opts=opts)(line=10))
+    with pytest.raises(sc.CompileError, match=r'tr\.Pair\.Blip'):
+        sc.compile(off_raster, opts)
 
 
 # ------------------------------------------------------------------------ the layer boundary
@@ -242,10 +245,11 @@ def test_a_plain_function_is_still_a_component(opts) -> None:
         return sc.LogicBlock('crush').add(
             0.0, pp.make_trapezoid('z', area=area_per_m, system=opts))
 
-    out = sc.compile(sc.LogicBlock('tr').add(0.0, crusher(opts)), opts)
+    tree = sc.LogicBlock('tr').add(0.0, crusher(opts))
+    seq = sc.compile(tree, opts)                       # a legality failure would have raised
 
-    assert out.check().ok
-    assert out.origin(0) == ('tr', 'crush')
+    assert len(seq.block_events) == 1
+    assert [path for _, _, path in sc.flatten(tree)] == [('tr', 'crush')]
 
     # And the shipped assertion takes it, because it asks for a callable and nothing else.
     sc.testing.assert_output(lambda: crusher(opts), opts)

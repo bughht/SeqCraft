@@ -107,20 +107,24 @@ def test_grad_knots_does_not_duplicate_an_extended_trapezoids_edges(opts) -> Non
 
 
 # ------------------------------------------------------------------------ the checks can fail
-def _recheck(out, placed, targets) -> None:
+def _recheck(seq, placed, targets, *, tree_duration_s: float | None = None) -> None:
     """
     Re-run the invariants against a (possibly tampered) tree.
 
     Returns nothing: the invariants raise now, so ``sc.compile`` having returned at all is the
     "clean to begin with" assertion each test below used to make explicitly.
+
+    `tree_duration_s` defaults to what the sequence measures, which is what a clean compile
+    asserted -- pass a different value to tamper with the duration invariant specifically.
     """
+    duration_s = float(seq.duration()[0])
     verify_against_tree(
         placed,
         targets,
-        duration_s=out.duration_s,
-        tree_duration_s=out.tree_duration_s,
-        moments=lambda order: _sequence_moments(out.seq, order),
-        label_states=lambda: out.seq.evaluate_labels(evolution='adc'),
+        duration_s=duration_s,
+        tree_duration_s=duration_s if tree_duration_s is None else tree_duration_s,
+        moments=lambda order: _sequence_moments(seq, order),
+        label_states=lambda: seq.evaluate_labels(evolution='adc'),
     )
 
 
@@ -181,7 +185,6 @@ def test_the_address_check_catches_a_label_on_the_wrong_readout(opts) -> None:
         .add(5000e-6, adc)
     )
     out = sc.compile(tree, opts)              # clean to begin with, or this would have raised
-    assert out.check().ok
 
     placed = place_events(tree, opts)
     adc_starts = sorted(p.res_start for p in placed if p.kind == 'adc')
@@ -210,17 +213,22 @@ def test_the_duplicate_address_check_would_not_have_caught_it(opts) -> None:
     tree = sc.LogicBlock('t')
     for i in range(3):
         tree.add(i * 5e-3, adc, pp.make_label('LIN', 'SET', i + 1))
-    out = sc.compile(tree, opts)
-    labels = out.seq.evaluate_labels(evolution='adc')
+    # The compile returns, so check_label_addresses saw nothing: the addresses are unique.
+    seq = sc.compile(tree, opts)
+    labels = seq.evaluate_labels(evolution='adc')
     seen = [int(v) for v in np.atleast_1d(np.asarray(labels['LIN']))]
     assert len(set(seen)) == len(seen), 'unique, so the duplicate check is silent'
-    assert not [i for i in out.check().issues if i.kind == 'label']
+    assert seen == [1, 2, 3], 'and here they are also *right*, which is the other half of it'
 
 
 def test_duration_is_still_checked(opts) -> None:
     """The oldest invariant, and the one that fences boundary merging (W6)."""
     tree = sc.LogicBlock('t').add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
-    out = sc.compile(tree, opts)
-    object.__setattr__(out, 'tree_duration_s', out.tree_duration_s + 1e-3)
+    seq = sc.compile(tree, opts)
     with pytest.raises(sc.CompilerContractError, match='differs from the tree total'):
-        _recheck(out, place_events(tree, opts), {})
+        _recheck(
+            seq,
+            place_events(tree, opts),
+            {},
+            tree_duration_s=float(seq.duration()[0]) + 1e-3,
+        )

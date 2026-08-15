@@ -26,7 +26,7 @@ import seqcraft as sc
 
 def _lin(compiled) -> list[int]:
     """LIN as seen by each ADC, in acquisition order."""
-    labels = compiled.seq.evaluate_labels(evolution='adc')
+    labels = compiled.evaluate_labels(evolution='adc')
     return [int(v) for v in np.atleast_1d(np.asarray(labels['LIN']))]
 
 
@@ -150,7 +150,7 @@ def test_labels_on_different_keys_share_a_block_safely(opts) -> None:
         .add(5000e-6, adc)
     )
     out = sc.compile(tree, opts)
-    labels = out.seq.evaluate_labels(evolution='adc')
+    labels = out.evaluate_labels(evolution='adc')
     assert [int(v) for v in np.atleast_1d(np.asarray(labels['LIN']))] == [0, 5]
     assert [int(v) for v in np.atleast_1d(np.asarray(labels['SLC']))] == [0, 2]
 
@@ -216,13 +216,13 @@ def test_a_label_with_no_following_adc_is_emitted_and_reported(opts) -> None:
         out = sc.compile(tree, opts)
     emitted = [
         lab.value
-        for i in sorted(out.seq.block_events)
-        for lab in (getattr(out.seq.get_block(i), 'label', None) or [])
+        for i in sorted(out.block_events)
+        for lab in (getattr(out.get_block(i), 'label', None) or [])
     ]
     assert 99 in emitted, 'a trailing label must still reach the file'
     orphan = [
         str(w.message) for w in caught
-        if issubclass(w.category, sc.SeqCraftWarning) and 'no ADC after them' in str(w.message)
+        if issubclass(w.category, sc.SeqCraftWarning) and 'no ADC after it' in str(w.message)
     ]
     assert orphan, f'expected a warning about the orphan label, got {[str(w.message) for w in caught]}'
     assert 'LIN' in orphan[0], 'the warning must name the label'
@@ -248,6 +248,6 @@ def test_a_multislice_address_survives_a_blocking_gradient(opts) -> None:
         warnings.simplefilter('always')
         out = sc.compile(tree, opts)
     assert _lin(out) == [1, 2, 3, 4], 'each readout gets the label written before it'
-    assert not [w for w in caught if 'no ADC after them' in str(w.message)], (
+    assert not [w for w in caught if 'no ADC after' in str(w.message)], (
         'no orphan warnings for a well-formed sequence'
     )

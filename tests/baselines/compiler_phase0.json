@@ -18,6 +18,7 @@
         "emitted_content_sha256": "53ba8624dc92d480e7bfaa10ad576217f5535d89207d935a0fef6caad787be72",
         "gradient_splits": 0,
         "input_gradients": 384,
+        "origins_sha256": "cf1a79355a05e4b59cd580ef540f70041a8285d3252324a25fabaa578da2cee5",
         "performance": {
           "iterations": 3,
           "max_wall_s": 0.328711,
@@ -62,8 +63,7 @@
             "z": 43420.6322913
           }
         },
-        "n_blocks": 383,
-        "origins_sha256": "cf1a79355a05e4b59cd580ef540f70041a8285d3252324a25fabaa578da2cee5"
+        "n_blocks": 383
       }
     },
     "se_2d": {
@@ -71,6 +71,7 @@
         "emitted_content_sha256": "07a2299115822a61e721d8cf351bfc4069cc5ed434907294c8760cf3510a3624",
         "gradient_splits": 0,
         "input_gradients": 448,
+        "origins_sha256": "3deaa6b5c09b2017a9cafe493dbb54cd16df46e22a1848150ae8fe808ee0a400",
         "performance": {
           "iterations": 3,
           "max_wall_s": 0.742767,
@@ -115,8 +116,7 @@
             "z": 69098940.3512
           }
         },
-        "n_blocks": 575,
-        "origins_sha256": "3deaa6b5c09b2017a9cafe493dbb54cd16df46e22a1848150ae8fe808ee0a400"
+        "n_blocks": 575
       }
     }
   },

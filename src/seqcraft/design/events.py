@@ -74,10 +74,9 @@ Event = SimpleNamespace
 # --------------------------------------------------------------------------- the vocabulary
 # What an event *is*, as opposed to what the compiler may do with it.  These classify pulseq's
 # own ``type`` strings, so they belong beside the functions that read that field rather than in
-# the compiler -- which is also what keeps the result types free of a compiler import, since
-# ``CompiledSequence`` reads four of them.  The two genuinely-compiler constants (what may not be
-# cut, what may not share a block) stay in :mod:`seqcraft.compiler.model`, because they are
-# block-format policy rather than event identity.
+# the compiler -- which is what lets ``analysis`` and ``display`` use them without importing it.
+# The two genuinely-compiler constants (what may not be cut, what may not share a block) stay in
+# :mod:`seqcraft.compiler.model`, because they are block-format policy rather than event identity.
 
 #: Event ``type`` values that carry a gradient on a channel.
 GRADIENT_KINDS = frozenset({'trap', 'grad'})

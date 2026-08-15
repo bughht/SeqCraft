@@ -227,6 +227,5 @@ def test_a_scanner_with_unusual_rasters_works_end_to_end() -> None:
                              use='excitation')
     out = sc.compile(sc.LogicBlock('t').add(0.0, rf), opts)
 
-    assert out.check().ok
-    for duration in out.seq.block_durations.values():
+    for duration in out.block_durations.values():
         assert Raster(opts.block_duration_raster).holds(float(duration))

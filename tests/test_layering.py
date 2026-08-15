@@ -1,12 +1,12 @@
 """
 The layout, asserted rather than described.
 
-Four packages in one dependency order::
+Five layers in one dependency order::
 
-    errors  ->  design  ->  result  ->  compiler
+    errors  ->  design  ->  compiler  ->  analysis  ->  display
 
-with :mod:`seqcraft.scanner` independent of all four, and :mod:`seqcraft.display`,
-:mod:`seqcraft.testing` and the top-level facade allowed to reach anywhere.
+with :mod:`seqcraft.scanner` independent of all five, and :mod:`seqcraft.testing` and the
+top-level facade allowed to reach anywhere.
 
 Both rules here were true at some point and quietly stopped being true, which is the whole
 argument for testing them.  ``core`` once held the compiler *and* the geometry *and* the unit
@@ -30,15 +30,16 @@ import seqcraft
 
 ROOT = Path(seqcraft.__file__).parent
 
-#: Later packages may import earlier ones, never the reverse.
+#: Later layers may import earlier ones, never the reverse.
 #:
-#: ``errors`` and ``report`` are both leaves and both cross-cutting -- they are the two halves of
-#: how seqcraft communicates a problem, one by raising and one by reporting -- so they come first
-#: and neither may import anything else in the package.
-ORDER = ['errors', 'report', 'design', 'result', 'compiler']
+#: ``errors`` is a leaf and cross-cutting -- everything may raise -- so it comes first and may
+#: import nothing else in the package.  ``analysis`` sits between the compiler and the display
+#: because :func:`seqcraft.kspace` and :func:`seqcraft.pns` compile internally, and ``display``
+#: draws what :func:`seqcraft.sample` returns.
+ORDER = ['errors', 'design', 'compiler', 'analysis', 'display']
 
 #: Nothing under ``compiler/`` may import these *at runtime*: they are beside the compile path.
-OFF_THE_COMPILE_PATH = ['design.module', 'display', 'testing', 'result.provenance', 'scanner']
+OFF_THE_COMPILE_PATH = ['design.module', 'analysis', 'display', 'testing', 'scanner']
 
 
 def _imports(path: Path, *, runtime_only: bool = False) -> set[str]:
@@ -108,11 +109,13 @@ def _modules(package: str) -> list[Path]:
 @pytest.mark.parametrize('index', range(len(ORDER)))
 def test_no_package_imports_a_later_layer(index: int) -> None:
     """
-    ``errors -> design -> result -> compiler``, and never back up the chain.
+    ``errors -> design -> compiler -> analysis -> display``, and never back up the chain.
 
-    The edge this exists to forbid is ``result -> compiler``: the result types are what a caller
-    holds after a build, and a caller inspecting, plotting or writing one should not be dragging
-    the transformation in behind it.
+    The edge this exists to forbid is ``compiler -> analysis``: the compiler must not reach for
+    the measurements taken *of* what it produced.  It would be an easy one to add -- the
+    self-check wants a moment per axis, and ``analysis.moments`` computes one -- and it would be
+    wrong, because that moment walks the tree and the self-check needs the compiled side.  A
+    self-check that shares code with the thing it checks compares a number with itself.
     """
     package = ORDER[index]
     later = set(ORDER[index + 1:])
@@ -131,12 +134,12 @@ def test_the_compile_path_imports_nothing_beside_it() -> None:
     """
     The compiler reads a tree and an ``Opts``, and nothing else it could do without.
 
-    The component contract, the scanner package, the provenance sidecar and the display helpers are
+    The component contract, the scanner package, the analysis toolbox and the display helpers are
     all either upstream or downstream of the transform.  A compile path that reached any of them
     could not be reused on its own, and the coupling would stay invisible until someone tried.
 
     One thing is deliberately **not** forbidden, and naming it is the point of writing the rule
-    down rather than describing it: :func:`~seqcraft.compiler.legalization.limit_issues` imports
+    down rather than describing it: :func:`~seqcraft.compiler.legalization.check_limits` imports
     ``design.units`` to convert Hz/m to mT/m, so a limit violation is reported in the units the
     amplifier is specified in.  Banning it would either cost that message or duplicate the
     conversion factor, and a second copy of a factor is worse than an edge on the graph.

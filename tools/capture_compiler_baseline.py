@@ -33,7 +33,7 @@ from seqcraft.design.timing import EPS, to_ticks
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from seqcraft.result import CompiledSequence
+    import pypulseq as _pp
 
 _ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_OUTPUT = _ROOT / 'tests' / 'baselines' / 'compiler_phase0.json'
@@ -78,14 +78,21 @@ def _sha256(value: Any) -> str:
     return digest.hexdigest()
 
 
-def stable_summary(compiled: CompiledSequence) -> dict[str, Any]:
-    """Return compiler output fields used to build the Phase 0 baseline."""
+def stable_summary(compiled: _pp.Sequence) -> dict[str, Any]:
+    """
+    Return compiler output fields used to build the Phase 0 baseline.
+
+    Takes the bare :class:`pypulseq.Sequence` a compile returns.  Provenance is no longer on it --
+    it is used where it is produced, to name the source in an error message -- so
+    ``origins_sha256`` is captured by :func:`_tracked_build` instead and lives under ``observed``,
+    the way ``emitted_content_sha256`` already does.
+    """
     counts: collections.Counter[str] = collections.Counter()
     content = hashlib.sha256()
     durations: list[int] = []
-    for index in sorted(compiled.seq.block_events):
-        block = compiled.seq.get_block(index)
-        duration = to_ticks(float(compiled.seq.block_durations[index]))
+    for index in sorted(compiled.block_events):
+        block = compiled.get_block(index)
+        duration = to_ticks(float(compiled.block_durations[index]))
         durations.append(duration)
         _update_hash(content, duration)
         for field in _EVENT_FIELDS:
@@ -103,11 +110,10 @@ def stable_summary(compiled: CompiledSequence) -> dict[str, Any]:
     # which case there is no output to summarise, or a SeqCraftWarning, which is a property of the
     # run rather than of the emitted sequence -- so it is counted under `observed` instead.
     return {
-        'n_blocks': compiled.n_blocks,
-        'duration_ticks': to_ticks(compiled.duration_s),
+        'n_blocks': len(compiled.block_events),
+        'duration_ticks': to_ticks(float(compiled.duration()[0])),
         'block_duration_sha256': _sha256(durations),
         'emitted_content_sha256': content.hexdigest(),
-        'origins_sha256': _sha256(compiled.origins),
         'event_counts': dict(sorted(counts.items())),
         'moments': {
             # The compiler's own compiled-side integrator, imported rather than reimplemented:
@@ -115,14 +121,14 @@ def stable_summary(compiled: CompiledSequence) -> dict[str, Any]:
             # literally the same code the compile ran.
             f'm{order}': {
                 axis: float(f'{value:.12g}')
-                for axis, value in sorted(_sequence_moments(compiled.seq, order).items())
+                for axis, value in sorted(_sequence_moments(compiled, order).items())
             }
             for order in range(3)
         },
     }
 
 
-def _builders() -> dict[str, Callable[[], CompiledSequence]]:
+def _builders() -> dict[str, Callable[[], _pp.Sequence]]:
     """
     Load the integration recipes without copying them into this tool.
 
@@ -137,7 +143,7 @@ def _builders() -> dict[str, Callable[[], CompiledSequence]]:
     }
 
 
-def _tracked_build(builder: Callable[[], CompiledSequence]) -> tuple[CompiledSequence, dict[str, int]]:
+def _tracked_build(builder: Callable[[], _pp.Sequence]) -> tuple[_pp.Sequence, dict[str, Any]]:
     """
     Build one recipe while observing placement and split counts at existing seam points.
 
@@ -149,13 +155,20 @@ def _tracked_build(builder: Callable[[], CompiledSequence]) -> tuple[CompiledSeq
     compiler = importlib.import_module('seqcraft.compiler')
     emission = importlib.import_module('seqcraft.compiler.emission')
     original_place = compiler.place_events
+    original_emit = compiler.emit_blocks
     original_axis_gradient = emission.axis_gradient
     placed: list[Any] = []
+    origins: list[tuple[str, ...]] = []
     segments: collections.Counter[int] = collections.Counter()
 
     def track_place(*args: Any, **kwargs: Any) -> list[Any]:
         result = original_place(*args, **kwargs)
         placed.extend(result)
+        return result
+
+    def track_emit(*args: Any, **kwargs: Any) -> list[Any]:
+        result = original_emit(*args, **kwargs)
+        origins.extend(result)
         return result
 
     def track_axis_gradient(
@@ -172,11 +185,13 @@ def _tracked_build(builder: Callable[[], CompiledSequence]) -> tuple[CompiledSeq
         return original_axis_gradient(axis, pieces, start, end, *args, **kwargs)
 
     compiler.place_events = track_place
+    compiler.emit_blocks = track_emit
     emission.axis_gradient = track_axis_gradient
     try:
         compiled = builder()
     finally:
         compiler.place_events = original_place
+        compiler.emit_blocks = original_emit
         emission.axis_gradient = original_axis_gradient
 
     gradients = [piece for piece in placed if piece.kind in ('grad', 'trap')]
@@ -184,14 +199,15 @@ def _tracked_build(builder: Callable[[], CompiledSequence]) -> tuple[CompiledSeq
         'placed_events': len(placed),
         'input_gradients': len(gradients),
         'gradient_splits': sum(max(0, segments[id(piece)] - 1) for piece in gradients),
+        'origins_sha256': _sha256(tuple(origins)),
     }
 
 
-def _file_size(compiled: CompiledSequence) -> int:
+def _file_size(compiled: _pp.Sequence) -> int:
     """Return the written sequence size without leaving an artifact in the worktree."""
     with tempfile.TemporaryDirectory(prefix='seqcraft-phase0-') as scratch:
         path = Path(scratch) / 'baseline.seq'
-        compiled.write(path, sidecar=False)
+        compiled.write(str(path))
         return path.stat().st_size
 
 
@@ -228,7 +244,7 @@ def capture(iterations: int) -> dict[str, Any]:
         warning_counts: collections.Counter[str] = collections.Counter()
         stable: dict[str, Any] | None = None
         observed: dict[str, int] | None = None
-        compiled: CompiledSequence | None = None
+        compiled: _pp.Sequence | None = None
         for _ in range(iterations):
             started = time.perf_counter()
             with warnings.catch_warnings(record=True) as caught:

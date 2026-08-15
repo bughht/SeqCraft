@@ -40,7 +40,7 @@ from seqcraft.design.logic import BARRIER, LogicBlock, flatten
 if TYPE_CHECKING:
     from types import SimpleNamespace
 
-    from seqcraft.result import CompiledSequence
+    import pypulseq as pp
 
 __all__ = ['axis_knots', 'compare', 'compiled_knots', 'describe_mismatch', 'tree_knots']
 
@@ -135,7 +135,7 @@ def tree_knots(root: LogicBlock) -> dict[str, list[tuple[list[int], list[float]]
     return out
 
 
-def compiled_knots(compiled: CompiledSequence) -> dict[str, tuple[list[int], list[float]]]:
+def compiled_knots(seq: pp.Sequence) -> dict[str, tuple[list[int], list[float]]]:
     """
     Reconstruct the single PWL waveform each axis actually plays, over the whole sequence.
 
@@ -149,7 +149,6 @@ def compiled_knots(compiled: CompiledSequence) -> dict[str, tuple[list[int], lis
     block edge reaches zero there.
     """
     out: dict[str, tuple[list[int], list[float]]] = {}
-    seq = compiled.seq
     per_axis: dict[str, list[tuple[int, float]]] = {ax: [] for ax in _AXES}
 
     t = 0.0
@@ -191,7 +190,7 @@ def compiled_knots(compiled: CompiledSequence) -> dict[str, tuple[list[int], lis
 
 
 def seam_discontinuities(
-    compiled: CompiledSequence,
+    seq: pp.Sequence,
     tol: float = 1e-6,
 ) -> list[tuple[float, str, float, float]]:
     """
@@ -200,7 +199,6 @@ def seam_discontinuities(
     pypulseq enforces this when building, but checking it independently is cheap and it is the
     invariant a bad split would break.
     """
-    seq = compiled.seq
     bad: list[tuple[float, str, float, float]] = []
     t = 0.0
     tail: dict[str, float] = dict.fromkeys(_AXES, 0.0)
@@ -226,7 +224,7 @@ def seam_discontinuities(
 
 def compare(
     root: LogicBlock,
-    compiled: CompiledSequence,
+    compiled: pp.Sequence,
     *,
     atol: float = 1e-6,
     rtol: float = 1e-9,
@@ -310,7 +308,7 @@ def describe_mismatch(report: dict[str, dict[str, float]]) -> str:
 
 def assert_matches(
     root: LogicBlock,
-    compiled: CompiledSequence,
+    compiled: pp.Sequence,
     *,
     atol: float = 1e-6,
     rtol: float = 1e-9,
