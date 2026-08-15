@@ -84,20 +84,20 @@ from ._compiler.model import (
     AXES,
     EXCLUSIVE_KINDS,
     GRADIENT_KINDS,
-    HANDLED_KINDS,
     INDIVISIBLE_KINDS,
     LABEL_KINDS,
     POINT_KINDS,
     PlacedEvent,
     PulseqReadyBlock,
 )
+from ._compiler.placement import place_events
 from ._compiler.verification import (
     require_valid_contract,
     verify_placed_events,
     verify_ready_blocks,
 )
 from .errors import CompileError, format_error
-from .logic import BARRIER, flatten
+from .logic import BARRIER
 from .report import Issue, Report
 from .timing import EPS, TICKS_PER_SECOND, Raster, exact_diff, to_ticks
 from .validate import merge_definitions
@@ -123,121 +123,9 @@ _POINT = POINT_KINDS
 _INDIVISIBLE = INDIVISIBLE_KINDS
 _EXCLUSIVE = EXCLUSIVE_KINDS
 _LABEL = LABEL_KINDS
-_HANDLED = HANDLED_KINDS
 _AXES = AXES
 _ADDRESS_KEYS = ADDRESS_KEYS
-
-#: Types pypulseq 1.5 can produce that seqcraft recognises but does not emit, each with what it
-#: is and the way round.  Kept apart from "never heard of it" because the remedy differs
-#: completely -- these have one, an unknown type is a bug or a version skew.
-_UNSUPPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
-    'rot3D': (
-        'the pulseq rotation extension',
-        (
-            'seqcraft bakes rotations into the waveform instead of emitting the extension, so '
-            'that limits, moments and k-space all describe what actually plays',
-            'rotate at build time, the way SpiralVDS rotates its interleaves and the diffusion '
-            'modules resolve a direction',
-            'for a one-off, pypulseq.rotate() / rotate_3d() return rotated gradient events that '
-            'can be added to a LogicBlock directly',
-        ),
-    ),
-    'soft_delay': (
-        'the pulseq soft-delay extension',
-        (
-            'a soft delay must occupy a block containing no other events, which the compiler '
-            'does not yet arrange',
-            'use a plain delay event (pp.make_delay) if the duration is fixed at compile time',
-        ),
-    ),
-    'rf_shim': (
-        'the pulseq RF-shim extension',
-        ('not yet emitted; leave it out, or open an issue with the sequence that needs it',),
-    ),
-}
-# --------------------------------------------------------------------------------- placing
-def _intrinsic_duration(event: SimpleNamespace) -> float:
-    """Return how long an event is active, excluding its own leading delay."""
-    kind = getattr(event, 'type', None)
-    if kind == 'trap':
-        return float(event.rise_time) + float(event.flat_time) + float(event.fall_time)
-    if kind == 'grad':
-        shape = getattr(event, 'shape_dur', None)
-        return float(shape) if shape is not None else float(event.tt[-1])
-    if kind == 'rf':
-        return float(event.shape_dur)
-    if kind == 'adc':
-        return float(event.num_samples) * float(event.dwell)
-    if kind in ('trigger', 'output'):
-        # pypulseq builds scanner inputs as 'trigger' and scanner outputs as 'output', and both
-        # hold their block open for the length of the pulse.
-        return float(getattr(event, 'duration', 0.0) or 0.0)
-    return 0.0
-
-
-def _unsupported(kind: str | None, path: tuple[str, ...], node_t: float) -> CompileError:
-    """Build the error for an event type the compiler will not emit."""
-    where = '.'.join(path) if path else '(untagged)'
-    if kind in _UNSUPPORTED:
-        what, hints = _UNSUPPORTED[kind]
-        return CompileError(format_error(
-            f'{what} ({kind!r}) is not supported by the compiler.',
-            {'from': where, 'at': f'{node_t * 1e6:.1f} us'},
-            list(hints),
-        ))
-    return CompileError(format_error(
-        f'unknown event type {kind!r}.',
-        {'from': where, 'at': f'{node_t * 1e6:.1f} us', 'handled': ', '.join(sorted(_HANDLED))},
-        [
-            'LogicBlock.add() accepts any object with a .type attribute, so a typo or a '
-            'hand-built namespace reaches the compiler unchecked',
-            'if this is a real pulseq event from a newer pypulseq, seqcraft needs updating -- '
-            'please open an issue naming the type',
-        ],
-    ))
-
-
-def _place(root: LogicBlock, opts: Opts) -> list[_Placed]:
-    """
-    Flatten `root` and resolve every event to absolute times and reservations.
-
-    A ``delay`` event is the one special case: pypulseq stores its length in ``delay`` and it
-    has no waveform, so it occupies ``[t, t + delay]`` rather than starting after its own
-    delay.  It exists to hold a block open -- a b=0 diffusion volume that must fill the same
-    slot as an encoded one.
-
-    Raises
-    ------
-    CompileError
-        If any leaf carries a type the compiler does not emit.  Rejecting here is the point:
-        every branch below is a positive match, so an unrecognised type would otherwise be
-        placed with a zero-width reservation, collected by nothing, and silently lost.
-    """
-    out: list[_Placed] = []
-    for node_t, event, path in flatten(root):
-        kind = getattr(event, 'type', None)
-        if kind not in _HANDLED:
-            raise _unsupported(kind, path, node_t)
-        if kind == BARRIER:
-            out.append(_Placed(node_t, node_t, node_t, node_t, node_t, event, path))
-            continue
-        delay = float(getattr(event, 'delay', 0.0) or 0.0)
-        if kind == 'delay':
-            out.append(_Placed(node_t, node_t, node_t + delay, node_t, node_t + delay, event, path))
-            continue
-
-        start = node_t + delay
-        end = start + _intrinsic_duration(event)
-        if kind == 'rf':
-            ring = float(getattr(event, 'ringdown_time', opts.rf_ringdown_time) or 0.0)
-            res_start, res_end = node_t, end + ring
-        elif kind == 'adc':
-            dead = float(getattr(event, 'dead_time', opts.adc_dead_time) or 0.0)
-            res_start, res_end = node_t, end + dead
-        else:
-            res_start, res_end = start, end
-        out.append(_Placed(node_t, start, end, res_start, res_end, event, path))
-    return out
+_place = place_events
 
 
 def _check_exclusive(placed: Sequence[_Placed]) -> None:

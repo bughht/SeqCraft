@@ -26,7 +26,7 @@ phases must preserve the behavior; it does not imply that every behavior is idea
 
 | ID | Constraint | Enforcement | Observable result |
 |---|---|---|---|
-| P-01 | Absolute leaf time is the sum of ancestor and local starts. | `flatten`, `_place` | Nested offsets and provenance paths are stable. |
+| P-01 | Absolute leaf time is the sum of ancestor and local starts. | `flatten`, `placement.place_events` | Nested offsets and provenance paths are stable. |
 | P-02 | A negative physical reservation start is illegal. | `compile_sequence` precheck | `CompileError` names the event, source, and likely TE cause. |
 | P-03 | Gradient starts must lie on the gradient raster. | `compile_sequence` precheck | `CompileError` gives neighboring legal raster times. |
 | P-04 | Same-time tree order is insertion order. | `LogicBlock.nodes`, `flatten` | Characterization test freezes the traversal input order. |
