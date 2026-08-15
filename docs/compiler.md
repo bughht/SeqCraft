@@ -190,7 +190,7 @@ instantaneous limit while accumulating a PNS response several times over thresho
 is deliberately conservative. On the DTI example it reports **2.44** while the site's own Cima.X
 descriptor reports **0.95** — the difference between "not runnable" and "passes with a thin margin".
 Acting on the synthetic number would mean derating the diffusion lobes and lengthening TE to fix a
-problem the scanner does not have. Load the vendor `.asc` with `load_hardware()` and
+problem the scanner does not have. Load the vendor `.asc` with `sc.hardware.load_hardware()` and
 `$SEQCRAFT_ASC_DIR`; the file stays outside the repository, and only its name and sha256 are recorded.
 
 Which term dominates is not guessable, it moves as the sequence changes, and **the two models rank
@@ -265,7 +265,7 @@ object itself. Nothing forces you to wait for a module to be written.
 ## Reading a compile report
 
 ```python
-out = sc.compile(tree, system)
+out = sc.compile(tree, opts)          # opts is a pypulseq.Opts, not a seqcraft wrapper
 report = out.check()
 report.raise_if_failed()
 
@@ -284,6 +284,27 @@ for issue in report.issues:
 | `timing` | error, or info | From `Sequence.check_timing`. The `TotalDuration` float-equality artifact is downgraded to info, because pypulseq emits it even on pulseq's own approved files. |
 | `label` | **error** | Two imaging ADCs write the same k-space address. |
 
-`out.origin(block_index)` gives the tag path that produced a block. Where several modules share a
+`out.origin(block_index)` gives the tag path that produced a block. Where several components share a
 block it reports their **common ancestor** rather than picking one arbitrarily, which is the honest
 answer to "where did this come from".
+
+---
+
+## What the compiler reads from the scanner
+
+Eight `Opts` fields, and nothing else:
+
+```text
+opts.max_grad          opts.rf_ringdown_time    opts.gamma
+opts.max_slew          opts.rf_raster_time      opts.adc_dead_time
+opts.grad_raster_time  opts.adc_raster_time
+```
+
+plus `adc_samples_limit` / `rf_samples_limit` in the post-compile size check, and
+`block_duration_raster` for every boundary and duration.
+
+That measured coupling is why there is no scanner class. `compile_sequence(root, opts, ...)` takes
+the same `pp.Opts` you pass to `pp.make_trapezoid`, so a block and the compile that schedules it
+cannot be built against different limits by accident. A part designed against derated limits carries
+its own `Opts` from `sc.opts.derate`; the compiler validates the *combined* waveform against the one
+it was given, which is what it always did.
