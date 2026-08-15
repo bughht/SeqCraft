@@ -90,6 +90,7 @@ import importlib
 from . import _compat
 from ._version import __version__
 from .compiler import compile_sequence as compile  # noqa: A001, A004
+from .compiler.verification import CompilerContractError
 from .design import events, timing, units
 from .design.logic import Item, LogicBlock, Node, barrier, flatten, span
 from .design.module import Module
@@ -157,6 +158,7 @@ def __dir__() -> list[str]:
 __all__ = [
     'CompileError',
     'CompiledSequence',
+    'CompilerContractError',
     'ConfigurationError',
     'DefinitionConflict',
     'HardwareLimitError',

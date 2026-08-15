@@ -273,7 +273,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     # The last compile stage: check the produced sequence against the tree it came from.  It runs
     # here, on the object just built, rather than as a method on it -- it reads the private IR,
     # which is the compiler's, not the result's.
-    against_tree = verify_against_tree(
+    verify_against_tree(
         placed,
         targets,
         duration_s=out.duration_s,
@@ -281,6 +281,4 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
         moments=out.moments,
         label_states=lambda: seq.evaluate_labels(evolution='adc'),
     )
-    if against_tree:
-        out.report = Report((*out.report.issues, *against_tree), subject=out.report.subject)
     return out

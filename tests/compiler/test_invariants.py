@@ -107,16 +107,21 @@ def test_grad_knots_does_not_duplicate_an_extended_trapezoids_edges(opts) -> Non
 
 
 # ------------------------------------------------------------------------ the checks can fail
-def _recheck(out, placed, targets):
-    """Re-run the invariants against a (possibly tampered) tree and return the fresh report."""
-    return sc.Report(tuple(verify_against_tree(
+def _recheck(out, placed, targets) -> None:
+    """
+    Re-run the invariants against a (possibly tampered) tree.
+
+    Returns nothing: the invariants raise now, so ``sc.compile`` having returned at all is the
+    "clean to begin with" assertion each test below used to make explicitly.
+    """
+    verify_against_tree(
         placed,
         targets,
         duration_s=out.duration_s,
         tree_duration_s=out.tree_duration_s,
         moments=out.moments,
         label_states=lambda: out.seq.evaluate_labels(evolution='adc'),
-    )))
+    )
 
 
 def test_m1_catches_a_gradient_that_plays_at_the_wrong_time(opts) -> None:
@@ -129,11 +134,9 @@ def test_m1_catches_a_gradient_that_plays_at_the_wrong_time(opts) -> None:
     """
     g = pp.make_trapezoid('x', area=500.0, duration=1e-3, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(3e-3, pp.make_delay(1e-3))
-    out = sc.compile(tree, opts)
-    assert not out.report.of_kind('moment'), 'must be clean to begin with'
+    out = sc.compile(tree, opts)              # clean to begin with, or this would have raised
 
-    opts_ = opts
-    placed = place_events(tree, opts_)
+    placed = place_events(tree, opts)
     shifted = [
         dataclasses.replace(p, node_t=p.node_t + 10e-6, start=p.start + 10e-6,
                             end=p.end + 10e-6, res_start=p.res_start + 10e-6,
@@ -141,12 +144,11 @@ def test_m1_catches_a_gradient_that_plays_at_the_wrong_time(opts) -> None:
         if p.kind == 'trap' else p
         for p in placed
     ]
-    report = _recheck(out, shifted, label_targets(shifted))
-    reported = [i.message for i in report.of_kind('moment')]
-    assert any(m.startswith('compiled m1') for m in reported), (
-        f'm1 must notice a 10 us displacement; got {report}'
-    )
-    assert not any(m.startswith('compiled m0') for m in reported), (
+    with pytest.raises(sc.CompilerContractError) as err:
+        _recheck(out, shifted, label_targets(shifted))
+    text = str(err.value)
+    assert 'compiled m1' in text, f'm1 must notice a 10 us displacement; got {text}'
+    assert 'compiled m0' not in text, (
         'and m0 must not -- area is exactly what a time shift preserves, which is the whole '
         'reason m1 was added'
     )
@@ -160,8 +162,8 @@ def test_m0_still_catches_a_lost_lobe(opts) -> None:
 
     placed = place_events(tree, opts)
     doubled = [*placed, *[p for p in placed if p.kind == 'trap']]
-    report = _recheck(out, doubled, label_targets(doubled))
-    assert any('m0' in i.message for i in report.of_kind('moment')), report
+    with pytest.raises(sc.CompilerContractError, match='compiled m0'):
+        _recheck(out, doubled, label_targets(doubled))
 
 
 def test_the_address_check_catches_a_label_on_the_wrong_readout(opts) -> None:
@@ -178,8 +180,7 @@ def test_the_address_check_catches_a_label_on_the_wrong_readout(opts) -> None:
         .add(2000e-6, pp.make_label('LIN', 'SET', 7))
         .add(5000e-6, adc)
     )
-    out = sc.compile(tree, opts)
-    assert not out.report.of_kind('address'), 'must be clean to begin with'
+    out = sc.compile(tree, opts)              # clean to begin with, or this would have raised
     assert out.check().ok
 
     placed = place_events(tree, opts)
@@ -189,11 +190,13 @@ def test_the_address_check_catches_a_label_on_the_wrong_readout(opts) -> None:
         for i, p in enumerate(placed)
         if p.kind in ('labelset', 'labelinc')
     }
-    report = _recheck(out, placed, wrong)
-    assert report.of_kind('address'), (
-        f'the address check must notice a label attributed to the wrong readout; got {report}'
+    with pytest.raises(sc.CompilerContractError) as err:
+        _recheck(out, placed, wrong)
+    text = str(err.value)
+    assert 'wrong readout' in text, (
+        f'the address check must notice a label attributed to the wrong readout; got {text}'
     )
-    assert 'LIN' in ' '.join(i.message for i in report.of_kind('address'))
+    assert 'LIN' in text
 
 
 def test_the_duplicate_address_check_would_not_have_caught_it(opts) -> None:
@@ -219,5 +222,5 @@ def test_duration_is_still_checked(opts) -> None:
     tree = sc.LogicBlock('t').add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
     out = sc.compile(tree, opts)
     object.__setattr__(out, 'tree_duration_s', out.tree_duration_s + 1e-3)
-    report = _recheck(out, place_events(tree, opts), {})
-    assert report.of_kind('duration'), report
+    with pytest.raises(sc.CompilerContractError, match='differs from the tree total'):
+        _recheck(out, place_events(tree, opts), {})

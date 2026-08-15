@@ -11,9 +11,9 @@ and one ADC.  A failure is a compiler bug by definition, so it raises
 **Semantics** (:func:`verify_against_tree`) asks the harder question: did the compile preserve
 what the *tree* meant?  Duration, zeroth and first gradient moment per axis, and the label
 address each ADC ends up with, all compared against the placed events the compile started from.
-A failure here is reported as an ``Issue``, because it describes the produced sequence rather
-than an internal invariant, and because seeing every affected axis at once beats stopping at the
-first.
+A failure here is a compiler bug too -- the tree was legal, since every legality check has already
+passed -- so it raises :class:`CompilerContractError` as well.  All four invariants are measured
+before anything is raised, because seeing every affected axis at once beats stopping at the first.
 
 Why the semantic check lives in the compiler rather than on the result it checks: it takes
 ``Sequence[PlacedEvent]`` -- the compiler's private IR, which the result type never sees -- and it
@@ -33,7 +33,6 @@ import numpy as np
 
 from ..design.events import GRADIENT_KINDS, HANDLED_KINDS, LABEL_KINDS, knots_of, pwl_moment
 from ..design.timing import EPS
-from ..report import Issue
 from .model import (
     EXCLUSIVE_KINDS,
     PlacedEvent,
@@ -170,11 +169,11 @@ def expected_addresses(
     return out
 
 
-def _address_issues(
+def _address_violations(
     placed: Sequence[PlacedEvent],
     targets: Mapping[int, float] | None,
     label_states: Callable[[], Mapping[str, Any]],
-) -> list[Issue]:
+) -> list[ContractViolation]:
     """
     Check every ADC's compiled label state against the fold of the tree's labels.
 
@@ -200,18 +199,16 @@ def _address_issues(
     if not got or not expected:
         return []
 
-    out: list[Issue] = []
+    out: list[ContractViolation] = []
     for key in sorted({k for state in expected for k in state}):
         series = np.atleast_1d(np.asarray(got.get(key, 0)))
         series = np.resize(series, len(expected)) if series.size else np.zeros(len(expected))
         for index, state in enumerate(expected):
             if int(series[index]) != int(state.get(key, 0)):
-                out.append(Issue(
-                    'address',
+                out.append(ContractViolation(
                     f'adc {index}',
                     f'label {key} is {int(series[index])} on readout {index} but the tree '
                     f'implies {int(state.get(key, 0))} -- a label reached the wrong readout',
-                    'error',
                 ))
                 break       # one report per key; a shift corrupts every later readout too
     return out
@@ -225,9 +222,9 @@ def verify_against_tree(
     tree_duration_s: float,
     moments: Callable[[int], dict[str, float]],
     label_states: Callable[[], Mapping[str, Any]],
-) -> list[Issue]:
+) -> None:
     """
-    Assert the compile preserved what the tree meant, and return what it did not.
+    Assert the compile preserved what the tree meant.
 
     Four invariants, all cheap, each catching a class of compiler bug no individual test case
     would:
@@ -259,20 +256,24 @@ def verify_against_tree(
         dicts, so a tree with no gradients pays for neither.
     label_states
         ``Sequence.evaluate_labels(evolution='adc')``, deferred for the same reason.
+
+    Raises
+    ------
+    CompilerContractError
+        If any invariant fails.  Every one is measured first, so the message carries all of them:
+        one mis-timed stage usually breaks several axes, and the pattern is the diagnosis.
     """
-    extra: list[Issue] = []
+    violations: list[ContractViolation] = []
     # Tolerance scales with the total, because it has to: float64 resolves about 4 ns at
     # 20 000 s, so demanding nanosecond agreement on a long acquisition would flag every
     # sequence over an hour -- and print two identical-looking numbers while doing it.
     tolerance = max(EPS, 1e-12 * tree_duration_s)
     if abs(duration_s - tree_duration_s) > tolerance:
-        extra.append(
-            Issue(
-                'duration',
-                'sequence',
+        violations.append(
+            ContractViolation(
+                'sequence duration',
                 f'compiled duration {duration_s * 1e6:.1f} us differs from the tree total '
                 f'{tree_duration_s * 1e6:.1f} us',
-                'error',
             )
         )
 
@@ -304,13 +305,11 @@ def verify_against_tree(
         for axis, expected in want.items():
             scale = max(magnitude[axis], 1.0)
             if abs(actual.get(axis, 0.0) - expected) > 1e-6 * scale:
-                extra.append(
-                    Issue(
-                        'moment',
-                        f'axis {axis}',
+                violations.append(
+                    ContractViolation(
+                        f'axis {axis} m0',
                         f'compiled m0 {actual.get(axis, 0.0):.6g} 1/m differs from the tree '
                         f'sum {expected:.6g} 1/m -- a split or a merge lost area',
-                        'error',
                     )
                 )
             # Both sides are exact closed forms, so the only error is float summation over the
@@ -320,19 +319,17 @@ def verify_against_tree(
             # by one raster changes m1 by area * 10 us, comfortably above this.
             m1_scale = max(scale * max(tree_duration_s, 1e-3), 1.0)
             if abs(actual_m1.get(axis, 0.0) - want_m1.get(axis, 0.0)) > 1e-9 * m1_scale:
-                extra.append(
-                    Issue(
-                        'moment',
-                        f'axis {axis}',
+                violations.append(
+                    ContractViolation(
+                        f'axis {axis} m1',
                         f'compiled m1 {actual_m1.get(axis, 0.0):.6g} s/m differs from the '
                         f'tree sum {want_m1.get(axis, 0.0):.6g} s/m -- a gradient plays at '
                         f'the wrong time, which m0 cannot see',
-                        'error',
                     )
                 )
 
-    extra.extend(_address_issues(placed, targets, label_states))
-    return extra
+    violations.extend(_address_violations(placed, targets, label_states))
+    require_valid_contract('against-tree', violations)
 
 
 __all__ = [
