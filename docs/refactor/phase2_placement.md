@@ -54,5 +54,6 @@ lint, types, examples, and Ubuntu/Windows tests on Python 3.11/3.12.
 ## Exit status
 
 All Phase 2 local and hosted gates are complete. The implementation remains in Draft
-[PR #5](https://github.com/bughht/SeqCraft/pull/5); `main` is unchanged. Phase 3 must not begin until
-the Phase 2 merge recommendation has been reviewed.
+[PR #5](https://github.com/bughht/SeqCraft/pull/5); `main` is unchanged. The merge review passed and
+the Phase 3 boundary was accepted in [`phase2_merge_review.md`](phase2_merge_review.md) and
+[`phase3_boundary.md`](phase3_boundary.md).
