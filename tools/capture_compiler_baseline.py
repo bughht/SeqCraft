@@ -27,6 +27,7 @@ import pypulseq
 import pytest
 
 import seqcraft as sc
+from seqcraft.compiler.verification import _sequence_moments
 from seqcraft.design.timing import EPS, to_ticks
 
 if TYPE_CHECKING:
@@ -112,8 +113,12 @@ def stable_summary(compiled: CompiledSequence) -> dict[str, Any]:
         'compile_issue_counts': dict(sorted(compile_issues.items())),
         'checked_issue_counts': dict(sorted(checked_issues.items())),
         'moments': {
+            # The compiler's own compiled-side integrator, imported rather than reimplemented:
+            # the digest has to stay identical across the refactor, so the arithmetic must be
+            # literally the same code the compile ran.
             f'm{order}': {
-                axis: float(f'{value:.12g}') for axis, value in sorted(compiled.moments(order).items())
+                axis: float(f'{value:.12g}')
+                for axis, value in sorted(_sequence_moments(compiled.seq, order).items())
             }
             for order in range(3)
         },

@@ -18,7 +18,7 @@ import pytest
 import seqcraft as sc
 from seqcraft.compiler.boundaries import label_targets
 from seqcraft.compiler.placement import place_events
-from seqcraft.compiler.verification import verify_against_tree
+from seqcraft.compiler.verification import _sequence_moments, verify_against_tree
 from seqcraft.design.events import knots_of as _grad_knots
 from seqcraft.design.events import pwl_moment
 
@@ -119,7 +119,7 @@ def _recheck(out, placed, targets) -> None:
         targets,
         duration_s=out.duration_s,
         tree_duration_s=out.tree_duration_s,
-        moments=out.moments,
+        moments=lambda order: _sequence_moments(out.seq, order),
         label_states=lambda: out.seq.evaluate_labels(evolution='adc'),
     )
 

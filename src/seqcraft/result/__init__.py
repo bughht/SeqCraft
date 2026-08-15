@@ -35,8 +35,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ..design import events as ev
-from ..design.events import ADDRESS_KEYS, AXES
 from ..report import Issue, Report, ReportFailed
 from .provenance import _jsonable, write_sidecar
 
@@ -130,41 +128,12 @@ class CompiledSequence:
             f'{len(self.report.warnings)} warnings)'
         )
 
-    def moments(self, order: int = 0) -> dict[str, float]:
-        """
-        Return the whole-sequence gradient moment per axis, integrated from the compiled blocks.
-
-        Parameters
-        ----------
-        order
-            ``0`` for area in 1/m, ``1`` for s/m, ``2`` for s^2/m.  Referenced to the start of
-            the sequence.
-
-        Notes
-        -----
-        Integrated from each block's exact knots, not from raster samples.  The difference is
-        not cosmetic: sampling is exact for ``order == 0`` and only then, and an arbitrary
-        gradient's samples sit at raster *centres*, so a raster-sampled m0 quietly matched a
-        raster-sampled tree even when the compiled waveform had moved.
-        """
-        out: dict[str, float] = dict.fromkeys(AXES, 0.0)
-        t = 0.0
-        # Block IDs are 1-based, and block_durations is a dict keyed by them, not a list.
-        for index in sorted(self.seq.block_events):
-            block = self.seq.get_block(index)
-            for axis in AXES:
-                grad = getattr(block, f'g{axis}', None)
-                if grad is not None:
-                    out[axis] += ev.pwl_moment(*ev.knots_of(grad, t), order)
-            t += float(self.seq.block_durations[index])
-        return out
-
     def check(self, *, allow_timing: Sequence[str] = ('TotalDuration',)) -> Report:
         """
         Run every post-compile check and return one report.
 
-        Combines the compile report with ``Sequence.check_timing`` and label-address
-        uniqueness.
+        Combines the compile report with ``Sequence.check_timing``.  Event-size and
+        label-address checking moved into the compile itself, where they raise.
 
         Parameters
         ----------
@@ -193,100 +162,12 @@ class CompiledSequence:
                 text = str(line).strip()
                 allowed = any(token in text for token in allow_timing)
                 issues.append(Issue('timing', 'sequence', text, 'info' if allowed else 'error'))
-        issues.extend(self._label_issues())
-        issues.extend(self._event_size_issues())
         out = Report(tuple(issues), subject=self.report.subject, values={
             'n_blocks': self.n_blocks,
             'duration_s': self.duration_s,
         })
         object.__setattr__(self, '_checked', out)
         return out
-
-    def _event_size_issues(self) -> list[Issue]:
-        """
-        Check every ADC and RF event against the interpreter's per-event sample limits.
-
-        These limits live in ``Opts`` as ``adc_samples_limit`` and ``rf_samples_limit`` and default
-        to ``0``, pypulseq's "no limit".  Nothing checked them until a 67 388-sample spiral readout
-        reached a scanner, which refused the block with ``fRTEBFinish() failed for block type:
-        ArbX ArbY ADC`` -- a message that names the block type and says nothing about samples.
-
-        The limit is the vendor interpreter's, not the amplifier's, so it has to be set from the
-        installation: :func:`seqcraft.scanner.opts.from_scanner` takes ``adc_samples_limit=`` for
-        exactly this, and 8192 is the common Siemens value.  A readout longer than one event's worth has
-        to be split into several ADCs, at the cost of ``adc_dead_time`` between them.
-        """
-        out: list[Issue] = []
-        limits = self.opts
-        for kind, attribute, count in (
-            ('adc', 'adc_samples_limit', lambda block: int(block.adc.num_samples)),
-            ('rf', 'rf_samples_limit', lambda block: int(np.size(block.rf.signal))),
-        ):
-            limit = int(getattr(limits, attribute, 0) or 0)
-            if limit <= 0:
-                continue
-            worst = 0
-            where = ''
-            for index in sorted(self.seq.block_events):
-                block = self.seq.get_block(index)
-                if getattr(block, kind, None) is None:
-                    continue
-                samples = count(block)
-                if samples > worst:
-                    worst, where = samples, f'block {index} ({self.origin(index)})'
-            if worst > limit:
-                out.append(Issue(
-                    f'{kind}_samples_limit',
-                    where,
-                    f'{worst} {kind.upper()} samples in one event, above the {limit} the '
-                    f'interpreter accepts; split it into '
-                    f'{-(-worst // limit)} events or lengthen the dwell',
-                    'error',
-                ))
-        return out
-
-    def _label_issues(self) -> list[Issue]:
-        """
-        Check that no two imaging ADCs write the same k-space address.
-
-        The highest-value check available on a finished sequence: a duplicate address means two
-        readouts landing in the same place, which catches a wrong slice order, an off-by-one
-        partial-Fourier start and a mis-nested loop from one assertion.
-        """
-        try:
-            labels = self.seq.evaluate_labels(evolution='adc')
-        except (AttributeError, ValueError, IndexError):  # pragma: no cover - older pypulseq
-            return []
-        keys = [k for k in ADDRESS_KEYS if k in labels]
-        if not keys:
-            return []
-        arrays = [np.atleast_1d(np.asarray(labels[k])) for k in keys]
-        n = max(len(a) for a in arrays)
-        arrays = [np.resize(a, n) for a in arrays]
-        skip = np.zeros(n, dtype=bool)
-        for flag in ('NOISE', 'REF', 'NAV'):
-            if flag in labels:
-                skip |= np.resize(np.atleast_1d(np.asarray(labels[flag])).astype(bool), n)
-        addresses = [tuple(int(a[i]) for a in arrays) for i in range(n) if not skip[i]]
-        duplicates = len(addresses) - len(set(addresses))
-        if not duplicates:
-            return []
-        seen: set[tuple[int, ...]] = set()
-        first: tuple[int, ...] = ()
-        for address in addresses:
-            if address in seen:
-                first = address
-                break
-            seen.add(address)
-        return [
-            Issue(
-                'label',
-                'sequence',
-                f'{duplicates} imaging ADC(s) repeat a k-space address; first repeat is '
-                f'{dict(zip(keys, first))} -- two readouts are writing the same location',
-                'error',
-            )
-        ]
 
     # ---------------------------------------------------------------------------- output
     def kspace(self) -> dict[str, np.ndarray]:

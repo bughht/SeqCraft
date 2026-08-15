@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pypulseq as pp
 import pytest
+from fidelity import compiled_knots
 from pypulseq.opts import Opts
 
 import seqcraft as sc
@@ -23,6 +24,18 @@ def compile_one(opts: Opts, *nodes: tuple[float, object]) -> sc.CompiledSequence
     for start, event in nodes:
         lb.add(start, event)
     return sc.compile(lb, opts)
+
+
+def compiled_m0(out, axis: str) -> float:
+    """
+    The area an axis actually plays, in 1/m, read off the compiled blocks.
+
+    Via the independent oracle in ``fidelity.py`` rather than the compiler's own arithmetic:
+    a check that shares code with what it checks compares a number with itself.  m0 is the
+    integral of a piecewise-linear function, so the trapezoidal rule is exact here.
+    """
+    times, amps = compiled_knots(out)[axis]
+    return float(np.trapezoid(amps, np.asarray(times, dtype=float) * 1e-12))
 
 
 def merges(out: sc.CompiledSequence) -> int:
@@ -68,7 +81,7 @@ def test_same_axis_at_once_merges_with_one_warning(opts) -> None:
     )
     assert out.n_blocks == 1
     assert merges(out) == 1
-    assert out.moments()['x'] == pytest.approx(300.0, abs=1e-6)
+    assert compiled_m0(out, 'x') == pytest.approx(300.0, abs=1e-6)
 
 
 def test_the_merge_warning_names_both_sources(opts) -> None:
@@ -197,7 +210,7 @@ def test_a_gradient_spanning_an_rf_stays_one_event(opts) -> None:
     out = compile_one(opts, (0.0, long_g), (1.5e-3, rf))
     assert out.n_blocks == 1
     assert out.seq.get_block(1).gx.type == 'trap'
-    assert out.moments()['x'] == pytest.approx(2000.0, rel=1e-9)
+    assert compiled_m0(out, 'x') == pytest.approx(2000.0, rel=1e-9)
     assert out.check().ok
 
 
@@ -218,7 +231,7 @@ def test_a_split_preserves_area_and_continuity(opts) -> None:
         sc.LogicBlock('t').add(0.0, long_g).add(2e-3, sc.barrier('mid')), opts
     )
     assert out.n_blocks == 2
-    assert out.moments()['x'] == pytest.approx(2000.0, rel=1e-9)
+    assert compiled_m0(out, 'x') == pytest.approx(2000.0, rel=1e-9)
     first, second = out.seq.get_block(1).gx, out.seq.get_block(2).gx
     assert float(first.last) == pytest.approx(float(second.first), rel=1e-9)
     assert out.check().ok
@@ -323,8 +336,8 @@ def test_per_axis_m0_survives_compilation(opts) -> None:
     tree.add(1e-3, pp.make_trapezoid('x', area=-40.0, system=opts))
     tree.add(2e-3, sc.barrier())
     out = sc.compile(tree, opts)
-    assert out.moments()['x'] == pytest.approx(60.0, abs=1e-6)
-    assert out.moments()['y'] == pytest.approx(-250.0, abs=1e-6)
+    assert compiled_m0(out, 'x') == pytest.approx(60.0, abs=1e-6)
+    assert compiled_m0(out, 'y') == pytest.approx(-250.0, abs=1e-6)
     assert not out.report.of_kind('moment')
 
 
@@ -398,10 +411,11 @@ def test_duplicate_kspace_addresses_are_an_error(opts) -> None:
     tree = sc.LogicBlock('t')
     for i in range(3):
         tree.add(i * 5e-3, adc, pp.make_label('LIN', 'SET', 7))
-    out = sc.compile(tree, opts)
-    report = out.check()
-    assert not report.ok
-    assert any(i.kind == 'label' for i in report.errors)
+    with pytest.raises(sc.CompileError) as err:
+        sc.compile(tree, opts)
+    text = str(err.value)
+    assert 'repeat a k-space address' in text
+    assert "'LIN': 7" in text, 'the message must name the address that repeats'
 
 
 def test_unique_kspace_addresses_pass(opts) -> None:

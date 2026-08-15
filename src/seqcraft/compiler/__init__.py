@@ -94,6 +94,9 @@ from .definitions import merge_definitions
 from .emission import emit_blocks
 from .placement import place_events
 from .verification import (
+    _sequence_moments,
+    check_event_sizes,
+    check_label_addresses,
     require_valid_contract,
     verify_against_tree,
     verify_placed_events,
@@ -256,6 +259,11 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     seq = pp.Sequence(system=opts)
     origins = emit_blocks(seq, edges, placed, targets, opts, raster, issues)
 
+    # The two questions only a built sequence can answer: does any one event exceed the
+    # interpreter's sample limit, and do two imaging ADCs write the same k-space address.
+    check_event_sizes(seq, opts, origins)
+    check_label_addresses(seq)
+
     # Named sources, so a conflict says *who* claimed the key twice rather than "already"/"also".
     defs = merge_definitions({
         'the sequence name': {'Name': name or root.tag or 'seqcraft'},
@@ -278,7 +286,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
         targets,
         duration_s=out.duration_s,
         tree_duration_s=total,
-        moments=out.moments,
+        moments=lambda order: _sequence_moments(seq, order),
         label_states=lambda: seq.evaluate_labels(evolution='adc'),
     )
     return out
