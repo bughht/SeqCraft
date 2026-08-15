@@ -2,9 +2,9 @@
 Assertions for testing your own sequence components.
 
 What seqcraft can check about a component is what it *produces*: a
-:class:`~seqcraft.design.logic.LogicBlock` that is reproducible, respects the amplifier, and compiles
-to a legal ``.seq`` on its own.  Nothing here asks what produced it, so a plain function and a class
-of your own design get exactly the same checks a :class:`seqcraft.Module` subclass gets::
+:class:`~seqcraft.design.logic.LogicBlock` that is reproducible and compiles to a legal ``.seq`` on
+its own.  Nothing here asks what produced it, so a plain function and a class of your own design
+get exactly the same checks a :class:`seqcraft.Module` subclass gets::
 
     import seqcraft as sc
 
@@ -23,10 +23,14 @@ bare script.
 
 What is deliberately *not* here is any check the compiler already makes with a better message.
 A malformed node cannot be constructed -- :meth:`~seqcraft.design.logic.LogicBlock.add` rejects
-anything that is neither an event nor a block -- and an off-raster gradient start makes
+anything that is neither an event nor a block -- an off-raster gradient start makes
 :func:`~seqcraft.compiler.compile_sequence` raise, naming the nearest raster point above and
-below and two ways to fix it.  A second, thinner assertion for either would only be a worse error
+below and two ways to fix it, and a lobe over the amplifier's limits raises with the derating
+that would clear it.  A second, thinner assertion for any of them would only be a worse error
 message competing with the good one.
+
+What is left is exactly the two things the compiler *cannot* see, and the reason is the same for
+both: it validates a tree, and it never sees the second call.
 
 Examples
 --------
@@ -66,7 +70,6 @@ __all__ = [
     'assert_deterministic',
     'assert_output',
     'assert_pure',
-    'assert_within_limits',
 ]
 
 
@@ -111,44 +114,6 @@ def assert_deterministic(make: Callable[[], LogicBlock]) -> None:
         assert ev.content_hash(a) == ev.content_hash(b), f'event {index} ({where}) changed'
 
 
-def assert_within_limits(block: LogicBlock, opts: Opts) -> None:
-    """
-    Assert that `block` respects the amplitude and slew limits of `opts`.
-
-    Per-axis only: the vector norm across simultaneous axes routinely exceeds the per-axis limit and
-    is legal on real amplifiers, which is why the compiler reports it as a warning.
-
-    Pass the ``Opts`` the component was *designed* against.  A part designed against derated limits
-    is checked against those (:func:`seqcraft.scanner.opts.derate`); the un-derated ceiling is what
-    the finished sequence is compiled and validated against.
-
-    Examples
-    --------
-    >>> import pypulseq as pp
-    >>> import seqcraft as sc
-    >>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s')
-    >>> block = sc.LogicBlock('spoil').add(0.0, pp.make_trapezoid('z', area=500.0, system=opts))
-    >>> sc.testing.assert_within_limits(block, opts)
-    """
-    # `flatten`, not iteration: a block's direct children may be nested blocks, and a component that
-    # nests would otherwise have its actual gradients skipped entirely and pass this vacuously.
-    placed = [
-        (start, event) for start, event, _ in flatten(block)
-        if getattr(event, 'type', None) in ('trap', 'grad')
-    ]
-    # Node times matter: two lobes of a bipolar pair are both on one axis, and without their
-    # starts they would be taken to play simultaneously and sum to zero.
-    violations = [
-        entry for entry in ev.check_limits(
-            [event for _, event in placed],
-            opts,
-            starts=[start for start, _ in placed],
-        )
-        if not entry[0].endswith('_norm')
-    ]
-    assert not violations, f'{_name(block)}: {violations}'
-
-
 def assert_output(make: Callable[[], LogicBlock], opts: Opts) -> None:
     """
     Run every block-level assertion against whatever `make` returns.
@@ -156,24 +121,29 @@ def assert_output(make: Callable[[], LogicBlock], opts: Opts) -> None:
     The universal one: it takes a callable, so it applies to a module call, to one of several
     methods on a class of your own, or to a bare function.  Nothing here inspects the caller.
 
-    Three checks, and each is here because nothing else performs it:
+    Two checks, and each is here because nothing else performs it:
 
-    **Determinism** -- two calls agree across the whole tree, by content hash.
-
-    **Per-axis limits** -- against the ``Opts`` the component was *designed* against, with node
-    times, which the compiler's own limit check cannot supply because it sees one block at a time.
+    **Determinism** -- two calls agree across the whole tree, by content hash.  The compiler
+    validates a tree; it never sees the second call.
 
     **It compiles alone** -- a component that only works when something else happens to be beside
-    it is not reusable.  The compile is what checks the raster: an off-raster gradient start makes
-    :func:`~seqcraft.compiler.compile_sequence` raise ``CompileError`` naming the nearest
-    raster point above and below, which is strictly more than a separate assertion could say.
+    it is not reusable.  The compile is what checks everything else: an off-raster gradient start
+    raises ``CompileError`` naming the nearest raster point above and below, and a lobe over the
+    amplifier's slew limit raises ``HardwareLimitError`` with the derating that would clear it.
+    Both are strictly more than a separate assertion could say.
 
     Parameters
     ----------
     make
         A callable of no arguments returning a :class:`~seqcraft.design.logic.LogicBlock`.
     opts
-        The scanner to check the limits against, and to compile with.
+        The scanner to compile against.
+
+    Notes
+    -----
+    There was a third check, ``assert_within_limits``, and the compiler's own is strictly
+    stronger: it measures the *summed* waveform, and two individually legal gradients on one axis
+    can sum to 189 % of the slew limit.  A per-block check could not see that in isolation.
 
     Examples
     --------
@@ -190,15 +160,9 @@ def assert_output(make: Callable[[], LogicBlock], opts: Opts) -> None:
     """
     block = make()
     assert_deterministic(make)
-    assert_within_limits(block, opts)
     if not block.nodes or block.duration == 0.0:
         return
-    out = compile_sequence(LogicBlock(f'assert_{_name(block)}').add(0.0, block), opts)
-    errors = [
-        issue for issue in out.check().errors
-        if issue.kind != 'timing' or 'TotalDuration' not in issue.message
-    ]
-    assert not errors, f'{_name(block)} does not compile cleanly on its own: {errors}'
+    compile_sequence(LogicBlock(f'assert_{_name(block)}').add(0.0, block), opts)
 
 
 # ---------------------------------------------------------------- the conventions Module follows
