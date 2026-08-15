@@ -2,15 +2,21 @@
 Core layer: the data model, the compiler, and the arithmetic they rest on.
 
 Everything here is required to get from a :class:`~seqcraft.core.logic.LogicBlock` to a legal,
-validated ``.seq`` -- and nothing else is.  The module library (:mod:`seqcraft.modules`),
-sequence-programming vocabulary (:mod:`seqcraft.ordering`) and output tooling
-(:mod:`seqcraft.provenance`, :mod:`seqcraft.display`) sit one level up, outside this package,
-because the compiler never references them.
+validated ``.seq`` -- and nothing else is.  The component contract (:class:`seqcraft.Module`),
+the scanner description (:mod:`seqcraft.scanner`), sequence-programming vocabulary
+(:mod:`seqcraft.ordering`) and output tooling (:mod:`seqcraft.provenance`,
+:mod:`seqcraft.display`) sit one level up, outside this package, because the compiler references
+none of them.
 
-In particular there is no module abstraction here.  The compiler's input is a ``LogicBlock`` and
-it never asks what produced one, so :class:`seqcraft.modules.base.Module` -- an optional
-convenience for writing reusable components -- lives with the components rather than with the
-compiler.
+Two consequences of that rule are worth stating, because both were once otherwise:
+
+**There is no module abstraction here.**  The compiler's input is a ``LogicBlock`` and it never
+asks what produced one, so :class:`seqcraft.Module` lives beside the components rather than with
+the compiler.  A test asserts this package does not import it.
+
+**There is no scanner class here.**  The compiler takes a :class:`pypulseq.Opts` -- eight fields of
+it -- rather than a seqcraft wrapper, so the same object that configures ``pp.make_trapezoid``
+configures the compile.
 
 Import from :mod:`seqcraft` rather than from here for everyday use; this package is the
 implementation surface.
@@ -34,7 +40,6 @@ from .errors import (
 from .geometry import Geometry
 from .logic import Item, LogicBlock, Node, barrier, flatten, span
 from .report import Issue, Report, ReportFailed
-from .system import Limits, System, load_hardware, synthetic_hardware
 from .timing import Raster
 from .units import convert
 
@@ -47,7 +52,6 @@ __all__ = [
     'HardwareLimitError',
     'Issue',
     'Item',
-    'Limits',
     'LogicBlock',
     'MissingExtraError',
     'Node',
@@ -56,7 +60,6 @@ __all__ = [
     'Report',
     'ReportFailed',
     'SeqCraftError',
-    'System',
     'UnitSanityError',
     'UnknownFieldError',
     'WriteResult',
@@ -65,9 +68,7 @@ __all__ = [
     'convert',
     'events',
     'flatten',
-    'load_hardware',
     'span',
-    'synthetic_hardware',
     'timing',
     'units',
     'validate',

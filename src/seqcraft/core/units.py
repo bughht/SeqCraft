@@ -51,14 +51,15 @@ Gamma, and other system parameters
 ----------------------------------
 Pairs that cross the tesla/hertz divide (``mT/m`` <-> ``Hz/m``, ``uT`` <-> ``Hz``,
 ``T/m/s`` <-> ``Hz/m/s``) need a gyromagnetic ratio, and ``ppm`` <-> ``Hz`` needs a Larmor
-frequency.  Both are keyword arguments rather than globals, and
-:meth:`seqcraft.System.convert` fills in the scanner's own values:
+frequency.  Both are keyword arguments rather than globals, so a nucleus other than ``1H`` cannot
+silently pick up the proton value -- take them from the ``Opts`` the sequence is built against:
 
+>>> import pypulseq as pp
 >>> import seqcraft as sc
->>> system = sc.System.preset('generic_3t')
->>> round(system.convert(-3.4, 'ppm', 'Hz'))                   # the fat/water shift at 3 T
+>>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', B0=3.0)
+>>> round(sc.convert(-3.4, 'ppm', 'Hz', f0=opts.gamma * opts.B0))   # fat/water shift at 3 T
 -434
->>> round(system.convert(system.default.max_grad, 'Hz/m', 'mT/m'), 1)
+>>> round(sc.convert(opts.max_grad, 'Hz/m', 'mT/m', gamma=opts.gamma), 1)
 40.0
 """
 
@@ -110,7 +111,7 @@ _UNITS: dict[str, _Unit] = {
     'ps': _Unit('time', _f(1, 10**12)),
     # Ten microseconds: the block-duration quantum a .seq file counts in.  This is a plain unit,
     # *not* a synonym for "the block raster" -- for counts of this scanner's raster use
-    # system.block_raster.count(t), which follows the scanner if it ever changes.
+    # Raster(opts.block_duration_raster).count(t), which follows the scanner if it ever changes.
     '10us': _Unit('time', _f(1, 10**5)),
     'min': _Unit('time', _f(60)),
     # ----------------------------------------------------------------------------- length
@@ -248,7 +249,7 @@ def convert(
         explicitly reads better and is what module code should do.
     gamma
         Gyromagnetic ratio, Hz/T.  Used only by pairs that cross the tesla/hertz divide.  Defaults
-        to the proton value; :meth:`seqcraft.System.convert` supplies the scanner's own.
+        to the proton value; pass ``gamma=opts.gamma`` to use the scanner's own.
     f0
         Larmor frequency, Hz.  Required only for ``ppm``/``%`` <-> frequency.
 

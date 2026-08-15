@@ -163,24 +163,25 @@ class Raster:
     ----------
     dt : float
         The interval in seconds.  This is the number to use in array arithmetic, e.g.
-        ``np.diff(g) / system.grad_raster.dt`` for a slew rate.
+        ``np.diff(g) / opts.grad_raster_time`` for a slew rate.
     name : str
 
     Notes
     -----
-    Hashable and comparable by value, so two rasters read from the same ``Opts`` are the same
-    raster.  Get them from :class:`~seqcraft.System` rather than constructing them: the scanner is
-    the authority on what its rasters are.
+    Hashable and comparable by value, so two rasters built from the same ``Opts`` field are the
+    same raster.  Build them from that field rather than writing the interval out: the scanner is
+    the authority on what its rasters are, and there are four of them
+    (``grad_raster_time``, ``rf_raster_time``, ``adc_raster_time``, ``block_duration_raster``).
 
     Examples
     --------
-    >>> import seqcraft as sc
-    >>> system = sc.System.preset('prisma')
-    >>> system.grad_raster
+    >>> import pypulseq as pp
+    >>> opts = pp.Opts(max_grad=40, grad_unit='mT/m')
+    >>> Raster(opts.grad_raster_time, 'gradient')
     Raster(gradient, 10 us)
-    >>> system.adc_raster.dt
+    >>> Raster(opts.adc_raster_time).dt
     1e-07
-    >>> system.block_raster == Raster(10e-6)
+    >>> Raster(opts.block_duration_raster) == Raster(10e-6)
     True
     """
 
@@ -194,7 +195,7 @@ class Raster:
         if not dt > 0:
             msg = format_error(
                 f'raster must be positive, got {dt!r}.',
-                {'hint': 'pass e.g. system.block_raster.dt (10 us on Siemens), not 0'},
+                {'hint': 'pass e.g. opts.block_duration_raster (10 us on Siemens), not 0'},
             )
             raise RasterError(msg)
         ticks = int(round(dt * TICKS_PER_SECOND))
