@@ -30,9 +30,10 @@ def merges(out: sc.CompiledSequence) -> int:
     return len(out.report.of_kind('grad_merge'))
 
 
-def limit_errors(out: sc.CompiledSequence) -> list[sc.Issue]:
-    """Per-axis amplitude and slew violations (errors, not the vector-norm warnings)."""
-    return [i for i in out.report.errors if i.kind.endswith('_limit')]
+#: A same-axis pair that sums to a legal waveform.  ``rise_time`` is stated because
+#: ``make_trapezoid`` with only a duration uses the shortest legal ramp, which puts each lobe near
+#: the slew limit on its own -- so their sum is 158 % of it and the compile raises.
+GENTLE = {'duration': 2e-3, 'rise_time': 400e-6}
 
 
 # ------------------------------------------------------------------------- overlap: the 3 rules
@@ -62,8 +63,8 @@ def test_same_axis_at_once_merges_with_one_warning(opts) -> None:
     """Summing is what was meant, so it happens -- but it is the one waveform change, so it says so."""
     out = compile_one(
         opts,
-        (0.0, pp.make_trapezoid('x', area=100.0, system=opts)),
-        (0.0, pp.make_trapezoid('x', area=200.0, system=opts)),
+        (0.0, pp.make_trapezoid('x', area=100.0, system=opts, **GENTLE)),
+        (0.0, pp.make_trapezoid('x', area=200.0, system=opts, **GENTLE)),
     )
     assert out.n_blocks == 1
     assert merges(out) == 1
@@ -72,8 +73,10 @@ def test_same_axis_at_once_merges_with_one_warning(opts) -> None:
 
 def test_the_merge_warning_names_both_sources(opts) -> None:
     """A merge you did not expect has to be traceable to the two modules that caused it."""
-    a = sc.LogicBlock('rewinder').add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
-    b = sc.LogicBlock('prephaser').add(0.0, pp.make_trapezoid('x', area=-50.0, system=opts))
+    a = sc.LogicBlock('rewinder').add(
+        0.0, pp.make_trapezoid('x', area=100.0, system=opts, **GENTLE))
+    b = sc.LogicBlock('prephaser').add(
+        0.0, pp.make_trapezoid('x', area=-50.0, system=opts, **GENTLE))
     out = sc.compile(sc.LogicBlock('tr').add(0.0, a).add(0.0, b), opts)
     message = out.report.of_kind('grad_merge')[0].message
     assert 'tr.rewinder' in message
@@ -85,25 +88,37 @@ def test_two_legal_gradients_can_sum_to_an_illegal_one(opts) -> None:
     The reason limits are checked after merging rather than per module.
 
     Two 60 %-amplitude gradients on one axis are each perfectly legal and together are not, and no
-    module can see that in isolation.
+    module can see that in isolation.  There is no legal sequence to hand back, so the compile
+    raises rather than returning one with a note attached.
     """
     big = pp.make_trapezoid('x', amplitude=0.6 * opts.max_grad, duration=2e-3, system=opts)
-    out = compile_one(opts, (0.0, big), (0.0, big))
-    errors = limit_errors(out)
-    assert errors, 'a 120% merged amplitude must be an error'
-    assert any(i.kind == 'grad_limit' for i in errors)
-    assert '120%' in ' '.join(i.message for i in errors)
-    assert not out.check().ok
+    with pytest.raises(sc.HardwareLimitError) as err:
+        compile_one(opts, (0.0, big), (0.0, big))
+    text = str(err.value)
+    assert text.startswith('gradient 120% of the 40 mT/m limit on axis x.'), text
+    assert 'derate' in text, 'the message must offer a way forward'
 
 
 def test_merging_can_break_the_slew_limit_too(opts) -> None:
     """Amplitude is not the only thing a merge can break; on my first attempt slew hit 189 %."""
-    out = compile_one(
-        opts,
-        (0.0, pp.make_trapezoid('x', area=100.0, system=opts)),
-        (0.0, pp.make_trapezoid('x', area=200.0, system=opts)),
-    )
-    assert any(i.kind == 'slew_limit' for i in limit_errors(out))
+    with pytest.raises(sc.HardwareLimitError, match='slew 189% of the 150 T/m/s limit on axis x'):
+        compile_one(
+            opts,
+            (0.0, pp.make_trapezoid('x', area=100.0, system=opts)),
+            (0.0, pp.make_trapezoid('x', area=200.0, system=opts)),
+        )
+
+
+def test_the_limit_error_names_the_time_and_the_source(opts) -> None:
+    """A block index means nothing until the sequence is written; a time can be acted on."""
+    big = pp.make_trapezoid('x', amplitude=0.6 * opts.max_grad, duration=2e-3, system=opts)
+    inner = sc.LogicBlock('prephaser').add(0.0, big).add(0.0, big)
+    with pytest.raises(sc.HardwareLimitError) as err:
+        sc.compile(sc.LogicBlock('tr').add(0.0, pp.make_delay(1e-3)).add(1e-3, inner), opts)
+    text = str(err.value)
+    assert 'tr.prephaser' in text
+    assert '1.000 ms' in text
+    assert 'reached:' in text
 
 
 def test_vector_norm_is_a_warning_not_an_error(opts) -> None:
@@ -120,7 +135,6 @@ def test_vector_norm_is_a_warning_not_an_error(opts) -> None:
         (0.0, pp.make_trapezoid('y', **strong)),
     )
     assert any(i.kind.endswith('_norm_limit') for i in out.report.warnings)
-    assert not limit_errors(out)
     assert out.check().ok
 
 
@@ -217,7 +231,6 @@ def test_a_split_mid_ramp_keeps_the_slew(opts) -> None:
         sc.LogicBlock('t').add(0.0, ramp).add(float(ramp.rise_time) / 2.0, sc.barrier()), opts
     )
     assert out.n_blocks == 2
-    assert not limit_errors(out)
     assert out.check().ok
 
 
@@ -420,8 +433,8 @@ def test_merging_two_trapezoids_stays_a_short_shape(opts) -> None:
     """
     out = compile_one(
         opts,
-        (0.0, pp.make_trapezoid('x', area=100.0, duration=2e-3, system=opts)),
-        (0.0, pp.make_trapezoid('x', area=200.0, duration=2e-3, system=opts)),
+        (0.0, pp.make_trapezoid('x', area=100.0, system=opts, **GENTLE)),
+        (0.0, pp.make_trapezoid('x', area=200.0, system=opts, **GENTLE)),
     )
     grad = out.seq.get_block(1).gx
     if grad.type == 'grad':

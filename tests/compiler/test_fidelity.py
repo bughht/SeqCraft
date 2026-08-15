@@ -49,10 +49,18 @@ def test_sequential_gradients_same_axis(opts) -> None:
 
 # ------------------------------------------------------------------------------------ merging
 def test_two_trapezoids_summed(opts) -> None:
+    """
+    ``rise_time`` is explicit because the sum has to stay *legal*.
+
+    With the shortest legal ramp each lobe sits near the slew limit on its own, so their sum is
+    158 % of it and the compile raises -- which is a different claim, tested in
+    ``test_scheduling.py``.  This test is about fidelity, so the pair is designed to be legal.
+    """
+    lobe = {'duration': 2e-3, 'rise_time': 400e-6, 'system': opts}
     tree = (
         sc.LogicBlock('t')
-        .add(0.0, pp.make_trapezoid('x', area=100.0, duration=2e-3, system=opts))
-        .add(0.0, pp.make_trapezoid('x', area=200.0, duration=2e-3, system=opts))
+        .add(0.0, pp.make_trapezoid('x', area=100.0, **lobe))
+        .add(0.0, pp.make_trapezoid('x', area=200.0, **lobe))
     )
     assert_matches(tree, sc.compile(tree, opts))
 
@@ -159,7 +167,9 @@ def test_arbitrary_merged_with_a_trapezoid_is_reported_not_silent(opts) -> None:
     """
     wx, _ = _spiral_like(opts, n=60)
     g = pp.make_arbitrary_grad('x', waveform=wx, first=0.0, last=0.0, system=opts)
-    trap = pp.make_trapezoid('x', area=20.0, system=opts)
+    # A stated duration, so the trapezoid does not use the shortest legal ramp: added to the
+    # spiral's own slew that would reach 129 % of the limit and raise before anything is emitted.
+    trap = pp.make_trapezoid('x', area=20.0, duration=300e-6, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(0.0, trap)
     out = sc.compile(tree, opts)
 

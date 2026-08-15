@@ -36,7 +36,7 @@ from ..design.events import GRADIENT_KINDS, POINT_KINDS
 from ..design.logic import BARRIER
 from ..design.timing import EPS
 from ..errors import CompileError, format_error
-from .legalization import axis_gradient, limit_issues
+from .legalization import axis_gradient, check_limits
 from .model import EXCLUSIVE_KINDS, PlacedEvent, PulseqReadyBlock, in_block_delay
 from .verification import require_valid_contract, verify_ready_blocks
 
@@ -140,13 +140,15 @@ def emit_blocks(  # noqa: C901, PLR0912
     opts, raster
         The scanner, and the block-duration raster.
     issues
-        Appended to: same-axis merges, resamplings and limit violations found while emitting.
+        Appended to: same-axis merges, resamplings and vector-norm findings made while emitting.
 
     Raises
     ------
     CompileError
         If a boundary would split an ADC's sampling window, if an interval is shorter than the
         events it holds, or if pypulseq refuses the block.
+    HardwareLimitError
+        If the *summed* waveform in a block exceeds ``max_grad`` or ``max_slew`` on an axis.
 
     Notes
     -----
@@ -258,7 +260,7 @@ def emit_blocks(  # noqa: C901, PLR0912
             continue
 
         origin = ', '.join(sorted({'.'.join(p) for p in ready.source_paths if p})) or '?'
-        issues.extend(limit_issues(ready.events, opts, index, origin))
+        check_limits(ready.events, opts, index, origin, issues, start=a)
         # pypulseq takes a block's duration as the max over its events, so an interval shorter
         # than its contents silently produces an off-raster block instead of an error.  Catch it
         # here, where the boundary that caused it can still be named.
