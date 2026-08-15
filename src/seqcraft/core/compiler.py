@@ -79,6 +79,23 @@ import pypulseq as pp
 
 from . import events as ev
 from . import units
+from ._compiler.model import (
+    ADDRESS_KEYS,
+    AXES,
+    EXCLUSIVE_KINDS,
+    GRADIENT_KINDS,
+    HANDLED_KINDS,
+    INDIVISIBLE_KINDS,
+    LABEL_KINDS,
+    POINT_KINDS,
+    PlacedEvent,
+    PulseqReadyBlock,
+)
+from ._compiler.verification import (
+    require_valid_contract,
+    verify_placed_events,
+    verify_ready_blocks,
+)
 from .errors import CompileError, format_error
 from .logic import BARRIER, flatten
 from .report import Issue, Report
@@ -98,36 +115,18 @@ if TYPE_CHECKING:
 
 __all__ = ['CompiledSequence', 'WriteResult', 'compile_sequence']
 
-#: Event types carrying a gradient on an axis.
-_GRAD = frozenset({'trap', 'grad'})
-#: Event types attached to whichever block contains their start.
-_POINT = frozenset({'labelset', 'labelinc', 'trigger', 'output'})
-#: Event types no block boundary may fall inside.
-#:
-#: Each is a single hardware action rather than a waveform, so splitting one is meaningless: an
-#: RF with its dead time and ringdown, an ADC with its window and trailing dead time, a trigger
-#: pulse.  Gradients are deliberately absent -- they split exactly and are put back together by
-#: :func:`_axis_gradient`.
-_INDIVISIBLE = frozenset({'rf', 'adc', 'trigger', 'output'})
-#: Event types of which a block may hold at most one, so a boundary is *required* between two.
-#:
-#: Only RF and ADC.  Triggers are ``TRIGGERS`` extensions and pulseq accepts several in one
-#: block, so treating them as exclusive would invent a constraint the hardware does not have and
-#: reject sequences that are perfectly legal.
-_EXCLUSIVE = frozenset({'rf', 'adc'})
-#: Types that carry a k-space address rather than occupying time.  Retimed onto the block holding
-#: the ADC they are meant to affect; see :func:`_label_targets`.
-_LABEL = frozenset({'labelset', 'labelinc'})
-#: Every event type the compiler places and emits.
-#:
-#: Checked rather than assumed, because an unhandled type used to match none of the branches
-#: below and disappear: :func:`_place` gave it a zero-width reservation and the assembly loop
-#: never collected it, so a tree carrying a rotation extension compiled clean, reported nothing,
-#: and played unrotated.  A whitelist turns that class of silence into an error, and makes a new
-#: pulseq event type fail loudly here instead of vanishing.
-_HANDLED = frozenset({
-    BARRIER, 'adc', 'delay', 'grad', 'labelinc', 'labelset', 'output', 'rf', 'trap', 'trigger',
-})
+# Temporary aliases keep the established compiler implementation readable while each owning stage
+# moves behind the private package.  `_Placed` names the same class; there is no parallel IR.
+_Placed = PlacedEvent
+_GRAD = GRADIENT_KINDS
+_POINT = POINT_KINDS
+_INDIVISIBLE = INDIVISIBLE_KINDS
+_EXCLUSIVE = EXCLUSIVE_KINDS
+_LABEL = LABEL_KINDS
+_HANDLED = HANDLED_KINDS
+_AXES = AXES
+_ADDRESS_KEYS = ADDRESS_KEYS
+
 #: Types pypulseq 1.5 can produce that seqcraft recognises but does not emit, each with what it
 #: is and the way round.  Kept apart from "never heard of it" because the remedy differs
 #: completely -- these have one, an unknown type is a bug or a version skew.
@@ -156,50 +155,7 @@ _UNSUPPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
         ('not yet emitted; leave it out, or open an issue with the sequence that needs it',),
     ),
 }
-#: Axis order, matching pulseq's block layout.
-_AXES = ('x', 'y', 'z')
-#: Label keys that together form a k-space address.
-_ADDRESS_KEYS = ('SLC', 'LIN', 'PAR', 'AVG', 'REP', 'SEG', 'ECO', 'SET')
-
-
 # --------------------------------------------------------------------------------- placing
-@dataclass(frozen=True)
-class _Placed:
-    """
-    One leaf event resolved to absolute time.
-
-    Attributes
-    ----------
-    node_t
-        The time the tree assigned, *before* the event's own ``delay``.
-    start, end
-        When the event is physically active: the waveform, the pulse, or the sampling window.
-    res_start, res_end
-        The interval the event reserves exclusively.  For an RF that is `node_t` -- which
-        already contains the transmit dead time, because pypulseq puts it in ``rf.delay`` --
-        through the end of ringdown.  For an ADC it is `node_t` through the post-sampling dead
-        time.  Equal to ``(start, end)`` for everything else.
-    """
-
-    node_t: float
-    start: float
-    end: float
-    res_start: float
-    res_end: float
-    event: SimpleNamespace
-    path: tuple[str, ...]
-
-    @property
-    def kind(self) -> str:
-        """The pulseq event ``type``."""
-        return str(getattr(self.event, 'type', '?'))
-
-    @property
-    def where(self) -> str:
-        """A human label: the tag path, or the event type when the tree was untagged."""
-        return '.'.join(self.path) if self.path else self.kind
-
-
 def _intrinsic_duration(event: SimpleNamespace) -> float:
     """Return how long an event is active, excluding its own leading delay."""
     kind = getattr(event, 'type', None)
@@ -1101,6 +1057,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     opts = system.limits(regime)
     raster = system.block_raster
     placed = _place(root, opts)
+    require_valid_contract('placed-event', verify_placed_events(placed))
 
     negative = [p for p in placed if p.res_start < -EPS]
     if negative:
@@ -1166,6 +1123,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
 
     seq = pp.Sequence(system=opts)
     origins: list[tuple[str, ...]] = []
+    previous_block_end: float | None = None
 
     # Sort once per axis so each interval is served by a sweep rather than a rescan: 1700 TRs
     # is ~500k events, and rescanning per interval would be quadratic.
@@ -1251,22 +1209,40 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
                 paths.extend(p.path for p in here)
 
         duration = raster.nearest(b - a)
-        origins.append(_common_path(paths))
-        if not block:
-            seq.add_block(pp.make_delay(duration))
+        ready = PulseqReadyBlock(
+            index=index,
+            start=a,
+            end=b,
+            duration=duration,
+            events=tuple(block),
+            source_paths=tuple(paths),
+            origin=_common_path(paths),
+        )
+        require_valid_contract(
+            'ready-block',
+            verify_ready_blocks(
+                (ready,),
+                expected_first_index=index,
+                expected_start=previous_block_end,
+            ),
+        )
+        previous_block_end = ready.end
+        origins.append(ready.origin)
+        if not ready.events:
+            seq.add_block(pp.make_delay(ready.duration))
             continue
 
-        origin = ', '.join(sorted({'.'.join(p) for p in paths if p})) or '?'
-        issues.extend(_limit_issues(block, opts, index, origin))
+        origin = ', '.join(sorted({'.'.join(p) for p in ready.source_paths if p})) or '?'
+        issues.extend(_limit_issues(ready.events, opts, index, origin))
         # pypulseq takes a block's duration as the max over its events, so an interval shorter
         # than its contents silently produces an off-raster block instead of an error.  Catch it
         # here, where the boundary that caused it can still be named.
-        needed = _required_duration(block, opts)
-        if needed > duration + EPS:
+        needed = _required_duration(ready.events, opts)
+        if needed > ready.duration + EPS:
             msg = format_error(
-                f'block {index} spans {duration * 1e6:.1f} us but its events need '
+                f'block {index} spans {ready.duration * 1e6:.1f} us but its events need '
                 f'{needed * 1e6:.1f} us.',
-                {'from': origin, 'shortfall_us': round((needed - duration) * 1e6, 3)},
+                {'from': origin, 'shortfall_us': round((needed - ready.duration) * 1e6, 3)},
                 [
                     'usually an ADC whose trailing dead time, or an RF whose ringdown, extends '
                     'past the interval -- the module should report a longer duration',
@@ -1278,13 +1254,13 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
         # add_block() takes no duration argument; a delay event is how pulseq states an explicit
         # block length, and `set_block` takes the max of it and the event extents.
         try:
-            seq.add_block(*block, pp.make_delay(duration))
+            seq.add_block(*ready.events, pp.make_delay(ready.duration))
         except (ValueError, RuntimeError) as err:
             msg = format_error(
                 f'pypulseq rejected block {index} at {a * 1e6:.1f} us: {err}',
                 {
-                    'duration_us': f'{duration * 1e6:.1f}',
-                    'events': ', '.join(getattr(e, 'type', '?') for e in block),
+                    'duration_us': f'{ready.duration * 1e6:.1f}',
+                    'events': ', '.join(getattr(e, 'type', '?') for e in ready.events),
                     'from': origin,
                 },
                 ['this is a compiler bug unless the tree contains raw events built against '

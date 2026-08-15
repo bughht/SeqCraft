@@ -103,6 +103,8 @@ warn_redundant_casts = true
 # therefore structurally untypeable; do not attempt to type pypulseq itself.
 [[tool.mypy.overrides]]
 module = [
+  'seqcraft.core._compiler.model',
+  'seqcraft.core._compiler.verification',
   'seqcraft.core.timing',
   'seqcraft.core.units',
   'seqcraft.core.validate',

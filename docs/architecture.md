@@ -138,6 +138,11 @@ dependency- and cohesion-based boundary audit, and any broader move requires a s
 compatibility plan. The audit scope and evidence rules are defined in
 [`refactor/core_package_boundary_audit.md`](refactor/core_package_boundary_audit.md).
 
+Phase 1 establishes the private `PlacedEvent` and `PulseqReadyBlock` contracts while the existing
+`compile_sequence` control flow remains authoritative. Their time arithmetic and shallow
+immutability policies are recorded in [ADR-001](adr/001-compiler-internal-time-policy.md) and
+[ADR-002](adr/002-compiler-ir-contracts.md).
+
 | Module | What it is for |
 |---|---|
 | `system` | `System` holding **named `Opts` regimes**, so a diffusion encoding can run at full amplitude while the readout is derated. Asserts every regime agrees on the rasters, gamma and B0 — nothing upstream checks that, and a disagreement produces an unplayable file. Also the source of every `Raster` and of `system.convert`. |
@@ -221,5 +226,7 @@ docs/         architecture  compiler  writing_a_module
 ```
 
 During the compiler refactor, `core/compiler.py` remains import-compatible while private stage files
-are added beneath `core/_compiler/`. The current flat compiler implementation is removed only after
-the differential and public-import gates pass.
+are added beneath `core/_compiler/`. Phase 1 adds only `model.py` and the verification skeleton;
+placement, legalization, and emission remain in the façade until their numbered extraction phases.
+The current flat compiler implementation is removed only after the differential and public-import
+gates pass.
