@@ -1,5 +1,9 @@
 """
-Loop-ordering utilities.
+Loop-ordering utilities.  **Not part of the seqcraft package** -- see ``salvage/README.md``.
+
+Moved out whole rather than deleted: four of the six functions here had never had a caller, and
+ordering tables are sequence-programming choices rather than physics, so they belong in the
+opinionated library rather than the core (``docs/adr/003-scanner-and-module-reform.md``).
 
 Loops stay in user code -- a plain ``for``, which is the familiar idiom and keeps the
 control flow visible.  What this module supplies is the handful of pieces that were
