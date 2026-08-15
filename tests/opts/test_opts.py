@@ -14,7 +14,8 @@ import pytest
 from pypulseq.opts import Opts
 
 import seqcraft as sc
-from seqcraft.errors import ConfigurationError, MissingExtraError, UnknownFieldError
+from seqcraft.errors import ConfigurationError, MissingExtraError
+from seqcraft.scanner.opts import UnknownFieldError
 
 # One installation's constants.  Not on any spec sheet, which is the whole point.
 SITE = {

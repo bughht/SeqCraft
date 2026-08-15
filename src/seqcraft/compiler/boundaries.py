@@ -36,7 +36,8 @@ from typing import TYPE_CHECKING
 from ..design.events import GRADIENT_KINDS, LABEL_KINDS
 from ..design.logic import BARRIER
 from ..design.timing import EPS
-from ..errors import CompileError, format_error
+from ..errors import format_error
+from .errors import CompileError
 from .model import EXCLUSIVE_KINDS, INDIVISIBLE_KINDS, PlacedEvent
 
 if TYPE_CHECKING:

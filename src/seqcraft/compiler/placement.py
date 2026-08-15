@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 
 from ..design.events import HANDLED_KINDS
 from ..design.logic import BARRIER, flatten
-from ..errors import CompileError, format_error
+from ..errors import format_error
+from .errors import CompileError
 from .model import PlacedEvent
 
 if TYPE_CHECKING:

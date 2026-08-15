@@ -69,14 +69,23 @@ from pypulseq.opts import Opts
 from ..errors import (
     ConfigurationError,
     MissingExtraError,
-    UnknownFieldError,
     format_error,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-__all__ = ['derate', 'from_scanner']
+__all__ = ['UnknownFieldError', 'derate', 'from_scanner']
+
+
+class UnknownFieldError(ConfigurationError):
+    """
+    An override names something ``Opts`` does not declare.
+
+    It lives here, with the only code that raises it, rather than at the root: an exception stays
+    with its raiser unless more than one package needs it.  Re-exported as
+    ``sc.UnknownFieldError``, so a caller never spells the layout.
+    """
 
 #: Every keyword ``Opts.__init__`` accepts, less the two that mutate the process-global default.
 #: Read from the signature rather than listed here, so a pypulseq that grows a field does not need

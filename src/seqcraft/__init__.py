@@ -90,28 +90,24 @@ import importlib
 from . import _compat
 from ._version import __version__
 from .compiler import compile_sequence as compile  # noqa: A001, A004
+from .compiler.errors import CompileError, DefinitionConflict, HardwareLimitError
 from .compiler.verification import CompilerContractError
 from .design import events, timing, units
 from .design.logic import Item, LogicBlock, Node, barrier, flatten, span
 from .design.module import Module
 from .design.sampling import sample
-from .design.timing import Raster
+from .design.timing import Raster, RasterError
 from .design.units import convert
 from .errors import (
-    CompileError,
     ConfigurationError,
-    DefinitionConflict,
-    HardwareLimitError,
     MissingExtraError,
-    RasterError,
     SeqCraftError,
     SeqCraftWarning,
-    UnitSanityError,
-    UnknownFieldError,
 )
 from .report import Issue, Report, ReportFailed
 from .result import CompiledSequence, WriteResult
 from .scanner import hardware, opts
+from .scanner.opts import UnknownFieldError
 
 # Fail once with a complete list, rather than letting the first caller that needs a missing
 # pypulseq function fail with an opaque AttributeError halfway through a build.
@@ -174,7 +170,6 @@ __all__ = [
     'ReportFailed',
     'SeqCraftError',
     'SeqCraftWarning',
-    'UnitSanityError',
     'UnknownFieldError',
     'WriteResult',
     '__version__',

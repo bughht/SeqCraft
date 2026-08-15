@@ -47,7 +47,8 @@ from ..design.events import (
     pwl_moment,
 )
 from ..design.timing import EPS
-from ..errors import CompileError, HardwareLimitError, format_error
+from ..errors import format_error
+from .errors import CompileError, HardwareLimitError
 from .model import (
     EXCLUSIVE_KINDS,
     PlacedEvent,

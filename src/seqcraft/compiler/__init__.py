@@ -82,7 +82,7 @@ import pypulseq as pp
 
 from ..design.events import GRADIENT_KINDS
 from ..design.timing import EPS, Raster
-from ..errors import CompileError, DefinitionConflict, SeqCraftWarning, format_error
+from ..errors import SeqCraftWarning, format_error
 from ..result import CompiledSequence
 from .boundaries import (
     check_exclusive,
@@ -92,6 +92,7 @@ from .boundaries import (
     orphan_label_notes,
 )
 from .emission import emit_blocks
+from .errors import CompileError, DefinitionConflict
 from .placement import place_events
 from .verification import (
     _sequence_moments,

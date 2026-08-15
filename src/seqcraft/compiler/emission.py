@@ -35,7 +35,8 @@ from ..design import events as ev
 from ..design.events import GRADIENT_KINDS, POINT_KINDS
 from ..design.logic import BARRIER
 from ..design.timing import EPS
-from ..errors import CompileError, format_error
+from ..errors import format_error
+from .errors import CompileError
 from .legalization import axis_gradient, check_limits
 from .model import EXCLUSIVE_KINDS, PlacedEvent, PulseqReadyBlock, in_block_delay
 from .verification import require_valid_contract, verify_ready_blocks

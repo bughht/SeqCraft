@@ -1,10 +1,25 @@
 """
-Exception hierarchy and the shared error-message formatter.
+The exception root, and the shared error-message formatter.
 
 seqcraft signals failure by raising, never by printing.  The reference implementation
 this package replaces (``pSeq_Base``) contained no ``assert`` or ``raise`` at all: its
 ``get_report()`` printed the result of ``check_timing()`` and returned ``None``, so a
 failing sequence could not be detected programmatically.
+
+**Only what more than one package raises lives here.**  Everything else stays with the code that
+raises it -- :class:`~seqcraft.compiler.errors.CompileError` and its two siblings in
+``compiler/``, :class:`~seqcraft.design.timing.RasterError` in ``design/timing.py``,
+:class:`~seqcraft.scanner.opts.UnknownFieldError` in ``scanner/opts.py``.  Every one of them is
+re-exported as ``sc.<Name>``, so the spelling a caller writes never depends on the layout::
+
+    SeqCraftError                  # the base; catch this to catch everything
+    +-- ConfigurationError         # a call is wrong: bad type, unknown unit, unusable Opts
+    |   +-- RasterError            #   design/timing.py
+    |   +-- UnknownFieldError      #   scanner/opts.py
+    +-- CompileError               # compiler/errors.py
+    +-- HardwareLimitError         # compiler/errors.py
+    +-- DefinitionConflict         # compiler/errors.py
+    +-- MissingExtraError          # an optional dependency is needed; names the extra
 
 Every message follows one shape so it is scannable and so a test can assert on it::
 
@@ -15,9 +30,8 @@ Every message follows one shape so it is scannable and so a test can assert on i
         <option 1, with the numbers already filled in>
         <option 2>
 
-Use :func:`format_error` to build the body.  Soft findings are *not* exceptions -- they
-belong in a :class:`seqcraft.report.Report` as an ``Issue`` so they survive into the
-provenance sidecar.
+Use :func:`format_error` to build the body.  What the compiler *did* rather than refused is not an
+exception at all: it is a :class:`SeqCraftWarning`.
 """
 
 from __future__ import annotations
@@ -28,16 +42,10 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
 __all__ = [
-    'CompileError',
     'ConfigurationError',
-    'DefinitionConflict',
-    'HardwareLimitError',
     'MissingExtraError',
-    'RasterError',
     'SeqCraftError',
     'SeqCraftWarning',
-    'UnitSanityError',
-    'UnknownFieldError',
     'format_error',
 ]
 
@@ -62,39 +70,13 @@ class SeqCraftWarning(UserWarning):
 
 
 class ConfigurationError(SeqCraftError):
-    """A parameter is missing, out of range, or inconsistent with another parameter."""
-
-
-class UnitSanityError(ConfigurationError):
-    """A value is outside the plausible range for its named unit (mm vs m, ms vs s, ...)."""
-
-
-class RasterError(ConfigurationError):
-    """A duration is not an exact multiple of the raster it must land on."""
-
-
-class UnknownFieldError(ConfigurationError):
-    """``with_()`` or ``override()`` was given a field the target does not declare."""
-
-
-class HardwareLimitError(SeqCraftError):
-    """A gradient exceeds an amplitude or slew limit, per axis or in vector norm."""
-
-
-class CompileError(SeqCraftError):
     """
-    A logic-block tree cannot be expressed as legal pulseq blocks.
+    A parameter is missing, out of range, or inconsistent with another parameter.
 
-    Raised for the conditions the compiler cannot resolve by scheduling: two RF or ADC events
-    overlapping in time, a negative absolute start, or a block boundary falling inside a
-    gradient that an ADC is sampling.  Amplitude and slew violations are reported through a
-    :class:`~seqcraft.report.Report` instead, because there are usually several and
-    seeing them all at once is more useful than stopping at the first.
+    Two packages subclass it, each keeping its subclass beside the code that raises it:
+    :class:`seqcraft.design.timing.RasterError` and
+    :class:`seqcraft.scanner.opts.UnknownFieldError`.
     """
-
-
-class DefinitionConflict(SeqCraftError):
-    """Two sources claimed the same ``.seq`` definition key with different values."""
 
 
 class MissingExtraError(SeqCraftError):

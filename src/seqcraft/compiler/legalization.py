@@ -44,7 +44,8 @@ import pypulseq as pp
 from ..design import events as ev
 from ..design import units
 from ..design.timing import EPS, TICKS_PER_SECOND, to_ticks
-from ..errors import HardwareLimitError, format_error
+from ..errors import format_error
+from .errors import HardwareLimitError
 from .model import PlacedEvent, in_block_delay
 
 if TYPE_CHECKING:
