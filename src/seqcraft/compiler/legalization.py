@@ -45,7 +45,6 @@ from ..design import events as ev
 from ..design import units
 from ..design.timing import EPS, TICKS_PER_SECOND, to_ticks
 from ..errors import HardwareLimitError, format_error
-from ..report import Issue
 from .model import PlacedEvent, in_block_delay
 
 if TYPE_CHECKING:
@@ -139,7 +138,7 @@ def axis_gradient(
     a: float,
     b: float,
     opts: Opts,
-    issues: list[Issue],
+    notes: dict[str, list[str]],
     block_index: int,
 ) -> SimpleNamespace | None:
     """
@@ -164,15 +163,8 @@ def axis_gradient(
             return ev.derive(p.event, delay=in_block_delay(p, a, opts))
 
     if len(pieces) > 1:
-        issues.append(
-            Issue(
-                'grad_merge',
-                f'block {block_index}',
-                f'{len(pieces)} gradients overlap on axis {axis} over '
-                f'{a * 1e6:.1f}..{b * 1e6:.1f} us and were summed: '
-                + ', '.join(sorted({p.where for p in pieces})),
-                'warning',
-            )
+        notes.setdefault('merge', []).append(
+            '+'.join(sorted({p.where for p in pieces})) + f' (axis {axis})'
         )
 
     rel_ps, amps = superpose(pieces, a, b)
@@ -208,9 +200,9 @@ def axis_gradient(
     centre = _as_arbitrary(rel_ps, amps, raster_ps)
     if centre is not None:
         waveform, first, last = centre
-        # Limits are measured on the compiled block by limit_issues, which reports rather than
-        # raises; letting make_arbitrary_grad raise here would turn a reportable violation into a
-        # failed compile, and would do it before the waveform is complete.
+        # Limits are measured on the finished block by check_limits.  Letting make_arbitrary_grad
+        # raise here would report the violation before the waveform is complete, on a piece rather
+        # than on the sum -- which is the one place the truth is visible.
         return pp.make_arbitrary_grad(
             channel=axis,
             waveform=waveform,
@@ -222,7 +214,7 @@ def axis_gradient(
             system=opts,
         )
 
-    return _resampled(axis, rel_ps, amps, opts, issues, block_index, pieces)
+    return _resampled(axis, rel_ps, amps, opts, notes, block_index, pieces, a)
 
 
 def _resampled(
@@ -230,9 +222,10 @@ def _resampled(
     rel_ps: np.ndarray,
     amps: np.ndarray,
     opts: Opts,
-    issues: list[Issue],
+    notes: dict[str, list[str]],
     block_index: int,
     pieces: Sequence[PlacedEvent],
+    at: float,
 ) -> SimpleNamespace:
     """
     Force knots onto the gradient raster, and say by how much the waveform moved.
@@ -254,17 +247,9 @@ def _resampled(
     before = np.interp(union, rel_ps / TICKS_PER_SECOND, amps)
     after = np.interp(union, grid_ps / TICKS_PER_SECOND, grid_amps)
     error = float(np.max(np.abs(before - after)))
-    issues.append(
-        Issue(
-            'grad_resample',
-            f'block {block_index}',
-            f'axis {axis}: a trapezoid summed with a raster-centre waveform bends both on and '
-            f'off the gradient raster, which no pulseq gradient event can hold; resampled onto '
-            f'the raster, moving the waveform by at most '
-            f'{error / float(opts.max_grad) * 100:.2f} % of max_grad. From '
-            + ', '.join(sorted({p.where for p in pieces})),
-            'warning',
-        )
+    notes.setdefault('resample', []).append(
+        f'{"+".join(sorted({p.where for p in pieces}))} (axis {axis}) at {at * 1e3:.3f} ms, '
+        f'by at most {error / float(opts.max_grad) * 100:.2f} % of max_grad'
     )
     grad = pp.make_extended_trapezoid(
         channel=axis,
@@ -284,7 +269,7 @@ def check_limits(
     opts: Opts,
     block_index: int,
     origin: str,
-    issues: list[Issue],
+    notes: dict[str, list[str]],
     *,
     start: float = 0.0,
 ) -> None:
@@ -310,8 +295,8 @@ def check_limits(
         Where this block is, for the message: its index, the tag paths that fed it, and its
         absolute start time.  The time is what a caller can act on -- a block index means
         nothing until the sequence is written.
-    issues
-        Appended to with the vector-norm findings, which are informational.
+    notes
+        Appended to under ``'norm'`` with the vector-norm findings, which are informational.
 
     Raises
     ------
@@ -326,15 +311,9 @@ def check_limits(
             units.convert, from_unit=pulseq_unit, to_unit=unit, gamma=gamma
         )
         if kind.endswith('_norm'):
-            issues.append(
-                Issue(
-                    f'{kind}_limit',
-                    f'block {block_index}',
-                    f'{kind.replace("_", " ")} on {where} reaches {to_display(achieved):.1f} '
-                    f'{unit}, limit {to_display(limit):.1f} {unit} '
-                    f'({achieved / limit * 100:.0f}%); from {origin}',
-                    'warning',
-                )
+            notes.setdefault('norm', []).append(
+                f'{origin} ({kind.replace("_norm", "")} {achieved / limit * 100:.0f}% at '
+                f'{start * 1e3:.3f} ms)'
             )
             continue
         what = 'gradient' if kind == 'grad' else 'slew'

@@ -99,10 +99,9 @@ def stable_summary(compiled: CompiledSequence) -> dict[str, Any]:
             counts[str(label.type)] += 1
             _update_hash(content, label)
 
-    compile_issues = collections.Counter(f'{issue.severity}:{issue.kind}' for issue in compiled.report.issues)
-    checked_issues = collections.Counter(
-        f'{issue.severity}:{issue.kind}' for issue in compiled.check().issues
-    )
+    # No issue counts here any more.  What the compile *found* is now either an exception, in
+    # which case there is no output to summarise, or a SeqCraftWarning, which is a property of the
+    # run rather than of the emitted sequence -- so it is counted under `observed` instead.
     return {
         'n_blocks': compiled.n_blocks,
         'duration_ticks': to_ticks(compiled.duration_s),
@@ -110,8 +109,6 @@ def stable_summary(compiled: CompiledSequence) -> dict[str, Any]:
         'emitted_content_sha256': content.hexdigest(),
         'origins_sha256': _sha256(compiled.origins),
         'event_counts': dict(sorted(counts.items())),
-        'compile_issue_counts': dict(sorted(compile_issues.items())),
-        'checked_issue_counts': dict(sorted(checked_issues.items())),
         'moments': {
             # The compiler's own compiled-side integrator, imported rather than reimplemented:
             # the digest has to stay identical across the refactor, so the arithmetic must be

@@ -12,6 +12,8 @@ the defect from PLAN_COMPILER_V2.md and is removed by the work item that fixes i
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pypulseq as pp
 import pytest
@@ -171,23 +173,27 @@ def test_arbitrary_merged_with_a_trapezoid_is_reported_not_silent(opts) -> None:
     # spiral's own slew that would reach 129 % of the limit and raise before anything is emitted.
     trap = pp.make_trapezoid('x', area=20.0, duration=300e-6, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(0.0, trap)
-    out = sc.compile(tree, opts)
 
-    reported = out.report.of_kind('grad_resample')
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        out = sc.compile(tree, opts)
+    reported = [
+        str(w.message) for w in caught
+        if issubclass(w.category, sc.SeqCraftWarning) and 'resampled' in str(w.message)
+    ]
     assert reported, 'a resample that moves the waveform must never be silent'
-    assert 'axis x' in reported[0].message
+    assert 'axis x' in reported[0]
 
     # The reported bound must actually bound the measured deviation.
-    claimed = float(reported[0].message.split('at most ')[1].split(' %')[0]) / 100.0
+    claimed = float(reported[0].split('at most ')[1].split(' %')[0]) / 100.0
     worst = max(
         v['max_abs_error'] for v in compare(tree, out).values()
     ) / float(opts.max_grad)
     assert worst <= claimed + 1e-9, f'measured {worst:.4%} exceeds reported bound {claimed:.4%}'
     assert worst < 0.05, f'resample moved the waveform by {worst:.2%} of max_grad'
-
     # Area is what a resample preserves, so it is not evidence of fidelity -- but losing it would
-    # mean something worse than a resample happened.
-    assert not out.report.of_kind('moment')
+    # have raised CompilerContractError from the m0 invariant, so the compile returning is that
+    # assertion.
 
 
 def test_arbitrary_gradient_split_by_a_barrier(opts) -> None:
@@ -445,7 +451,9 @@ def test_a_long_arbitrary_readout_survives_compilation(opts) -> None:
     """
     gx, gy = _spiral_pair(opts)
     tree = sc.LogicBlock('t').add(0.0, gx, gy)
-    out = sc.compile(tree, opts)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        out = sc.compile(tree, opts)
 
     floor = _roundtrip_floor(gx, opts)
     report = compare(tree, out, atol=10.0 * max(floor, 1e-9), rtol=0.0)
@@ -454,7 +462,9 @@ def test_a_long_arbitrary_readout_survives_compilation(opts) -> None:
             f'axis {ax}: {r["max_abs_error"]:.4g} Hz/m exceeds 10x pypulseq\'s own '
             f'{floor:.4g} Hz/m round-trip floor -- seqcraft moved the waveform'
         )
-    assert not out.report.of_kind('grad_resample'), 'a lone readout must never be resampled'
+    assert not [w for w in caught if 'resampled' in str(w.message)], (
+        'a lone readout must never be resampled'
+    )
 
 
 def test_every_rotation_of_an_arbitrary_readout_is_faithful(opts) -> None:

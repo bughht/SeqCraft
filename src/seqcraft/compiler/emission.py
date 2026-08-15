@@ -47,7 +47,6 @@ if TYPE_CHECKING:
     from pypulseq.opts import Opts
 
     from ..design.timing import Raster
-    from ..report import Issue
 
 __all__ = ['common_path', 'emit_blocks', 'required_duration']
 
@@ -122,7 +121,7 @@ def emit_blocks(  # noqa: C901, PLR0912
     targets: Mapping[int, float],
     opts: Opts,
     raster: Raster,
-    issues: list[Issue],
+    notes: dict[str, list[str]],
 ) -> list[tuple[str, ...]]:
     """
     Add one pulseq block per interval of `edges` to `seq`, and return each block's origin path.
@@ -139,8 +138,10 @@ def emit_blocks(  # noqa: C901, PLR0912
         The placed events, and the label assignment times chosen for them.
     opts, raster
         The scanner, and the block-duration raster.
-    issues
-        Appended to: same-axis merges, resamplings and vector-norm findings made while emitting.
+    notes
+        ``category -> entries``, appended to: same-axis merges, resamplings and vector-norm
+        findings made while emitting.  Aggregated into one warning per category at the end of
+        the compile.
 
     Raises
     ------
@@ -230,7 +231,7 @@ def emit_blocks(  # noqa: C901, PLR0912
                         ],
                     )
                     raise CompileError(msg)
-            grad = axis_gradient(axis, here, a, b, opts, issues, index)
+            grad = axis_gradient(axis, here, a, b, opts, notes, index)
             if grad is not None:
                 block.append(grad)
                 paths.extend(p.path for p in here)
@@ -260,7 +261,7 @@ def emit_blocks(  # noqa: C901, PLR0912
             continue
 
         origin = ', '.join(sorted({'.'.join(p) for p in ready.source_paths if p})) or '?'
-        check_limits(ready.events, opts, index, origin, issues, start=a)
+        check_limits(ready.events, opts, index, origin, notes, start=a)
         # pypulseq takes a block's duration as the max over its events, so an interval shorter
         # than its contents silently produces an off-raster block instead of an error.  Catch it
         # here, where the boundary that caused it can still be named.

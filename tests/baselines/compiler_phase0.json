@@ -36,12 +36,6 @@
       },
       "stable": {
         "block_duration_sha256": "8ebc72d69fb1d5133b0eede337ea82500566ab9677a327d6ad313aa40c5cce6c",
-        "checked_issue_counts": {
-          "warning:slew_norm_limit": 64
-        },
-        "compile_issue_counts": {
-          "warning:slew_norm_limit": 64
-        },
         "duration_ticks": 1270980000000,
         "event_counts": {
           "adc": 64,
@@ -95,12 +89,6 @@
       },
       "stable": {
         "block_duration_sha256": "10ad3c848ba9770068112d7f0636c970cc8d2ee34174e370af80b51dc8a883e8",
-        "checked_issue_counts": {
-          "warning:slew_norm_limit": 8
-        },
-        "compile_issue_counts": {
-          "warning:slew_norm_limit": 8
-        },
         "duration_ticks": 31522710000000,
         "event_counts": {
           "adc": 64,

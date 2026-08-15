@@ -15,6 +15,8 @@ unique, which is the normal case for a real acquisition.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pypulseq as pp
 import pytest
@@ -209,15 +211,21 @@ def test_a_label_with_no_following_adc_is_emitted_and_reported(opts) -> None:
         .add(3000e-6, pp.make_label('LIN', 'SET', 99))
         .add(3000e-6, pp.make_delay(1e-3))
     )
-    out = sc.compile(tree, opts)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        out = sc.compile(tree, opts)
     emitted = [
         lab.value
         for i in sorted(out.seq.block_events)
         for lab in (getattr(out.seq.get_block(i), 'label', None) or [])
     ]
     assert 99 in emitted, 'a trailing label must still reach the file'
-    orphan = [i for i in out.report.of_kind('label') if 'no ADC after it' in i.message]
-    assert orphan, f'expected a warning about the orphan label, got {out.report}'
+    orphan = [
+        str(w.message) for w in caught
+        if issubclass(w.category, sc.SeqCraftWarning) and 'no ADC after them' in str(w.message)
+    ]
+    assert orphan, f'expected a warning about the orphan label, got {[str(w.message) for w in caught]}'
+    assert 'LIN' in orphan[0], 'the warning must name the label'
 
 
 def test_a_multislice_address_survives_a_blocking_gradient(opts) -> None:
@@ -236,7 +244,10 @@ def test_a_multislice_address_survives_a_blocking_gradient(opts) -> None:
         tree.add(t0 + 1000e-6, pp.make_label('LIN', 'SET', i + 1))
         tree.add(t0 + 1500e-6, _blocking_gradient(opts))
         tree.add(t0 + 3000e-6, adc)
-    out = sc.compile(tree, opts)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        out = sc.compile(tree, opts)
     assert _lin(out) == [1, 2, 3, 4], 'each readout gets the label written before it'
-    assert out.check().ok, out.check()
-    assert not out.report.of_kind('label'), 'no orphan warnings for a well-formed sequence'
+    assert not [w for w in caught if 'no ADC after them' in str(w.message)], (
+        'no orphan warnings for a well-formed sequence'
+    )

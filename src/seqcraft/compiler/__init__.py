@@ -74,21 +74,22 @@ Examples
 
 from __future__ import annotations
 
+import collections
+import warnings
 from typing import TYPE_CHECKING, Any
 
 import pypulseq as pp
 
 from ..design.events import GRADIENT_KINDS
 from ..design.timing import EPS, Raster
-from ..errors import CompileError, format_error
-from ..report import Issue, Report
+from ..errors import CompileError, SeqCraftWarning, format_error
 from ..result import CompiledSequence
 from .boundaries import (
     check_exclusive,
     find_boundaries,
     label_order_conflict,
     label_targets,
-    orphan_label_issues,
+    orphan_label_notes,
 )
 from .definitions import merge_definitions
 from .emission import emit_blocks
@@ -118,6 +119,52 @@ __all__ = ['compile_sequence']
 #: Deliberately not a parameter.  It was ``check(allow_timing=...)`` and no caller ever passed it,
 #: which makes it a knob whose only effect is to let a real timing failure through.
 _ALLOWED_TIMING = ('TotalDuration',)
+
+#: What each note category is called in its warning.  Every category the compiler can produce
+#: appears here, so adding one without naming it is a visible omission rather than a bare key.
+_WARNING_TEXT = {
+    'merge': 'same-axis gradient merges',
+    'norm': 'blocks over the vector-norm limit (legal on real amplifiers)',
+    'orphan_label': 'labels with no ADC after them',
+    'resample': 'gradients resampled onto the raster',
+    'snap': 'reservations snapped to the block raster',
+}
+
+#: How many distinct sites a warning names before it starts counting.
+_WARNING_SITES = 5
+
+
+def _warn(notes: dict[str, list[str]]) -> None:
+    """
+    Emit one aggregated :class:`~seqcraft.errors.SeqCraftWarning` per non-empty category.
+
+    **Aggregation is not cosmetic.**  Python's default filter shows a warning once per unique
+    ``(message, category, module, lineno)``, so one ``warn`` per merge would print the first and
+    silently swallow the other eleven -- strictly worse than the count a report gave.  One warning
+    per category carries the whole picture in one line.
+
+    Identical entries are counted rather than repeated, because the interesting number is how many
+    *sites* merged, not how many TRs the loop ran for: a 64-line acquisition merges the same two
+    modules 64 times and that is one fact, not sixty-four.
+
+    ``stacklevel=2`` so the warning points at the caller's ``sc.compile(...)`` rather than at the
+    compiler's guts.
+    """
+    for category, entries in sorted(notes.items()):
+        if not entries:
+            continue
+        counted = collections.Counter(entries)
+        shown = ', '.join(
+            site if n == 1 else f'{site} x{n}'
+            for site, n in counted.most_common(_WARNING_SITES)
+        )
+        extra = len(counted) - _WARNING_SITES
+        warnings.warn(
+            f'{len(entries)} {_WARNING_TEXT.get(category, category)}: {shown}'
+            + (f' (+{extra} more site(s))' if extra > 0 else ''),
+            SeqCraftWarning,
+            stacklevel=3,        # _warn -> compile_sequence -> the caller
+        )
 
 
 def compile_sequence(  # noqa: C901, PLR0912, PLR0915
@@ -247,12 +294,14 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
         )
         raise CompileError(msg)
 
-    issues: list[Issue] = [
-        Issue('raster', p.where, f'start {p.res_start * 1e6:.4f} us snapped to '
-              f'{raster.nearest(p.res_start) * 1e6:.1f} us', 'warning')
+    notes: dict[str, list[str]] = {}
+    snapped = [
+        f'{p.where} {p.res_start * 1e6:.4f} -> {raster.nearest(p.res_start) * 1e6:.1f} us'
         for p in placed
         if p.kind in ('rf', 'adc') and not raster.holds(p.res_start)
     ]
+    if snapped:
+        notes['snap'] = snapped
 
     max_block = raster.dt * 2**24
     edges = find_boundaries(placed, total, raster, max_block)
@@ -263,10 +312,12 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     conflict = label_order_conflict(placed, targets)
     if conflict is not None:
         raise conflict
-    issues.extend(orphan_label_issues(placed, targets))
+    orphans = orphan_label_notes(placed, targets)
+    if orphans:
+        notes['orphan_label'] = orphans
 
     seq = pp.Sequence(system=opts)
-    origins = emit_blocks(seq, edges, placed, targets, opts, raster, issues)
+    origins = emit_blocks(seq, edges, placed, targets, opts, raster, notes)
 
     # The two questions only a built sequence can answer: does any one event exceed the
     # interpreter's sample limit, and do two imaging ADCs write the same k-space address.
@@ -300,7 +351,6 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     out = CompiledSequence(
         seq=seq,
         opts=opts,
-        report=Report(tuple(issues), subject=defs['Name']),
         origins=tuple(origins),
         definitions=defs,
         tree_duration_s=total,
@@ -316,4 +366,6 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
         moments=lambda order: _sequence_moments(seq, order),
         label_states=lambda: seq.evaluate_labels(evolution='adc'),
     )
+    # Last, so that nothing warns about a compile that then failed.
+    _warn(notes)
     return out

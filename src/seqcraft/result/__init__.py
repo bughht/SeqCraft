@@ -70,9 +70,6 @@ class CompiledSequence:
     opts
         The scanner it was compiled against, kept so the post-compile checks and the provenance
         sidecar cannot disagree with what the boundaries were chosen for.
-    report
-        Everything the compile found: every same-axis merge, every limit violation, every
-        snapped time.
     origins
         One tag path per compiled block, so a block index traces back to the module that
         produced it.
@@ -80,14 +77,18 @@ class CompiledSequence:
         The ``[DEFINITIONS]`` that will be written, already merged and collision-checked.  Plain
         pulseq keys: there is no geometry object here, because everything the file says about the
         scan came in as this mapping.
+    report
+        Empty, and last, and defaulted.  Everything it used to carry either raises or is a
+        :class:`~seqcraft.errors.SeqCraftWarning` now, so the compiler no longer constructs one --
+        which is what lets ``compiler/`` stop importing ``report`` at all.
     """
 
     seq: Any
     opts: Opts
-    report: Report
     origins: tuple[tuple[str, ...], ...]
     definitions: dict[str, Any]
     tree_duration_s: float
+    report: Report = field(default_factory=Report)
     _checked: Report | None = field(default=None, repr=False)
 
     # ------------------------------------------------------------------------ properties

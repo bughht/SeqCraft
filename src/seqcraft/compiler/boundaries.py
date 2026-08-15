@@ -23,8 +23,8 @@ Gradients constrain nothing: they follow wherever the boundaries land, split and
 
 Labels are the other half of this module, and they are here rather than in emission because the
 answer they need -- which readout does this label address? -- has to be independent of where the
-boundaries turn out to be.  :func:`_label_targets` assigns each label to its target ADC's time, and
-:func:`_label_order_conflict` rejects the groups pulseq cannot express.
+boundaries turn out to be.  :func:`label_targets` assigns each label to its target ADC's time, and
+:func:`label_order_conflict` rejects the groups pulseq cannot express.
 """
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ from ..design.events import GRADIENT_KINDS, LABEL_KINDS
 from ..design.logic import BARRIER
 from ..design.timing import EPS
 from ..errors import CompileError, format_error
-from ..report import Issue
 from .model import EXCLUSIVE_KINDS, INDIVISIBLE_KINDS, PlacedEvent
 
 if TYPE_CHECKING:
@@ -50,7 +49,7 @@ __all__ = [
     'find_boundaries',
     'label_order_conflict',
     'label_targets',
-    'orphan_label_issues',
+    'orphan_label_notes',
 ]
 
 
@@ -223,29 +222,22 @@ def label_order_conflict(
 
 
 
-def orphan_label_issues(
+def orphan_label_notes(
     placed: Sequence[PlacedEvent],
     targets: dict[int, float],
-) -> list[Issue]:
+) -> list[str]:
     """
-    Report labels with no ADC after them.
+    Return one note per label with no ADC after it.
 
     Such a label addresses nothing, so it is placed by containment -- and containment can put it
     in the *last* ADC's block, changing that readout's address.  Rather than guess, say so: the
     fix is always to move the label before the readout it was meant for.
     """
-    out: list[Issue] = []
-    for i, p in enumerate(placed):
-        if p.kind in LABEL_KINDS and i not in targets:
-            out.append(Issue(
-                'label',
-                p.where,
-                f'label {getattr(p.event, "label", "?")} at {p.res_start * 1e6:.1f} us has no '
-                f'ADC after it, so it addresses no readout; it may land in the preceding '
-                f'readout\'s block and change that address',
-                'warning',
-            ))
-    return out
+    return [
+        f'{getattr(p.event, "label", "?")} at {p.res_start * 1e3:.3f} ms from {p.where}'
+        for i, p in enumerate(placed)
+        if p.kind in LABEL_KINDS and i not in targets
+    ]
 
 
 def _covering(placed: Sequence[PlacedEvent], t: float) -> PlacedEvent | None:

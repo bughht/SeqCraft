@@ -8,6 +8,8 @@ where the tests go.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pypulseq as pp
 import pytest
@@ -38,9 +40,20 @@ def compiled_m0(out, axis: str) -> float:
     return float(np.trapezoid(amps, np.asarray(times, dtype=float) * 1e-12))
 
 
-def merges(out: sc.CompiledSequence) -> int:
-    """How many same-axis merges the compile reported."""
-    return len(out.report.of_kind('grad_merge'))
+def warned(kind: str, make) -> list[str]:
+    """
+    Return the messages of every :class:`sc.SeqCraftWarning` matching `kind` that `make` emitted.
+
+    A recorder rather than ``pytest.warns``, because half the claims here are *negative* -- no
+    merge warning for three axes at once -- and ``pytest.warns`` has no clean negative form.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        make()
+    return [
+        str(w.message) for w in caught
+        if issubclass(w.category, sc.SeqCraftWarning) and kind in str(w.message)
+    ]
 
 
 #: A same-axis pair that sums to a legal waveform.  ``rise_time`` is stated because
@@ -60,28 +73,55 @@ def test_different_axes_at_once_is_one_block_and_silent(opts) -> None:
     together do earn the vector-norm warning, and that is a different claim with its own test.
     """
     gentle = {'area': 100.0, 'duration': 2e-3, 'rise_time': 200e-6, 'system': opts}
-    out = compile_one(
-        opts,
-        (0.0, pp.make_trapezoid('x', **gentle)),
-        (0.0, pp.make_trapezoid('y', **gentle)),
-        (0.0, pp.make_trapezoid('z', **gentle)),
-    )
-    assert out.n_blocks == 1
-    assert merges(out) == 0
-    assert out.report.issues == (), f'expected silence, got {out.report}'
-    assert out.check().ok
+
+    def build():
+        return compile_one(
+            opts,
+            (0.0, pp.make_trapezoid('x', **gentle)),
+            (0.0, pp.make_trapezoid('y', **gentle)),
+            (0.0, pp.make_trapezoid('z', **gentle)),
+        )
+
+    assert build().n_blocks == 1
+    assert warned('', build) == [], 'expected silence about three axes at one instant'
 
 
 def test_same_axis_at_once_merges_with_one_warning(opts) -> None:
     """Summing is what was meant, so it happens -- but it is the one waveform change, so it says so."""
-    out = compile_one(
-        opts,
-        (0.0, pp.make_trapezoid('x', area=100.0, system=opts, **GENTLE)),
-        (0.0, pp.make_trapezoid('x', area=200.0, system=opts, **GENTLE)),
-    )
+    def build():
+        return compile_one(
+            opts,
+            (0.0, pp.make_trapezoid('x', area=100.0, system=opts, **GENTLE)),
+            (0.0, pp.make_trapezoid('x', area=200.0, system=opts, **GENTLE)),
+        )
+
+    out = build()
     assert out.n_blocks == 1
-    assert merges(out) == 1
     assert compiled_m0(out, 'x') == pytest.approx(300.0, abs=1e-6)
+    with pytest.warns(sc.SeqCraftWarning, match='same-axis gradient merges'):
+        build()
+
+
+def test_a_run_of_merges_is_one_warning_not_one_each(opts) -> None:
+    """
+    Python's default filter shows a warning once per source line.
+
+    One ``warn`` per merge would print the first and swallow the other eleven, which is strictly
+    worse than the count the report used to give.  So the compile emits exactly one, carrying the
+    count and the sites.
+    """
+    tree = sc.LogicBlock('tr')
+    for i in range(8):
+        tree.add(
+            i * 5e-3,
+            sc.LogicBlock('rewinder').add(
+                0.0, pp.make_trapezoid('x', area=100.0, system=opts, **GENTLE)),
+            sc.LogicBlock('prephaser').add(
+                0.0, pp.make_trapezoid('x', area=-50.0, system=opts, **GENTLE)),
+        )
+    messages = warned('merge', lambda: sc.compile(tree, opts))
+    assert len(messages) == 1, f'expected exactly one warning, got {messages}'
+    assert messages[0].startswith('8 same-axis gradient merges'), messages[0]
 
 
 def test_the_merge_warning_names_both_sources(opts) -> None:
@@ -90,8 +130,8 @@ def test_the_merge_warning_names_both_sources(opts) -> None:
         0.0, pp.make_trapezoid('x', area=100.0, system=opts, **GENTLE))
     b = sc.LogicBlock('prephaser').add(
         0.0, pp.make_trapezoid('x', area=-50.0, system=opts, **GENTLE))
-    out = sc.compile(sc.LogicBlock('tr').add(0.0, a).add(0.0, b), opts)
-    message = out.report.of_kind('grad_merge')[0].message
+    tree = sc.LogicBlock('tr').add(0.0, a).add(0.0, b)
+    message = warned('merge', lambda: sc.compile(tree, opts))[0]
     assert 'tr.rewinder' in message
     assert 'tr.prephaser' in message
 
@@ -139,16 +179,19 @@ def test_vector_norm_is_a_warning_not_an_error(opts) -> None:
     Two axes ramping together reach sqrt(2) times the per-axis slew, which real amplifiers allow.
 
     Making this an error would reject the ordinary three-way winder overlap that the whole design
-    exists to support.
+    exists to support -- so it is measured, said out loud, and not fatal.
     """
     strong = {'amplitude': 0.9 * opts.max_grad, 'duration': 1e-3, 'system': opts}
-    out = compile_one(
-        opts,
-        (0.0, pp.make_trapezoid('x', **strong)),
-        (0.0, pp.make_trapezoid('y', **strong)),
-    )
-    assert any(i.kind.endswith('_norm_limit') for i in out.report.warnings)
-    assert out.check().ok
+
+    def build():
+        return compile_one(
+            opts,
+            (0.0, pp.make_trapezoid('x', **strong)),
+            (0.0, pp.make_trapezoid('y', **strong)),
+        )
+
+    build()                      # a per-axis violation would have raised
+    assert warned('vector-norm', build), 'the norm exceedance must not be silent either'
 
 
 # ---------------------------------------------------------------------------- RF/ADC exclusivity
