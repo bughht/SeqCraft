@@ -44,8 +44,9 @@ LogicBlock(readout, 1 node, 0.24 ms)
 
 from __future__ import annotations
 
+import numbers
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Union, overload
 
 import pypulseq as pp
 
@@ -128,7 +129,13 @@ class LogicBlock:
         self.nodes: list[Node] = []
 
     # ------------------------------------------------------------------------ create
-    def add(self, start: float, *items: Item) -> Self:
+    @overload
+    def add(self, start: float, *items: Item) -> Self: ...
+
+    @overload
+    def add(self, start: list[Any] | tuple[Any, ...], /) -> Self: ...
+
+    def add(self, start: float | list[Any] | tuple[Any, ...], *items: Item) -> Self:
         """
         Add events or nested blocks, starting `start` seconds into this block.
 
@@ -136,13 +143,26 @@ class LogicBlock:
         a readout gradient and its ADC -- so `add` takes any number, the way pulseq's
         ``add_block`` does.
 
+        There is a second call shape for when the schedule is *computed* rather than written
+        out: pass a list (or tuple) of ``[time, *items]`` rows and the whole table goes in
+        one call.  ``nodes`` ends up exactly as the chained form would leave it -- rows are
+        appended in the order given, items within a row keep theirs, and nothing is sorted
+        by time.  It is input-side sugar over an unchanged data model.
+
         Parameters
         ----------
         start
             Seconds from this block's start.  May be zero; negative is allowed here and
             rejected by the compiler if it makes an absolute time negative.
+
+            A ``list`` or ``tuple`` selects the batch form instead, and is then the only
+            argument.  It is either a table of rows or -- when its first element is a
+            number -- a single bare row, so the outer brackets are optional for one line.
+            ``list``/``tuple`` and not "any iterable" on purpose: a :class:`LogicBlock` is
+            itself iterable and must never be mistaken for a table.
         *items
-            Pulseq events and/or nested :class:`LogicBlock` objects.
+            Pulseq events and/or nested :class:`LogicBlock` objects.  Not accepted
+            alongside a table.
 
         Returns
         -------
@@ -152,9 +172,11 @@ class LogicBlock:
         Raises
         ------
         ConfigurationError
-            If an item is neither a pulseq event nor a :class:`LogicBlock`.  Catching this
-            here rather than at compile time means the traceback points at the line that
-            added the wrong thing.
+            If an item is neither a pulseq event nor a :class:`LogicBlock`, if the first
+            argument is an item rather than a time, or if a batch row is not
+            ``[time, *items]``.  Catching this here rather than at compile time means the
+            traceback points at the line that added the wrong thing, and a batch message
+            names the row so a thirty-row table points at the offending one.
 
         Examples
         --------
@@ -163,24 +185,97 @@ class LogicBlock:
         >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=170, slew_unit='T/m/s')
         >>> rf = pp.make_block_pulse(flip_angle=1.57, duration=500e-6, system=o,
         ...                          use='excitation')
+        >>> gz = pp.make_trapezoid(channel='z', area=100.0, system=o)
         >>> lb = LogicBlock('exc').add(0.0, rf)
         >>> len(lb)
         1
+
+        The batch form, and the chained form it is equal to:
+
+        >>> table = LogicBlock('exc').add([[0.0, rf, gz],
+        ...                                [1.2e-3, gz]])
+        >>> chained = LogicBlock('exc').add(0.0, rf, gz).add(1.2e-3, gz)
+        >>> [(round(n.start * 1e6), n.item.type) for n in table]
+        [(0, 'rf'), (0, 'trap'), (1200, 'trap')]
+        >>> [n.start for n in table] == [n.start for n in chained]
+        True
+
+        A single row needs no outer brackets:
+
+        >>> len(LogicBlock('exc').add([0.0, rf, gz]))
+        2
         """
-        for item in items:
-            if not isinstance(item, LogicBlock) and getattr(item, 'type', None) is None:
+        plan: list[tuple[int | None, Any, tuple[Item, ...]]]
+
+        if isinstance(start, (list, tuple)):
+            if items:
                 msg = format_error(
-                    f'LogicBlock.add() takes pulseq events or LogicBlocks, got '
-                    f'{type(item).__name__}.',
-                    {'tag': self.tag or '(untagged)', 'start_us': start * 1e6},
+                    f'LogicBlock.add() in its batch form takes exactly one argument, got '
+                    f'{1 + len(items)}.',
+                    {'tag': self.tag or '(untagged)', 'extra_args': len(items)},
                     [
-                        'a pulseq event comes from pp.make_trapezoid / make_sinc_pulse / '
-                        'make_adc / make_label / make_delay',
-                        'to nest, pass another LogicBlock -- usually module.build()',
+                        'put every row inside the table: add([[t0, rf, gz], [t1, gzr]])',
+                        'or add one instant at a time: add(t0, rf, gz)',
                     ],
                 )
                 raise ConfigurationError(msg)
-            self.nodes.append(Node(float(start), item))
+            # A first element that is a number means this is one bare row, not a table.
+            rows = [start] if start and isinstance(start[0], numbers.Real) else start
+            plan = []
+            for index, row in enumerate(rows):
+                if not isinstance(row, (list, tuple)) or not row:
+                    msg = format_error(
+                        f'LogicBlock.add() batch row {index} is not a [time, *items] list, '
+                        f'got {type(row).__name__}.',
+                        {'tag': self.tag or '(untagged)', 'row': index},
+                        [
+                            'every row is [start_seconds, event, ...] -- e.g. [1.2e-3, rf, gz]',
+                            'a row may hold a time and nothing else, but never nothing at all',
+                        ],
+                    )
+                    raise ConfigurationError(msg)
+                if not isinstance(row[0], numbers.Real):
+                    msg = format_error(
+                        f'LogicBlock.add() batch row {index} starts with '
+                        f'{type(row[0]).__name__}, not a time.',
+                        {'tag': self.tag or '(untagged)', 'row': index},
+                        ['a row is [start_seconds, *items], so the time comes first'],
+                    )
+                    raise ConfigurationError(msg)
+                plan.append((index, row[0], tuple(row[1:])))
+        else:
+            if isinstance(start, LogicBlock) or getattr(start, 'type', None) is not None:
+                msg = format_error(
+                    f'LogicBlock.add() takes the start time first, got '
+                    f'{type(start).__name__}.',
+                    {'tag': self.tag or '(untagged)'},
+                    [
+                        'add(0.0, item) places it at the start of this block',
+                        'a computed schedule is a table of rows: add([[t0, rf], [t1, gz]])',
+                    ],
+                )
+                raise ConfigurationError(msg)
+            plan = [(None, start, items)]
+
+        for row_index, when, row_items in plan:
+            for item in row_items:
+                if not isinstance(item, LogicBlock) and getattr(item, 'type', None) is None:
+                    fields: dict[str, object] = {'tag': self.tag or '(untagged)'}
+                    if row_index is not None:
+                        fields['row'] = row_index
+                    fields['start_us'] = when * 1e6
+                    msg = format_error(
+                        f'LogicBlock.add() takes pulseq events or LogicBlocks, got '
+                        f'{type(item).__name__}.',
+                        fields,
+                        [
+                            'a pulseq event comes from pp.make_trapezoid / make_sinc_pulse / '
+                            'make_adc / make_label / make_delay',
+                            'to nest, pass another LogicBlock -- usually module.build()',
+                        ],
+                    )
+                    raise ConfigurationError(msg)
+                self.nodes.append(Node(float(when), item))
         return self
 
     def copy(self) -> LogicBlock:
