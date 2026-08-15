@@ -7,6 +7,7 @@ difficulty lives in the compiler, which has its own directory.
 
 from __future__ import annotations
 
+import numpy as np
 import pypulseq as pp
 import pytest
 
@@ -39,6 +40,120 @@ def test_add_rejects_a_non_event() -> None:
     """A wrong type fails where it was added, not deep inside the compiler."""
     with pytest.raises(sc.ConfigurationError, match='takes pulseq events or LogicBlocks'):
         sc.LogicBlock('t').add(0.0, 42)
+
+
+def test_add_rejects_an_item_as_the_first_argument(opts) -> None:
+    """The time is not optional: ``add(block)`` used to be a silent no-op."""
+    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    inner = sc.LogicBlock('inner').add(0.0, g)
+    with pytest.raises(sc.ConfigurationError, match='takes the start time first, got LogicBlock'):
+        sc.LogicBlock('t').add(inner)
+    with pytest.raises(sc.ConfigurationError, match='takes the start time first'):
+        sc.LogicBlock('t').add(g)
+
+
+# ---------------------------------------------------------------------------------- batch add
+def test_batch_add_equals_the_chained_form(opts) -> None:
+    """Sugar and nothing else: `nodes` ends up exactly as chaining would leave it."""
+    rf, gz, _ = pp.make_sinc_pulse(
+        flip_angle=0.26, duration=1e-3, slice_thickness=5e-3, system=opts,
+        return_gz=True, use='excitation',
+    )
+    gzr = pp.make_trapezoid('z', area=-50.0, system=opts)
+    table = sc.LogicBlock('exc').add([[0.0, rf, gz], [1.2e-3, gzr]])
+    chained = sc.LogicBlock('exc').add(0.0, rf, gz).add(1.2e-3, gzr)
+    assert [n.start for n in table] == [n.start for n in chained]
+    assert [n.item for n in table] == [n.item for n in chained]
+
+
+def test_batch_add_returns_self(opts) -> None:
+    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    lb = sc.LogicBlock('t')
+    assert lb.add([[0.0, g]]) is lb
+
+
+def test_batch_rows_are_never_sorted_by_time(opts) -> None:
+    """Insertion order is the guarantee `flatten` and the compiler's tie-breaking rely on."""
+    early = pp.make_trapezoid('x', area=10.0, system=opts)
+    late = pp.make_trapezoid('y', area=20.0, system=opts)
+    block = sc.LogicBlock('t').add([[2e-3, late], [0.0, early]])
+    assert [n.start for n in block] == [2e-3, 0.0]
+    assert [event for _, event, _ in flatten(block)] == [late, early]
+
+
+def test_a_batch_row_takes_nested_blocks(opts) -> None:
+    """A row holds the same items `add` already accepts, blocks included."""
+    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    inner = sc.LogicBlock('inner').add(0.0, g)
+    outer = sc.LogicBlock('outer').add([[0.0, inner], [2e-3, inner, g]])
+    assert [n.item for n in outer] == [inner, inner, g]
+    assert outer.duration == pytest.approx(2e-3 + inner.duration)
+
+
+def test_a_bare_row_needs_no_outer_brackets(opts) -> None:
+    """A first element that is a number means one row, not a table of rows."""
+    rf, gz, _ = pp.make_sinc_pulse(
+        flip_angle=0.26, duration=1e-3, slice_thickness=5e-3, system=opts,
+        return_gz=True, use='excitation',
+    )
+    lb = sc.LogicBlock('exc').add([0.0, rf, gz])
+    assert [n.start for n in lb] == [0.0, 0.0]
+    assert [n.item.type for n in lb] == ['rf', 'trap']
+
+
+def test_batch_accepts_tuples(opts) -> None:
+    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    assert [n.start for n in sc.LogicBlock('t').add(((0.0, g), (1e-3, g)))] == [0.0, 1e-3]
+    assert [n.start for n in sc.LogicBlock('t').add((1e-3, g))] == [1e-3]
+
+
+def test_batch_accepts_numpy_times_and_stores_plain_floats(opts) -> None:
+    """numpy scalars are ``numbers.Real``, so a computed schedule needs no casting."""
+    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    times = np.linspace(0.0, 3e-3, 4)
+    lb = sc.LogicBlock('t').add([[t, g] for t in times])
+    assert [n.start for n in lb] == pytest.approx(list(times))
+    assert all(type(n.start) is float for n in lb)
+
+
+def test_an_empty_row_and_an_empty_table_are_no_ops(opts) -> None:
+    """``[t0]`` with no items is legal, exactly as ``add(t0)`` is."""
+    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    assert len(sc.LogicBlock('t').add([[0.0], [1e-3, g], [2e-3]])) == 1
+    assert len(sc.LogicBlock('t').add([])) == 0
+
+
+def test_batch_rejects_a_mixed_call(opts) -> None:
+    """The batch form takes exactly one argument; the two shapes never combine."""
+    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    with pytest.raises(sc.ConfigurationError, match='takes exactly one argument, got 2'):
+        sc.LogicBlock('t').add([[0.0, g]], g)
+
+
+def test_batch_rejects_a_row_that_is_not_a_list(opts) -> None:
+    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    with pytest.raises(sc.ConfigurationError, match='row 1 is not a'):
+        sc.LogicBlock('t').add([[0.0, g], g])
+    with pytest.raises(sc.ConfigurationError, match='row 1 is not a'):
+        sc.LogicBlock('t').add([[0.0, g], []])
+
+
+def test_batch_rejects_a_non_numeric_time(opts) -> None:
+    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    with pytest.raises(sc.ConfigurationError, match='row 1 starts with str, not a time'):
+        sc.LogicBlock('t').add([[0.0, g], ['later', g]])
+    with pytest.raises(sc.ConfigurationError, match='row 0 starts with LogicBlock'):
+        sc.LogicBlock('t').add([[sc.LogicBlock('inner'), g]])
+
+
+def test_a_batch_error_names_the_offending_row(opts) -> None:
+    """The reason the row index is carried: a thirty-row table must point at the line."""
+    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    rows: list[list[object]] = [[i * 1e-3, g] for i in range(30)]
+    rows[17] = [17e-3, 42]
+    with pytest.raises(sc.ConfigurationError, match=r'row\s+:\s+17') as excinfo:
+        sc.LogicBlock('t').add(rows)
+    assert 'takes pulseq events or LogicBlocks, got int' in str(excinfo.value)
 
 
 # --------------------------------------------------------------------------------------- read

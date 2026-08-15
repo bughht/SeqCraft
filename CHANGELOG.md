@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased — a batch form for `LogicBlock.add`
+
+### Added — `add` accepts a table of `[time, *items]` rows
+
+The chained form is fine when the times are literals. It is the wrong shape when the schedule is
+*computed*, because the rows already exist as data and the only way to hand them over was a loop
+that called `add` once per row. The batch form makes the schedule a first-class value:
+
+```python
+seq.add([[t0, rf, gz],
+         [t1, gzr]])                       # == seq.add(t0, rf, gz).add(t1, gzr)
+
+plan = [[t, *events] for t, events in schedule]
+seq.add(plan)                              # a computed score, in one call
+```
+
+- **Dispatch is on `list`/`tuple`, and nothing else.** Not "any iterable": a `LogicBlock` is itself
+  iterable and must never be mistaken for a table of rows.
+- **A bare row needs no outer brackets.** `add([t0, rf, gz])` — a first element that is a number
+  means one row. `numbers.Real`, so numpy scalars are times without a cast, and `nodes` still stores
+  plain floats.
+- **Rows are never sorted by time.** They are appended in the order given and items within a row keep
+  theirs, because insertion order is what `flatten` and the compiler's tie-breaking rely on.
+- **`[t0]` with no items is a legal no-op**, consistent with `add(t0)`. So is an empty table.
+- **Errors name the row**, so a thirty-row table points at the offending line rather than at `add`.
+  A mixed call (`add([[...]], rf)`) is rejected: the batch form takes exactly one argument.
+- `@overload` stubs declare both call shapes, so a type checker sees them and rejects the mixed call
+  statically as well.
+
+`nodes` keeps exactly the same shape, so the compiler, `flatten`, `display` and `testing` are
+untouched. This is input-side sugar over an unchanged data model, and `LogicBlock` still has two
+attributes and one method.
+
+### Fixed — `add(block)` was a silent no-op
+
+Forgetting the start time — `seq.add(exc.build())` rather than `seq.add(0.0, exc.build())` — fell
+into the `*items` loop with nothing to iterate and returned `self` having added nothing, so the
+event went missing with no error anywhere. An item as the first argument is now a
+`ConfigurationError` naming the type and the two spellings that work.
+
 ## Unreleased — `LogicBlock` is the interface
 
 `Module` was described as one of seqcraft's three concepts and lived in `core` beside the compiler,

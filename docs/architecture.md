@@ -38,6 +38,11 @@ module say what it means without also knowing where the block boundaries will la
 CRUD is Python's, not seqcraft's: create with `add`, read with `lb.nodes[i]` or iteration, update with
 `lb.nodes[i].start += dt`, delete with `del lb.nodes[i]`. One method of our own.
 
+`add` has two call shapes and one meaning. `add(t, *items)` is one instant; `add(rows)` takes a table
+of `[time, *items]` rows, for when the schedule is computed rather than written out. Rows are appended
+in the order given and never sorted by time — insertion order is what `flatten` and the compiler's
+tie-breaking rely on. `nodes` ends up identical either way, so nothing downstream knows which was used.
+
 ### What it deliberately lacks
 
 | Absent | Where the job went |
