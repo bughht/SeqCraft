@@ -5,8 +5,8 @@ Five layers in one dependency order::
 
     errors  ->  design  ->  compiler  ->  analysis  ->  display
 
-with :mod:`seqcraft.scanner` independent of all five, and :mod:`seqcraft.testing` and the
-top-level facade allowed to reach anywhere.
+with :mod:`seqcraft.scanner` independent of all five, and the top-level facade allowed to reach
+anywhere.
 
 Both rules here were true at some point and quietly stopped being true, which is the whole
 argument for testing them.  ``core`` once held the compiler *and* the geometry *and* the unit
@@ -39,7 +39,7 @@ ROOT = Path(seqcraft.__file__).parent
 ORDER = ['errors', 'design', 'compiler', 'analysis', 'display']
 
 #: Nothing under ``compiler/`` may import these *at runtime*: they are beside the compile path.
-OFF_THE_COMPILE_PATH = ['design.module', 'analysis', 'display', 'testing', 'scanner']
+OFF_THE_COMPILE_PATH = ['design.module', 'analysis', 'display', 'scanner']
 
 
 def _imports(path: Path, *, runtime_only: bool = False) -> set[str]:
@@ -170,7 +170,7 @@ def test_display_is_the_only_module_that_imports_matplotlib() -> None:
     assert not offenders, f'matplotlib is imported outside display.py: {offenders}'
 
 
-def test_importing_seqcraft_does_not_import_the_plotting_or_testing_modules() -> None:
+def test_importing_seqcraft_does_not_import_the_plotting_module() -> None:
     """
     The invariant the lazy ``_LAZY`` table exists to protect, checked in a fresh interpreter.
 
@@ -180,16 +180,19 @@ def test_importing_seqcraft_does_not_import_the_plotting_or_testing_modules() ->
     seqcraft at all -- pulls it in regardless of what this package does.
 
     What *is* seqcraft's to promise is that nothing here reaches for it, which the previous test
-    checks per file, and that the two heavyweight modules stay behind ``__getattr__``.  A
+    checks per file, and that the one heavyweight module stays behind ``__getattr__``.  A
     top-level ``from .display import plot_block`` added for convenience is exactly what would
     break this, and it would break it silently.
+
+    ``seqcraft.testing`` used to be checked here too.  It is not deferred any more, it is gone --
+    the two assertions it held are in ``tests/conftest.py``.
     """
     import subprocess
     import sys
 
     probe = (
         'import sys, seqcraft\n'
-        'eager = sorted(m for m in ("seqcraft.display", "seqcraft.testing") if m in sys.modules)\n'
+        'eager = sorted(m for m in ("seqcraft.display",) if m in sys.modules)\n'
         'print(eager)\n'
         'sys.exit(1 if eager else 0)\n'
     )

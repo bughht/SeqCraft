@@ -43,7 +43,7 @@ first = venc.pre()
 seq.add(t0, first)
 seq.add(t0 + first.duration + refoc_duration, venc.post())
 
-sc.testing.assert_output(venc.pre, opts)     # the block-level contract, for any callable
+sc.compile(sc.LogicBlock('probe').add(0.0, venc.pre()), opts)   # it must compile on its own
 ```
 
 Note the placement: `first.duration`, read off the block that was just built, rather than a
@@ -112,7 +112,6 @@ def _scaled(grad, factor):
 ```python
 venc = VelocityEncode(opts=opts, venc_cm_s=50)
 seq.add(t0, venc(sign=-1.0))
-sc.testing.assert_all(venc, sign=-1.0)
 ```
 
 ### The two failures the base catches
@@ -335,26 +334,39 @@ three parameters to change. That difference is most of what a module is for.
 
 ## What to assert in your tests
 
-Two tiers, and neither asks what your component inherits.
-
-**`sc.testing.assert_output(make, opts)`** takes any callable returning a block, so it fits a
-function, one method of several, or a module call. It covers a well-formed block, deterministic
-output, gradients on the raster, per-axis limits, and a clean compile on its own:
+**Compile it on its own.** That is one line, and it is most of the suite seqcraft used to ship:
 
 ```python
-sc.testing.assert_output(lambda: spoiler(opts, twists=4), opts)
-sc.testing.assert_output(venc.pre, opts)
-sc.testing.assert_output(venc.post, opts)
+def test_the_lobe_compiles_alone(opts):
+    sc.compile(sc.LogicBlock('probe').add(0.0, venc.pre()), opts)
 ```
 
-**`sc.testing.assert_all(module, **build_args)`** adds the check that only means something for the
-`Module` convention — that the call mutates neither the module nor the events on it — then runs
-`assert_output` on the result. It reads `module(**args)` and `module.opts` off the object and never
-checks its type, so a class shaped that way passes whether or not it inherits `Module`.
+A component that only works when something else happens to be beside it is not reusable, and the
+compile checks everything a separate assertion could and more. An off-raster gradient start raises
+`CompileError` naming the nearest raster point above and below; a lobe over the amplifier's slew
+limit raises `HardwareLimitError` with the derating that would clear it — measured on the *summed*
+waveform, which is the only place two individually legal gradients on one axis can be seen to reach
+189 % of the limit together.
+
+**Then check purity, because the compiler structurally cannot.** It validates a tree. It never sees
+the second call. A component that designs once and assembles per TR is called once per TR, so
+self-mutation, accumulation and nondeterminism are invisible to `sc.compile` by construction — each
+individual call hands it a tree that is perfectly legal. The reference implementation's
+`self.gx.amplitude = -self.gx.amplitude` inside a readout loop compiles cleanly every TR and
+produces a plausible but wrong image.
 
 ```python
-sc.testing.assert_all(venc, sign=-1.0)
+def test_my_module_is_pure():
+    pe = PhaseEncode(opts=opts, fov_m=0.22, matrix=64, duration_s=600e-6)
+    before = {k: sc.events.content_hash(v)
+              for k, v in vars(pe).items() if hasattr(v, 'type')}
+    pe(line=17); pe(line=17)
+    assert {k: sc.events.content_hash(v)
+            for k, v in vars(pe).items() if hasattr(v, 'type')} == before
 ```
+
+Twice, not once. The canonical bug is an *involution*: comparing only before the first call and
+after the second finds the module exactly where it started and reports nothing.
 
 There is no duration check, and deliberately so: a module declares no duration, so there is no
 second number that can disagree with the first, and nothing left to assert.

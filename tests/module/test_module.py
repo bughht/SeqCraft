@@ -238,7 +238,7 @@ def test_the_compiler_does_not_import_the_module_contract() -> None:
     assert not offenders, f'seqcraft.compiler reaches seqcraft.design.module from: {offenders}'
 
 
-def test_a_plain_function_is_still_a_component(opts) -> None:
+def test_a_plain_function_is_still_a_component(opts, component_checks) -> None:
     """``Module`` is the standard shape for a reusable component, not a gate."""
 
     def crusher(opts, *, area_per_m=400.0) -> sc.LogicBlock:
@@ -251,8 +251,8 @@ def test_a_plain_function_is_still_a_component(opts) -> None:
     assert len(seq.block_events) == 1
     assert [path for _, _, path in sc.flatten(tree)] == [('tr', 'crush')]
 
-    # And the shipped assertion takes it, because it asks for a callable and nothing else.
-    sc.testing.assert_output(lambda: crusher(opts), opts)
+    # And the suite's own assertion takes it, because it asks for a callable and nothing else.
+    component_checks.output(lambda: crusher(opts), opts)
 
 
 # ------------------------------------------------------------------- the assertions we ship
@@ -260,23 +260,27 @@ def test_a_plain_function_is_still_a_component(opts) -> None:
     pytest.param(lambda opts: Blip(opts=opts), id='Blip'),
     pytest.param(lambda opts: Pair(opts=opts), id='Pair'),
 ])
-def test_assert_all_passes_on_the_reference_modules(make, opts) -> None:
+def test_assert_all_passes_on_the_reference_modules(make, opts, component_checks) -> None:
     """
-    ``sc.testing`` is pointed at this repository's own modules, not only at other people's.
+    The two checks the compiler structurally cannot make, pointed at the only ``Module``
+    subclasses this repository has.
 
-    An assertion suite nobody in the project runs is a suite whose failures nobody has seen.  These
-    two are the only ``Module`` subclasses seqcraft has -- ``Blip`` designs once and scales per
-    call, ``Pair`` nests one inside another -- so between them they cover the purity check (the
-    events on ``self`` must survive two calls unchanged) and the whole-tree checks that a nesting
-    component would otherwise pass vacuously.
+    They are in ``conftest.py`` rather than in the package: everything else they used to assert --
+    the raster, the limits, that a block is well formed -- the compiler now checks, with a better
+    message and on the *summed* waveform.  What is left is what ``sc.compile`` cannot see, because
+    it validates a tree and never sees the second call.
+
+    ``Blip`` designs once and scales per call, ``Pair`` nests one inside another -- so between
+    them they cover the purity check (the events on ``self`` must survive two calls unchanged)
+    and the whole-tree checks that a nesting component would otherwise pass vacuously.
 
     ``line=17`` rather than the default: ``Blip(line=0)`` is a zero-amplitude gradient, which
     passes a limit check for the wrong reason.
     """
-    sc.testing.assert_all(make(opts), line=17)
+    component_checks.all(make(opts), line=17)
 
 
-def test_assert_pure_catches_the_mutation_it_exists_for(opts) -> None:
+def test_assert_pure_catches_the_mutation_it_exists_for(opts, component_checks) -> None:
     """
     The canonical bug, and proof the check can fail.
 
@@ -298,4 +302,4 @@ def test_assert_pure_catches_the_mutation_it_exists_for(opts) -> None:
 
     module = Flipper(opts=opts)
     with pytest.raises(AssertionError, match='mutated'):
-        sc.testing.assert_pure(module, module)
+        component_checks.pure(module, module)

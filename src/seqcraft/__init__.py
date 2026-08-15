@@ -70,8 +70,7 @@ Named for what each layer answers, in the order a sequence passes through them::
     analysis     measuring a tree          sample, moments, kspace, pns
     display      looking at a tree         plot_block
 
-and :mod:`~seqcraft.errors` beside them, which everything may raise, plus
-:mod:`~seqcraft.testing` for components of your own.
+and :mod:`~seqcraft.errors` beside them, which everything may raise.
 
 The dependencies run one way -- ``errors -> design -> compiler -> analysis -> display`` -- and two
 tests assert it, so nothing on the compile path can come to import the display helpers or the
@@ -125,12 +124,11 @@ compile_sequence = compile
 #:
 #: ``display`` is the only module allowed to import matplotlib, and ``import seqcraft`` must not
 #: pull matplotlib in -- so ``sc.plot_block(block, opts)`` works without paying that cost until it
-#: is used.  ``testing`` is deferred for tidiness: the contract assertions are documented as
-#: available downstream, but they are not part of the sequence-building API.
+#: is used.  It is the only entry left: ``testing`` used to be here too, and the assertions it
+#: held are in the test suite now.
 _LAZY: dict[str, tuple[str, str | None]] = {
     'display': ('.display', None),
     'plot_block': ('.display', 'plot_block'),
-    'testing': ('.testing', None),
 }
 
 
@@ -186,7 +184,6 @@ __all__ = [
     'sample',
     'scanner',
     'span',
-    'testing',
     'timing',
     'units',
 ]
