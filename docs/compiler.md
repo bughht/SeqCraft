@@ -184,7 +184,7 @@ permit. A three-axis spoiler routinely reports 139 % of the amplitude limit on t
 **The vector-norm warning is not a proxy for peripheral nerve stimulation.** They answer different
 questions — one about an instant, the other about a history, and a waveform can sit inside every
 instantaneous limit while accumulating a PNS response several times over threshold. Measure it with
-`CompiledSequence.pns()` against a real hardware model rather than reading it off the warnings.
+`sc.pns(tree, opts, hw)` against a real hardware model rather than reading it off the warnings.
 
 **And `synthetic_hardware()` cannot give you a verdict.** It exists so CI always has *a* model and it
 is deliberately conservative. On the DTI example it reports **2.44** while the site's own Cima.X
@@ -257,36 +257,77 @@ ADC after it, since its placement is then reported as a warning rather than defi
 that must sit alone, or a gradient you want split at a known instant so a later reconstruction step
 can find the seam. It occupies no time, so it changes block structure and never timing.
 
-`RawEvents` wraps arbitrary pypulseq events as a module, and `CompiledSequence.seq` is the pypulseq
-object itself. Nothing forces you to wait for a module to be written.
+The returned `pypulseq.Sequence` is the object itself, not a wrapper around one — modify it,
+`plot()` it, `write()` it. Nothing forces you to wait for a module to be written.
 
 ---
 
-## Reading a compile report
+## What a compile tells you
+
+**It raises, or it warns. There is no report.**
 
 ```python
-out = sc.compile(tree, opts)          # opts is a pypulseq.Opts, not a seqcraft wrapper
-report = out.check()
-report.raise_if_failed()
-
-for issue in report.issues:
-    print(issue.severity, issue.kind, issue.where, issue.message)
+seq = sc.compile(tree, opts)          # opts is a pypulseq.Opts, not a seqcraft wrapper
 ```
 
-| `kind` | Severity | Means |
-|---|---|---|
-| `grad_merge` | warning | Two or more gradients shared an axis in one block and were summed. Names every source. The sum itself is exact. |
-| `grad_resample` | warning | A trapezoid was summed with a raster-centre waveform. Their sum bends both on and off the gradient raster and no pulseq gradient event can hold that, so it was resampled. The message carries a **bound on how far the waveform moved**, measured rather than estimated. This is the only place the compiler is knowingly inexact. |
-| `grad_limit`, `slew_limit` | **error** | The merged waveform exceeds the amplifier per axis. |
-| `grad_norm_limit`, `slew_norm_limit` | warning | The vector norm across axes exceeds the per-axis limit. Normal for multi-axis gradients. |
-| `raster` | warning | An RF or ADC start had to move onto the block raster. |
-| `duration`, `moment` | **error** | An invariant failed. This is a compiler bug; please report it with the tree. |
-| `timing` | error, or info | From `Sequence.check_timing`. The `TotalDuration` float-equality artifact is downgraded to info, because pypulseq emits it even on pulseq's own approved files. |
-| `label` | **error** | Two imaging ADCs write the same k-space address. |
+That line either returns a legal `pypulseq.Sequence` or throws. There is nothing to check
+afterwards, which is the point: an object carrying findings is an object whose findings can go
+unread, and the failure mode is a `.seq` the console refuses an hour later.
 
-`out.origin(block_index)` gives the tag path that produced a block. Where several components share a
-block it reports their **common ancestor** rather than picking one arbitrarily, which is the honest
-answer to "where did this come from".
+### It raises
+
+| Exception | When |
+|---|---|
+| `CompileError` | Two RF or ADC events overlap; an absolute start is negative; a gradient starts off the gradient raster; no boundary can be cut in the gap between two exclusive events; a boundary would fall inside a gradient an ADC is sampling; two imaging ADCs write the same k-space address; `check_timing` fails on anything but the `TotalDuration` float-equality artifact, which pypulseq emits even on pulseq's own approved files. |
+| `HardwareLimitError` | The **summed** waveform exceeds `max_grad` or `max_slew` on an axis, or one ADC or RF event carries more samples than the interpreter accepts. |
+| `DefinitionConflict` | `name=` and `definitions['Name']` disagree. |
+| `CompilerContractError` | An IR contract broke, or the compiled sequence does not match the tree in duration, m0, m1 or a label address. A compiler bug; report it with the tree. |
+
+Every message names the event, its **provenance path** and the time, and offers two concrete
+remedies with the numbers filled in:
+
+```text
+HardwareLimitError: slew 189% of the 150 T/m/s limit on axis x.
+  from   :  tr.readout.prephaser
+  at     :  2.340 ms (block 117)
+  reached:  283.5 T/m/s
+  fix
+    lengthen the lobe, or lower the readout bandwidth
+    or design that part against sc.opts.derate(opts, slew=0.52)
+```
+
+Where several components share a block the path is their **common ancestor** rather than one
+picked arbitrarily, which is the honest answer to "where did this come from".
+
+### It warns
+
+Things it **did** rather than refused, as `SeqCraftWarning` — a `UserWarning` subclass, through the
+standard `warnings` machinery.
+
+| Category | Means |
+|---|---|
+| `merge` | Two or more gradients shared an axis in one block and were summed. Names every source. The sum itself is exact. |
+| `resample` | A trapezoid was summed with a raster-centre waveform. Their sum bends both on and off the gradient raster and no pulseq gradient event can hold that, so it was resampled. The message carries a **bound on how far the waveform moved**, measured rather than estimated. This is the only place the compiler is knowingly inexact. |
+| `snap` | An RF or ADC reservation had to move onto the block raster. |
+| `orphan_label` | A label has no ADC after it, so its placement is undefined. |
+| `norm` | The vector norm across axes exceeds the per-axis limit. Normal for multi-axis gradients, and legal on real amplifiers — which is why it is not an error. |
+
+**One aggregated warning per category, at the end of the compile**, naming the count and the
+sites. That is not cosmetic: Python's default filter shows a warning once per unique
+`(message, category, module, lineno)`, so one `warn` per merge would print the first and silently
+swallow the other eleven — strictly worse than a count.
+
+```python
+import warnings
+
+with warnings.catch_warnings():
+    warnings.simplefilter('error', sc.SeqCraftWarning)      # treat any as fatal
+    seq = sc.compile(tree, opts)
+
+# or, in a test
+with pytest.warns(sc.SeqCraftWarning, match='merge'):
+    sc.compile(tree, opts)
+```
 
 ---
 

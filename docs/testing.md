@@ -64,6 +64,26 @@ classes, which made compiler coverage depend on whatever the library happened to
 the library impossible to replace without also rewriting the compiler's tests. `tests/conftest.py`
 supplies one `pp.Opts`, and the sequences are assembled from `pp.make_*` calls.
 
+`tests/conftest.py` also holds the component assertions the package used to ship as
+`seqcraft.testing`: `assert_deterministic`, `assert_pure`, `assert_output` and `assert_all`,
+reachable through the `component_checks` fixture. They are here rather than in `src/` because a
+package that ships assertions has to keep them working, and these are forty lines that only this
+repository's own module tests use. Everything else that module asserted -- the raster, the limits,
+that a block is well formed -- the compiler now checks, with a better message and on the *summed*
+waveform.
+
+## What a compiler test asserts
+
+`sc.compile` raises on every legality failure and returns a bare `pypulseq.Sequence` otherwise, so
+**a test that compiles at all has asserted most of what it used to assert explicitly**: limits on
+the summed waveform, per-event sample counts, duplicate k-space addresses, pypulseq's own timing
+audit, and the four against-the-tree invariants. What is left to write down is the number the test
+is actually about.
+
+Warnings are the other half. Use `pytest.warns(sc.SeqCraftWarning, match=...)` for the positive
+form; for the negative -- *no* warning of a kind -- use `warnings.catch_warnings(record=True)` and
+assert on the captured list, because `pytest.warns` has no clean negative.
+
 ## Updating dependencies
 
 Dependency updates are intentional maintenance changes. Update one related group in

@@ -41,10 +41,13 @@ for i, line in enumerate(range(-32, 32)):
     seq.add(t0 + t_winders, gz_reph, pe, gx_pre)        # z, y, x — one block, no coordination
     seq.add(t0 + 8e-3 - time_to_echo, gx, adc)          # this *is* the definition of TE
 
-out = sc.compile(seq, opts)
-out.check().raise_if_failed()
-out.write('gre.seq')
+seq_out = sc.compile(seq, opts)          # a pypulseq.Sequence, or an exception
+seq_out.write('gre.seq')                 # pypulseq's own writer; the definitions are already set
 ```
+
+`sc.compile` returns a `pypulseq.Sequence` and nothing else. If the tree cannot become a legal
+sequence it **raises**; if the compiler had to change a waveform to make it legal it **warns**.
+There is no report object to inspect and no result wrapper to unpack.
 
 The three winders land in one pulseq block because they coincide, and the compiler says nothing —
 they are on different axes, so there is nothing wrong. That is the point of the design: you say
@@ -95,10 +98,14 @@ an arbitrary waveform that must not be resampled, and long trains where float er
 one case where pulseq's two gradient representations genuinely cannot both be held is *reported*
 with a bound, rather than being inexact quietly.
 
-**Files that cannot lie about themselves.** `write()` takes no geometry, matrix or FOV arguments —
-everything written comes from what was compiled. A JSON sidecar records the versions, the git commit
-and dirty flag, the definitions, the file's sha256, and every field of the `Opts` it was built
-against.
+**Failures you cannot forget to check.** Every legality problem raises, with the offending
+number, the tag path it came from, the time it happens, and two concrete remedies with the values
+already computed. There is no report object, because an object carrying findings is an object whose
+findings can go unread — and the way that fails is a `.seq` the console refuses an hour later.
+
+> **No provenance sidecar, for now.** An earlier version wrote a JSON file beside the `.seq`
+> recording versions, git state and every `Opts` field. It went with the result wrapper and nothing
+> has replaced it yet, so a written `.seq` does not currently say what produced it.
 
 ---
 
@@ -108,7 +115,7 @@ For one sequence, once, write raw pypulseq — it is a fine tool for that.
 
 seqcraft pays for itself when you have a *family* of sequences, a loop over more than two axes,
 gradients that must overlap without you hand-splitting blocks, or files that have to be reproducible
-six months later. And when it does not fit, `CompiledSequence.seq` is the pypulseq object itself.
+six months later. And when it does not fit, what you are holding is already the pypulseq object.
 
 ---
 
@@ -155,9 +162,10 @@ class VelocityEncode:                                    # so is a class of any 
 Two outputs named for what they are, rather than one `build(part=...)` — seqcraft has no opinion
 either way.
 
-`sc.testing.assert_output(component.pre, opts)` gives either of them the block-level contract
-checks — a well-formed block, deterministic output, gradients on the raster, per-axis limits, and a
-clean compile on its own.
+`sc.compile(sc.LogicBlock('probe').add(0.0, component.pre()), opts)` is the whole block-level
+contract check: a component that only works when something else happens to be beside it is not
+reusable, and the compile checks the raster, the limits and block legality with a better message
+than a separate assertion could give.
 
 `sc.Module` is the standard shape for a component you intend to *reuse*: parameters in, one
 `LogicBlock` out. Four members, and no more — `opts`, `tag`, `__call__`, and the abstract `build`
@@ -176,8 +184,16 @@ class PhaseEncode(sc.Module):
         return sc.LogicBlock().add(0.0, sc.events.derive(self.g, ...))
 ```
 
-`sc.testing.assert_all(pe, line=17)` then runs the whole suite against it. See
-[`docs/writing_a_module.md`](docs/writing_a_module.md).
+The one check the compiler structurally **cannot** make is that a call leaves the module alone.
+It validates a tree; it never sees the second call, so `self.g.amplitude = -self.g.amplitude` in a
+per-call method compiles cleanly every TR and produces a plausible but wrong image. Three lines,
+and [`docs/writing_a_module.md`](docs/writing_a_module.md) explains why:
+
+```python
+before = {k: sc.events.content_hash(v) for k, v in vars(pe).items() if hasattr(v, 'type')}
+pe(line=17); pe(line=17)
+assert {k: sc.events.content_hash(v) for k, v in vars(pe).items() if hasattr(v, 'type')} == before
+```
 
 ---
 

@@ -1,5 +1,159 @@
 # Changelog
 
+## Unreleased — compile returns a `pypulseq.Sequence`
+
+`sc.compile(tree, opts)` returns a `pypulseq.Sequence`. Not a wrapper, not a pair of a sequence and
+a report. **If the tree cannot become a legal sequence it raises; if the compiler had to change a
+waveform to make it legal it warns.** There is nothing to unpack and nothing to remember to check.
+
+```python
+seq = sc.compile(tree, opts)          # was: out = sc.compile(...); out.check().raise_if_failed()
+seq.write('gre.seq')                  # was: out.write(path) -> WriteResult
+```
+
+The old shape had one failure mode and it was the same one `pSeq_Base.get_report()` had, one
+indirection later: findings on an object nobody has to look at. `get_report()` printed and returned
+`None`; `CompiledSequence.check()` returned a `Report` that a caller could simply not call. Either
+way the sequence is written, and the console refuses it an hour later.
+
+**Nothing about the emitted bytes changed.** `build_gre` and `build_se` write `.seq` files with the
+same sha256 as before the revision began, and every structural field of
+`tests/baselines/compiler_phase0.json` — block durations, event content, provenance digest, m0, m1,
+m2 — matches. That is checked at three gates and asserted on every test run.
+
+### Every legality failure raises
+
+| Was | Is |
+|---|---|
+| a `grad_limit` / `slew_limit` `Issue` | `HardwareLimitError`, on the **summed** waveform |
+| an `adc_samples_limit` / `rf_samples_limit` `Issue` | `HardwareLimitError` |
+| a `label` `Issue` (duplicate k-space address) | `CompileError` |
+| a `timing` `Issue` from `check_timing` | `CompileError`, less the `TotalDuration` artifact |
+| a `duration` / `moment` / `address` `Issue` | `CompilerContractError` |
+
+Each message names the offending number, the tag path it came from, the time it happens, and two
+remedies with the values already computed:
+
+```text
+HardwareLimitError: slew 189% of the 150 T/m/s limit on axis x.
+  from   :  tr.readout.prephaser
+  at     :  2.340 ms (block 117)
+  reached:  283.5 T/m/s
+  fix
+    lengthen the lobe, or lower the readout bandwidth
+    or design that part against sc.opts.derate(opts, slew=0.52)
+```
+
+`HardwareLimitError` was declared and exported but raised nowhere; it is live now.
+
+### Everything else is a `SeqCraftWarning`
+
+A `UserWarning` subclass, through the standard `warnings` machinery — so `simplefilter('error')`
+makes any of them fatal and `pytest.warns` asserts on them. Five categories: `merge`, `resample`,
+`snap`, `orphan_label`, `norm`.
+
+**One aggregated warning per category**, naming the count and the sites. Python's default filter
+shows a warning once per unique `(message, category, module, lineno)`, so one `warn` per merge
+would print the first and silently swallow the other eleven — strictly worse than the count the
+report gave. A 64-line acquisition merging the same two modules 64 times is one fact, not
+sixty-four, so identical entries are counted rather than repeated.
+
+```text
+SeqCraftWarning: 8 same-axis gradient merges: tr.rewinder+tr.prephaser (axis x) x8
+```
+
+### New — `seqcraft.analysis`
+
+Four functions, one entry shape: **give it a tree, get numbers back.** You should not have to know
+that PNS prediction needs a compiled sequence while a moment does not, so none of them asks for
+one; `kspace` and `pns` compile internally.
+
+| | |
+|---|---|
+| `sc.sample(tree, opts)` | the tree on a uniform grid. **Lossy**, on purpose — for looking |
+| `sc.moments(tree, order=0)` | m0/m1/m2 per axis, from exact knots. Takes no `Opts` and does no compile |
+| `sc.kspace(tree, opts)` | the trajectory at true ADC sample times, with a named return |
+| `sc.pns(tree, opts, hw)` | the full SAFE curve — `ok`, `peak`, `norm`, `components`, `t` |
+
+`moments` is not built on `sample`, and the reason is subtler than "sampling is lossy". Linear
+interpolation errs *antisymmetrically* about each knot, so the halves cancel under the integral and
+m0 comes back bit-identical while the peak is visibly rounded off. A `moments` built on `sample`
+would look correct on every test anyone would think to write.
+`tests/analysis/test_analysis.py` asserts both halves of that.
+
+`sc.pns` now returns the whole curve rather than a verdict: when `ok` is `False`, `peak` says how
+much but `norm` and `t` say *where*, which is what you need to fix it.
+
+### Removed
+
+| Removed | Use instead |
+|---|---|
+| `sc.CompiledSequence`, `sc.WriteResult` | the returned `pypulseq.Sequence` |
+| `out.seq` | the returned object itself |
+| `out.n_blocks` | `len(seq.block_events)` |
+| `out.duration_s` | `seq.duration()[0]` |
+| `out.definitions` | `seq.definitions` — set by the compile, not by `write()` |
+| `out.check()`, `out.report`, `sc.Issue`, `sc.Report`, `sc.ReportFailed` | the compile raised, or warned |
+| `out.write(path)` | `seq.write(str(path))` |
+| `out.origin(i)` | gone; provenance paths still name the source in every error message |
+| `out.moments(1)` | `sc.moments(tree, 1)` |
+| `out.kspace()` | `sc.kspace(tree, opts)` |
+| `out.pns(hw)` | `sc.pns(tree, opts, hw)` |
+| `sc.plot_sequence(out)` | `seq.plot()` — pypulseq's own, better maintained |
+| `sc.plot_trajectory(shots)` | `sc.kspace(...)` plus three lines of matplotlib |
+| `sc.testing.*` | the compiler raises; for purity see [`docs/writing_a_module.md`](docs/writing_a_module.md) |
+| `sc.provenance`, the JSON sidecar | **nothing yet** — see below |
+| `sc.UnitSanityError` | raised nowhere; it guarded `Geometry`'s ranges, and `salvage/geometry.py` has its own |
+| `seqcraft.compiler.definitions` | two sources need a collision check, not a merge algorithm |
+
+> **The provenance sidecar is a real gap.** Nothing currently records the git commit, dirty flag or
+> package versions that produced a `.seq`. It went with the result wrapper deliberately, so that
+> what replaces it starts from a blank slate rather than from code shaped around a type that no
+> longer exists.
+
+### Moved — an exception lives with the code that raises it
+
+Only what more than one package raises stays in `seqcraft.errors`. **Every one is still
+re-exported at the root**, and `tests/test_layering.py` asserts the *identity* rather than the
+presence, so `except sc.CompileError` is unchanged.
+
+| Exception | Now defined in |
+|---|---|
+| `CompileError`, `HardwareLimitError`, `DefinitionConflict` | `seqcraft.compiler.errors` |
+| `RasterError` | `seqcraft.design.timing` |
+| `UnknownFieldError` | `seqcraft.scanner.opts` |
+| `SeqCraftError`, `ConfigurationError`, `MissingExtraError`, `SeqCraftWarning` | `seqcraft.errors` |
+
+### The layers
+
+```text
+errors  ─►  design  ─►  compiler  ─►  analysis  ─►  display
+   └──────────►  scanner  (independent of all five)
+```
+
+`result/`, `report.py`, `testing.py` and `design/sampling.py` are gone. The edge the layering test
+now forbids in particular is `compiler → analysis`: the compiler must not reach for the
+measurements taken *of* what it produced. It would be an easy one to add — the self-check wants a
+moment per axis — and it would be wrong, because that moment walks the tree while the self-check
+needs the compiled side.
+
+### Also
+
+- **The synthetic PNS model says what it is.** `synthetic_hardware()` carries `is_synthetic=True`
+  and a `repr` reading `NOT a real scanner; never use it to clear a human scan`. The caveat used to
+  live in a docstring that this revision deleted, and it is the one safety note in the package.
+- **`tools/capture_compiler_baseline.py` works again.** It monkeypatched `compiler._place` and
+  `._axis_gradient`, neither of which has existed since the compiler was split into stages, so it
+  had been raising `AttributeError` rather than arbitrating anything.
+- **A real defect surfaced.** `make_arbitrary_grad` without `first=`/`last=` extrapolates from the
+  end samples, so a "lone spiral" test tree started at −2680 Hz/m — a step from zero the amplifier
+  cannot play. It compiled silently before; `check_timing` inside the compile now stops it.
+- **An off-by-one in an error message.** The event-size check indexed a 0-based `origins` list with
+  pypulseq's 1-based block id, so it named the next block along and could raise `IndexError` on the
+  last one.
+
+---
+
 ## Unreleased — four packages, and 600 fewer lines
 
 The package was one 4 700-line `core/` directory whose membership rule — *"what is required to get

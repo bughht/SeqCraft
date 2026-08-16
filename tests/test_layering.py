@@ -156,6 +156,59 @@ def test_the_compile_path_imports_nothing_beside_it() -> None:
     assert not offenders, f'the compile path reaches beside itself: {offenders}'
 
 
+def test_compile_returns_a_bare_pypulseq_sequence() -> None:
+    """
+    The central contract, asserted rather than described.
+
+    ``sc.compile`` returns a :class:`pypulseq.Sequence` and nothing else -- not a wrapper, not a
+    pair of a sequence and a report.  It lives here rather than with the compiler tests because
+    it is a claim about the *layout*: the return type is what decided that ``result/`` and
+    ``report.py`` had nothing left to hold.
+
+    ``hasattr(seq, 'report')`` is the specific regression: re-attaching findings to the returned
+    object is the obvious way to "improve" the API back into something a caller can forget to
+    check.
+    """
+    import pypulseq as pp
+
+    opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+                   rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
+    tree = seqcraft.LogicBlock('t').add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
+    seq = seqcraft.compile(tree, opts)
+
+    assert type(seq).__module__.startswith('pypulseq')
+    assert not hasattr(seq, 'report')
+    assert not hasattr(seq, 'check')
+    assert seq.definitions['Name'] == 't', 'and it is self-sufficient: the definitions are on it'
+
+
+def test_every_exception_is_reachable_from_the_package_root() -> None:
+    """
+    An exception lives with the code that raises it; the spelling never depends on the layout.
+
+    Identity, not presence: ``sc.CompileError`` must *be* the class ``compiler/`` raises, or a
+    caller's ``except sc.CompileError`` silently stops catching anything.
+    """
+    from seqcraft.compiler import errors as compiler_errors
+    from seqcraft.design import timing
+    from seqcraft.scanner import opts as scanner_opts
+
+    assert seqcraft.CompileError is compiler_errors.CompileError
+    assert seqcraft.HardwareLimitError is compiler_errors.HardwareLimitError
+    assert seqcraft.DefinitionConflict is compiler_errors.DefinitionConflict
+    assert seqcraft.RasterError is timing.RasterError
+    assert seqcraft.UnknownFieldError is scanner_opts.UnknownFieldError
+
+    catchable = (
+        seqcraft.CompileError, seqcraft.HardwareLimitError, seqcraft.DefinitionConflict,
+        seqcraft.RasterError, seqcraft.UnknownFieldError, seqcraft.ConfigurationError,
+        seqcraft.MissingExtraError,
+    )
+    assert all(issubclass(e, seqcraft.SeqCraftError) for e in catchable), (
+        'catching SeqCraftError has to catch everything, or the base class is a lie'
+    )
+
+
 def test_display_is_the_only_module_that_imports_matplotlib() -> None:
     """
     ``import seqcraft`` stays cheap, and it stays cheap by there being one place to check.

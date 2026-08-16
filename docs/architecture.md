@@ -71,9 +71,18 @@ same-axis gradients are summed with a warning; different axes are silent; limits
 *compiled* waveform because that is the only place a merge's effect is visible. Full detail in
 [`compiler.md`](compiler.md).
 
-Returns a `CompiledSequence` holding the `pypulseq.Sequence`, the compile report, and per-block
-provenance. There is **no `Sequence` class** in seqcraft — a sequence *is* a logic block, and
-compiling it produces the artifact.
+**Returns a `pypulseq.Sequence`, and nothing else.** Not a wrapper, not a pair of a sequence and
+a report. `seq.write(...)`, `seq.plot()`, `seq.block_events` and `seq.definitions` are pypulseq's
+own and are what the rest of the ecosystem already reads; the definitions you passed are set on it
+during the compile, so nothing has to survive until write time to put them there. There is **no
+`Sequence` class** in seqcraft — a sequence *is* a logic block, and compiling it produces the
+artifact.
+
+That is only tenable because **every legality failure raises**. A returned object carrying a report
+is a way of not noticing: it writes a `.seq` the console refuses an hour later, and the explanation
+is on an object nobody looked at. What the compile *did* rather than refused — summed two gradients
+on an axis, resampled one onto the raster — is a `SeqCraftWarning`, one aggregated line per
+category, so the standard `warnings` machinery decides what happens to it.
 
 Its signature is `compile(root: LogicBlock, opts: pp.Opts, ...)`, and that is the whole of what it
 knows about the world upstream of it. A test asserts that `compiler/` never imports
@@ -88,9 +97,9 @@ src/seqcraft/compiler/
 ├── boundaries.py     where the blocks are cut, and which readout each label addresses
 ├── legalization.py   superpose, represent, resample, measure limits
 ├── emission.py       ready blocks -> pypulseq.Sequence
-├── verification.py   the IR contracts, and the compile checked against the tree
-├── model.py          the IR itself, plus block-format policy and time policy
-└── definitions.py    merge_definitions
+├── verification.py   the IR contracts, the finished-sequence checks, the compile vs the tree
+├── errors.py         CompileError, HardwareLimitError, DefinitionConflict
+└── model.py          the IR itself, plus block-format policy and time policy
 ```
 
 None of the stage modules is re-exported. The public surface is `compile_sequence` and nothing
@@ -140,20 +149,22 @@ sequence needs it, with the raw-pypulseq path kept beside it so the module has t
 
 ---
 
-## The four packages
+## The layers
 
-Each is named for a question, and they are ordered by the one direction the dependencies run:
+Each is named for what it answers, and they are ordered by the one direction the dependencies run:
 
 ```text
-errors, report  ─►  design  ─►  result  ─►  compiler
-        └──────────►  scanner  (independent)      display ─► design, result
+errors  ─►  design  ─►  compiler  ─►  analysis  ─►  display
+   └──────────►  scanner  (independent of all five)
 ```
 
 `tests/test_layering.py` asserts it, per file, from the source rather than from `sys.modules` —
 so an import that only fires under `TYPE_CHECKING` still counts, and one that happens to be
-satisfied by import order does not. Two things it forbids in particular: `result/` importing
-`compiler/`, and anything under `compiler/` reaching `display`, `provenance`, `testing`,
-`module` or `scanner`.
+satisfied by import order does not. The edge it forbids in particular is `compiler → analysis`:
+the compiler must not reach for the measurements taken *of* what it produced. It would be an easy
+one to add — the self-check wants a moment per axis, and `analysis.moments` computes one — and it
+would be wrong, because that moment walks the tree while the self-check needs the compiled side. A
+self-check that shares code with the thing it checks compares a number with itself.
 
 ### `design/` — what you build
 
@@ -164,7 +175,14 @@ satisfied by import order does not. Two things it forbids in particular: `result
 | `events` | `derive()` — the one sanctioned way to copy a pypulseq event. Also `knots_of` and `pwl_moment` (the exact-gradient primitives), `waveform_of` (a curve to plot, **not** a uniform raster — a `grad` event carries its own sample times), `content_hash`, `check_limits`, and the kind vocabulary every stage classifies by. |
 | `timing` | `Raster` — the raster as an object, with `ceil / floor / nearest / count / at / holds / require`. Arithmetic in integer ticks, because `1.5e-3 / 1e-5` is `149.99999999999997` and `250 * 1e-7` is not `2.5e-5`; both errors propagate into ADC dwells and off-raster block durations. Nothing here assumes 10 µs: rasters are read from the `Opts` at each call site. |
 | `units` | One function — `convert(value, from_unit, to_unit, gamma=, f0=)` — over eleven dimensions, in both directions, the shape `pypulseq.convert` uses. Scales are exact `Fraction`s, so `4200 us` is `0.0042 s` and not `0.004200000000000001 s`. |
-| `sampling` | `sample(root, opts)` — a tree as arrays. Was private inside `display`; it is useful without drawing. |
+
+`sample` used to be a sixth module here. It is in `analysis` now, beside the other three ways of
+measuring a tree.
+
+`RasterError` lives in `timing.py`, with the only code that raises it. An exception stays with its
+raiser unless more than one package needs it; every one is re-exported as `sc.<Name>`, and
+`test_layering.py` asserts the *identity*, not just the presence, so the move is invisible to a
+caller's `except`.
 
 **There is no `Geometry` class.** `compile()` used to take `geometry=` and call `definitions()` on
 it, which is what `definitions=` already does for any source — so ~450 lines of dataclass and range
@@ -181,31 +199,57 @@ the plausibility bands, because a geometry of that shape is wanted again when th
 gets its infrastructure — a readout and a phase encoder both need FOV and matrix, and deriving the
 definitions from the same fields is what stops the file disagreeing with what it plays.
 
-### `result/` — what compile returns
+### `analysis` — measuring a tree
 
-| Module | What it is for |
-|---|---|
-| `__init__` | `CompiledSequence` and `WriteResult`. The `pypulseq.Sequence`, the report, per-block provenance, and the questions you ask afterwards: `moments`, `check`, `kspace`, `pns`, `write`. |
-| `provenance` | The JSON sidecar: versions, git commit and dirty flag, definitions, the `Opts`, sha256. Written by default; `write(sidecar=False)` suppresses it. Takes a mapping, so a component that reports its own parameters however it likes is not shut out. |
+Four functions, **one entry shape: give it a tree, get numbers back.** You should not have to know
+that PNS prediction needs a compiled sequence while a moment does not, so none of them asks for
+one; `kspace` and `pns` compile internally.
 
-`Issue` and `Report` are **not** in `result/`, though a compile returns one — five compiler stage
-modules build `Issue`s long before a `CompiledSequence` exists, so keeping them here made
-`compiler/` import `result/` for a type. They are at the root beside `errors`.
+| Function | Basis | Exact? |
+|---|---|---|
+| `sample(tree, opts)` | uniform raster grid, **interpolated** | **No** — for looking, and for approximate numeric work |
+| `moments(tree, order=0)` | `knots_of` + `pwl_moment` over `flatten(tree)` | **Yes** — never routed through `sample` |
+| `kspace(tree, opts)` | compiled, then `calculate_kspacePP()` | Yes, at true ADC sample times |
+| `pns(tree, opts, hw)` | compiled, then `calculate_pns()` | pypulseq's validated SAFE model |
 
-`CompiledSequence._verify` used to live here and took `Sequence[PlacedEvent]` — the compiler's
-private IR. That single method was the only reason `result/` depended on `compiler/`. It is now
-`compiler.verification.verify_against_tree`, a compile stage that happens to run last, and the
-result types import nothing from the transform that made them.
+`moments` looks like it could be built on `sample` now that they sit in one file. It must not be,
+and the reason is subtler than "sampling is lossy". Linear interpolation errs *antisymmetrically*
+about each knot, so the halves cancel under the integral and m0 comes back bit-identical — while
+the peak is visibly rounded off. A `moments` built on `sample` would therefore look correct on
+every test anyone would think to write, and the compiler's own self-check would be comparing two
+differently-wrong numbers. `tests/analysis/test_analysis.py` asserts both halves of that.
+
+### `result/` is gone
+
+It held `CompiledSequence`, `WriteResult` and the JSON provenance sidecar. `compile` returns the
+`pypulseq.Sequence` directly now, so there is nothing left to wrap: `n_blocks` is
+`len(seq.block_events)`, `duration_s` is `seq.duration()[0]`, `check()` is the compile raising, and
+`write()` is pypulseq's.
+
+**The sidecar leaves a real gap.** Nothing currently records the git commit, dirty flag or package
+versions that produced a `.seq`. That is deferred rather than solved — see
+[`serialization.md`](serialization.md) — and it starts from a blank slate rather than from sidecar
+code shaped around a type that no longer exists.
 
 ### Beside all four
 
 | Module | What it is for |
 |---|---|
-| `errors` | The exception hierarchy and `format_error`. At the root, because every package raises from it. |
-| `report` | `Issue` and `Report` — findings as data. The other half of the pair: hard failures raise, soft findings report. Immutable; `ok` is true when there are no errors, so a 98 %-of-limit warning informs without failing. |
-| `scanner` | `sc.opts` — `derate` and `from_scanner`, the two operations `pp.Opts` makes awkward or unsafe. And `sc.hardware` — the PNS response model, which is not a limit and which only post-compile analysis reads. |
-| `display` | **The only module allowed to import matplotlib**, and lazily at that. Every function returns a figure and never calls `show()`. It stays at the root because it spans two stages by signature: `plot_block(LogicBlock)` against `plot_sequence(CompiledSequence)`. |
-| `testing` | `assert_output(make, opts)` takes a callable and a block, so it asks nothing about ancestry; `assert_all(module, **args)` adds the checks that only mean something for the `Module` convention. |
+| `errors` | `SeqCraftError`, `ConfigurationError`, `MissingExtraError`, `SeqCraftWarning` and `format_error` — only what more than one package needs. Everything else lives with the code that raises it, and is re-exported here. |
+| `scanner` | `sc.opts` — `derate` and `from_scanner`, the two operations `pp.Opts` makes awkward or unsafe. And `sc.hardware` — the PNS response model, which is not a limit and which only `analysis.pns` reads. |
+| `display` | **The only module allowed to import matplotlib**, and lazily at that. One public function, `plot_block`, and it returns a figure rather than calling `show()`. It draws the *tree*; for a compiled sequence `seq.plot()` is pypulseq's own, is better maintained, and is the picture everyone else in the ecosystem reads. |
+
+**`report.py` is gone.** `Issue` and `Report` were the soft half of "hard failures raise, soft
+findings report", and the soft half turned out not to exist: every finding they carried was either
+a legality failure — which now raises, because there is no legal sequence to hand back — or
+something the compiler *did*, which is now a `SeqCraftWarning` through the standard machinery.
+
+**`testing.py` is gone.** Of the five assertions it shipped, three are things the compiler now
+checks with a better message and on the *summed* waveform. The two it cannot make — determinism and
+purity — are in `tests/conftest.py`, because a package that ships assertions has to keep them
+working and these are forty lines that only this repository's own module tests use. What they are
+*for* is documented in [`writing_a_module.md`](writing_a_module.md), which is better than naming a
+function.
 
 **`system.py` is gone.** 652 lines of `System`, `Limits`, presets, regimes and hardware loading,
 replaced by `pp.Opts`. Everything it held is already a field of `Opts`, the compiler read exactly
@@ -257,29 +301,25 @@ read), a YAML or GUI front end, and a `.seq` importer.
 ```
 src/seqcraft/
   __init__.py    the façade -- the only global re-export layer
-  errors.py      the exception hierarchy      } how a problem
-  report.py      Issue and Report             } is communicated
-  display.py     the only matplotlib importer
-  testing.py     assertions you can point at any component of your own
+  errors.py      what more than one package raises, and format_error
+  analysis.py    sample, moments, kspace, pns -- measuring a tree
+  display.py     plot_block; the only matplotlib importer
 
   scanner/       what you build against
-                 opts.py      derate, from_scanner
+                 opts.py      derate, from_scanner, UnknownFieldError
                  hardware.py  PNS response models
 
   design/        what you build
-                 logic.py  module.py  events.py  sampling.py
-                 timing.py  units.py
+                 logic.py  module.py  events.py
+                 timing.py (Raster, RasterError)  units.py
 
   compiler/      the transform
                  __init__.py  compile_sequence
                  placement.py  boundaries.py  legalization.py  emission.py
-                 verification.py  model.py  definitions.py
+                 verification.py  model.py  errors.py
 
-  result/        what compile returns
-                 __init__.py  CompiledSequence, WriteResult
-                 provenance.py
-
-tests/        design/  logic/  compiler/  module/  opts/  integration/
+tests/        analysis/  design/  logic/  compiler/  module/  opts/  integration/
+              conftest.py                the two checks the compiler cannot make
               test_layering.py           the layout, asserted
 examples/     01_getting_started.ipynb   uses no modules, on purpose
               _parked/                   two DTI scans, kept as the spec for the next library
@@ -288,8 +328,7 @@ salvage/      physics lifted out of the deleted library; not packaged, not impor
 docs/         architecture  compiler  writing_a_module  testing
 ```
 
-The four packages are the four questions in the order a sequence passes through them, and the
-arrow between them only ever points forward. That is the whole of the membership rule, and unlike
-"is this on the compile path?" — which put the unit table, the geometry and the report in one
-directory with the scheduler — it can be checked mechanically, which is what `test_layering.py`
-does.
+The layers are the questions in the order a sequence passes through them, and the arrow between
+them only ever points forward. That is the whole of the membership rule, and unlike "is this on the
+compile path?" — which put the unit table, the geometry and the report in one directory with the
+scheduler — it can be checked mechanically, which is what `test_layering.py` does.
