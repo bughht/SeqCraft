@@ -473,13 +473,28 @@ read from the `Opts` at each call site.
 Integer-tick arithmetic, for when a sum of times must land exactly on a raster:
 
 ```python
-terms = [1.3e-4, 5.0e-4, 3.7e-4, 2.1e-4]
-assert sum(terms) != 0.00121                            # float
-assert sc.timing.exact_sum(terms) == 0.00121            # ticks
+t = 0.0                                                 # what a TR loop does
+for _ in range(1000):
+    t += 1.997e-3
+assert t != 1.997                                       # and it has drifted by 23 fs
+assert sc.timing.exact_sum([1.997e-3] * 1000) == 1.997  # ticks do not
+
+terms = [1e-5] * 121                                    # all exact multiples of 10 us
+assert sum(terms) != 0.00121
+assert sc.timing.exact_sum(terms) == 0.00121
 assert sc.timing.exact_diff(3e-3, 1e-3) == 0.002
 assert sc.timing.to_ticks(1.5e-3) == 1_500_000_000
 assert sc.timing.from_ticks(1_500_000_000) == 0.0015
 ```
+
+The accumulating loop is the honest demonstration, and it is the shape the real bug had: a plain
+subtraction of absolute times produced an RF delay of 129.9999999986 µs at 39 s into a sequence,
+which pypulseq rejects.
+
+> Do not demonstrate this with a short `sum()`. **CPython 3.12 gave `sum()` Neumaier compensated
+> summation**, so `sum([1.3e-4, 5.0e-4, 3.7e-4, 2.1e-4])` is exactly `0.00121` there and drifts on
+> 3.11 — a claim that flips between interpreters. `+=` gets no such compensation, which is both why
+> the loop above is stable and why the accumulation in real code is the thing to worry about.
 
 | Constant | Value | Meaning |
 |---|---|---|
