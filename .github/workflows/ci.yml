@@ -27,15 +27,19 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install --constraint ci/constraints.txt -e ".[dev]"
+      # The same set as pyproject.toml's strict overrides and docs/testing.md.  It listed
+      # src/seqcraft/core/* until now, which has not existed since the package became four
+      # layers -- so this job was checking nothing and saying so quietly.
       - name: strict pure-core types
         run: >-
           mypy
-          src/seqcraft/core/timing.py
-          src/seqcraft/core/units.py
-          src/seqcraft/core/validate.py
-          src/seqcraft/core/geometry.py
-          src/seqcraft/module.py
+          src/seqcraft/design/timing.py
+          src/seqcraft/design/units.py
+          src/seqcraft/design/module.py
           src/seqcraft/scanner/opts.py
+          src/seqcraft/compiler/model.py
+          src/seqcraft/compiler/placement.py
+          src/seqcraft/compiler/boundaries.py
 
   test:
     strategy:
@@ -57,6 +61,10 @@ jobs:
           --cov=seqcraft --cov-report=term-missing
       - name: doctests
         run: pytest --doctest-modules src/seqcraft
+      # Executes every python block in docs/api_reference.md and checks its index against every
+      # module's __all__ in both directions.  A reference nobody runs is wrong within two commits.
+      - name: api reference
+        run: python tools/check_api_reference.py
 
   examples:
     runs-on: ubuntu-latest
