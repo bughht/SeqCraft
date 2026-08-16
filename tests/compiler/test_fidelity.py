@@ -6,8 +6,10 @@ scheduler can plausibly go wrong: a boundary landing inside a waveform, two grad
 a gradient sharing a block with an RF or an ADC, an arbitrary waveform that must not be
 resampled, and the long trains where float error accumulates.
 
-Marked ``xfail`` where the *current* compiler is known to lose fidelity; each such mark names
-the defect from PLAN_COMPILER_V2.md and is removed by the work item that fixes it.
+Nothing here is ``xfail`` any more.  It once was, per known defect, and the marks came off as the
+work items landed -- so the file's claim is now unconditional: the compiler is exact on every tree
+below, and the one case where pulseq's two gradient representations genuinely cannot both be held
+is *reported* with a measured bound rather than being inexact quietly.
 """
 
 from __future__ import annotations

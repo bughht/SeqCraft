@@ -107,6 +107,9 @@ only after reviewing an approved behavior change:
 python tools/capture_compiler_baseline.py --iterations 3
 ```
 
-Current compiler responsibilities and the event/boundary support matrix are recorded in
-[`refactor/compiler_current_state.md`](refactor/compiler_current_state.md) and
-[`refactor/compiler_constraint_matrix.md`](refactor/compiler_constraint_matrix.md).
+The compiler's responsibilities and the event/boundary support matrix are in
+[`compiler.md`](compiler.md).  The two `refactor/` documents that used to hold them --
+[`compiler_current_state.md`](refactor/compiler_current_state.md) and
+[`compiler_constraint_matrix.md`](refactor/compiler_constraint_matrix.md) -- are dated,
+commit-pinned records of the pre-refactor shape and are marked historical; they are kept because
+what changed is only legible against what was there.

@@ -3,6 +3,11 @@
 - Status: Accepted
 - Date: 2026-08-15
 - Supersedes: the `System`/`regime` scanner model and the `seqcraft.modules` library
+- Amended by: [ADR-004](004-compile-returns-a-sequence.md) — `CompiledSequence` no longer exists,
+  so "`CompiledSequence` stores `opts`" below is historical and `pns(hardware)` is now the free
+  function `sc.pns(tree, opts, hardware)`.  The decision this ADR records is unaffected: the
+  scanner is still a `pp.Opts`, PNS still takes the response model explicitly, and the module
+  contract is unchanged.
 
 ## Context
 
