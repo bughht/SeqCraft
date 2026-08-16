@@ -20,7 +20,7 @@ from seqcraft.compiler.boundaries import label_targets
 from seqcraft.compiler.placement import place_events
 from seqcraft.compiler.verification import _sequence_moments, verify_against_tree
 from seqcraft.design.events import knots_of as _grad_knots
-from seqcraft.design.events import pwl_moment
+from seqcraft.design.events import pwl_moment, trapz
 
 
 def pwl_moment_m1(times, amps):
@@ -58,7 +58,7 @@ def test_pwl_m1_is_exact_where_trapz_is_not() -> None:
     for n in (10, 100, 1000):
         t = np.linspace(0.0, h, n + 1)
         g = np.interp(t, [0.0, h], [0.0, amp])
-        errors.append(abs(float(np.trapezoid(g * t, t)) - exact))
+        errors.append(abs(float(trapz(g * t, t)) - exact))
     assert errors[0] > 0.0, 'trapz must actually be wrong here, or the test proves nothing'
     assert errors[0] > errors[1] > errors[2], 'and refining it must approach the closed form'
     assert errors[-1] < 1e-4 * exact
@@ -68,7 +68,7 @@ def test_pwl_m1_shifts_by_area_times_offset() -> None:
     """The property the invariant relies on: displacing a waveform changes m1 by ``m0 * dt``."""
     times = np.array([0.0, 100e-6, 300e-6, 400e-6])
     amps = np.array([0.0, 1e4, 1e4, 0.0])
-    m0 = float(np.trapezoid(amps, times))
+    m0 = float(trapz(amps, times))
     dt = 10e-6
     before = pwl_moment_m1(times, amps)
     after = pwl_moment_m1(times + dt, amps)

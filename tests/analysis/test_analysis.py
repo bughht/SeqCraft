@@ -14,12 +14,13 @@ import pypulseq as pp
 import pytest
 
 import seqcraft as sc
+from seqcraft.design.events import trapz
 
 
 def _sampled_area(tree, opts, axis: str) -> float:
     """m0 the lossy way: trapezoidal integration of the uniform-grid samples."""
     grid, grads, _ = sc.sample(tree, opts)
-    return float(np.trapezoid(grads[axis], grid))
+    return float(trapz(grads[axis], grid))
 
 
 def _raster_centre_lobe(opts, n: int = 13, scale: float = 0.1):
@@ -125,7 +126,7 @@ def test_sample_rounds_the_peak_off_a_raster_centre_waveform(opts) -> None:
     )
 
     # ... and the area survives it exactly, which is the whole trap.
-    assert float(np.trapezoid(grads['x'], grid)) == pytest.approx(
+    assert float(trapz(grads['x'], grid)) == pytest.approx(
         sc.moments(tree)['x'], rel=1e-9
     ), 'm0 is precisely the quantity that cannot detect this, so it must agree here'
 

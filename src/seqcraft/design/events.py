@@ -64,7 +64,6 @@ __all__ = [
     'derive',
     'knots_of',
     'pwl_moment',
-    'trapz',
     'waveform_of',
 ]
 
@@ -109,7 +108,9 @@ ADDRESS_KEYS = ('SLC', 'LIN', 'PAR', 'AVG', 'REP', 'SEG', 'ECO', 'SET')
 
 _STRIP = ('id', 'shape_IDs', '_pypulseq_sequence_event_cache')
 
-# numpy renamed trapz -> trapezoid in 2.0; support both so numpy>=1.24 stays valid.
+# numpy renamed trapz -> trapezoid in 2.0; support both so the declared numpy>=1.24 floor is real.
+# Deliberately absent from __all__: it is numpy's function under a compatibility name, not
+# seqcraft API.  Importable for the package's own use -- and the tests' -- and nothing more.
 trapz = getattr(np, 'trapezoid', None) or np.trapz
 
 

@@ -18,7 +18,7 @@ from pypulseq.opts import Opts
 
 import seqcraft as sc
 from seqcraft.compiler.emission import common_path
-from seqcraft.design.events import content_hash
+from seqcraft.design.events import content_hash, trapz
 
 
 def compile_one(opts: Opts, *nodes: tuple[float, object]):
@@ -38,7 +38,7 @@ def compiled_m0(out, axis: str) -> float:
     integral of a piecewise-linear function, so the trapezoidal rule is exact here.
     """
     times, amps = compiled_knots(out)[axis]
-    return float(np.trapezoid(amps, np.asarray(times, dtype=float) * 1e-12))
+    return float(trapz(amps, np.asarray(times, dtype=float) * 1e-12))
 
 
 def warned(kind: str, make) -> list[str]:

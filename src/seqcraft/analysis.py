@@ -99,7 +99,7 @@ def sample(
     (['z'], [])
     >>> bool(np.allclose(np.diff(grid), opts.grad_raster_time))
     True
-    >>> round(float(np.trapezoid(grads['z'], grid)), 1)          # the area, near enough to see
+    >>> round(float(ev.trapz(grads['z'], grid)), 1)              # the area, near enough to see
     500.0
     """
     raster = float(opts.grad_raster_time)
