@@ -12,8 +12,8 @@ different moments:
 
 :mod:`seqcraft.scanner.hardware`
     The **response model** for peripheral-nerve-stimulation prediction.  Not a limit, and nothing
-    on the compile path reads it: :meth:`seqcraft.CompiledSequence.pns` takes it as an argument, on
-    a sequence that has already been compiled.
+    on the compile path reads it: :func:`seqcraft.pns` takes it as a third argument, beside the
+    tree and the ``Opts``.
 
 Both are re-exported at the package root, so the shorter spelling is the one to use::
 

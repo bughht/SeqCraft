@@ -1,5 +1,11 @@
 # Phase 3 legalization boundary
 
+> **Historical.** This records the state at the time it was written.  The compiler was
+> subsequently changed by [ADR-004](../adr/004-compile-returns-a-sequence.md): `compile` returns a
+> bare `pypulseq.Sequence`, every legality failure raises, and `CompiledSequence`, `Report` and
+> `Issue` no longer exist.  For the current shape see [`../compiler.md`](../compiler.md) and
+> [`../architecture.md`](../architecture.md).
+
 - Status: Accepted implementation boundary; implementation not started
 - Date: 2026-08-14
 - Applies after: Phase 2 merge

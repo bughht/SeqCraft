@@ -6,11 +6,15 @@ scheduler can plausibly go wrong: a boundary landing inside a waveform, two grad
 a gradient sharing a block with an RF or an ADC, an arbitrary waveform that must not be
 resampled, and the long trains where float error accumulates.
 
-Marked ``xfail`` where the *current* compiler is known to lose fidelity; each such mark names
-the defect from PLAN_COMPILER_V2.md and is removed by the work item that fixes it.
+Nothing here is ``xfail`` any more.  It once was, per known defect, and the marks came off as the
+work items landed -- so the file's claim is now unconditional: the compiler is exact on every tree
+below, and the one case where pulseq's two gradient representations genuinely cannot both be held
+is *reported* with a measured bound rather than being inexact quietly.
 """
 
 from __future__ import annotations
+
+import warnings
 
 import numpy as np
 import pypulseq as pp
@@ -49,10 +53,18 @@ def test_sequential_gradients_same_axis(opts) -> None:
 
 # ------------------------------------------------------------------------------------ merging
 def test_two_trapezoids_summed(opts) -> None:
+    """
+    ``rise_time`` is explicit because the sum has to stay *legal*.
+
+    With the shortest legal ramp each lobe sits near the slew limit on its own, so their sum is
+    158 % of it and the compile raises -- which is a different claim, tested in
+    ``test_scheduling.py``.  This test is about fidelity, so the pair is designed to be legal.
+    """
+    lobe = {'duration': 2e-3, 'rise_time': 400e-6, 'system': opts}
     tree = (
         sc.LogicBlock('t')
-        .add(0.0, pp.make_trapezoid('x', area=100.0, duration=2e-3, system=opts))
-        .add(0.0, pp.make_trapezoid('x', area=200.0, duration=2e-3, system=opts))
+        .add(0.0, pp.make_trapezoid('x', area=100.0, **lobe))
+        .add(0.0, pp.make_trapezoid('x', area=200.0, **lobe))
     )
     assert_matches(tree, sc.compile(tree, opts))
 
@@ -159,25 +171,31 @@ def test_arbitrary_merged_with_a_trapezoid_is_reported_not_silent(opts) -> None:
     """
     wx, _ = _spiral_like(opts, n=60)
     g = pp.make_arbitrary_grad('x', waveform=wx, first=0.0, last=0.0, system=opts)
-    trap = pp.make_trapezoid('x', area=20.0, system=opts)
+    # A stated duration, so the trapezoid does not use the shortest legal ramp: added to the
+    # spiral's own slew that would reach 129 % of the limit and raise before anything is emitted.
+    trap = pp.make_trapezoid('x', area=20.0, duration=300e-6, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(0.0, trap)
-    out = sc.compile(tree, opts)
 
-    reported = out.report.of_kind('grad_resample')
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        out = sc.compile(tree, opts)
+    reported = [
+        str(w.message) for w in caught
+        if issubclass(w.category, sc.SeqCraftWarning) and 'resampled' in str(w.message)
+    ]
     assert reported, 'a resample that moves the waveform must never be silent'
-    assert 'axis x' in reported[0].message
+    assert 'axis x' in reported[0]
 
     # The reported bound must actually bound the measured deviation.
-    claimed = float(reported[0].message.split('at most ')[1].split(' %')[0]) / 100.0
+    claimed = float(reported[0].split('at most ')[1].split(' %')[0]) / 100.0
     worst = max(
         v['max_abs_error'] for v in compare(tree, out).values()
     ) / float(opts.max_grad)
     assert worst <= claimed + 1e-9, f'measured {worst:.4%} exceeds reported bound {claimed:.4%}'
     assert worst < 0.05, f'resample moved the waveform by {worst:.2%} of max_grad'
-
     # Area is what a resample preserves, so it is not evidence of fidelity -- but losing it would
-    # mean something worse than a resample happened.
-    assert not out.report.of_kind('moment')
+    # have raised CompilerContractError from the m0 invariant, so the compile returning is that
+    # assertion.
 
 
 def test_arbitrary_gradient_split_by_a_barrier(opts) -> None:
@@ -356,10 +374,10 @@ def test_the_oracle_catches_a_corrupted_waveform(opts) -> None:
     out = sc.compile(tree, opts)
     assert_matches(tree, out)                                   # clean to begin with
 
-    block = out.seq.get_block(1)
+    block = out.get_block(1)
     block.gx.waveform = np.asarray(block.gx.waveform) * 1.01    # 1 % too strong
     # get_block() rebuilds from the library, so patch the library entry the block came from.
-    out.seq.get_block = lambda i, _b=block, _o=out.seq.get_block: (  # type: ignore[method-assign]
+    out.get_block = lambda i, _b=block, _o=out.get_block: (  # type: ignore[method-assign]
         _b if i == 1 else _o(i)
     )
     report = compare(tree, out)
@@ -435,7 +453,9 @@ def test_a_long_arbitrary_readout_survives_compilation(opts) -> None:
     """
     gx, gy = _spiral_pair(opts)
     tree = sc.LogicBlock('t').add(0.0, gx, gy)
-    out = sc.compile(tree, opts)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        out = sc.compile(tree, opts)
 
     floor = _roundtrip_floor(gx, opts)
     report = compare(tree, out, atol=10.0 * max(floor, 1e-9), rtol=0.0)
@@ -444,7 +464,9 @@ def test_a_long_arbitrary_readout_survives_compilation(opts) -> None:
             f'axis {ax}: {r["max_abs_error"]:.4g} Hz/m exceeds 10x pypulseq\'s own '
             f'{floor:.4g} Hz/m round-trip floor -- seqcraft moved the waveform'
         )
-    assert not out.report.of_kind('grad_resample'), 'a lone readout must never be resampled'
+    assert not [w for w in caught if 'resampled' in str(w.message)], (
+        'a lone readout must never be resampled'
+    )
 
 
 def test_every_rotation_of_an_arbitrary_readout_is_faithful(opts) -> None:

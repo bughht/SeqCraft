@@ -4,9 +4,8 @@ Gradient hardware models, for peripheral-nerve-stimulation prediction.
 A **hardware model** is not a limit.  ``Opts`` says how strong and how fast the amplifier may be
 driven; this describes how the *body* responds to being driven that way -- three exponential time
 constants per axis, a stimulation threshold, and the forbidden acoustic-resonance bands.  Nothing
-in the compile path reads it, which is why it is not on the ``Opts`` and not in ``core``:
-:meth:`seqcraft.CompiledSequence.pns` takes it as an argument, on a sequence that has already been
-compiled.
+in the compile path reads it, which is why it is not on the ``Opts``:
+:func:`seqcraft.analysis.pns` takes it as a third argument.
 
 **No vendor hardware file is ever read from inside this repository.**  Siemens ``.asc`` gradient
 descriptors carry proprietary PNS/CNS response coefficients and forbidden acoustic-resonance
@@ -37,6 +36,17 @@ __all__ = ['ASC_ENV_VAR', 'load_hardware', 'synthetic_hardware']
 ASC_ENV_VAR = 'SEQCRAFT_ASC_DIR'
 
 
+class _SyntheticHardware(SimpleNamespace):
+    """A PNS model that says what it is in its own ``repr``."""
+
+    def __repr__(self) -> str:
+        """Name the model and the caveat, so it cannot be mistaken for a measured one."""
+        return (
+            f'<synthetic PNS hardware {self.name!r} -- illustrative coefficients, '
+            f'NOT a real scanner; never use it to clear a human scan>'
+        )
+
+
 def synthetic_hardware(name: str = 'synthetic_generic') -> SimpleNamespace:
     """
     Return a vendor-free PNS hardware model for tests and CI.
@@ -44,9 +54,16 @@ def synthetic_hardware(name: str = 'synthetic_generic') -> SimpleNamespace:
     Shaped like the output of ``pypulseq.utils.siemens.asc_to_hw`` so it can be handed
     straight to ``Sequence.calculate_pns``, but the coefficients are the illustrative
     values from pypulseq's own ``safe_pns_prediction.safe_example_hw()`` reference
-    implementation, not measurements from any scanner.  **It is not a real scanner and
-    must never be used to clear a sequence for human scanning** -- use
-    :func:`load_hardware` with the site's own ``.asc`` for that.
+    implementation, not measurements from any scanner.
+
+    .. warning::
+
+       **This is not a real scanner.**  It is a conservative vendor-free stand-in so that PNS
+       checks can run without a vendor file, and it **must never be used to clear a sequence for
+       human scanning**.  Use :func:`load_hardware` with the site's own ``.asc`` for that.
+
+       The object carries ``is_synthetic=True`` and says so in its ``repr``, so the caveat travels
+       with the model rather than living in the docstring of whatever happens to consume it.
 
     Examples
     --------
@@ -55,6 +72,11 @@ def synthetic_hardware(name: str = 'synthetic_generic') -> SimpleNamespace:
     'synthetic_generic'
     >>> hw.x.stim_limit
     30.0
+    >>> hw.is_synthetic
+    True
+    >>> hw
+    <synthetic PNS hardware 'synthetic_generic' -- illustrative coefficients, NOT a real
+    scanner; never use it to clear a human scan>
     """
 
     def axis(stim_limit: float, stim_thresh: float, g_scale: float) -> SimpleNamespace:
@@ -70,7 +92,7 @@ def synthetic_hardware(name: str = 'synthetic_generic') -> SimpleNamespace:
             g_scale=g_scale,
         )
 
-    return SimpleNamespace(
+    return _SyntheticHardware(
         name=name,
         checkID=0,
         x=axis(30.0, 24.0, 0.4),
@@ -103,7 +125,7 @@ def load_hardware(
     Returns
     -------
     SimpleNamespace
-        The response model, ready for :meth:`seqcraft.CompiledSequence.pns`.  It carries
+        The response model, ready for :func:`seqcraft.pns`.  It carries
         ``.source``, a provenance string of the form ``'<filename> sha256:<12 hex>'`` -- the
         file *name* and hash only, never the contents, which are vendor-confidential.
 

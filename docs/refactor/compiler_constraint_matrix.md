@@ -1,5 +1,11 @@
 # Compiler constraint and support matrix
 
+> **Historical.** This records the state at the time it was written.  The compiler was
+> subsequently changed by [ADR-004](../adr/004-compile-returns-a-sequence.md): `compile` returns a
+> bare `pypulseq.Sequence`, every legality failure raises, and `CompiledSequence`, `Report` and
+> `Issue` no longer exist.  For the current shape see [`../compiler.md`](../compiler.md) and
+> [`../architecture.md`](../architecture.md).
+
 This matrix records the behavior accepted at the Phase 0 baseline. “Frozen” means later no-change
 phases must preserve the behavior; it does not imply that every behavior is ideal.
 

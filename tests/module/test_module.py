@@ -190,14 +190,17 @@ def test_a_constant_duration_across_lines_is_the_modules_own_doing(opts) -> None
 # ---------------------------------------------------------------------------- provenance
 def test_nesting_produces_the_provenance_path(opts) -> None:
     """
-    The payoff of auto-tagging: not one tag string is written by hand, and every compiled block
-    still traces back to the module that produced it.
+    The payoff of auto-tagging: not one tag string is written by hand, and every event still
+    names the module that produced it -- which is what an error message quotes.
     """
     tree = sc.LogicBlock('tr').add(0.0, Pair(opts=opts)(line=10))
 
-    out = sc.compile(tree, opts)
+    assert {path for _, _, path in sc.flatten(tree)} == {('tr', 'Pair', 'Blip')}
 
-    assert out.origin(0) == ('tr', 'Pair', 'Blip')
+    # And the compiler reads that path, rather than a block index, when it has to complain.
+    off_raster = sc.LogicBlock('tr').add(3e-6, Pair(opts=opts)(line=10))
+    with pytest.raises(sc.CompileError, match=r'tr\.Pair\.Blip'):
+        sc.compile(off_raster, opts)
 
 
 # ------------------------------------------------------------------------ the layer boundary
@@ -235,20 +238,21 @@ def test_the_compiler_does_not_import_the_module_contract() -> None:
     assert not offenders, f'seqcraft.compiler reaches seqcraft.design.module from: {offenders}'
 
 
-def test_a_plain_function_is_still_a_component(opts) -> None:
+def test_a_plain_function_is_still_a_component(opts, component_checks) -> None:
     """``Module`` is the standard shape for a reusable component, not a gate."""
 
     def crusher(opts, *, area_per_m=400.0) -> sc.LogicBlock:
         return sc.LogicBlock('crush').add(
             0.0, pp.make_trapezoid('z', area=area_per_m, system=opts))
 
-    out = sc.compile(sc.LogicBlock('tr').add(0.0, crusher(opts)), opts)
+    tree = sc.LogicBlock('tr').add(0.0, crusher(opts))
+    seq = sc.compile(tree, opts)                       # a legality failure would have raised
 
-    assert out.check().ok
-    assert out.origin(0) == ('tr', 'crush')
+    assert len(seq.block_events) == 1
+    assert [path for _, _, path in sc.flatten(tree)] == [('tr', 'crush')]
 
-    # And the shipped assertion takes it, because it asks for a callable and nothing else.
-    sc.testing.assert_output(lambda: crusher(opts), opts)
+    # And the suite's own assertion takes it, because it asks for a callable and nothing else.
+    component_checks.output(lambda: crusher(opts), opts)
 
 
 # ------------------------------------------------------------------- the assertions we ship
@@ -256,23 +260,27 @@ def test_a_plain_function_is_still_a_component(opts) -> None:
     pytest.param(lambda opts: Blip(opts=opts), id='Blip'),
     pytest.param(lambda opts: Pair(opts=opts), id='Pair'),
 ])
-def test_assert_all_passes_on_the_reference_modules(make, opts) -> None:
+def test_assert_all_passes_on_the_reference_modules(make, opts, component_checks) -> None:
     """
-    ``sc.testing`` is pointed at this repository's own modules, not only at other people's.
+    The two checks the compiler structurally cannot make, pointed at the only ``Module``
+    subclasses this repository has.
 
-    An assertion suite nobody in the project runs is a suite whose failures nobody has seen.  These
-    two are the only ``Module`` subclasses seqcraft has -- ``Blip`` designs once and scales per
-    call, ``Pair`` nests one inside another -- so between them they cover the purity check (the
-    events on ``self`` must survive two calls unchanged) and the whole-tree checks that a nesting
-    component would otherwise pass vacuously.
+    They are in ``conftest.py`` rather than in the package: everything else they used to assert --
+    the raster, the limits, that a block is well formed -- the compiler now checks, with a better
+    message and on the *summed* waveform.  What is left is what ``sc.compile`` cannot see, because
+    it validates a tree and never sees the second call.
+
+    ``Blip`` designs once and scales per call, ``Pair`` nests one inside another -- so between
+    them they cover the purity check (the events on ``self`` must survive two calls unchanged)
+    and the whole-tree checks that a nesting component would otherwise pass vacuously.
 
     ``line=17`` rather than the default: ``Blip(line=0)`` is a zero-amplitude gradient, which
     passes a limit check for the wrong reason.
     """
-    sc.testing.assert_all(make(opts), line=17)
+    component_checks.all(make(opts), line=17)
 
 
-def test_assert_pure_catches_the_mutation_it_exists_for(opts) -> None:
+def test_assert_pure_catches_the_mutation_it_exists_for(opts, component_checks) -> None:
     """
     The canonical bug, and proof the check can fail.
 
@@ -294,4 +302,4 @@ def test_assert_pure_catches_the_mutation_it_exists_for(opts) -> None:
 
     module = Flipper(opts=opts)
     with pytest.raises(AssertionError, match='mutated'):
-        sc.testing.assert_pure(module, module)
+        component_checks.pure(module, module)

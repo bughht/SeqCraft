@@ -149,4 +149,4 @@ def test_all_handled_types_actually_compile(opts) -> None:
     for kind, event in cases.items():
         tree = sc.LogicBlock('t').add(0.0, pp.make_delay(2e-3)).add(0.0, event)
         out = sc.compile(tree, opts)          # must not raise
-        assert out.n_blocks >= 1, kind
+        assert len(out.block_events) >= 1, kind

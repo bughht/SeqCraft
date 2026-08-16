@@ -8,16 +8,20 @@ where the tests go.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pypulseq as pp
 import pytest
+from fidelity import compiled_knots
 from pypulseq.opts import Opts
 
 import seqcraft as sc
-from seqcraft.design.events import content_hash
+from seqcraft.compiler.emission import common_path
+from seqcraft.design.events import content_hash, trapz
 
 
-def compile_one(opts: Opts, *nodes: tuple[float, object]) -> sc.CompiledSequence:
+def compile_one(opts: Opts, *nodes: tuple[float, object]):
     """Compile a flat tree of ``(start, event)`` pairs."""
     lb = sc.LogicBlock('t')
     for start, event in nodes:
@@ -25,14 +29,38 @@ def compile_one(opts: Opts, *nodes: tuple[float, object]) -> sc.CompiledSequence
     return sc.compile(lb, opts)
 
 
-def merges(out: sc.CompiledSequence) -> int:
-    """How many same-axis merges the compile reported."""
-    return len(out.report.of_kind('grad_merge'))
+def compiled_m0(out, axis: str) -> float:
+    """
+    The area an axis actually plays, in 1/m, read off the compiled blocks.
+
+    Via the independent oracle in ``fidelity.py`` rather than the compiler's own arithmetic:
+    a check that shares code with what it checks compares a number with itself.  m0 is the
+    integral of a piecewise-linear function, so the trapezoidal rule is exact here.
+    """
+    times, amps = compiled_knots(out)[axis]
+    return float(trapz(amps, np.asarray(times, dtype=float) * 1e-12))
 
 
-def limit_errors(out: sc.CompiledSequence) -> list[sc.Issue]:
-    """Per-axis amplitude and slew violations (errors, not the vector-norm warnings)."""
-    return [i for i in out.report.errors if i.kind.endswith('_limit')]
+def warned(kind: str, make) -> list[str]:
+    """
+    Return the messages of every :class:`sc.SeqCraftWarning` matching `kind` that `make` emitted.
+
+    A recorder rather than ``pytest.warns``, because half the claims here are *negative* -- no
+    merge warning for three axes at once -- and ``pytest.warns`` has no clean negative form.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        make()
+    return [
+        str(w.message) for w in caught
+        if issubclass(w.category, sc.SeqCraftWarning) and kind in str(w.message)
+    ]
+
+
+#: A same-axis pair that sums to a legal waveform.  ``rise_time`` is stated because
+#: ``make_trapezoid`` with only a duration uses the shortest legal ramp, which puts each lobe near
+#: the slew limit on its own -- so their sum is 158 % of it and the compile raises.
+GENTLE = {'duration': 2e-3, 'rise_time': 400e-6}
 
 
 # ------------------------------------------------------------------------- overlap: the 3 rules
@@ -46,36 +74,65 @@ def test_different_axes_at_once_is_one_block_and_silent(opts) -> None:
     together do earn the vector-norm warning, and that is a different claim with its own test.
     """
     gentle = {'area': 100.0, 'duration': 2e-3, 'rise_time': 200e-6, 'system': opts}
-    out = compile_one(
-        opts,
-        (0.0, pp.make_trapezoid('x', **gentle)),
-        (0.0, pp.make_trapezoid('y', **gentle)),
-        (0.0, pp.make_trapezoid('z', **gentle)),
-    )
-    assert out.n_blocks == 1
-    assert merges(out) == 0
-    assert out.report.issues == (), f'expected silence, got {out.report}'
-    assert out.check().ok
+
+    def build():
+        return compile_one(
+            opts,
+            (0.0, pp.make_trapezoid('x', **gentle)),
+            (0.0, pp.make_trapezoid('y', **gentle)),
+            (0.0, pp.make_trapezoid('z', **gentle)),
+        )
+
+    assert len(build().block_events) == 1
+    assert warned('', build) == [], 'expected silence about three axes at one instant'
 
 
 def test_same_axis_at_once_merges_with_one_warning(opts) -> None:
     """Summing is what was meant, so it happens -- but it is the one waveform change, so it says so."""
-    out = compile_one(
-        opts,
-        (0.0, pp.make_trapezoid('x', area=100.0, system=opts)),
-        (0.0, pp.make_trapezoid('x', area=200.0, system=opts)),
-    )
-    assert out.n_blocks == 1
-    assert merges(out) == 1
-    assert out.moments()['x'] == pytest.approx(300.0, abs=1e-6)
+    def build():
+        return compile_one(
+            opts,
+            (0.0, pp.make_trapezoid('x', area=100.0, system=opts, **GENTLE)),
+            (0.0, pp.make_trapezoid('x', area=200.0, system=opts, **GENTLE)),
+        )
+
+    out = build()
+    assert len(out.block_events) == 1
+    assert compiled_m0(out, 'x') == pytest.approx(300.0, abs=1e-6)
+    with pytest.warns(sc.SeqCraftWarning, match='1 same-axis gradient merge:'):
+        build()
+
+
+def test_a_run_of_merges_is_one_warning_not_one_each(opts) -> None:
+    """
+    Python's default filter shows a warning once per source line.
+
+    One ``warn`` per merge would print the first and swallow the other eleven, which is strictly
+    worse than the count the report used to give.  So the compile emits exactly one, carrying the
+    count and the sites.
+    """
+    tree = sc.LogicBlock('tr')
+    for i in range(8):
+        tree.add(
+            i * 5e-3,
+            sc.LogicBlock('rewinder').add(
+                0.0, pp.make_trapezoid('x', area=100.0, system=opts, **GENTLE)),
+            sc.LogicBlock('prephaser').add(
+                0.0, pp.make_trapezoid('x', area=-50.0, system=opts, **GENTLE)),
+        )
+    messages = warned('merge', lambda: sc.compile(tree, opts))
+    assert len(messages) == 1, f'expected exactly one warning, got {messages}'
+    assert messages[0].startswith('8 same-axis gradient merges'), messages[0]
 
 
 def test_the_merge_warning_names_both_sources(opts) -> None:
     """A merge you did not expect has to be traceable to the two modules that caused it."""
-    a = sc.LogicBlock('rewinder').add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
-    b = sc.LogicBlock('prephaser').add(0.0, pp.make_trapezoid('x', area=-50.0, system=opts))
-    out = sc.compile(sc.LogicBlock('tr').add(0.0, a).add(0.0, b), opts)
-    message = out.report.of_kind('grad_merge')[0].message
+    a = sc.LogicBlock('rewinder').add(
+        0.0, pp.make_trapezoid('x', area=100.0, system=opts, **GENTLE))
+    b = sc.LogicBlock('prephaser').add(
+        0.0, pp.make_trapezoid('x', area=-50.0, system=opts, **GENTLE))
+    tree = sc.LogicBlock('tr').add(0.0, a).add(0.0, b)
+    message = warned('merge', lambda: sc.compile(tree, opts))[0]
     assert 'tr.rewinder' in message
     assert 'tr.prephaser' in message
 
@@ -85,25 +142,37 @@ def test_two_legal_gradients_can_sum_to_an_illegal_one(opts) -> None:
     The reason limits are checked after merging rather than per module.
 
     Two 60 %-amplitude gradients on one axis are each perfectly legal and together are not, and no
-    module can see that in isolation.
+    module can see that in isolation.  There is no legal sequence to hand back, so the compile
+    raises rather than returning one with a note attached.
     """
     big = pp.make_trapezoid('x', amplitude=0.6 * opts.max_grad, duration=2e-3, system=opts)
-    out = compile_one(opts, (0.0, big), (0.0, big))
-    errors = limit_errors(out)
-    assert errors, 'a 120% merged amplitude must be an error'
-    assert any(i.kind == 'grad_limit' for i in errors)
-    assert '120%' in ' '.join(i.message for i in errors)
-    assert not out.check().ok
+    with pytest.raises(sc.HardwareLimitError) as err:
+        compile_one(opts, (0.0, big), (0.0, big))
+    text = str(err.value)
+    assert text.startswith('gradient 120% of the 40 mT/m limit on axis x.'), text
+    assert 'derate' in text, 'the message must offer a way forward'
 
 
 def test_merging_can_break_the_slew_limit_too(opts) -> None:
     """Amplitude is not the only thing a merge can break; on my first attempt slew hit 189 %."""
-    out = compile_one(
-        opts,
-        (0.0, pp.make_trapezoid('x', area=100.0, system=opts)),
-        (0.0, pp.make_trapezoid('x', area=200.0, system=opts)),
-    )
-    assert any(i.kind == 'slew_limit' for i in limit_errors(out))
+    with pytest.raises(sc.HardwareLimitError, match='slew 189% of the 150 T/m/s limit on axis x'):
+        compile_one(
+            opts,
+            (0.0, pp.make_trapezoid('x', area=100.0, system=opts)),
+            (0.0, pp.make_trapezoid('x', area=200.0, system=opts)),
+        )
+
+
+def test_the_limit_error_names_the_time_and_the_source(opts) -> None:
+    """A block index means nothing until the sequence is written; a time can be acted on."""
+    big = pp.make_trapezoid('x', amplitude=0.6 * opts.max_grad, duration=2e-3, system=opts)
+    inner = sc.LogicBlock('prephaser').add(0.0, big).add(0.0, big)
+    with pytest.raises(sc.HardwareLimitError) as err:
+        sc.compile(sc.LogicBlock('tr').add(0.0, pp.make_delay(1e-3)).add(1e-3, inner), opts)
+    text = str(err.value)
+    assert 'tr.prephaser' in text
+    assert '1.000 ms' in text
+    assert 'reached:' in text
 
 
 def test_vector_norm_is_a_warning_not_an_error(opts) -> None:
@@ -111,17 +180,19 @@ def test_vector_norm_is_a_warning_not_an_error(opts) -> None:
     Two axes ramping together reach sqrt(2) times the per-axis slew, which real amplifiers allow.
 
     Making this an error would reject the ordinary three-way winder overlap that the whole design
-    exists to support.
+    exists to support -- so it is measured, said out loud, and not fatal.
     """
     strong = {'amplitude': 0.9 * opts.max_grad, 'duration': 1e-3, 'system': opts}
-    out = compile_one(
-        opts,
-        (0.0, pp.make_trapezoid('x', **strong)),
-        (0.0, pp.make_trapezoid('y', **strong)),
-    )
-    assert any(i.kind.endswith('_norm_limit') for i in out.report.warnings)
-    assert not limit_errors(out)
-    assert out.check().ok
+
+    def build():
+        return compile_one(
+            opts,
+            (0.0, pp.make_trapezoid('x', **strong)),
+            (0.0, pp.make_trapezoid('y', **strong)),
+        )
+
+    build()                      # a per-axis violation would have raised
+    assert warned('vector-norm', build), 'the norm exceedance must not be silent either'
 
 
 # ---------------------------------------------------------------------------- RF/ADC exclusivity
@@ -181,10 +252,9 @@ def test_a_gradient_spanning_an_rf_stays_one_event(opts) -> None:
     rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=opts, use='excitation')
     long_g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=opts)
     out = compile_one(opts, (0.0, long_g), (1.5e-3, rf))
-    assert out.n_blocks == 1
-    assert out.seq.get_block(1).gx.type == 'trap'
-    assert out.moments()['x'] == pytest.approx(2000.0, rel=1e-9)
-    assert out.check().ok
+    assert len(out.block_events) == 1
+    assert out.get_block(1).gx.type == 'trap'
+    assert compiled_m0(out, 'x') == pytest.approx(2000.0, rel=1e-9)
 
 
 def test_a_boundary_never_falls_inside_an_adc_window(opts) -> None:
@@ -192,9 +262,8 @@ def test_a_boundary_never_falls_inside_an_adc_window(opts) -> None:
     adc = pp.make_adc(num_samples=64, dwell=10e-6, system=opts)
     long_g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=opts)
     out = compile_one(opts, (0.0, long_g), (1.5e-3, adc))
-    assert out.n_blocks == 1
-    assert out.seq.get_block(1).gx.type == 'trap'
-    assert out.check().ok
+    assert len(out.block_events) == 1
+    assert out.get_block(1).gx.type == 'trap'
 
 
 def test_a_split_preserves_area_and_continuity(opts) -> None:
@@ -203,11 +272,10 @@ def test_a_split_preserves_area_and_continuity(opts) -> None:
     out = sc.compile(
         sc.LogicBlock('t').add(0.0, long_g).add(2e-3, sc.barrier('mid')), opts
     )
-    assert out.n_blocks == 2
-    assert out.moments()['x'] == pytest.approx(2000.0, rel=1e-9)
-    first, second = out.seq.get_block(1).gx, out.seq.get_block(2).gx
+    assert len(out.block_events) == 2
+    assert compiled_m0(out, 'x') == pytest.approx(2000.0, rel=1e-9)
+    first, second = out.get_block(1).gx, out.get_block(2).gx
     assert float(first.last) == pytest.approx(float(second.first), rel=1e-9)
-    assert out.check().ok
 
 
 def test_a_split_mid_ramp_keeps_the_slew(opts) -> None:
@@ -216,32 +284,28 @@ def test_a_split_mid_ramp_keeps_the_slew(opts) -> None:
     out = sc.compile(
         sc.LogicBlock('t').add(0.0, ramp).add(float(ramp.rise_time) / 2.0, sc.barrier()), opts
     )
-    assert out.n_blocks == 2
-    assert not limit_errors(out)
-    assert out.check().ok
+    assert len(out.block_events) == 2
 
 
 def test_barrier_forces_a_boundary_and_costs_no_time(opts) -> None:
     g = pp.make_trapezoid('x', area=500.0, duration=2e-3, system=opts)
     plain = compile_one(opts, (0.0, g))
     split = sc.compile(sc.LogicBlock('t').add(0.0, g).add(1e-3, sc.barrier()), opts)
-    assert split.n_blocks == plain.n_blocks + 1
-    assert split.duration_s == pytest.approx(plain.duration_s)
+    assert len(split.block_events) == len(plain.block_events) + 1
+    assert split.duration()[0] == pytest.approx(plain.duration()[0])
 
 
 def test_a_delay_only_block_compiles(opts) -> None:
     """The b=0 diffusion volume: correct duration, no events."""
     out = compile_one(opts, (0.0, pp.make_delay(4.2e-3)))
-    assert out.duration_s == pytest.approx(4.2e-3)
-    assert out.n_blocks == 1
-    assert out.check().ok
+    assert out.duration()[0] == pytest.approx(4.2e-3)
+    assert len(out.block_events) == 1
 
 
 def test_an_over_long_interval_is_subdivided(opts) -> None:
     """pulseq stores a block duration in a fixed-width field."""
     out = compile_one(opts, (0.0, pp.make_delay(1.0)))
-    assert out.duration_s == pytest.approx(1.0)
-    assert out.check().ok
+    assert out.duration()[0] == pytest.approx(1.0)
 
 
 # ------------------------------------------------------------------------------ error reporting
@@ -278,14 +342,47 @@ def test_compile_does_not_mutate_the_input_tree_or_events(opts) -> None:
         (start, path, id(event), content_hash(event))
         for start, event, path in sc.flatten(tree)
     ]
-    out = sc.compile(tree, opts)
+    sc.compile(tree, opts)
     after = [
         (start, path, id(event), content_hash(event))
         for start, event, path in sc.flatten(tree)
     ]
 
     assert after == before
-    assert out.check().ok
+
+
+# --------------------------------------------------------------------------------- definitions
+def test_the_definitions_reach_the_sequence(opts) -> None:
+    """
+    Set during the compile, not at write time.
+
+    That is what makes the returned ``pp.Sequence`` self-sufficient: nothing has to survive until
+    ``write()`` to put them there, so there is no wrapper to carry them.
+    """
+    tree = sc.LogicBlock('gre').add(0.0, pp.make_delay(1e-3))
+    out = sc.compile(tree, opts, definitions={'FOV': [0.25, 0.25, 0.005], 'TE': 8e-3})
+    assert out.definitions['FOV'] == [0.25, 0.25, 0.005]
+    assert out.definitions['Name'] == 'gre', 'the tag names the sequence by default'
+    assert out.definitions['TotalDuration'] == pytest.approx(1e-3)
+
+
+def test_two_sources_claiming_Name_is_an_error(opts) -> None:
+    """
+    Last-writer-wins is how a file came to say kSpaceCenterLine = 73 while its own navigator
+    used 36.5: neither source was wrong about itself, and nothing compared them.
+    """
+    tree = sc.LogicBlock('gre').add(0.0, pp.make_delay(1e-3))
+    with pytest.raises(sc.DefinitionConflict) as err:
+        sc.compile(tree, opts, name='gre', definitions={'Name': 'something_else'})
+    text = str(err.value)
+    assert 'gre' in text and 'something_else' in text, 'the message must name both claimants'
+
+
+def test_a_Name_that_agrees_is_not_a_conflict(opts) -> None:
+    """Saying the same thing twice is not a disagreement, and stopping for it would be noise."""
+    tree = sc.LogicBlock('gre').add(0.0, pp.make_delay(1e-3))
+    out = sc.compile(tree, opts, name='gre', definitions={'Name': 'gre'})
+    assert out.definitions['Name'] == 'gre'
 
 
 # ---------------------------------------------------------------------------------- invariants
@@ -293,8 +390,9 @@ def test_compiled_duration_equals_the_tree_duration(opts) -> None:
     g = pp.make_trapezoid('x', area=100.0, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g).add(5e-3, g).add(20e-3, pp.make_delay(1e-3))
     out = sc.compile(tree, opts)
-    assert out.duration_s == pytest.approx(21e-3)
-    assert not out.report.of_kind('duration')
+    # The duration invariant runs on every compile and raises, so returning at all is half the
+    # assertion; the number itself is the other half.
+    assert out.duration()[0] == pytest.approx(21e-3)
 
 
 def test_per_axis_m0_survives_compilation(opts) -> None:
@@ -310,9 +408,11 @@ def test_per_axis_m0_survives_compilation(opts) -> None:
     tree.add(1e-3, pp.make_trapezoid('x', area=-40.0, system=opts))
     tree.add(2e-3, sc.barrier())
     out = sc.compile(tree, opts)
-    assert out.moments()['x'] == pytest.approx(60.0, abs=1e-6)
-    assert out.moments()['y'] == pytest.approx(-250.0, abs=1e-6)
-    assert not out.report.of_kind('moment')
+    assert compiled_m0(out, 'x') == pytest.approx(60.0, abs=1e-6)
+    assert compiled_m0(out, 'y') == pytest.approx(-250.0, abs=1e-6)
+    assert sc.moments(tree) == pytest.approx({'x': 60.0, 'y': -250.0}, abs=1e-6), (
+        'and the tree-side measurement must agree, which is what the m0 invariant asserts'
+    )
 
 
 def test_block_durations_land_on_the_block_raster(opts) -> None:
@@ -330,9 +430,8 @@ def test_block_durations_land_on_the_block_raster(opts) -> None:
         sc.LogicBlock('t').add(0.0, rf).add(2e-3, g).add(2e-3, adc), opts
     )
     raster = sc.Raster(opts.block_duration_raster)
-    for index, duration in out.seq.block_durations.items():
+    for index, duration in out.block_durations.items():
         assert raster.holds(duration), f'block {index} is {duration * 1e6} us'
-    assert out.check().ok
 
 
 def test_event_delays_land_on_their_own_raster(opts) -> None:
@@ -347,31 +446,37 @@ def test_event_delays_land_on_their_own_raster(opts) -> None:
     for i in range(40):
         tree.add(i * 1.997e-3 + 3.0, rf)
     out = sc.compile(tree, opts)
-    for index in out.seq.block_events:
-        block = out.seq.get_block(index)
+    for index in out.block_events:
+        block = out.get_block(index)
         if getattr(block, 'rf', None) is not None:
             assert sc.Raster(opts.rf_raster_time).holds(float(block.rf.delay))
-    assert out.check().ok
 
 
 # ---------------------------------------------------------------------------------- provenance
-def test_origin_traces_a_block_back_to_its_module(opts) -> None:
+def test_a_block_built_from_one_module_carries_that_modules_path(opts) -> None:
+    """
+    Provenance is no longer returned -- it is used where it is produced, to name the source in an
+    error message -- so it is checked at the stage that computes it.
+    """
     inner = sc.LogicBlock('spoiler').add(0.0, pp.make_trapezoid('z', area=500.0, system=opts))
-    out = sc.compile(sc.LogicBlock('tr').add(0.0, inner), opts)
-    assert out.origin(0) == ('tr', 'spoiler')
+    assert common_path([('tr', 'spoiler'), ('tr', 'spoiler')]) == ('tr', 'spoiler')
+
+    # And end to end: an error about that gradient names where it came from.
+    tree = sc.LogicBlock('tr').add(3e-6, inner)          # off the gradient raster
+    with pytest.raises(sc.CompileError, match=r'tr\.spoiler'):
+        sc.compile(tree, opts)
 
 
-def test_origin_of_a_shared_block_is_the_common_ancestor(opts) -> None:
+def test_the_origin_of_a_shared_block_is_the_common_ancestor(opts) -> None:
     """
     Three modules in one block have no single origin, and saying otherwise would mislead.
 
-    The honest answer is the path they share.
+    The honest answer is the path they share; picking one arbitrarily would name a module that
+    is only half responsible.
     """
-    tree = sc.LogicBlock('tr')
-    tree.add(0.0, sc.LogicBlock('rephaser').add(0.0, pp.make_trapezoid('z', area=100.0, system=opts)))
-    tree.add(0.0, sc.LogicBlock('blip').add(0.0, pp.make_trapezoid('y', area=100.0, system=opts)))
-    out = sc.compile(tree, opts)
-    assert out.origin(0) == ('tr',)
+    assert common_path([('tr', 'rephaser'), ('tr', 'blip')]) == ('tr',)
+    assert common_path([('tr', 'ro'), ('other', 'ro')]) == ()
+    assert common_path([(), ('tr', 'blip')]) == ('tr', 'blip'), 'an untagged node abstains'
 
 
 # -------------------------------------------------------------------------------------- labels
@@ -385,10 +490,11 @@ def test_duplicate_kspace_addresses_are_an_error(opts) -> None:
     tree = sc.LogicBlock('t')
     for i in range(3):
         tree.add(i * 5e-3, adc, pp.make_label('LIN', 'SET', 7))
-    out = sc.compile(tree, opts)
-    report = out.check()
-    assert not report.ok
-    assert any(i.kind == 'label' for i in report.errors)
+    with pytest.raises(sc.CompileError) as err:
+        sc.compile(tree, opts)
+    text = str(err.value)
+    assert 'repeat a k-space address' in text
+    assert "'LIN': 7" in text, 'the message must name the address that repeats'
 
 
 def test_unique_kspace_addresses_pass(opts) -> None:
@@ -396,7 +502,6 @@ def test_unique_kspace_addresses_pass(opts) -> None:
     tree = sc.LogicBlock('t')
     for i in range(3):
         tree.add(i * 5e-3, adc, pp.make_label('LIN', 'SET', i))
-    assert sc.compile(tree, opts).check().ok
 
 
 def test_a_label_attaches_to_the_block_containing_its_start(opts) -> None:
@@ -406,7 +511,7 @@ def test_a_label_attaches_to_the_block_containing_its_start(opts) -> None:
     out = sc.compile(
         sc.LogicBlock('t').add(0.0, g).add(1e-3, adc, pp.make_label('LIN', 'SET', 5)), opts
     )
-    labels = out.seq.evaluate_labels(evolution='adc')
+    labels = out.evaluate_labels(evolution='adc')
     assert int(np.atleast_1d(labels['LIN'])[0]) == 5
 
 
@@ -420,10 +525,10 @@ def test_merging_two_trapezoids_stays_a_short_shape(opts) -> None:
     """
     out = compile_one(
         opts,
-        (0.0, pp.make_trapezoid('x', area=100.0, duration=2e-3, system=opts)),
-        (0.0, pp.make_trapezoid('x', area=200.0, duration=2e-3, system=opts)),
+        (0.0, pp.make_trapezoid('x', area=100.0, system=opts, **GENTLE)),
+        (0.0, pp.make_trapezoid('x', area=200.0, system=opts, **GENTLE)),
     )
-    grad = out.seq.get_block(1).gx
+    grad = out.get_block(1).gx
     if grad.type == 'grad':
         assert len(grad.tt) <= 8, f'merged shape has {len(grad.tt)} points'
 
@@ -433,9 +538,13 @@ def test_a_lone_arbitrary_gradient_passes_through_untouched(opts) -> None:
     A spiral must not be resampled: it takes the fast path when it sits alone in its interval.
 
     Resampling would be lossy exactly where the diffusion measurement is most sensitive.
+
+    ``first`` and ``last`` are stated: without them ``make_arbitrary_grad`` extrapolates from the
+    end samples, which puts the waveform at -2680 Hz/m half a raster before it starts.  pypulseq's
+    own timing check calls that a step from zero, and the compile now stops on it.
     """
     wave = np.sin(np.linspace(0.0, np.pi, 500)) * 0.5 * opts.max_grad
-    g = pp.make_arbitrary_grad(channel='x', waveform=wave, system=opts)
+    g = pp.make_arbitrary_grad(channel='x', waveform=wave, first=0.0, last=0.0, system=opts)
     out = compile_one(opts, (0.0, g))
-    assert out.seq.get_block(1).gx.type == 'grad'
-    assert len(out.seq.get_block(1).gx.waveform) == len(wave)
+    assert out.get_block(1).gx.type == 'grad'
+    assert len(out.get_block(1).gx.waveform) == len(wave)

@@ -8,6 +8,8 @@ if it is to be one event per axis rather than one per echo.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pypulseq as pp
 import pytest
@@ -195,7 +197,10 @@ def test_an_epi_train_compiles_without_limit_warnings(opts) -> None:
     for echo in range(n_echo):
         train.add(echo * spacing, adc)
 
-    out = sc.compile(train, opts, name='epi_train')
-    limits = [i for i in out.check().issues if i.kind.endswith('_limit')]
-    assert not limits, f'{len(limits)} limit issues on a legal train: {limits[:2]}'
-    assert not [i for i in out.check().issues if i.kind == 'grad_merge']
+    # A limit violation would raise, so reaching the next line is the assertion.  The claim left
+    # to make is the negative one: nothing was *merged*, because the two axes never share one.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        sc.compile(train, opts, name='epi_train')
+    merged = [str(w.message) for w in caught if 'merge' in str(w.message)]
+    assert not merged, f'a legal train on two axes must not merge anything: {merged}'

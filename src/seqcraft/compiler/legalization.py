@@ -25,9 +25,11 @@ spiral -- fits neither, and that one is resampled by :func:`_resampled`, which m
 error it introduced and reports it rather than moving the waveform quietly.  A silent 2.5 %
 amplitude loss on a spiral is exactly how that requirement was discovered.
 
-Limits are measured here too (:func:`limit_issues`), on the summed waveform, because that is the
+Limits are measured here too (:func:`check_limits`), on the summed waveform, because that is the
 only place the truth is visible: two individually legal gradients on one axis can sum to an
-illegal one, and no module can see that in isolation.
+illegal one, and no module can see that in isolation.  A per-axis violation **raises**: there is
+no legal sequence to return, so returning one with a note attached would only be a way of not
+noticing.
 """
 
 from __future__ import annotations
@@ -42,7 +44,8 @@ import pypulseq as pp
 from ..design import events as ev
 from ..design import units
 from ..design.timing import EPS, TICKS_PER_SECOND, to_ticks
-from ..report import Issue
+from ..errors import format_error
+from .errors import HardwareLimitError
 from .model import PlacedEvent, in_block_delay
 
 if TYPE_CHECKING:
@@ -51,7 +54,7 @@ if TYPE_CHECKING:
 
     from pypulseq.opts import Opts
 
-__all__ = ['axis_gradient', 'limit_issues', 'superpose']
+__all__ = ['axis_gradient', 'check_limits', 'superpose']
 
 
 def superpose(
@@ -136,7 +139,7 @@ def axis_gradient(
     a: float,
     b: float,
     opts: Opts,
-    issues: list[Issue],
+    notes: dict[str, list[str]],
     block_index: int,
 ) -> SimpleNamespace | None:
     """
@@ -161,15 +164,8 @@ def axis_gradient(
             return ev.derive(p.event, delay=in_block_delay(p, a, opts))
 
     if len(pieces) > 1:
-        issues.append(
-            Issue(
-                'grad_merge',
-                f'block {block_index}',
-                f'{len(pieces)} gradients overlap on axis {axis} over '
-                f'{a * 1e6:.1f}..{b * 1e6:.1f} us and were summed: '
-                + ', '.join(sorted({p.where for p in pieces})),
-                'warning',
-            )
+        notes.setdefault('merge', []).append(
+            '+'.join(sorted({p.where for p in pieces})) + f' (axis {axis})'
         )
 
     rel_ps, amps = superpose(pieces, a, b)
@@ -205,9 +201,9 @@ def axis_gradient(
     centre = _as_arbitrary(rel_ps, amps, raster_ps)
     if centre is not None:
         waveform, first, last = centre
-        # Limits are measured on the compiled block by limit_issues, which reports rather than
-        # raises; letting make_arbitrary_grad raise here would turn a reportable violation into a
-        # failed compile, and would do it before the waveform is complete.
+        # Limits are measured on the finished block by check_limits.  Letting make_arbitrary_grad
+        # raise here would report the violation before the waveform is complete, on a piece rather
+        # than on the sum -- which is the one place the truth is visible.
         return pp.make_arbitrary_grad(
             channel=axis,
             waveform=waveform,
@@ -219,7 +215,7 @@ def axis_gradient(
             system=opts,
         )
 
-    return _resampled(axis, rel_ps, amps, opts, issues, block_index, pieces)
+    return _resampled(axis, rel_ps, amps, opts, notes, block_index, pieces, a)
 
 
 def _resampled(
@@ -227,9 +223,10 @@ def _resampled(
     rel_ps: np.ndarray,
     amps: np.ndarray,
     opts: Opts,
-    issues: list[Issue],
+    notes: dict[str, list[str]],
     block_index: int,
     pieces: Sequence[PlacedEvent],
+    at: float,
 ) -> SimpleNamespace:
     """
     Force knots onto the gradient raster, and say by how much the waveform moved.
@@ -251,17 +248,9 @@ def _resampled(
     before = np.interp(union, rel_ps / TICKS_PER_SECOND, amps)
     after = np.interp(union, grid_ps / TICKS_PER_SECOND, grid_amps)
     error = float(np.max(np.abs(before - after)))
-    issues.append(
-        Issue(
-            'grad_resample',
-            f'block {block_index}',
-            f'axis {axis}: a trapezoid summed with a raster-centre waveform bends both on and '
-            f'off the gradient raster, which no pulseq gradient event can hold; resampled onto '
-            f'the raster, moving the waveform by at most '
-            f'{error / float(opts.max_grad) * 100:.2f} % of max_grad. From '
-            + ', '.join(sorted({p.where for p in pieces})),
-            'warning',
-        )
+    notes.setdefault('resample', []).append(
+        f'{"+".join(sorted({p.where for p in pieces}))} (axis {axis}) at {at * 1e3:.3f} ms, '
+        f'by at most {error / float(opts.max_grad) * 100:.2f} % of max_grad'
     )
     grad = pp.make_extended_trapezoid(
         channel=axis,
@@ -276,24 +265,45 @@ def _resampled(
     return grad
 
 
-def limit_issues(
+def check_limits(
     events: Iterable[SimpleNamespace],
     opts: Opts,
     block_index: int,
     origin: str,
-) -> list[Issue]:
+    notes: dict[str, list[str]],
+    *,
+    start: float = 0.0,
+) -> None:
     """
-    Measure amplitude and slew on a compiled block and describe any violation.
+    Measure amplitude and slew on a compiled block; raise on a per-axis violation.
 
-    Reported rather than raised so a run surfaces every violation at once; one mistimed module
-    usually produces a run of them, and stopping at the first hides the pattern.
+    Raised rather than reported, because there is no legal sequence to hand back.  A returned
+    object carrying a note is a way of not noticing: it writes a ``.seq`` the console refuses an
+    hour later, and the report explaining why is on an object nobody looked at.
 
-    The vector norm across simultaneous axes is a warning, not an error: two axes ramping
-    together reach ``sqrt(2)`` times the per-axis slew in vector magnitude, which real
+    The vector norm across simultaneous axes is the exception, and stays a **warning**: two axes
+    ramping together reach ``sqrt(2)`` times the per-axis slew in vector magnitude, which real
     amplifiers permit.  It becomes a hard limit only once a rotation can concentrate the whole
-    vector onto one physical axis.
+    vector onto one physical axis -- so it is measured, said out loud, and not fatal.
+
+    Parameters
+    ----------
+    events
+        The finished events of one compiled block.
+    opts
+        The scanner whose ``max_grad`` and ``max_slew`` are the ceiling.
+    block_index, origin, start
+        Where this block is, for the message: its index, the tag paths that fed it, and its
+        absolute start time.  The time is what a caller can act on -- a block index means
+        nothing until the sequence is written.
+    notes
+        Appended to under ``'norm'`` with the vector-norm findings, which are informational.
+
+    Raises
+    ------
+    HardwareLimitError
+        On the first per-axis amplitude or slew violation.
     """
-    out: list[Issue] = []
     raster = float(opts.grad_raster_time)
     gamma = float(opts.gamma)
     for kind, where, achieved, limit in ev.check_limits(events, opts, raster):
@@ -301,14 +311,34 @@ def limit_issues(
         to_display = functools.partial(
             units.convert, from_unit=pulseq_unit, to_unit=unit, gamma=gamma
         )
-        out.append(
-            Issue(
-                f'{kind}_limit',
-                f'block {block_index}',
-                f'{kind.replace("_", " ")} on {where} reaches {to_display(achieved):.1f} {unit}, '
-                f'limit {to_display(limit):.1f} {unit} '
-                f'({achieved / limit * 100:.0f}%); from {origin}',
-                'warning' if kind.endswith('_norm') else 'error',
+        if kind.endswith('_norm'):
+            notes.setdefault('norm', []).append(
+                f'{origin} ({kind.replace("_norm", "")} {achieved / limit * 100:.0f}% at '
+                f'{start * 1e3:.3f} ms)'
             )
+            continue
+        what = 'gradient' if kind == 'grad' else 'slew'
+        knob = 'grad' if kind == 'grad' else 'slew'
+        # Floored rather than rounded, so designing against the suggested derating actually
+        # clears the limit instead of landing on 100.4 % of it.
+        headroom = max(0.01, math.floor(limit / achieved * 100.0) / 100.0)
+        remedy = (
+            'lengthen the lobe, or lower the readout bandwidth'
+            if kind == 'slew'
+            else 'lower the amplitude, or lengthen the lobe'
         )
-    return out
+        msg = format_error(
+            f'{what} {achieved / limit * 100:.0f}% of the {to_display(limit):.0f} {unit} '
+            f'limit on axis {where}.',
+            {
+                'from': origin,
+                'at': f'{start * 1e3:.3f} ms (block {block_index})',
+                'reached': f'{to_display(achieved):.1f} {unit}',
+            },
+            [
+                remedy,
+                f'or design that part against sc.opts.derate(opts, {knob}={headroom:.2f}) -- '
+                f'the finished sequence is still compiled against the full opts',
+            ],
+        )
+        raise HardwareLimitError(msg)

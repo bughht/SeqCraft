@@ -16,10 +16,12 @@ does -- rebuilt against it rather than ported.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import tempfile
 import time
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -36,67 +38,64 @@ _BASELINE = json.loads(
 
 
 # ------------------------------------------------------------------------- every recipe passes
-def test_every_recipe_checks_clean(compiled: sc.CompiledSequence) -> None:
-    report = compiled.check()
-    assert report.ok, f'{compiled.definitions["Name"]}: {report}'
-
-
-def test_every_recipe_has_unique_kspace_addresses(compiled: sc.CompiledSequence) -> None:
+def test_every_recipe_compiles(compiled: pp.Sequence) -> None:
     """
-    A duplicate address means two readouts writing the same location.
+    The whole of what ``check()`` used to assert, in three lines.
 
-    One assertion catches a wrong slice order, an off-by-one partial-Fourier start and a mis-nested
-    loop -- which is why it runs on every recipe rather than being tested once.
+    Every legality failure raises now -- limits on the summed waveform, duplicate k-space
+    addresses, per-event sample counts, pypulseq's own timing audit, and the four
+    against-the-tree invariants -- so a recipe that reaches this line has passed all of them.
+    What is left to say is that the thing handed back is a bare pypulseq sequence with no report
+    bolted to it.
     """
-    assert not [i for i in compiled.check().issues if i.kind == 'label']
+    assert type(compiled).__module__.startswith('pypulseq')
+    assert not hasattr(compiled, 'report')
+    assert len(compiled.block_events) > 0
 
 
-def test_every_recipe_reports_no_amplitude_or_slew_error(compiled: sc.CompiledSequence) -> None:
-    """Per-axis violations are errors; the vector-norm ones are warnings and are allowed."""
-    hard = [i for i in compiled.report.errors if i.kind in ('grad_limit', 'slew_limit')]
-    assert not hard, hard
-
-
-def test_every_recipe_round_trips_through_a_file(compiled: sc.CompiledSequence) -> None:
+def test_every_recipe_round_trips_through_a_file(compiled: pp.Sequence) -> None:
     """Write, read back, and get the same block count and duration."""
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / 'seq.seq'
-        result = compiled.write(path)
-        assert result.path.exists()
-        assert result.sidecar is not None and result.sidecar.exists()
-        again = pp.Sequence(system=compiled.opts)
+        compiled.write(str(path))
+        assert path.exists()
+        again = pp.Sequence(system=OPTS)
         again.read(str(path))
-        assert len(again.block_events) == compiled.n_blocks
-        assert float(again.duration()[0]) == pytest.approx(compiled.duration_s, abs=1e-9)
+        assert len(again.block_events) == len(compiled.block_events)
+        assert float(again.duration()[0]) == pytest.approx(compiled.duration()[0], abs=1e-9)
 
 
-def test_every_recipe_records_its_definitions(compiled: sc.CompiledSequence) -> None:
-    """A file has to be interpretable a year later without the script that made it."""
+def test_every_recipe_records_its_definitions(compiled: pp.Sequence) -> None:
+    """
+    A file has to be interpretable a year later without the script that made it.
+
+    Set by the compile rather than by ``write()``, which is what makes the returned sequence
+    self-sufficient: no wrapper has to survive until write time to carry them.
+    """
     defs = compiled.definitions
     assert defs['Name']
     assert 'TE' in defs
     assert 'TR' in defs
     assert 'FOV' in defs
+    assert defs['TotalDuration'] == pytest.approx(compiled.duration()[0])
 
 
-def test_every_block_duration_lands_on_the_raster(compiled: sc.CompiledSequence) -> None:
-    raster = sc.Raster(compiled.opts.block_duration_raster, 'block')
+def test_every_block_duration_lands_on_the_raster(compiled: pp.Sequence) -> None:
+    raster = sc.Raster(OPTS.block_duration_raster, 'block')
     off = [
-        index for index, duration in compiled.seq.block_durations.items()
+        index for index, duration in compiled.block_durations.items()
         if not raster.holds(float(duration))
     ]
     assert not off, f'blocks off the raster: {off[:5]}'
 
 
-def test_every_recipe_matches_the_frozen_compiler_baseline(
-    compiled: sc.CompiledSequence,
-) -> None:
+def test_every_recipe_matches_the_frozen_compiler_baseline(compiled: pp.Sequence) -> None:
     """
     Freeze the compiler fields that are exact across supported CI platforms.
 
-    Re-captured when the recipes were rebuilt on raw pypulseq, so it no longer spans the Phase 0
-    boundary -- what it guards from here is that the remaining compiler refactor changes block
-    counts, boundaries and moments not at all.
+    This is the revision's invariant I1, asserted on every run: what the compiler *emits* --
+    block durations, event content, origins, moments -- does not move while what it *returns*
+    does.
     """
     name = str(compiled.definitions['Name'])
     expected = _BASELINE['recipes'][name]['stable']
@@ -105,72 +104,51 @@ def test_every_recipe_matches_the_frozen_compiler_baseline(
         assert actual[field] == value, f'{name}: compiler baseline changed for {field}'
 
 
-def test_the_sidecar_records_the_scanner_it_was_built_against(
-    compiled: sc.CompiledSequence,
-) -> None:
-    """
-    Every ``Opts`` field, as stored -- so a file can be rebuilt without the script that made it.
-
-    Notably including the dead times, which are the fields most likely to differ between the
-    installation a sequence was designed on and the one it is played on.
-    """
-    with tempfile.TemporaryDirectory() as tmp:
-        result = compiled.write(Path(tmp) / 'seq.seq')
-        payload = json.loads(result.sidecar.read_text(encoding='utf-8'))
-
-    recorded = payload['resolved']['opts']
-    assert recorded['rf_dead_time'] == compiled.opts.rf_dead_time
-    assert recorded['max_grad'] == pytest.approx(compiled.opts.max_grad)
-    assert set(recorded) == set(vars(compiled.opts))
-
-
 # ------------------------------------------------------------------------------- GRE physics
-def test_gre_kspace_extent_matches_matrix_over_fov(gre: sc.CompiledSequence) -> None:
+def test_gre_kspace_extent_matches_matrix_over_fov(gre_k) -> None:
     """
     ``k_max = matrix / (2 FOV)``, and with an even sample count the outermost sample sits one half
     step inside it -- so the expected extent is ``k_max * (1 - 1/matrix)``.
     """
-    k = gre.kspace()['k_adc']
+    k = gre_k['k_adc']
     k_max = MATRIX / (2.0 * FOV_MM / 1e3)
     expected = k_max * (1.0 - 1.0 / MATRIX)
     assert float(np.abs(k[0]).max()) == pytest.approx(expected, rel=0.02)
     assert float(np.abs(k[1]).max()) == pytest.approx(k_max, rel=0.02)
 
 
-def test_gre_dk_is_one_over_fov(gre: sc.CompiledSequence) -> None:
+def test_gre_dk_is_one_over_fov(gre_k) -> None:
     """The step between phase-encode lines is what sets the FOV, so it is the thing to check."""
-    k = gre.kspace()['k_adc']
+    k = gre_k['k_adc']
     lines = np.unique(np.round(k[1], 6))
     steps = np.diff(np.sort(lines))
     assert float(np.median(steps)) == pytest.approx(1e3 / FOV_MM, rel=0.02)
 
 
-def test_gre_echo_lands_at_te(gre: sc.CompiledSequence) -> None:
+def test_gre_echo_lands_at_te(gre: pp.Sequence, gre_k) -> None:
     """
     The definition of TE: the centre of the ADC window relative to the excitation centre.
 
     Asserted on the window centre rather than on a sample, because with an even sample count no
     sample sits exactly at k=0 -- the two central ones straddle it by half a dwell.
     """
-    k = gre.kspace()
     n = MATRIX
-    window = k['t_adc'][:n]
+    window = gre_k['t_adc'][:n]
     centre = 0.5 * (window[n // 2 - 1] + window[n // 2])
-    assert centre - k['t_excitation'][0] == pytest.approx(gre.definitions['TE'], abs=1e-5)
+    assert centre - gre_k['t_excitation'][0] == pytest.approx(gre.definitions['TE'], abs=1e-5)
 
 
-def test_gre_no_sample_sits_exactly_at_k_zero(gre: sc.CompiledSequence) -> None:
+def test_gre_no_sample_sits_exactly_at_k_zero(gre_k) -> None:
     """
     The corollary, stated so nobody 'fixes' the test above.
 
     With 32 samples the two central ones straddle k=0 by half a dwell each.
     """
-    k = gre.kspace()['k_adc']
-    line = k[0][:MATRIX]
+    line = gre_k['k_adc'][0][:MATRIX]
     assert float(np.abs(line).min()) > 0.0
 
 
-def test_gre_rf_spoiling_uses_the_closed_form(gre: sc.CompiledSequence) -> None:
+def test_gre_rf_spoiling_uses_the_closed_form(gre: pp.Sequence) -> None:
     """
     ``phi_n = inc * n(n+1)/2``, evaluated rather than accumulated.
 
@@ -179,9 +157,9 @@ def test_gre_rf_spoiling_uses_the_closed_form(gre: sc.CompiledSequence) -> None:
     """
     increment = math.radians(gre.definitions['RfSpoilIncrementDeg'])
     phases = [
-        float(gre.seq.get_block(i).rf.phase_offset)
-        for i in range(1, gre.n_blocks + 1)
-        if getattr(gre.seq.get_block(i), 'rf', None) is not None
+        float(gre.get_block(i).rf.phase_offset)
+        for i in sorted(gre.block_events)
+        if getattr(gre.get_block(i), 'rf', None) is not None
     ]
     assert len(phases) > 4
     # The slice offset contributes a constant of its own, so compare against shot 0 -- whose own
@@ -193,17 +171,17 @@ def test_gre_rf_spoiling_uses_the_closed_form(gre: sc.CompiledSequence) -> None:
         assert min(error, 2 * math.pi - error) < 1e-6
 
 
-def test_gre_slices_get_different_rf_frequencies(gre: sc.CompiledSequence) -> None:
+def test_gre_slices_get_different_rf_frequencies(gre: pp.Sequence) -> None:
     """Two slices means two carrier offsets; one would put both slices on top of each other."""
     offsets = {
-        round(float(gre.seq.get_block(i).rf.freq_offset), 3)
-        for i in range(1, gre.n_blocks + 1)
-        if getattr(gre.seq.get_block(i), 'rf', None) is not None
+        round(float(gre.get_block(i).rf.freq_offset), 3)
+        for i in sorted(gre.block_events)
+        if getattr(gre.get_block(i), 'rf', None) is not None
     }
     assert len(offsets) == 2
 
 
-def test_gre_three_winders_share_one_block(gre: sc.CompiledSequence) -> None:
+def test_gre_three_winders_share_one_block(gre: pp.Sequence) -> None:
     """
     The overlap the whole design exists for: a rephaser, a blip and a prephaser in one block.
 
@@ -211,72 +189,71 @@ def test_gre_three_winders_share_one_block(gre: sc.CompiledSequence) -> None:
     there is nothing wrong.
     """
     found = any(
-        all(getattr(gre.seq.get_block(i), f'g{axis}', None) is not None for axis in 'xyz')
-        and getattr(gre.seq.get_block(i), 'adc', None) is None
-        for i in range(1, gre.n_blocks + 1)
+        all(getattr(gre.get_block(i), f'g{axis}', None) is not None for axis in 'xyz')
+        and getattr(gre.get_block(i), 'adc', None) is None
+        for i in sorted(gre.block_events)
     )
     assert found, 'no block carries all three winders'
-    assert not gre.report.of_kind('grad_merge')
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        build_gre()
+    assert not [w for w in caught if 'merge' in str(w.message)], (
+        'three unrelated gradients on three axes are not a merge'
+    )
 
 
 # -------------------------------------------------------------------------- spin-echo physics
-def test_se_echo_lands_at_te(se: sc.CompiledSequence) -> None:
-    k = se.kspace()
+def test_se_echo_lands_at_te(se: pp.Sequence, se_k) -> None:
     n = MATRIX
-    window = k['t_adc'][:n]
+    window = se_k['t_adc'][:n]
     centre = 0.5 * (window[n // 2 - 1] + window[n // 2])
-    assert centre - k['t_excitation'][0] == pytest.approx(se.definitions['TE'], abs=1e-5)
+    assert centre - se_k['t_excitation'][0] == pytest.approx(se.definitions['TE'], abs=1e-5)
 
 
-def test_se_refocusing_pulse_sits_at_half_te(se: sc.CompiledSequence) -> None:
+def test_se_refocusing_pulse_sits_at_half_te(se: pp.Sequence, se_k) -> None:
     """If the 180 is not at TE/2 the echo does not form at TE, whatever the readout says."""
-    k = se.kspace()
-    half = k['t_refocusing'][0] - k['t_excitation'][0]
+    half = se_k['t_refocusing'][0] - se_k['t_excitation'][0]
     assert half == pytest.approx(se.definitions['TE'] / 2.0, abs=5e-5)
 
 
-def test_se_kspace_is_not_shifted_by_the_refocusing_pulse(se: sc.CompiledSequence) -> None:
+def test_se_kspace_is_not_shifted_by_the_refocusing_pulse(se_k) -> None:
     """
     The sign trap: winders before the 180 must be inverted, or the readout ends at 3 k_max.
 
     Nothing errors when this is wrong -- the extent check is the only thing that catches it.
     """
-    k = se.kspace()['k_adc']
+    k = se_k['k_adc']
     k_max = MATRIX / (2.0 * FOV_MM / 1e3)
     assert float(np.abs(k[0]).max()) == pytest.approx(k_max * (1 - 1 / MATRIX), rel=0.02)
 
 
 # ----------------------------------------------------------------------------- reproducibility
+def _written(seq, path: Path) -> str:
+    """Write `seq` and return the file's sha256."""
+    seq.write(str(path))
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def test_building_the_same_recipe_twice_gives_the_same_file() -> None:
     """
     Byte identity, which is a legitimate assertion because pulseq writes no timestamp.
 
-    This is the refactor guard: 'my output did not change unintentionally'.
+    This is the refactor guard: 'my output did not change unintentionally'.  There is no sidecar
+    to suppress any more -- the JSON that recorded versions and git state went with the result
+    wrapper, and nothing records them for the moment.  See docs/serialization.md.
     """
     with tempfile.TemporaryDirectory() as tmp:
-        first = build_gre().write(Path(tmp) / 'a.seq', sidecar=False)
-        second = build_gre().write(Path(tmp) / 'b.seq', sidecar=False)
-        assert first.sha256 == second.sha256
+        first = _written(build_gre(), Path(tmp) / 'a.seq')
+        second = _written(build_gre(), Path(tmp) / 'b.seq')
+        assert first == second
 
 
 def test_changing_te_changes_the_file() -> None:
     """The other half of the guard: identical output for different inputs would be worse."""
     with tempfile.TemporaryDirectory() as tmp:
-        a = build_gre(te_s=8e-3).write(Path(tmp) / 'a.seq', sidecar=False)
-        b = build_gre(te_s=9e-3).write(Path(tmp) / 'b.seq', sidecar=False)
-        assert a.sha256 != b.sha256
-
-
-def test_the_sidecar_records_versions_and_git_state() -> None:
-    """A dirty tree means a rebuild cannot be expected to match, so it is recorded."""
-    out = build_gre()
-    with tempfile.TemporaryDirectory() as tmp:
-        result = out.write(Path(tmp) / 'seq.seq')
-        payload = json.loads(result.sidecar.read_text(encoding='utf-8'))
-    assert payload['versions']['seqcraft'] == sc.__version__
-    assert 'pypulseq' in payload['versions']
-    assert 'git' in payload
-    assert payload['resolved']['n_blocks'] == out.n_blocks
+        a = _written(build_gre(te_s=8e-3), Path(tmp) / 'a.seq')
+        b = _written(build_gre(te_s=9e-3), Path(tmp) / 'b.seq')
+        assert a != b
 
 
 # ------------------------------------------------------------------------------- the scanner
@@ -306,8 +283,9 @@ def test_a_realistic_sequence_compiles_quickly() -> None:
     interval assignment is O(n log n), and this fails loudly if that ever regresses to quadratic.
     """
     start = time.perf_counter()
-    out = build_gre(matrix=128, n_slices=8)
+    seq = build_gre(matrix=128, n_slices=8)
     elapsed = time.perf_counter() - start
 
-    assert out.n_blocks > 4000
-    assert elapsed < 60.0, f'{out.n_blocks} blocks took {elapsed:.1f} s'
+    n_blocks = len(seq.block_events)
+    assert n_blocks > 4000
+    assert elapsed < 60.0, f'{n_blocks} blocks took {elapsed:.1f} s'

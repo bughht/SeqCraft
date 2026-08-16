@@ -60,11 +60,11 @@ __all__ = [
     'HANDLED_KINDS',
     'LABEL_KINDS',
     'POINT_KINDS',
+    'check_limits',
     'content_hash',
     'derive',
     'knots_of',
     'pwl_moment',
-    'trapz',
     'waveform_of',
 ]
 
@@ -74,10 +74,9 @@ Event = SimpleNamespace
 # --------------------------------------------------------------------------- the vocabulary
 # What an event *is*, as opposed to what the compiler may do with it.  These classify pulseq's
 # own ``type`` strings, so they belong beside the functions that read that field rather than in
-# the compiler -- which is also what keeps the result types free of a compiler import, since
-# ``CompiledSequence`` reads four of them.  The two genuinely-compiler constants (what may not be
-# cut, what may not share a block) stay in :mod:`seqcraft.compiler.model`, because they are
-# block-format policy rather than event identity.
+# the compiler -- which is what lets ``analysis`` and ``display`` use them without importing it.
+# The two genuinely-compiler constants (what may not be cut, what may not share a block) stay in
+# :mod:`seqcraft.compiler.model`, because they are block-format policy rather than event identity.
 
 #: Event ``type`` values that carry a gradient on a channel.
 GRADIENT_KINDS = frozenset({'trap', 'grad'})
@@ -110,7 +109,9 @@ ADDRESS_KEYS = ('SLC', 'LIN', 'PAR', 'AVG', 'REP', 'SEG', 'ECO', 'SET')
 
 _STRIP = ('id', 'shape_IDs', '_pypulseq_sequence_event_cache')
 
-# numpy renamed trapz -> trapezoid in 2.0; support both so numpy>=1.24 stays valid.
+# numpy renamed trapz -> trapezoid in 2.0; support both so the declared numpy>=1.24 floor is real.
+# Deliberately absent from __all__: it is numpy's function under a compatibility name, not
+# seqcraft API.  Importable for the package's own use -- and the tests' -- and nothing more.
 trapz = getattr(np, 'trapezoid', None) or np.trapz
 
 

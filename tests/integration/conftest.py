@@ -28,7 +28,7 @@ from pypulseq.opts import Opts
 import seqcraft as sc
 
 if TYPE_CHECKING:
-    from seqcraft.result import CompiledSequence
+    import pypulseq
 
 #: Small enough that the whole tier runs in a few seconds.
 MATRIX = 32
@@ -125,7 +125,7 @@ def _readout(opts: Opts, *, fov_mm: float, matrix: int, duration_s: float = 3.2e
     return gx, adc, time_to_echo, dk
 
 
-def build_gre(
+def gre_tree(
     opts: Opts = OPTS,
     *,
     fov_mm: float = FOV_MM,
@@ -135,12 +135,16 @@ def build_gre(
     tr_s: float = 20e-3,
     flip_deg: float = 15.0,
     n_slices: int = 2,
-) -> CompiledSequence:
+) -> tuple[sc.LogicBlock, dict[str, object]]:
     """
-    A spoiled 2D gradient echo.
+    A spoiled 2D gradient echo: the tree, and the definitions it should be compiled with.
 
     The three winders -- slice rephaser on z, phase blip on y, readout prephaser on x -- are placed
     at one time on three axes, which is the overlap the whole design exists to make free.
+
+    Returned uncompiled because the analysis functions take a *tree*: ``sc.kspace(tree, opts)``
+    and ``sc.pns(tree, opts, hw)`` compile internally, so a caller should not have to hold a
+    compiled sequence to ask them anything.  :func:`build_gre` compiles it.
     """
     defs = geometry_definitions(
         fov_mm=fov_mm, matrix=matrix, slice_mm=slice_mm, n_slices=n_slices)
@@ -192,14 +196,17 @@ def build_gre(
                     pp.make_label('SLC', 'SET', slice_index))
             index += 1
 
-    return sc.compile(
-        seq, opts, name='gre_2d',
-        definitions={**defs, 'TE': te_s, 'TR': tr_s, 'FlipAngle': flip_deg,
-                     'RfSpoilIncrementDeg': 117.0},
-    )
+    return seq, {**defs, 'TE': te_s, 'TR': tr_s, 'FlipAngle': flip_deg,
+                 'RfSpoilIncrementDeg': 117.0}
 
 
-def build_se(
+def build_gre(opts: Opts = OPTS, **kwargs: object) -> pypulseq.Sequence:
+    """Compile :func:`gre_tree`."""
+    tree, defs = gre_tree(opts, **kwargs)          # type: ignore[arg-type]
+    return sc.compile(tree, opts, name='gre_2d', definitions=defs)
+
+
+def se_tree(
     opts: Opts = OPTS,
     *,
     fov_mm: float = FOV_MM,
@@ -208,9 +215,9 @@ def build_se(
     te_s: float = 20e-3,
     tr_s: float = 500e-3,
     n_slices: int = 2,
-) -> CompiledSequence:
+) -> tuple[sc.LogicBlock, dict[str, object]]:
     """
-    A 2D spin echo.
+    A 2D spin echo: the tree, and the definitions it should be compiled with.
 
     Both winders sit before the refocusing pulse and therefore carry the **opposite** sign: a 180
     inverts accumulated phase, so a prephaser ahead of it must prephase the other way.  With the
@@ -274,23 +281,38 @@ def build_se(
                     pp.make_label('SLC', 'SET', slice_index))
             index += 1
 
-    return sc.compile(
-        seq, opts, name='se_2d',
-        definitions={**defs, 'TE': te, 'TR': tr_s},
-    )
+    return seq, {**defs, 'TE': te, 'TR': tr_s}
+
+
+def build_se(opts: Opts = OPTS, **kwargs: object) -> pypulseq.Sequence:
+    """Compile :func:`se_tree`."""
+    tree, defs = se_tree(opts, **kwargs)           # type: ignore[arg-type]
+    return sc.compile(tree, opts, name='se_2d', definitions=defs)
 
 
 @pytest.fixture(scope='module')
-def gre() -> CompiledSequence:
+def gre() -> pypulseq.Sequence:
     return build_gre()
 
 
 @pytest.fixture(scope='module')
-def se() -> CompiledSequence:
+def se() -> pypulseq.Sequence:
     return build_se()
 
 
 @pytest.fixture(params=['gre', 'se'])
-def compiled(request) -> CompiledSequence:
+def compiled(request) -> pypulseq.Sequence:
     """Every recipe, for the checks that must hold of all of them."""
     return request.getfixturevalue(request.param)
+
+
+@pytest.fixture(scope='module')
+def gre_k() -> dict:
+    """The GRE trajectory, computed once: ``sc.kspace`` compiles, so it is not free."""
+    return sc.kspace(gre_tree()[0], OPTS)
+
+
+@pytest.fixture(scope='module')
+def se_k() -> dict:
+    """The spin-echo trajectory, computed once."""
+    return sc.kspace(se_tree()[0], OPTS)

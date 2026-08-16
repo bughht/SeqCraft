@@ -33,9 +33,14 @@ Getting started
 >>> _ = tr.add(0.0, rf).add(0.0, gz)
 >>> _ = tr.add(pp.calc_duration(gz), gzr)
 >>> _ = tr.add(5e-3, gx).add(5e-3, adc)             # 5 ms after excitation
->>> out = sc.compile(tr, opts)
->>> out.check().ok
-True
+>>> seq = sc.compile(tr, opts)                      # a pypulseq.Sequence, or an exception
+>>> len(seq.block_events), round(seq.duration()[0] * 1e3, 3)
+(4, 8.24)
+
+**The central contract.**  ``sc.compile(tree, opts)`` returns a :class:`pypulseq.Sequence` and
+nothing else.  If the tree cannot become a legal sequence it **raises**; if the compiler had to
+change a waveform to make it legal it **warns**.  There is no report object to inspect and no
+result wrapper to unpack.
 
 **Set the dead times.**  pypulseq defaults ``rf_dead_time``, ``rf_ringdown_time`` and
 ``adc_dead_time`` to zero, which is wrong on every real scanner: the sequence compiles cleanly,
@@ -57,20 +62,19 @@ library code, and changing your own sequence should never mean editing a package
 
 Layout
 ------
-Four packages, named for the four questions, in the order a sequence passes through them::
+Named for what each layer answers, in the order a sequence passes through them::
 
     scanner/     what you build against    Opts, and the PNS response model
-    design/      what you build            the tree, events, timing, units, sampling
+    design/      what you build            the tree, events, timing, units
     compiler/    the transform             boundaries, legalization, emission, verification
-    result/      what compile returns      CompiledSequence, the report, the sidecar
+    analysis     measuring a tree          sample, moments, kspace, pns
+    display      looking at a tree         plot_block
 
-and three modules beside them that are on nobody's path: :mod:`~seqcraft.errors` (the exception
-hierarchy, which everything may raise), :mod:`~seqcraft.display` (the sole matplotlib importer)
-and :mod:`~seqcraft.testing` (assertions for components of your own).
+and :mod:`~seqcraft.errors` beside them, which everything may raise.
 
-The dependencies run one way -- ``errors -> design -> result -> compiler`` -- and two tests
-assert it, so ``result/`` cannot come to import ``compiler/`` and nothing on the compile path can
-come to import the display helpers, the sidecar or the scanner package.
+The dependencies run one way -- ``errors -> design -> compiler -> analysis -> display`` -- and two
+tests assert it, so nothing on the compile path can come to import the display helpers or the
+scanner package.
 
 This module is the only global re-export layer.  Import from here.
 
@@ -80,7 +84,8 @@ Importing this package is side-effect free: it does not touch ``pypulseq.Opts.de
 nothing.  ``display`` and ``testing`` are resolved on first access rather than at import, so
 neither the plotting stack nor the assertions are paid for unless used -- though note that
 ``import pypulseq`` itself imports matplotlib (in ``Sequence/calc_grad_spectrum.py``), so the
-saving is seqcraft's own weight rather than the whole plotting stack's.
+saving is seqcraft's own weight rather than the whole plotting stack's.  ``analysis`` is eager: it
+imports numpy and the compiler, both of which are already loaded.
 """
 
 from __future__ import annotations
@@ -89,27 +94,23 @@ import importlib
 
 from . import _compat
 from ._version import __version__
+from .analysis import kspace, moments, pns, sample
 from .compiler import compile_sequence as compile  # noqa: A001, A004
+from .compiler.errors import CompileError, DefinitionConflict, HardwareLimitError
+from .compiler.verification import CompilerContractError
 from .design import events, timing, units
 from .design.logic import Item, LogicBlock, Node, barrier, flatten, span
 from .design.module import Module
-from .design.sampling import sample
-from .design.timing import Raster
+from .design.timing import Raster, RasterError
 from .design.units import convert
 from .errors import (
-    CompileError,
     ConfigurationError,
-    DefinitionConflict,
-    HardwareLimitError,
     MissingExtraError,
-    RasterError,
     SeqCraftError,
-    UnitSanityError,
-    UnknownFieldError,
+    SeqCraftWarning,
 )
-from .report import Issue, Report, ReportFailed
-from .result import CompiledSequence, WriteResult
 from .scanner import hardware, opts
+from .scanner.opts import UnknownFieldError
 
 # Fail once with a complete list, rather than letting the first caller that needs a missing
 # pypulseq function fail with an opaque AttributeError halfway through a build.
@@ -123,15 +124,11 @@ compile_sequence = compile
 #:
 #: ``display`` is the only module allowed to import matplotlib, and ``import seqcraft`` must not
 #: pull matplotlib in -- so ``sc.plot_block(block, opts)`` works without paying that cost until it
-#: is used.  ``testing`` is deferred for tidiness: the contract assertions are documented as
-#: available downstream, but they are not part of the sequence-building API.
+#: is used.  It is the only entry left: ``testing`` used to be here too, and the assertions it
+#: held are in the test suite now.
 _LAZY: dict[str, tuple[str, str | None]] = {
     'display': ('.display', None),
     'plot_block': ('.display', 'plot_block'),
-    'plot_sequence': ('.display', 'plot_sequence'),
-    'plot_trajectory': ('.display', 'plot_trajectory'),
-    'provenance': ('.result.provenance', None),
-    'testing': ('.testing', None),
 }
 
 
@@ -155,11 +152,10 @@ def __dir__() -> list[str]:
 
 __all__ = [
     'CompileError',
-    'CompiledSequence',
+    'CompilerContractError',
     'ConfigurationError',
     'DefinitionConflict',
     'HardwareLimitError',
-    'Issue',
     'Item',
     'LogicBlock',
     'MissingExtraError',
@@ -167,13 +163,11 @@ __all__ = [
     'Node',
     'Raster',
     'RasterError',
-    'Report',
-    'ReportFailed',
     'SeqCraftError',
-    'UnitSanityError',
+    'SeqCraftWarning',
     'UnknownFieldError',
-    'WriteResult',
     '__version__',
+    'analysis',
     'barrier',
     'compile',
     'compile_sequence',
@@ -182,15 +176,14 @@ __all__ = [
     'events',
     'flatten',
     'hardware',
+    'kspace',
+    'moments',
     'opts',
     'plot_block',
-    'plot_sequence',
-    'plot_trajectory',
-    'provenance',
+    'pns',
     'sample',
     'scanner',
     'span',
-    'testing',
     'timing',
     'units',
 ]

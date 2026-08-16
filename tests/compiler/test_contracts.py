@@ -146,6 +146,7 @@ def test_authoritative_compile_path_produces_both_contracts(monkeypatch, opts) -
 
     assert seen_placed and all(isinstance(event, PlacedEvent) for event in seen_placed)
     assert seen_ready and all(isinstance(block, PulseqReadyBlock) for block in seen_ready)
-    assert out.n_blocks == len(seen_ready)
-    assert out.origins == tuple(block.origin for block in seen_ready)
-    assert out.report.ok
+    assert len(out.block_events) == len(seen_ready)
+    # Provenance is no longer returned -- it is used where it is produced, to name the source in
+    # an error message -- so what is checkable from here is that emission computed one per block.
+    assert all(isinstance(block.origin, tuple) for block in seen_ready)

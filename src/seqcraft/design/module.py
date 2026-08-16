@@ -126,12 +126,13 @@ Composition needs no API, and auto-tagging pays for itself:
 ...                 .add(0.0, first)
 ...                 .add(first.duration + self.gap_s, self.pe(line=-line)))
 >>>
->>> out = sc.compile(sc.LogicBlock('tr').add(0.0, Pair(opts=opts)(line=10)), opts)
->>> out.origin(0)
-('tr', 'Pair', 'PhaseEncode')
+>>> tree = sc.LogicBlock('tr').add(0.0, Pair(opts=opts)(line=10))
+>>> [path for _, _, path in sc.flatten(tree)]
+[('tr', 'Pair', 'PhaseEncode'), ('tr', 'Pair', 'PhaseEncode')]
+>>> _ = sc.compile(tree, opts)
 
-Not one tag string was written anywhere, and every compiled block still traces back to the module
-that produced it.
+Not one tag string was written anywhere, and every error the compiler can raise about those events
+still names ``tr.Pair.PhaseEncode`` as where they came from.
 
 The two failure modes the base catches:
 

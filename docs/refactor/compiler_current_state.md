@@ -1,5 +1,11 @@
 # Compiler current state
 
+> **Historical.** This records the state at the time it was written.  The compiler was
+> subsequently changed by [ADR-004](../adr/004-compile-returns-a-sequence.md): `compile` returns a
+> bare `pypulseq.Sequence`, every legality failure raises, and `CompiledSequence`, `Report` and
+> `Issue` no longer exist.  For the current shape see [`../compiler.md`](../compiler.md) and
+> [`../architecture.md`](../architecture.md).
+
 This document freezes the compiler's pre-refactor shape at commit
 `afe576bafe17e9cce3edfc768b343ad958994560`. It describes what exists, not the intended Phase 1
 design. The corresponding remote baseline is [GitHub Actions run #7](https://github.com/bughht/SeqCraft/actions/runs/31848625433), whose seven Linux/Windows, Python 3.11/3.12, lint, type, and example jobs passed.

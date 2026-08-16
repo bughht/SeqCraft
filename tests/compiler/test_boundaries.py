@@ -78,8 +78,8 @@ def test_every_reservation_gap_gets_a_boundary(opts) -> None:
     tree = _epi_tree(opts, n)
     out = sc.compile(tree, opts)
     per_block = []
-    for index in sorted(out.seq.block_events):
-        block = out.seq.get_block(index)
+    for index in sorted(out.block_events):
+        block = out.get_block(index)
         per_block.append(
             (1 if getattr(block, 'adc', None) is not None else 0,
              1 if getattr(block, 'rf', None) is not None else 0)
@@ -92,5 +92,4 @@ def test_every_reservation_gap_gets_a_boundary(opts) -> None:
 def test_a_long_empty_stretch_is_subdivided_to_fit_the_duration_field(opts) -> None:
     """pulseq stores a block duration in a fixed-width field, so one long delay must split."""
     out = sc.compile(sc.LogicBlock('t').add(0.0, pp.make_delay(1.0)), opts)
-    assert out.duration_s == pytest.approx(1.0)
-    assert out.check().ok
+    assert out.duration()[0] == pytest.approx(1.0)

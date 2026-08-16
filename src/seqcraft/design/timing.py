@@ -63,7 +63,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..errors import RasterError, format_error
+from ..errors import ConfigurationError, format_error
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -72,11 +72,22 @@ __all__ = [
     'EPS',
     'TICKS_PER_SECOND',
     'Raster',
+    'RasterError',
     'exact_diff',
     'exact_sum',
     'from_ticks',
     'to_ticks',
 ]
+
+
+class RasterError(ConfigurationError):
+    """
+    A duration is not an exact multiple of the raster it must land on.
+
+    It lives here, with the only code that raises it, rather than at the root: an exception stays
+    with its raiser unless more than one package needs it.  Re-exported as ``sc.RasterError``, so
+    a caller never spells the layout.
+    """
 
 #: Absolute time tolerance, in seconds.  One nanosecond: 100x finer than the finest pulseq raster
 #: and ~1e6x coarser than float64 resolution at millisecond magnitudes.

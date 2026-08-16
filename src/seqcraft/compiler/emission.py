@@ -35,8 +35,9 @@ from ..design import events as ev
 from ..design.events import GRADIENT_KINDS, POINT_KINDS
 from ..design.logic import BARRIER
 from ..design.timing import EPS
-from ..errors import CompileError, format_error
-from .legalization import axis_gradient, limit_issues
+from ..errors import format_error
+from .errors import CompileError
+from .legalization import axis_gradient, check_limits
 from .model import EXCLUSIVE_KINDS, PlacedEvent, PulseqReadyBlock, in_block_delay
 from .verification import require_valid_contract, verify_ready_blocks
 
@@ -47,7 +48,6 @@ if TYPE_CHECKING:
     from pypulseq.opts import Opts
 
     from ..design.timing import Raster
-    from ..report import Issue
 
 __all__ = ['common_path', 'emit_blocks', 'required_duration']
 
@@ -122,7 +122,7 @@ def emit_blocks(  # noqa: C901, PLR0912
     targets: Mapping[int, float],
     opts: Opts,
     raster: Raster,
-    issues: list[Issue],
+    notes: dict[str, list[str]],
 ) -> list[tuple[str, ...]]:
     """
     Add one pulseq block per interval of `edges` to `seq`, and return each block's origin path.
@@ -139,14 +139,18 @@ def emit_blocks(  # noqa: C901, PLR0912
         The placed events, and the label assignment times chosen for them.
     opts, raster
         The scanner, and the block-duration raster.
-    issues
-        Appended to: same-axis merges, resamplings and limit violations found while emitting.
+    notes
+        ``category -> entries``, appended to: same-axis merges, resamplings and vector-norm
+        findings made while emitting.  Aggregated into one warning per category at the end of
+        the compile.
 
     Raises
     ------
     CompileError
         If a boundary would split an ADC's sampling window, if an interval is shorter than the
         events it holds, or if pypulseq refuses the block.
+    HardwareLimitError
+        If the *summed* waveform in a block exceeds ``max_grad`` or ``max_slew`` on an axis.
 
     Notes
     -----
@@ -228,7 +232,7 @@ def emit_blocks(  # noqa: C901, PLR0912
                         ],
                     )
                     raise CompileError(msg)
-            grad = axis_gradient(axis, here, a, b, opts, issues, index)
+            grad = axis_gradient(axis, here, a, b, opts, notes, index)
             if grad is not None:
                 block.append(grad)
                 paths.extend(p.path for p in here)
@@ -258,7 +262,7 @@ def emit_blocks(  # noqa: C901, PLR0912
             continue
 
         origin = ', '.join(sorted({'.'.join(p) for p in ready.source_paths if p})) or '?'
-        issues.extend(limit_issues(ready.events, opts, index, origin))
+        check_limits(ready.events, opts, index, origin, notes, start=a)
         # pypulseq takes a block's duration as the max over its events, so an interval shorter
         # than its contents silently produces an off-raster block instead of an error.  Catch it
         # here, where the boundary that caused it can still be named.

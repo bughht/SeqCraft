@@ -1,5 +1,11 @@
 # Phase 0 baseline report
 
+> **Historical.** This records the state at the time it was written.  The compiler was
+> subsequently changed by [ADR-004](../adr/004-compile-returns-a-sequence.md): `compile` returns a
+> bare `pypulseq.Sequence`, every legality failure raises, and `CompiledSequence`, `Report` and
+> `Issue` no longer exist.  For the current shape see [`../compiler.md`](../compiler.md) and
+> [`../architecture.md`](../architecture.md).
+
 ## Baseline identity
 
 - Source commit: `afe576bafe17e9cce3edfc768b343ad958994560`

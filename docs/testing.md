@@ -31,13 +31,21 @@ mypy src/seqcraft/design/timing.py src/seqcraft/design/units.py \
   src/seqcraft/design/module.py \
   src/seqcraft/scanner/opts.py \
   src/seqcraft/compiler/model.py src/seqcraft/compiler/placement.py \
-  src/seqcraft/compiler/boundaries.py src/seqcraft/compiler/definitions.py
+  src/seqcraft/compiler/boundaries.py
 pytest -n auto \
   -m "not slow and not bloch and not crossval and not hardware" \
   --cov=seqcraft --cov-report=term-missing
 pytest --doctest-modules src/seqcraft
+python tools/check_api_reference.py
 python tools/run_notebook_smoke.py
 ```
+
+`check_api_reference.py` executes every fenced `python` block in
+[`api_reference.md`](api_reference.md) in one shared namespace, in document order, and checks its
+index against every module's `__all__` in both directions -- a public name missing from the index,
+or an indexed name the package does not export, both fail. Blocks that are illustrative rather than
+runnable are skipped by name and each skip is printed, so the exemptions stay visible instead of
+accumulating quietly. A reference nobody executes is a reference that is wrong within two commits.
 
 Ruff formatting remains a pre-commit hook.  It is not yet a repository-wide CI gate because the
 existing tree has not had a dedicated format-only migration.  Likewise, mypy is intentionally
@@ -64,6 +72,26 @@ classes, which made compiler coverage depend on whatever the library happened to
 the library impossible to replace without also rewriting the compiler's tests. `tests/conftest.py`
 supplies one `pp.Opts`, and the sequences are assembled from `pp.make_*` calls.
 
+`tests/conftest.py` also holds the component assertions the package used to ship as
+`seqcraft.testing`: `assert_deterministic`, `assert_pure`, `assert_output` and `assert_all`,
+reachable through the `component_checks` fixture. They are here rather than in `src/` because a
+package that ships assertions has to keep them working, and these are forty lines that only this
+repository's own module tests use. Everything else that module asserted -- the raster, the limits,
+that a block is well formed -- the compiler now checks, with a better message and on the *summed*
+waveform.
+
+## What a compiler test asserts
+
+`sc.compile` raises on every legality failure and returns a bare `pypulseq.Sequence` otherwise, so
+**a test that compiles at all has asserted most of what it used to assert explicitly**: limits on
+the summed waveform, per-event sample counts, duplicate k-space addresses, pypulseq's own timing
+audit, and the four against-the-tree invariants. What is left to write down is the number the test
+is actually about.
+
+Warnings are the other half. Use `pytest.warns(sc.SeqCraftWarning, match=...)` for the positive
+form; for the negative -- *no* warning of a kind -- use `warnings.catch_warnings(record=True)` and
+assert on the captured list, because `pytest.warns` has no clean negative.
+
 ## Updating dependencies
 
 Dependency updates are intentional maintenance changes. Update one related group in
@@ -87,6 +115,9 @@ only after reviewing an approved behavior change:
 python tools/capture_compiler_baseline.py --iterations 3
 ```
 
-Current compiler responsibilities and the event/boundary support matrix are recorded in
-[`refactor/compiler_current_state.md`](refactor/compiler_current_state.md) and
-[`refactor/compiler_constraint_matrix.md`](refactor/compiler_constraint_matrix.md).
+The compiler's responsibilities and the event/boundary support matrix are in
+[`compiler.md`](compiler.md).  The two `refactor/` documents that used to hold them --
+[`compiler_current_state.md`](refactor/compiler_current_state.md) and
+[`compiler_constraint_matrix.md`](refactor/compiler_constraint_matrix.md) -- are dated,
+commit-pinned records of the pre-refactor shape and are marked historical; they are kept because
+what changed is only legible against what was there.

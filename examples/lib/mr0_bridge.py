@@ -2,13 +2,14 @@
 Bridge to MRzeroCore: simulate what the compiled sequence will actually play.
 
 MRzero's own ``.seq`` reader handles **trapezoid gradients only**, so a spiral cannot be imported
-through it at all.  :func:`to_mr0` therefore takes the events directly -- either from a compiled
-:class:`~seqcraft.result.CompiledSequence`, or from a ``pypulseq.Sequence`` that has read the
-written file back, since pypulseq's reader does handle arbitrary waveforms.
+through it at all.  :func:`to_mr0` therefore takes the events directly -- either from what
+:func:`seqcraft.compile` returned, or from a ``pypulseq.Sequence`` that has read the written file
+back, since pypulseq's reader does handle arbitrary waveforms.  Both are ``pypulseq.Sequence``
+objects, so it is one code path.
 
-Reading the file back is the stronger of the two.  What gets simulated is then the bytes that will be
-handed to the scanner rather than an object that ought to correspond to them, and "ought to" is where
-a stale sidecar or a lossy round trip hides.
+Reading the file back is the stronger of the two.  What gets simulated is then the bytes that will
+be handed to the scanner rather than an object that ought to correspond to them, and "ought to" is
+where a lossy round trip hides.
 
 What is modelled
 ----------------
@@ -62,7 +63,7 @@ from seqcraft.design import events as ev
 from seqcraft.errors import MissingExtraError, format_error
 
 if TYPE_CHECKING:
-    from seqcraft.result import CompiledSequence
+    import pypulseq as pp
 
 __all__ = [
     'Mr0Meta',
@@ -273,7 +274,7 @@ def _drop(moments: np.ndarray, axes: tuple[int, ...]) -> np.ndarray:
 
 
 def to_mr0(
-    compiled: CompiledSequence | Any,
+    compiled: pp.Sequence | Any,
     *,
     opts: Any = None,
     event_dt_s: float = 200e-6,
@@ -288,8 +289,8 @@ def to_mr0(
     Parameters
     ----------
     compiled
-        Either the result of :func:`~seqcraft.compiler.compile_sequence`, or a bare
-        ``pypulseq.Sequence`` -- in which case pass `opts` as well, since a ``.seq`` file records
+        A ``pypulseq.Sequence``: either what :func:`~seqcraft.compiler.compile_sequence` returned,
+        or one that has read a ``.seq`` back.  Pass `opts` as well, since a ``.seq`` file records
         the raster *values* but not the ``Opts`` object they came from.
 
         Reading the written file back is the stronger check of the two: it simulates the bytes that
@@ -298,7 +299,7 @@ def to_mr0(
         reader handles trapezoid gradients only, while pypulseq's reads arbitrary waveforms.
     opts
         The ``pypulseq.Opts`` the sequence was built against.  Required when `compiled` is a plain
-        ``pypulseq.Sequence``; taken from ``compiled.opts`` otherwise.
+        ``pypulseq.Sequence``, which since the compiler returns one is always.
     event_dt_s
         Target event length for blocks with no ADC.  Diffusion lobes are integrated per event, so
         this has to be short enough to resolve them: a single event spanning a 15 ms lobe would

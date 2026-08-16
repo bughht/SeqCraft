@@ -1,12 +1,12 @@
 """
 The layout, asserted rather than described.
 
-Four packages in one dependency order::
+Five layers in one dependency order::
 
-    errors  ->  design  ->  result  ->  compiler
+    errors  ->  design  ->  compiler  ->  analysis  ->  display
 
-with :mod:`seqcraft.scanner` independent of all four, and :mod:`seqcraft.display`,
-:mod:`seqcraft.testing` and the top-level facade allowed to reach anywhere.
+with :mod:`seqcraft.scanner` independent of all five, and the top-level facade allowed to reach
+anywhere.
 
 Both rules here were true at some point and quietly stopped being true, which is the whole
 argument for testing them.  ``core`` once held the compiler *and* the geometry *and* the unit
@@ -30,15 +30,16 @@ import seqcraft
 
 ROOT = Path(seqcraft.__file__).parent
 
-#: Later packages may import earlier ones, never the reverse.
+#: Later layers may import earlier ones, never the reverse.
 #:
-#: ``errors`` and ``report`` are both leaves and both cross-cutting -- they are the two halves of
-#: how seqcraft communicates a problem, one by raising and one by reporting -- so they come first
-#: and neither may import anything else in the package.
-ORDER = ['errors', 'report', 'design', 'result', 'compiler']
+#: ``errors`` is a leaf and cross-cutting -- everything may raise -- so it comes first and may
+#: import nothing else in the package.  ``analysis`` sits between the compiler and the display
+#: because :func:`seqcraft.kspace` and :func:`seqcraft.pns` compile internally, and ``display``
+#: draws what :func:`seqcraft.sample` returns.
+ORDER = ['errors', 'design', 'compiler', 'analysis', 'display']
 
 #: Nothing under ``compiler/`` may import these *at runtime*: they are beside the compile path.
-OFF_THE_COMPILE_PATH = ['design.module', 'display', 'testing', 'result.provenance', 'scanner']
+OFF_THE_COMPILE_PATH = ['design.module', 'analysis', 'display', 'scanner']
 
 
 def _imports(path: Path, *, runtime_only: bool = False) -> set[str]:
@@ -108,11 +109,13 @@ def _modules(package: str) -> list[Path]:
 @pytest.mark.parametrize('index', range(len(ORDER)))
 def test_no_package_imports_a_later_layer(index: int) -> None:
     """
-    ``errors -> design -> result -> compiler``, and never back up the chain.
+    ``errors -> design -> compiler -> analysis -> display``, and never back up the chain.
 
-    The edge this exists to forbid is ``result -> compiler``: the result types are what a caller
-    holds after a build, and a caller inspecting, plotting or writing one should not be dragging
-    the transformation in behind it.
+    The edge this exists to forbid is ``compiler -> analysis``: the compiler must not reach for
+    the measurements taken *of* what it produced.  It would be an easy one to add -- the
+    self-check wants a moment per axis, and ``analysis.moments`` computes one -- and it would be
+    wrong, because that moment walks the tree and the self-check needs the compiled side.  A
+    self-check that shares code with the thing it checks compares a number with itself.
     """
     package = ORDER[index]
     later = set(ORDER[index + 1:])
@@ -131,12 +134,12 @@ def test_the_compile_path_imports_nothing_beside_it() -> None:
     """
     The compiler reads a tree and an ``Opts``, and nothing else it could do without.
 
-    The component contract, the scanner package, the provenance sidecar and the display helpers are
+    The component contract, the scanner package, the analysis toolbox and the display helpers are
     all either upstream or downstream of the transform.  A compile path that reached any of them
     could not be reused on its own, and the coupling would stay invisible until someone tried.
 
     One thing is deliberately **not** forbidden, and naming it is the point of writing the rule
-    down rather than describing it: :func:`~seqcraft.compiler.legalization.limit_issues` imports
+    down rather than describing it: :func:`~seqcraft.compiler.legalization.check_limits` imports
     ``design.units`` to convert Hz/m to mT/m, so a limit violation is reported in the units the
     amplifier is specified in.  Banning it would either cost that message or duplicate the
     conversion factor, and a second copy of a factor is worse than an edge on the graph.
@@ -153,6 +156,59 @@ def test_the_compile_path_imports_nothing_beside_it() -> None:
     assert not offenders, f'the compile path reaches beside itself: {offenders}'
 
 
+def test_compile_returns_a_bare_pypulseq_sequence() -> None:
+    """
+    The central contract, asserted rather than described.
+
+    ``sc.compile`` returns a :class:`pypulseq.Sequence` and nothing else -- not a wrapper, not a
+    pair of a sequence and a report.  It lives here rather than with the compiler tests because
+    it is a claim about the *layout*: the return type is what decided that ``result/`` and
+    ``report.py`` had nothing left to hold.
+
+    ``hasattr(seq, 'report')`` is the specific regression: re-attaching findings to the returned
+    object is the obvious way to "improve" the API back into something a caller can forget to
+    check.
+    """
+    import pypulseq as pp
+
+    opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+                   rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
+    tree = seqcraft.LogicBlock('t').add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
+    seq = seqcraft.compile(tree, opts)
+
+    assert type(seq).__module__.startswith('pypulseq')
+    assert not hasattr(seq, 'report')
+    assert not hasattr(seq, 'check')
+    assert seq.definitions['Name'] == 't', 'and it is self-sufficient: the definitions are on it'
+
+
+def test_every_exception_is_reachable_from_the_package_root() -> None:
+    """
+    An exception lives with the code that raises it; the spelling never depends on the layout.
+
+    Identity, not presence: ``sc.CompileError`` must *be* the class ``compiler/`` raises, or a
+    caller's ``except sc.CompileError`` silently stops catching anything.
+    """
+    from seqcraft.compiler import errors as compiler_errors
+    from seqcraft.design import timing
+    from seqcraft.scanner import opts as scanner_opts
+
+    assert seqcraft.CompileError is compiler_errors.CompileError
+    assert seqcraft.HardwareLimitError is compiler_errors.HardwareLimitError
+    assert seqcraft.DefinitionConflict is compiler_errors.DefinitionConflict
+    assert seqcraft.RasterError is timing.RasterError
+    assert seqcraft.UnknownFieldError is scanner_opts.UnknownFieldError
+
+    catchable = (
+        seqcraft.CompileError, seqcraft.HardwareLimitError, seqcraft.DefinitionConflict,
+        seqcraft.RasterError, seqcraft.UnknownFieldError, seqcraft.ConfigurationError,
+        seqcraft.MissingExtraError,
+    )
+    assert all(issubclass(e, seqcraft.SeqCraftError) for e in catchable), (
+        'catching SeqCraftError has to catch everything, or the base class is a lie'
+    )
+
+
 def test_display_is_the_only_module_that_imports_matplotlib() -> None:
     """
     ``import seqcraft`` stays cheap, and it stays cheap by there being one place to check.
@@ -167,7 +223,7 @@ def test_display_is_the_only_module_that_imports_matplotlib() -> None:
     assert not offenders, f'matplotlib is imported outside display.py: {offenders}'
 
 
-def test_importing_seqcraft_does_not_import_the_plotting_or_testing_modules() -> None:
+def test_importing_seqcraft_does_not_import_the_plotting_module() -> None:
     """
     The invariant the lazy ``_LAZY`` table exists to protect, checked in a fresh interpreter.
 
@@ -177,16 +233,19 @@ def test_importing_seqcraft_does_not_import_the_plotting_or_testing_modules() ->
     seqcraft at all -- pulls it in regardless of what this package does.
 
     What *is* seqcraft's to promise is that nothing here reaches for it, which the previous test
-    checks per file, and that the two heavyweight modules stay behind ``__getattr__``.  A
+    checks per file, and that the one heavyweight module stays behind ``__getattr__``.  A
     top-level ``from .display import plot_block`` added for convenience is exactly what would
     break this, and it would break it silently.
+
+    ``seqcraft.testing`` used to be checked here too.  It is not deferred any more, it is gone --
+    the two assertions it held are in ``tests/conftest.py``.
     """
     import subprocess
     import sys
 
     probe = (
         'import sys, seqcraft\n'
-        'eager = sorted(m for m in ("seqcraft.display", "seqcraft.testing") if m in sys.modules)\n'
+        'eager = sorted(m for m in ("seqcraft.display",) if m in sys.modules)\n'
         'print(eager)\n'
         'sys.exit(1 if eager else 0)\n'
     )

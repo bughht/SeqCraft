@@ -11,15 +11,21 @@ and one ADC.  A failure is a compiler bug by definition, so it raises
 **Semantics** (:func:`verify_against_tree`) asks the harder question: did the compile preserve
 what the *tree* meant?  Duration, zeroth and first gradient moment per axis, and the label
 address each ADC ends up with, all compared against the placed events the compile started from.
-A failure here is reported as an ``Issue``, because it describes the produced sequence rather
-than an internal invariant, and because seeing every affected axis at once beats stopping at the
-first.
+A failure here is a compiler bug too -- the tree was legal, since every legality check has already
+passed -- so it raises :class:`CompilerContractError` as well.  All four invariants are measured
+before anything is raised, because seeing every affected axis at once beats stopping at the first.
 
-Why the semantic check lives in the compiler rather than on the result it checks: it takes
-``Sequence[PlacedEvent]`` -- the compiler's private IR, which the result type never sees -- and it
-runs once, on the object :func:`~seqcraft.compiler.compile_sequence` has just built.  It is a
-compile stage that happens to run last, not an accessor.  Keeping it here is what lets the result
-types stay free of any compiler import.
+**Finished-sequence checks** (:func:`check_event_sizes`, :func:`check_label_addresses`) ask what
+only a built :class:`pypulseq.Sequence` can answer: does any one event exceed the interpreter's
+sample limit, and do two imaging ADCs write the same k-space address?  Neither is an internal
+invariant -- both are ways a legal-looking tree produces a sequence a scanner refuses -- so they
+raise :class:`~seqcraft.errors.HardwareLimitError` and :class:`~seqcraft.errors.CompileError`
+respectively.
+
+They live here rather than on what a compile returns because a check nobody has to call is a
+check nobody calls.  The reference implementation's ``get_report()`` printed and returned
+``None``; its successor returned an object with a ``check()`` method, which is the same failure
+one indirection later.
 """
 
 from __future__ import annotations
@@ -31,9 +37,18 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ..design.events import GRADIENT_KINDS, HANDLED_KINDS, LABEL_KINDS, knots_of, pwl_moment
+from ..design.events import (
+    ADDRESS_KEYS,
+    AXES,
+    GRADIENT_KINDS,
+    HANDLED_KINDS,
+    LABEL_KINDS,
+    knots_of,
+    pwl_moment,
+)
 from ..design.timing import EPS
-from ..report import Issue
+from ..errors import format_error
+from .errors import CompileError, HardwareLimitError
 from .model import (
     EXCLUSIVE_KINDS,
     PlacedEvent,
@@ -134,6 +149,147 @@ def require_valid_contract(
     raise CompilerContractError(name, violations)
 
 
+# ------------------------------------------------------------------ what only the sequence knows
+def _sequence_moments(seq: Any, order: int = 0) -> dict[str, float]:
+    """
+    Return the whole-sequence gradient moment per axis, integrated from the compiled blocks.
+
+    The compiled side of :func:`verify_against_tree`.  Deliberately *not* shared with
+    :func:`seqcraft.analysis.moments`, which walks the tree: these are different iterations over
+    different structures, and having the self-check call the same code as the thing it checks
+    would make it compare a number with itself.
+
+    Parameters
+    ----------
+    seq
+        The built :class:`pypulseq.Sequence`.
+    order
+        ``0`` for area in 1/m, ``1`` for s/m, ``2`` for s^2/m, referenced to the sequence start.
+
+    Notes
+    -----
+    Integrated from each block's exact knots, not from raster samples.  The difference is not
+    cosmetic: sampling is exact for ``order == 0`` and only then, and an arbitrary gradient's
+    samples sit at raster *centres*, so a raster-sampled m0 quietly matched a raster-sampled tree
+    even when the compiled waveform had moved.
+    """
+    out: dict[str, float] = dict.fromkeys(AXES, 0.0)
+    t = 0.0
+    # Block IDs are 1-based, and block_durations is a dict keyed by them, not a list.
+    for index in sorted(seq.block_events):
+        block = seq.get_block(index)
+        for axis in AXES:
+            grad = getattr(block, f'g{axis}', None)
+            if grad is not None:
+                out[axis] += pwl_moment(*knots_of(grad, t), order)
+        t += float(seq.block_durations[index])
+    return out
+
+
+def check_event_sizes(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] = ()) -> None:
+    """
+    Check every ADC and RF event against the interpreter's per-event sample limits.
+
+    These limits live in ``Opts`` as ``adc_samples_limit`` and ``rf_samples_limit`` and default to
+    ``0``, pypulseq's "no limit".  Nothing checked them until a 67 388-sample spiral readout
+    reached a scanner, which refused the block with ``fRTEBFinish() failed for block type:
+    ArbX ArbY ADC`` -- a message that names the block type and says nothing about samples.
+
+    The limit is the vendor interpreter's, not the amplifier's, so it has to be set from the
+    installation: :func:`seqcraft.scanner.opts.from_scanner` takes ``adc_samples_limit=`` for
+    exactly this, and 8192 is the common Siemens value.  A readout longer than one event's worth
+    has to be split into several ADCs, at the cost of ``adc_dead_time`` between them.
+
+    Raises
+    ------
+    HardwareLimitError
+        Naming the worst event, where it came from, and how many events it needs splitting into.
+    """
+    for kind, attribute, count in (
+        ('adc', 'adc_samples_limit', lambda block: int(block.adc.num_samples)),
+        ('rf', 'rf_samples_limit', lambda block: int(np.size(block.rf.signal))),
+    ):
+        limit = int(getattr(opts, attribute, 0) or 0)
+        if limit <= 0:
+            continue
+        worst = 0
+        where = ''
+        for index in sorted(seq.block_events):
+            block = seq.get_block(index)
+            if getattr(block, kind, None) is None:
+                continue
+            samples = count(block)
+            if samples > worst:
+                # Block ids are 1-based; `origins` is a list in emission order, so it is not.
+                path = origins[index - 1] if 0 < index <= len(origins) else ()
+                worst = samples
+                where = f'block {index} ({".".join(path) or "?"})'
+        if worst > limit:
+            msg = format_error(
+                f'{worst} {kind.upper()} samples in one event, above the {limit} the '
+                f'interpreter accepts.',
+                {'from': where, 'limit': f'{kind}_samples_limit = {limit}'},
+                [
+                    f'split it into {-(-worst // limit)} events, at the cost of '
+                    f'adc_dead_time between them',
+                    'or lengthen the dwell, which lowers the readout bandwidth',
+                ],
+            )
+            raise HardwareLimitError(msg)
+
+
+def check_label_addresses(seq: Any) -> None:
+    """
+    Check that no two imaging ADCs write the same k-space address.
+
+    The highest-value check available on a finished sequence: a duplicate address means two
+    readouts landing in the same place, which catches a wrong slice order, an off-by-one
+    partial-Fourier start and a mis-nested loop from one assertion.
+
+    Raises
+    ------
+    CompileError
+        Naming how many readouts repeat and the first address that does.
+    """
+    try:
+        labels = seq.evaluate_labels(evolution='adc')
+    except (AttributeError, ValueError, IndexError):  # pragma: no cover - older pypulseq
+        return
+    keys = [k for k in ADDRESS_KEYS if k in labels]
+    if not keys:
+        return
+    arrays = [np.atleast_1d(np.asarray(labels[k])) for k in keys]
+    n = max(len(a) for a in arrays)
+    arrays = [np.resize(a, n) for a in arrays]
+    skip = np.zeros(n, dtype=bool)
+    for flag in ('NOISE', 'REF', 'NAV'):
+        if flag in labels:
+            skip |= np.resize(np.atleast_1d(np.asarray(labels[flag])).astype(bool), n)
+    addresses = [tuple(int(a[i]) for a in arrays) for i in range(n) if not skip[i]]
+    duplicates = len(addresses) - len(set(addresses))
+    if not duplicates:
+        return
+    seen: set[tuple[int, ...]] = set()
+    first: tuple[int, ...] = ()
+    for address in addresses:
+        if address in seen:
+            first = address
+            break
+        seen.add(address)
+    msg = format_error(
+        f'{duplicates} imaging ADC(s) repeat a k-space address -- two readouts are writing the '
+        f'same location.',
+        {'first repeat': dict(zip(keys, first)), 'readouts': len(addresses)},
+        [
+            'check the slice order, the phase-encode table, and that every loop index reaches '
+            'a label',
+            'a readout that is deliberately not imaged should carry a NOISE, REF or NAV label, '
+            'which excludes it from this check',
+        ],
+    )
+    raise CompileError(msg)
+
+
 # --------------------------------------------------------------- did the compile mean the tree
 def expected_addresses(
     placed: Sequence[PlacedEvent],
@@ -170,11 +326,11 @@ def expected_addresses(
     return out
 
 
-def _address_issues(
+def _address_violations(
     placed: Sequence[PlacedEvent],
     targets: Mapping[int, float] | None,
     label_states: Callable[[], Mapping[str, Any]],
-) -> list[Issue]:
+) -> list[ContractViolation]:
     """
     Check every ADC's compiled label state against the fold of the tree's labels.
 
@@ -200,18 +356,16 @@ def _address_issues(
     if not got or not expected:
         return []
 
-    out: list[Issue] = []
+    out: list[ContractViolation] = []
     for key in sorted({k for state in expected for k in state}):
         series = np.atleast_1d(np.asarray(got.get(key, 0)))
         series = np.resize(series, len(expected)) if series.size else np.zeros(len(expected))
         for index, state in enumerate(expected):
             if int(series[index]) != int(state.get(key, 0)):
-                out.append(Issue(
-                    'address',
+                out.append(ContractViolation(
                     f'adc {index}',
                     f'label {key} is {int(series[index])} on readout {index} but the tree '
                     f'implies {int(state.get(key, 0))} -- a label reached the wrong readout',
-                    'error',
                 ))
                 break       # one report per key; a shift corrupts every later readout too
     return out
@@ -225,9 +379,9 @@ def verify_against_tree(
     tree_duration_s: float,
     moments: Callable[[int], dict[str, float]],
     label_states: Callable[[], Mapping[str, Any]],
-) -> list[Issue]:
+) -> None:
     """
-    Assert the compile preserved what the tree meant, and return what it did not.
+    Assert the compile preserved what the tree meant.
 
     Four invariants, all cheap, each catching a class of compiler bug no individual test case
     would:
@@ -259,20 +413,24 @@ def verify_against_tree(
         dicts, so a tree with no gradients pays for neither.
     label_states
         ``Sequence.evaluate_labels(evolution='adc')``, deferred for the same reason.
+
+    Raises
+    ------
+    CompilerContractError
+        If any invariant fails.  Every one is measured first, so the message carries all of them:
+        one mis-timed stage usually breaks several axes, and the pattern is the diagnosis.
     """
-    extra: list[Issue] = []
+    violations: list[ContractViolation] = []
     # Tolerance scales with the total, because it has to: float64 resolves about 4 ns at
     # 20 000 s, so demanding nanosecond agreement on a long acquisition would flag every
     # sequence over an hour -- and print two identical-looking numbers while doing it.
     tolerance = max(EPS, 1e-12 * tree_duration_s)
     if abs(duration_s - tree_duration_s) > tolerance:
-        extra.append(
-            Issue(
-                'duration',
-                'sequence',
+        violations.append(
+            ContractViolation(
+                'sequence duration',
                 f'compiled duration {duration_s * 1e6:.1f} us differs from the tree total '
                 f'{tree_duration_s * 1e6:.1f} us',
-                'error',
             )
         )
 
@@ -304,13 +462,11 @@ def verify_against_tree(
         for axis, expected in want.items():
             scale = max(magnitude[axis], 1.0)
             if abs(actual.get(axis, 0.0) - expected) > 1e-6 * scale:
-                extra.append(
-                    Issue(
-                        'moment',
-                        f'axis {axis}',
+                violations.append(
+                    ContractViolation(
+                        f'axis {axis} m0',
                         f'compiled m0 {actual.get(axis, 0.0):.6g} 1/m differs from the tree '
                         f'sum {expected:.6g} 1/m -- a split or a merge lost area',
-                        'error',
                     )
                 )
             # Both sides are exact closed forms, so the only error is float summation over the
@@ -320,24 +476,24 @@ def verify_against_tree(
             # by one raster changes m1 by area * 10 us, comfortably above this.
             m1_scale = max(scale * max(tree_duration_s, 1e-3), 1.0)
             if abs(actual_m1.get(axis, 0.0) - want_m1.get(axis, 0.0)) > 1e-9 * m1_scale:
-                extra.append(
-                    Issue(
-                        'moment',
-                        f'axis {axis}',
+                violations.append(
+                    ContractViolation(
+                        f'axis {axis} m1',
                         f'compiled m1 {actual_m1.get(axis, 0.0):.6g} s/m differs from the '
                         f'tree sum {want_m1.get(axis, 0.0):.6g} s/m -- a gradient plays at '
                         f'the wrong time, which m0 cannot see',
-                        'error',
                     )
                 )
 
-    extra.extend(_address_issues(placed, targets, label_states))
-    return extra
+    violations.extend(_address_violations(placed, targets, label_states))
+    require_valid_contract('against-tree', violations)
 
 
 __all__ = [
     'CompilerContractError',
     'ContractViolation',
+    'check_event_sizes',
+    'check_label_addresses',
     'expected_addresses',
     'require_valid_contract',
     'verify_against_tree',
