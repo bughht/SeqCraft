@@ -36,8 +36,16 @@ pytest -n auto \
   -m "not slow and not bloch and not crossval and not hardware" \
   --cov=seqcraft --cov-report=term-missing
 pytest --doctest-modules src/seqcraft
+python tools/check_api_reference.py
 python tools/run_notebook_smoke.py
 ```
+
+`check_api_reference.py` executes every fenced `python` block in
+[`api_reference.md`](api_reference.md) in one shared namespace, in document order, and checks its
+index against every module's `__all__` in both directions -- a public name missing from the index,
+or an indexed name the package does not export, both fail. Blocks that are illustrative rather than
+runnable are skipped by name and each skip is printed, so the exemptions stay visible instead of
+accumulating quietly. A reference nobody executes is a reference that is wrong within two commits.
 
 Ruff formatting remains a pre-commit hook.  It is not yet a repository-wide CI gate because the
 existing tree has not had a dedicated format-only migration.  Likewise, mypy is intentionally

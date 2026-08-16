@@ -60,6 +60,7 @@ __all__ = [
     'HANDLED_KINDS',
     'LABEL_KINDS',
     'POINT_KINDS',
+    'check_limits',
     'content_hash',
     'derive',
     'knots_of',

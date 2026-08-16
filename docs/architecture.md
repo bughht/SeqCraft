@@ -325,7 +325,8 @@ examples/     01_getting_started.ipynb   uses no modules, on purpose
               _parked/                   two DTI scans, kept as the spec for the next library
               lib/                       sim + recon helpers, not the package
 salvage/      physics lifted out of the deleted library; not packaged, not imported
-docs/         architecture  compiler  writing_a_module  testing  serialization
+docs/         api_reference  architecture  compiler  writing_a_module
+              testing  serialization
               adr/     004 is the return type; 003 the scanner and module reform
 ```
 

@@ -201,6 +201,7 @@ assert {k: sc.events.content_hash(v) for k, v in vars(pe).items() if hasattr(v, 
 
 | | What it covers |
 |---|---|
+| [`docs/api_reference.md`](docs/api_reference.md) | **Every public name in the package**, by layer, with a runnable example for each. Executed by CI, so it cannot drift. |
 | [`01_getting_started.ipynb`](examples/01_getting_started.ipynb) | Blocks, `Opts` and `compile`; the overlap rules, provenance, the escape hatches, writing a file — and `sc.Module` at the end, once there is a reason for it. Uses no modules. |
 | [`_parked/`](examples/_parked/) | Two complete DTI acquisitions, spiral and EPI. **They do not run against this version** — they were built on the deleted library, and are kept as the specification for what replaces it. |
 
