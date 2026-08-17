@@ -11,9 +11,13 @@ import nbformat
 from nbclient import NotebookClient
 
 _ROOT = Path(__file__).resolve().parents[1]
-# The DTI build notebooks are parked under `examples/_parked/` until a module library exists to
-# rebuild them against, so they are deliberately not executed here.  See examples/_parked/README.md.
-_NOTEBOOKS = (Path('01_getting_started.ipynb'),)
+# Build-only notebooks: seqcraft and matplotlib, and nothing else.  The simulation notebooks are
+# deliberately absent -- they need MRzeroCore, torch and sigpy plus a phantom download, which is
+# the lab/nightly tier rather than this one.  See docs/testing.md.
+_NOTEBOOKS = (
+    Path('01_getting_started.ipynb'),
+    Path('gre_2d/01_build.ipynb'),
+)
 
 
 def _execute(path: Path) -> None:

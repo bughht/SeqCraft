@@ -35,7 +35,7 @@ rf = ['sigpy>=0.1.26']              # SLR pulse design, via pypulseq.make_slr_pu
 # The affine argument VoxelGridPhantom requires arrived in MRzeroCore 1.0; without it the phantom
 # builds but its voxels land in the wrong place, which is scaled or shifted rather than an error.
 sim = ['MRzeroCore>=1.0', 'torch>=2.0']
-recon = ['sigpy>=0.1.26']           # the off-resonance-corrected reconstruction in examples/lib
+recon = ['sigpy>=0.1.26']           # ESPIRiT and the TV reconstruction in examples/gre_2d/02
 marcos = ['marga-pulseq>=0.2.2']
 # Vendor max_grad/max_slew/B0 as data, for sc.opts.from_scanner().  Optional on purpose:
 # from_scanner() also accepts every Opts field as a keyword, so a spec sheet typed by hand

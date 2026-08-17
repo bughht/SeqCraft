@@ -34,7 +34,7 @@ class VelocityEncode:
         return sc.LogicBlock('venc_pre').add(0.0, self.lobe)
 
     def post(self):
-        return sc.LogicBlock('venc_post').add(0.0, _scaled(self.lobe, -1.0))
+        return sc.LogicBlock('venc_post').add(0.0, pp.scale_grad(self.lobe, -1.0))
 ```
 
 ```python
@@ -93,21 +93,19 @@ class VelocityEncode(sc.Module):
         self.lobe = pp.make_trapezoid(channel=axis, area=self._area(), system=opts)
 
     def build(self, *, sign=1.0) -> sc.LogicBlock:
-        first = _scaled(self.lobe, sign)
-        second = _scaled(self.lobe, -sign)
+        first = sc.events.derive(pp.scale_grad(self.lobe, sign))
+        second = sc.events.derive(pp.scale_grad(self.lobe, -sign))
         return (sc.LogicBlock()
                 .add(0.0, first)
                 .add(float(pp.calc_duration(first)), second))
-
-
-def _scaled(grad, factor):
-    return sc.events.derive(
-        grad,
-        amplitude=float(grad.amplitude) * factor,
-        area=float(grad.area) * factor,
-        flat_area=float(grad.flat_area) * factor,
-    )
 ```
+
+`pp.scale_grad` is the one to reach for, not a hand-written `derive(amplitude=…, area=…,
+flat_area=…)`. A trapezoid carries three numbers that must move together and an arbitrary gradient
+carries four (`waveform`, `first`, `last`, `area`); writing them out is that many chances to update
+all but one, and the result still compiles — it just encodes a different line from the one it
+reports. Wrapping it in `sc.events.derive` strips pypulseq's registration state from the copy, so
+the stored design can be scaled again after a compile has registered one of its outputs.
 
 ```python
 venc = VelocityEncode(opts=opts, venc_cm_s=50)

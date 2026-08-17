@@ -41,6 +41,13 @@ event with :func:`seqcraft.events.derive`; never assign to ``self.g.amplitude``.
 -- ``self.gx.amplitude = -self.gx.amplitude`` in a readout loop -- still compiles, and makes TR 500
 differ from TR 1.
 
+To *scale* a gradient, use ``pp.scale_grad``: it already updates ``amplitude``, ``flat_area`` and
+``area`` together for a trapezoid, and ``waveform``, ``first``, ``last`` and ``area`` for an
+arbitrary one.  Writing those out by hand is three chances to update two of the three, and the
+resulting event compiles -- it just encodes a different line from the one it reports.  Wrap the
+result in :func:`~seqcraft.events.derive` so pypulseq's registration state is stripped from the
+copy the way it is everywhere else.
+
 **The module declares no duration; the block measures itself.**  :attr:`LogicBlock.duration` is
 measured from the nodes, so a module-level ``duration`` would be a second source of truth that can
 disagree with the first -- and a build argument the property cannot see is exactly how it comes to
@@ -95,10 +102,7 @@ Examples
 ...
 ...     def build(self, *, line: int = 0) -> sc.LogicBlock:
 ...         scale = line * self.dk / float(self.g.area)
-...         g = sc.events.derive(self.g,
-...                              amplitude=float(self.g.amplitude) * scale,
-...                              area=float(self.g.area) * scale,
-...                              flat_area=float(self.g.flat_area) * scale)
+...         g = sc.events.derive(pp.scale_grad(self.g, scale))
 ...         return sc.LogicBlock().add(0.0, g)      # untagged: _finalize names it
 >>>
 >>> pe = PhaseEncode(opts=opts, fov_mm=250, matrix=64)

@@ -92,7 +92,7 @@ from __future__ import annotations
 
 import importlib
 
-from . import _compat
+from . import _compat, modules
 from ._version import __version__
 from .analysis import kspace, moments, pns, sample
 from .compiler import compile_sequence as compile  # noqa: A001, A004
@@ -178,6 +178,7 @@ __all__ = [
     'hardware',
     'kspace',
     'moments',
+    'modules',
     'opts',
     'plot_block',
     'pns',

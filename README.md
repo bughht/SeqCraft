@@ -70,9 +70,9 @@ Requires the pinned `pypulseq` fork and `numpy>=1.24`. Optional extras: `viz` (m
 `systems` ([PulseqSystems](https://github.com/nimpulseq/PulseqSystems) vendor limits), `dev`
 (pytest, ruff), `docs`.
 
-The simulation and reconstruction helpers in `examples/lib/` need `MRzeroCore`, `torch` and `sigpy`.
-They are **not** part of the package — seqcraft builds sequences, and simulating or reconstructing
-them are downstream jobs with heavy dependencies of their own.
+`sim` (MRzeroCore, torch) and `recon` (sigpy) are what `examples/gre_2d/02` needs. Simulating and
+reconstructing are **not** part of the package — seqcraft builds sequences, and both are downstream
+jobs with heavy dependencies of their own.
 
 ---
 
@@ -121,19 +121,39 @@ six months later. And when it does not fit, what you are holding is already the 
 
 ## The module library
 
-**There isn't one, on purpose.** seqcraft ships no concrete modules at all: no `SincExcitation`, no
-`EPIReadout`, no `MonopolarDiffusion`. What it ships is the tree, the compiler, and the contract.
+Six names, and every one of them was **extracted from a working sequence** rather than designed:
 
-The previous library — 27 classes, 5 762 lines — was removed rather than migrated. A recipe is
-somebody else's sequence choices baked into library code, and changing your own scan should never
-mean editing a package. The physics worth keeping from it (the b-value solve, the variable-density
-spiral trajectory, the EPI ramp-sampling moment integral) was lifted out as plain functions into
-[`salvage/`](salvage/) before the deletion.
+```python
+gre = sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(64, 64), thickness_mm=5.0)
+seq = sc.compile(gre(lines=range(64)), opts, name='gre_2d')
+seq.write('gre_2d.seq')
+```
 
-[ADR-003](docs/adr/003-scanner-and-module-reform.md) records what was decided and why. What replaces
-the library, and on what principle, is deliberately still open — each primitive should be written
-only when a real sequence needs it, with the raw-pypulseq path kept beside it so the module has to
-earn its place.
+| | |
+|---|---|
+| `Excitation` | an RF pulse and, when selective, its selection gradient and rephaser |
+| `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
+| `CartesianLine` | prephaser, readout gradient and ADC as one design |
+| `spoiler` | *n* turns of phase across a voxel — a function, because it earns nothing more |
+| `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
+| `GRE2D` | the complete scan |
+
+The previous library — 27 classes, 5 762 lines — was removed rather than migrated, because a recipe
+is somebody else's sequence choices baked into library code and changing your own scan should never
+mean editing a package. [ADR-003](docs/adr/003-scanner-and-module-reform.md) records that decision.
+What is here now is what came back under a stricter rule: **write it in the notebook first, in raw
+pypulseq, simulate it until the image is right, and only then extract it with the compiled output
+held fixed.** A module that cannot be extracted without altering the sequence is not a module; one
+whose extraction does not shorten the notebook is a wrapper.
+
+The line between a module and a recipe is who keeps the sequence choices. `CartesianLine` computes
+a prephaser that cancels the readout's ramp — arithmetic nobody should have to get right twice.
+`GRE2D` takes the **list of phase-encode lines to acquire** rather than an acceleration factor, and
+ships no generator for it, because which lines to acquire is a sequence-programming choice and the
+right answer depends on the coil array, the object and the reconstruction together.
+
+[`examples/gre_2d/`](examples/gre_2d/) is where all six came from, and a test asserts that what the
+notebook writes and what the package ships compile identically.
 
 ---
 
@@ -203,7 +223,8 @@ assert {k: sc.events.content_hash(v) for k, v in vars(pe).items() if hasattr(v, 
 |---|---|
 | [`docs/api_reference.md`](docs/api_reference.md) | **Every public name in the package**, by layer, with a runnable example for each. Executed by CI, so it cannot drift. |
 | [`01_getting_started.ipynb`](examples/01_getting_started.ipynb) | Blocks, `Opts` and `compile`; the overlap rules, provenance, the escape hatches, writing a file — and `sc.Module` at the end, once there is a reason for it. Uses no modules. |
-| [`_parked/`](examples/_parked/) | Two complete DTI acquisitions, spiral and EPI. **They do not run against this version** — they were built on the deleted library, and are kept as the specification for what replaces it. |
+| [`gre_2d/01_build.ipynb`](examples/gre_2d/01_build.ipynb) | A spoiled 2D GRE three times over — raw pypulseq, the leaf modules composed inline, and the same composition written as a module. Every module in `sc.modules` came out of it. Needs nothing but seqcraft. |
+| [`gre_2d/02_simulate_and_reconstruct.ipynb`](examples/gre_2d/02_simulate_and_reconstruct.ipynb) | The same three `.seq` files against a BrainWeb phantom — PD, T1, T2, T2′, D and a synthesised B0, all six simulated — with an eight-element receive ring, then one reconstruction across three samplings. |
 
 ---
 
