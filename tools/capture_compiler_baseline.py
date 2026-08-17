@@ -147,16 +147,14 @@ def _tracked_build(builder: Callable[[], _pp.Sequence]) -> tuple[_pp.Sequence, d
     """
     Build one recipe while observing placement and split counts at existing seam points.
 
-    The two names are patched on their *consumers* rather than on the modules that define them:
-    ``compiler/__init__.py`` does ``from .placement import place_events`` and ``emission.py`` does
-    ``from .legalization import axis_gradient``, so rebinding the definition site would leave both
-    call sites holding the original function and the counts would come back zero.
+    Imported names are patched on their consumers. ``axis_gradient`` remains module-local to
+    legalization, so it is patched at its definition site where ``legalize_blocks`` resolves it.
     """
     compiler = importlib.import_module('seqcraft.compiler')
-    emission = importlib.import_module('seqcraft.compiler.emission')
+    legalization = importlib.import_module('seqcraft.compiler.legalization')
     original_place = compiler.place_events
     original_emit = compiler.emit_blocks
-    original_axis_gradient = emission.axis_gradient
+    original_axis_gradient = legalization.axis_gradient
     placed: list[Any] = []
     origins: list[tuple[str, ...]] = []
     segments: collections.Counter[int] = collections.Counter()
@@ -166,10 +164,13 @@ def _tracked_build(builder: Callable[[], _pp.Sequence]) -> tuple[_pp.Sequence, d
         placed.extend(result)
         return result
 
-    def track_emit(*args: Any, **kwargs: Any) -> list[Any]:
-        result = original_emit(*args, **kwargs)
-        origins.extend(result)
-        return result
+    def track_emit(*args: Any, **kwargs: Any) -> Any:
+        def observed_blocks():
+            for block in args[1]:
+                origins.append(block.origin)
+                yield block
+
+        return original_emit(args[0], observed_blocks(), *args[2:], **kwargs)
 
     def track_axis_gradient(
         axis: str,
@@ -186,13 +187,13 @@ def _tracked_build(builder: Callable[[], _pp.Sequence]) -> tuple[_pp.Sequence, d
 
     compiler.place_events = track_place
     compiler.emit_blocks = track_emit
-    emission.axis_gradient = track_axis_gradient
+    legalization.axis_gradient = track_axis_gradient
     try:
         compiled = builder()
     finally:
         compiler.place_events = original_place
         compiler.emit_blocks = original_emit
-        emission.axis_gradient = original_axis_gradient
+        legalization.axis_gradient = original_axis_gradient
 
     gradients = [piece for piece in placed if piece.kind in ('grad', 'trap')]
     return compiled, {

@@ -161,9 +161,18 @@ class PulseqReadyBlock:
         return f'PulseqReadyBlock({self.summary()})'
 
 
+@dataclass(frozen=True)
+class LegalizationResult:
+    """The complete immutable output of gradient legalization and block assembly."""
+
+    blocks: tuple[PulseqReadyBlock, ...]
+    notes: tuple[tuple[str, tuple[str, ...]], ...]
+
+
 __all__ = [
     'EXCLUSIVE_KINDS',
     'INDIVISIBLE_KINDS',
+    'LegalizationResult',
     'PlacedEvent',
     'in_block_delay',
     'PulseqReadyBlock',

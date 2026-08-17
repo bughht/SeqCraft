@@ -1,4 +1,4 @@
-"""Phase 1 compiler contracts and their adapters into the authoritative compile path."""
+"""Compiler IR contracts and their use by the authoritative compile path."""
 
 from __future__ import annotations
 
@@ -10,9 +10,10 @@ import pytest
 
 import seqcraft as sc
 import seqcraft.compiler as compiler
-from seqcraft.compiler import emission
+from seqcraft.compiler import legalization
 from seqcraft.compiler.model import (
     EXCLUSIVE_KINDS,
+    LegalizationResult,
     PlacedEvent,
     PulseqReadyBlock,
     interval_duration,
@@ -75,6 +76,17 @@ def test_ready_block_is_immutable_and_summarises_events() -> None:
         ready.duration = 0.0  # type: ignore[misc]
 
 
+def test_legalization_result_freezes_blocks_and_notes() -> None:
+    """The stage returns its ready blocks and warning evidence without mutable side output."""
+    ready = PulseqReadyBlock(0, 0.0, 1e-3, 1e-3, (), (), ())
+    result = LegalizationResult((ready,), (('merge', ('readout+rewinder (axis x)',)),))
+
+    assert result.blocks == (ready,)
+    assert result.notes[0][0] == 'merge'
+    with pytest.raises(FrozenInstanceError):
+        result.blocks = ()  # type: ignore[misc]
+
+
 def test_event_classification_is_central_and_explicit() -> None:
     """Every stage sees the same hardware-oriented kind groups."""
     assert GRADIENT_KINDS == {'trap', 'grad'}
@@ -127,7 +139,7 @@ def test_authoritative_compile_path_produces_both_contracts(monkeypatch, opts) -
     seen_placed: list[PlacedEvent] = []
     seen_ready: list[PulseqReadyBlock] = []
     real_placed = compiler.verify_placed_events
-    real_ready = emission.verify_ready_blocks
+    real_ready = legalization.verify_ready_blocks
 
     def capture_placed(events):
         seen_placed.extend(events)
@@ -138,7 +150,7 @@ def test_authoritative_compile_path_produces_both_contracts(monkeypatch, opts) -
         return real_ready(blocks, **kwargs)
 
     monkeypatch.setattr(compiler, 'verify_placed_events', capture_placed)
-    monkeypatch.setattr(emission, 'verify_ready_blocks', capture_ready)
+    monkeypatch.setattr(legalization, 'verify_ready_blocks', capture_ready)
 
     grad = pp.make_trapezoid('x', area=100.0, duration=1e-3, system=opts)
     tree = sc.LogicBlock('tr').add(0.0, grad).add(2e-3, pp.make_delay(1e-3))

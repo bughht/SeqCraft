@@ -29,6 +29,7 @@ _DOC = _ROOT / 'docs' / 'api_reference.md'
 #: Fragments marking a block as illustrative rather than runnable, with the reason.
 _SKIP = {
     'class LogicBlock:': 'a schema, not a statement',
+    'class LegalizationResult:': 'a schema, not a statement',
     'class Node:': 'a schema, not a statement',
     'class Module(ABC):': 'a schema, not a statement',
     'class PlacedEvent:': 'a schema, not a statement',

@@ -105,6 +105,7 @@ from .boundaries import (
 )
 from .emission import emit_blocks
 from .errors import CompileError, DefinitionConflict
+from .legalization import legalize_blocks
 from .placement import place_events
 from .verification import (
     _sequence_moments,
@@ -343,8 +344,19 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     if orphans:
         notes['orphan_label'] = orphans
 
+    legalized = legalize_blocks(edges, placed, targets, opts, raster)
+    for category, entries in legalized.notes:
+        notes.setdefault(category, []).extend(entries)
+    origins = [block.origin for block in legalized.blocks]
+
+    # Legalization returns a complete immutable tuple so its cross-block contract can be checked.
+    # Drain a private queue during emission so events already copied into PyPulseq are not retained
+    # by that tuple for the rest of a long sequence build.
+    ready = collections.deque(legalized.blocks)
+    del legalized
+
     seq = pp.Sequence(system=opts)
-    origins = emit_blocks(seq, edges, placed, targets, opts, raster, notes)
+    emit_blocks(seq, (ready.popleft() for _ in range(len(ready))))
 
     # The two questions only a built sequence can answer: does any one event exceed the
     # interpreter's sample limit, and do two imaging ADCs write the same k-space address.

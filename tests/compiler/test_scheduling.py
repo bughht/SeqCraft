@@ -17,7 +17,7 @@ from fidelity import compiled_knots
 from pypulseq.opts import Opts
 
 import seqcraft as sc
-from seqcraft.compiler.emission import common_path
+from seqcraft.compiler.legalization import common_path
 from seqcraft.design.events import content_hash, trapz
 
 

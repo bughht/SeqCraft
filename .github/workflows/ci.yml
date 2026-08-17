@@ -40,6 +40,8 @@ jobs:
           src/seqcraft/compiler/model.py
           src/seqcraft/compiler/placement.py
           src/seqcraft/compiler/boundaries.py
+          src/seqcraft/compiler/legalization.py
+          src/seqcraft/compiler/emission.py
 
   test:
     strategy:

@@ -1053,8 +1053,8 @@ else; reach a stage module by its full path.
 |---|---|---|
 | **place** | `placement.py` | Walk the tree, resolve every event to absolute active and reservation intervals |
 | **bound** | `boundaries.py` | Choose block edges: exclusivity, indivisibility, label retiming, gap feasibility |
-| **legalize** | `legalization.py` | Superpose same-axis gradients, resample to the raster, split across edges, check limits |
-| **emit** | `emission.py` | Build each `PulseqReadyBlock` and hand it to `Sequence.add_block` |
+| **legalize** | `legalization.py` | Schedule events, transform gradients, check limits, and return validated ready blocks |
+| **emit** | `emission.py` | Mechanically hand validated ready blocks to `Sequence.add_block` |
 | **verify** | `verification.py` | IR contracts, finished-sequence checks, and the against-the-tree self-check |
 
 ## 7.1 `compiler/model.py` — the IR and the policy
@@ -1084,6 +1084,15 @@ class PulseqReadyBlock:
 ```
 
 Properties: `kinds`, and `summary()`.
+
+```python
+@dataclass(frozen=True)
+class LegalizationResult:
+    blocks: tuple[PulseqReadyBlock, ...]
+    notes: tuple[tuple[str, tuple[str, ...]], ...]
+```
+
+`notes` is explicit immutable stage output: emission neither discovers nor mutates warnings.
 
 | Name | What it is |
 |---|---|
@@ -1124,6 +1133,9 @@ address.
 | `superpose(pieces, a, b) -> (rel_ticks, amps)` | The exact PWL superposition over `[a, b]`, in integer ticks |
 | `axis_gradient(axis, pieces, a, b, opts, notes, block_index)` | The single gradient event for one axis over one interval, or `None` |
 | `check_limits(events, opts, block_index, origin, notes, *, start=0.0) -> None` | Raise `HardwareLimitError` on a per-axis violation; append norm findings to `notes` |
+| `required_duration(events, opts) -> float` | The shortest block that can hold `events`, by PyPulseq's rules |
+| `common_path(paths) -> tuple[str, ...]` | The longest tag path common to everything in a block |
+| `legalize_blocks(edges, placed, targets, opts, raster) -> LegalizationResult` | Produce and validate the complete immutable ready-block sequence and its notes |
 
 The sum of PWL functions is PWL with knots at the union of theirs, so both operations — split at a
 boundary, sum on an axis — are exact. `axis_gradient` picks whichever pulseq representation holds the
@@ -1135,14 +1147,10 @@ with a **measured** bound on how far it moved.
 
 | Function | Does |
 |---|---|
-| `emit_blocks(seq, edges, placed, targets, opts, raster, notes) -> list[tuple[str, ...]]` | Add one pulseq block per interval; return each block's origin path |
-| `required_duration(events, opts) -> float` | The shortest block that can hold `events`, by pulseq's own rules |
-| `common_path(paths) -> tuple[str, ...]` | The longest tag path common to everything in a block |
+| `emit_blocks(seq, blocks) -> None` | Add validated ready blocks without scheduling, transforming, or checking limits |
 
-`common_path` gives a block built from one module that module's full path, and a block where three
-modules overlap their shared ancestor — the honest answer to "where did this come from". The origins
-it returns are used to name a block in an error message and then discarded; they are not returned to
-the caller.
+The ready-block origin is used to add source context when PyPulseq rejects a block. Emission has no
+access to placed events, boundaries, label targets, the scanner limits, or transformation notes.
 
 ## 7.6 `compiler/verification.py`
 
@@ -1244,6 +1252,7 @@ at import.
 | `INDIVISIBLE_KINDS` | `compiler.model` | constant |
 | `Item` | `design.logic` | type alias |
 | `LABEL_KINDS` | `design.events` | constant |
+| `LegalizationResult` | `compiler.model` | class |
 | `LogicBlock` | `design.logic` | class |
 | `MissingExtraError` | `errors` | exception |
 | `Module` | `design.module` | class |
@@ -1266,7 +1275,7 @@ at import.
 | `check_label_addresses` | `compiler.verification` | function |
 | `check_limits` | `design.events` | function |
 | `check_limits` | `compiler.legalization` | function |
-| `common_path` | `compiler.emission` | function |
+| `common_path` | `compiler.legalization` | function |
 | `compile_sequence` | `compiler` | function |
 | `content_hash` | `design.events` | function |
 | `convert` | `design.units` | function |
@@ -1290,6 +1299,7 @@ at import.
 | `kspace` | `analysis` | function |
 | `label_order_conflict` | `compiler.boundaries` | function |
 | `label_targets` | `compiler.boundaries` | function |
+| `legalize_blocks` | `compiler.legalization` | function |
 | `load_hardware` | `scanner.hardware` | function |
 | `moments` | `analysis` | function |
 | `orphan_label_notes` | `compiler.boundaries` | function |
@@ -1299,7 +1309,7 @@ at import.
 | `pwl_moment` | `design.events` | function |
 | `require` | `_compat` | function |
 | `require_valid_contract` | `compiler.verification` | function |
-| `required_duration` | `compiler.emission` | function |
+| `required_duration` | `compiler.legalization` | function |
 | `sample` | `analysis` | function |
 | `span` | `design.logic` | function |
 | `superpose` | `compiler.legalization` | function |
