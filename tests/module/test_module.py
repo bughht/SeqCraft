@@ -28,12 +28,9 @@ class Blip(sc.Module):
 
     def build(self, *, line: int = 0) -> sc.LogicBlock:
         scale = line * self.dk / float(self.g.area)
-        return sc.LogicBlock().add(0.0, sc.events.derive(
-            self.g,
-            amplitude=float(self.g.amplitude) * scale,
-            area=float(self.g.area) * scale,
-            flat_area=float(self.g.flat_area) * scale,
-        ))
+        # pp.scale_grad keeps amplitude, flat_area and area consistent; derive() strips the
+        # registration state so a scaled copy can be made again after a compile.
+        return sc.LogicBlock().add(0.0, sc.events.derive(pp.scale_grad(self.g, scale)))
 
 
 class Pair(sc.Module):

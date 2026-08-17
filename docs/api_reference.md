@@ -963,6 +963,76 @@ the compiler's own self-check would be comparing two differently-wrong numbers.
 
 ---
 
+# 4b. `modules` — the concrete building blocks
+
+Everything above is the tree, the compiler and the contract, and none of it knows what a slice is.
+`sc.modules` is the other half: MR physics with its arithmetic attached, one class per thing.
+
+```python
+gre = sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(64, 64), thickness_mm=5.0)
+seq = sc.compile(gre(lines=range(64)), opts, name='gre_2d')
+```
+
+Re-exported **flat**, so no import path names a folder:
+
+| Name | What |
+|---|---|
+| `Excitation` | an RF pulse and, when selective, its selection gradient and rephaser |
+| `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
+| `CartesianLine` | prephaser, readout gradient and ADC as one design |
+| `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
+| `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
+| `GRE2D` | the complete scan |
+
+The folders behind that table are taxonomy, and each has a rule: `rf/` is `rf.use`, `encoding/` is
+gradients with no ADC, `readout/` contains an ADC, `kernel/` composes more than one leaf folder,
+`imaging/` composes kernels, and the top level holds what is not an `sc.Module` subclass.
+`tests/modules/test_layout.py` asserts all of it.
+
+**Nothing here was designed in the abstract.** Every module was extracted from
+[`examples/gre_2d/01_build.ipynb`](../examples/gre_2d/README.md), which builds the same sequence
+out of raw pypulseq beside it — so a module that cannot be extracted without altering the sequence
+is not a module, and one whose extraction does not shorten the notebook is a wrapper.
+
+## What each one knows that a block cannot
+
+`LogicBlock.duration` is measured, so a module never declares one. What a module *does* answer is
+the questions a tree of events cannot:
+
+| | |
+|---|---|
+| `Excitation.time_to_center()` | to the RF's effective centre — for a minimum-phase pulse, nowhere near the midpoint |
+| `Excitation.time_to_rephaser()` | where the slice rephaser begins, so another axis can start there |
+| `CartesianLine.time_to_echo()` | to k = 0, which is not the middle of the ADC window |
+| `GRE2DTR.min_te_s` / `min_tr_s` | feasibility, known at design time; a shorter request raises |
+
+## The two couplings
+
+**The winder** is three gradients on three axes playing at once — the slice rephaser on `z`, the
+phase-encode blip on `y`, the readout prephaser on `x`. Each leaf reports its minimum and accepts
+an override; `GRE2DTR` takes the maximum and passes it down. Stretching the short ones keeps TE at
+its minimum, which inserting a delay would not.
+
+**The receiver is phase-locked to the transmitter.** `GRE2DTR` gives the same `phase_deg` to the
+excitation and to the readout. Moving one and not the other writes the RF-spoiling schedule's
+quadratic phase into `ky`, which scatters a point source across the phase-encode direction while
+the readout direction stays perfectly correct.
+
+## The sampling pattern is a build argument
+
+```python
+gre(lines=range(ny))                               # fully sampled
+gre(lines=sorted(acs | set(range(0, ny, 3))))      # undersampled with a calibration block
+gre(lines=reversed(range(ny)))                     # ordering, with no new argument
+```
+
+One argument replaces acceleration, phase-encode partial Fourier, multi-shot and ordering, because
+each of those is a different list — and **no generators ship**, because which lines to acquire is a
+sequence-programming choice ([ADR-003](adr/003-scanner-and-module-reform.md)). Out-of-range or
+duplicate indices raise; a pattern omitting the centre of k-space warns.
+
+---
+
 # 5. `display` — looking at a tree
 
 ## `plot_block(root, opts, *, title='', figsize=(10.0, 4.5))`
@@ -1237,6 +1307,7 @@ at import.
 | `ASC_ENV_VAR` | `scanner.hardware` | constant |
 | `AXES` | `design.events` | constant |
 | `BARRIER` | `design.logic` | constant |
+| `CartesianLine` | `modules` | class |
 | `CompileError` | `compiler.errors` | exception |
 | `CompilerContractError` | `compiler.verification` | exception |
 | `ConfigurationError` | `errors` | exception |
@@ -1245,8 +1316,11 @@ at import.
 | `EPS` | `design.timing` | constant |
 | `EXCLUSIVE_KINDS` | `compiler.model` | constant |
 | `Event` | `design.events` | type alias |
+| `Excitation` | `modules` | class |
 | `GAMMA_1H` | `design.units` | constant |
 | `GRADIENT_KINDS` | `design.events` | constant |
+| `GRE2D` | `modules` | class |
+| `GRE2DTR` | `modules` | class |
 | `HANDLED_KINDS` | `design.events` | constant |
 | `HardwareLimitError` | `compiler.errors` | exception |
 | `INDIVISIBLE_KINDS` | `compiler.model` | constant |
@@ -1259,6 +1333,7 @@ at import.
 | `Node` | `design.logic` | class |
 | `POINT_KINDS` | `design.events` | constant |
 | `PYPULSEQ_VERSION` | `_compat` | constant |
+| `PhaseEncode` | `modules` | class |
 | `PlacedEvent` | `compiler.model` | class |
 | `PulseqReadyBlock` | `compiler.model` | class |
 | `Raster` | `design.timing` | class |
@@ -1311,6 +1386,7 @@ at import.
 | `require_valid_contract` | `compiler.verification` | function |
 | `required_duration` | `compiler.legalization` | function |
 | `sample` | `analysis` | function |
+| `spoiler` | `modules` | function |
 | `span` | `design.logic` | function |
 | `superpose` | `compiler.legalization` | function |
 | `synthetic_hardware` | `scanner.hardware` | function |

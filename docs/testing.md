@@ -15,9 +15,9 @@ Every push to `main` and every pull request runs four gates:
 1. `lint`: the established Ruff correctness baseline on Python 3.11.
 2. `types`: strict mypy checking of the pure-arithmetic core on Python 3.11.
 3. `test`: pytest and source doctests on Linux and Windows with Python 3.11 and 3.12.
-4. `examples`: isolated execution of the getting-started notebook on Linux with Python 3.11.
-   The two DTI build notebooks are parked under `examples/_parked/` until a module library exists
-   to rebuild them against, and are deliberately not executed.
+4. `examples`: isolated execution of the **build-only** notebooks on Linux with Python 3.11 --
+   `01_getting_started.ipynb` and `gre_2d/01_build.ipynb`.  The simulation notebook is deliberately
+   absent: it needs MRzeroCore, torch and sigpy plus a phantom download, which is the lab tier.
 
 The notebook runner copies `examples/` to a temporary directory before execution. Generated
 sequence files therefore never modify the working tree.

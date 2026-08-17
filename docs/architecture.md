@@ -117,10 +117,9 @@ guards are recorded in the [architecture freeze](refactor/compiler_architecture_
 
 ---
 
-## `Module` — a contract, and no library behind it
+## `Module` — a contract, and the library that was extracted against it
 
-**seqcraft ships no concrete modules.** There is no `SincExcitation`, no `EPIReadout`, no
-`MonopolarDiffusion`. What it ships is the shape a reusable component takes when you write one:
+`Module` is the shape a reusable component takes when you write one:
 
 ```python
 class Module(ABC):
@@ -152,10 +151,26 @@ that produces a tree, so it belongs with the tree. It is emphatically not part o
 while it lived beside the compiler it read as a requirement, and "three concepts" implied a sequence
 had to be expressed as modules. It never did.
 
-**Why there is no library.** The previous one — 27 classes, 5 762 lines — grew from whichever
-sequences happened to get built, and the compiler's own tests came to depend on it. It was deleted
-rather than migrated. What replaces it should be *chosen*: each primitive written only when a real
-sequence needs it, with the raw-pypulseq path kept beside it so the module has to earn its place.
+**The library, and why this one is different.** The previous one — 27 classes, 5 762 lines — grew
+from whichever sequences happened to get built, and the compiler's own tests came to depend on it.
+It was deleted rather than migrated.
+
+`seqcraft.modules` is what came back, under a rule that the old one had no way to satisfy: **write
+the sequence in raw pypulseq first, simulate it until the image is right, and only then extract the
+module with the compiled output held fixed.** Six names came out of one 2D GRE — `Excitation`,
+`PhaseEncode`, `CartesianLine`, `spoiler`, `GRE2DTR`, `GRE2D` — and
+[`examples/gre_2d/01_build.ipynb`](../examples/gre_2d/01_build.ipynb) still builds the same
+sequence out of raw events beside them, so each one has to keep earning its place.
+
+**It is a separate layer, and it depends on nothing downstream of `design`.** `modules` imports
+pypulseq and the tree; it does not import the compiler, `analysis`, `display` or `scanner`. A
+module that compiled internally to answer a question about itself would make every design call pay
+for a compile, and would be untestable against a tree it did not itself produce.
+`tests/modules/test_layout.py` asserts that, along with the folder taxonomy and the flat re-export.
+
+**The compiler's tests still use no modules at all.** That coupling — realistic trees coming from
+whatever the library happened to contain — is exactly what made the old compiler impossible to test
+independently, and `tests/conftest.py` records the rule.
 
 ---
 
@@ -284,12 +299,13 @@ live in [`salvage/`](../salvage/) until the opinionated library exists to hold t
 
 ## What is not in the package
 
-`examples/lib/` holds the MRzero simulation bridge and the sigpy off-resonance reconstruction. They
-are **not** part of seqcraft, on purpose: the package builds sequences, and simulating or
-reconstructing them are downstream jobs with heavy dependencies of their own. Folding them in would
-make every user pay for them.
+**Simulation and reconstruction.** `examples/gre_2d/02` calls MRzeroCore and sigpy directly, and
+seqcraft ships no bridge to either: the package builds sequences, and simulating or reconstructing
+them are downstream jobs with heavy dependencies of their own. Folding them in would make every
+user pay for them. Going through `mr0.Sequence.import_file` on the written `.seq` is also the
+stronger check -- it tests the file a scanner would play rather than the tree that produced it.
 
-**There are no recipes either.** A recipe is somebody else's sequence choices in library code: to
+**There are no recipes.** A recipe is somebody else's sequence choices in library code: to
 change your scan you would edit a package, and the package would accumulate everyone's variants. A
 sequence is assembled where it is used, and the timing is arithmetic you can read --
 
@@ -328,12 +344,16 @@ src/seqcraft/
                  placement.py  boundaries.py  legalization.py  emission.py
                  verification.py  model.py  errors.py
 
-tests/        analysis/  design/  logic/  compiler/  module/  opts/  integration/
+  modules/       the concrete building blocks, re-exported flat
+                 spoiler.py   a function, not a Module
+                 rf/  encoding/  readout/     the leaves
+                 kernel/  imaging/            the two composite levels
+
+tests/        analysis/  design/  logic/  compiler/  module/  modules/  opts/  integration/
               conftest.py                the two checks the compiler cannot make
               test_layering.py           the layout, asserted
 examples/     01_getting_started.ipynb   uses no modules, on purpose
-              _parked/                   two DTI scans, kept as the spec for the next library
-              lib/                       sim + recon helpers, not the package
+              gre_2d/                    the sequence sc.modules was extracted from
 salvage/      physics lifted out of the deleted library; not packaged, not imported
 docs/         api_reference  architecture  compiler  writing_a_module
               testing  serialization

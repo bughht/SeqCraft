@@ -41,6 +41,7 @@ _SKIP = {
     'sc.plot_block(': 'needs matplotlib, and would open a figure',
     'seq.plot()': "pypulseq's own plotter; would open a figure",
     'lb.nodes[2].start += 40e-6': 'a table of idioms, not a script',
+    'gre(lines=range(ny))': 'a table of sampling patterns, not a script',
     "print(f'peak stimulation": 'a fragment of the surrounding example',
 }
 
@@ -56,6 +57,7 @@ _INDEXED = {
     'seqcraft.design.units': 'design.units',
     'seqcraft.scanner.opts': 'scanner.opts',
     'seqcraft.scanner.hardware': 'scanner.hardware',
+    'seqcraft.modules': 'modules',
     'seqcraft.compiler': 'compiler',
     'seqcraft.compiler.errors': 'compiler.errors',
     'seqcraft.compiler.model': 'compiler.model',

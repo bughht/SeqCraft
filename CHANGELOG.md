@@ -1,5 +1,87 @@
 # Changelog
 
+## Unreleased — `sc.modules`, extracted from a 2D GRE
+
+seqcraft ships concrete modules again. Six names, all of them extracted from one working sequence
+rather than designed:
+
+```python
+gre = sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(64, 64), thickness_mm=5.0)
+sc.compile(gre(lines=range(64)), opts, name='gre_2d').write('gre_2d.seq')
+```
+
+| | |
+|---|---|
+| `Excitation` | an RF pulse and, when selective, its selection gradient and rephaser |
+| `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
+| `CartesianLine` | prephaser, readout gradient and ADC as one design |
+| `spoiler` | *n* turns of phase across a voxel — a function, not a class |
+| `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
+| `GRE2D` | the complete scan |
+
+The previous library — 27 classes, 5 762 lines — was deleted rather than migrated
+([ADR-003](docs/adr/003-scanner-and-module-reform.md)). What is here now came back under a rule the
+old one had no way to satisfy: **write the sequence in raw pypulseq first, simulate it until the
+image is right, and only then extract the module with the compiled output held fixed.**
+`examples/gre_2d/01_build.ipynb` still builds the same sequence out of raw events beside them, and
+`tests/modules/test_notebook_matches_the_package.py` asserts that the class the notebook writes and
+the class the package ships produce identical events.
+
+### Four things the extraction found
+
+**The prephaser is the integrated moment up to the echo.** `-gx.flat_area / 2` drops the ramp-up
+entirely; `-gx.area / 2` includes it and is still half a Δk short, because k = 0 belongs at sample
+index `matrix // 2`, whose centre time is half a dwell after the midpoint of the ADC window.
+`CartesianLine` integrates the gradient's own knots instead, which produces both terms for free and
+generalises to ramp sampling and partial echo with no second derivation.
+
+**The receiver is phase-locked to the transmitter.** `GRE2DTR` gives the same `phase_deg` to the
+excitation and to the readout. Leaving the ADC at zero while the RF runs an RF-spoiling schedule
+writes that schedule's quadratic phase into `ky`: measured on a single off-centre voxel, it
+scattered a point source across the whole phase-encode direction and moved its peak by thirteen
+pixels, with the readout direction perfectly correct beside it.
+
+**The winder is three axes wide.** The slice rephaser on `z`, the phase-encode blip on `y` and the
+readout prephaser on `x` all play at once. Waiting for the rephaser before starting the other two
+adds its whole duration to TE — 520 µs on the example protocol, out of 3.9 ms — and buys nothing.
+Each leaf reports its minimum and accepts an override; the kernel takes the maximum and passes it
+down.
+
+**pypulseq's slice rephaser is already correct**, including for a minimum-phase SLR pulse whose
+effective centre is at the end of the waveform. `Excitation` was written expecting to compute its
+own and does not; the invariant is asserted in `tests/modules/test_excitation.py` against an
+asymmetric pulse, where "half the total area" is wrong by a factor of sixty.
+
+### The layout, and what it forbids
+
+Five role folders (`rf/`, `encoding/`, `readout/`, `kernel/`, `imaging/`) plus the top level, each
+with a membership rule, and a **flat** re-export so no import path names a folder.
+`tests/modules/test_layout.py` asserts the rules, the flat re-export, and that `modules/` imports
+nothing downstream of `design` — no compiler, no `analysis`, no `display`, no `scanner`. The
+compiler's own tests still use no modules at all.
+
+### Also
+
+- `pp.scale_grad` replaces the hand-written `derive(amplitude=…, area=…, flat_area=…)` in
+  `design/module.py`, `docs/writing_a_module.md` and `tests/module/test_module.py`. A trapezoid
+  carries three numbers that must move together and an arbitrary gradient four; writing them out is
+  that many chances to update all but one, and the result still compiles.
+- `make_slr_pulse`, `make_gauss_pulse` and `make_block_pulse` join `_compat._REQUIRED_TOPLEVEL`.
+- `examples/_parked/` and `examples/lib/` are removed. The two DTI notebooks were kept as the
+  acceptance test for whatever module set came next; that job is discharged, they are in git
+  history, and the physics they depended on is still in `salvage/`. `mr0_bridge.py` went with them:
+  `examples/gre_2d/02` simulates the written `.seq` through `mr0.Sequence.import_file`, which tests
+  the file a scanner would play rather than the tree that produced it.
+
+### One thing to know about the simulation
+
+MRzero's `.seq` importer parses each event's `freq` field and then ignores it. A slice offset or a
+readout FOV shift is therefore **invisible** to a simulation through a written file — both are
+frequency offsets. `examples/gre_2d/02` is a single slice at isocentre for that reason, and
+`CartesianLine` and `Excitation` say so where they implement the offsets.
+
+---
+
 ## Unreleased — compile returns a `pypulseq.Sequence`
 
 `sc.compile(tree, opts)` returns a `pypulseq.Sequence`. Not a wrapper, not a pair of a sequence and
