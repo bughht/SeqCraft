@@ -2,9 +2,10 @@
 
 - Status: Accepted
 - Date: 2026-08-15
-- Supersedes: the `CompiledSequence` / `Report` result model from ADR-003 and before
-- Amends: [ADR-003](003-scanner-and-module-reform.md), whose Decision section describes
-  `CompiledSequence` storing `opts` and a `pns(hardware)` method on it
+- Supersedes: only the `CompiledSequence`, `Report`, provenance-result, and result-method portions
+  of [ADR-003](003-scanner-and-module-reform.md) and earlier designs
+- Does not supersede: ADR-003's `pp.Opts` scanner, PNS hardware input, raw-PyPulseq fixture, or
+  `Module` decisions
 
 ## Context
 
@@ -108,3 +109,9 @@ than a review comment.
 silently until `check_timing` moved inside the compile. And the event-size check indexed a 0-based
 `origins` list with pypulseq's 1-based block id, so it named the wrong block and could raise
 `IndexError` on the last one.
+
+## Final status
+
+This decision remains authoritative and is part of the stable compiler architecture. The final
+public/private surface and the conditions for reopening it are recorded in
+[`compiler_architecture_freeze.md`](../refactor/compiler_architecture_freeze.md).

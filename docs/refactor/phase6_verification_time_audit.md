@@ -1,6 +1,7 @@
 # Phase 6 verification, warning, and time-policy audit
 
-- Status: Complete; local and hosted gates passed
+- Status: Complete; merged through [PR #11](https://github.com/bughht/SeqCraft/pull/11) as
+  `74359032b782fae4dcd54385d8989d49e094cb77`
 - Date: 2026-08-16
 - Branch: `refactor/compiler-phases`
 - Baseline: `00fe41e`

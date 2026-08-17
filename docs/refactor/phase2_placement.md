@@ -1,5 +1,9 @@
 # Phase 2 placement extraction
 
+> **Historical implementation record.** Placement now lives at
+> `seqcraft/compiler/placement.py`; the temporary façade alias described below was removed when the
+> single stage pipeline became authoritative.
+
 - Status: Complete
 - Date: 2026-08-14
 - Branch: `refactor/compiler-phases`
@@ -8,8 +12,8 @@
 
 ## Scope delivered
 
-- Moved the authoritative tree traversal and absolute-time resolution to
-  `core/_compiler/placement.py`.
+- Moved the authoritative tree traversal and absolute-time resolution to the then-current
+  `core/_compiler/placement.py` path.
 - Moved intrinsic event-duration interpretation and unsupported-kind rejection with that stage.
 - Made the stage output an ordered immutable `tuple[PlacedEvent, ...]`.
 - Kept `compiler._place` as a temporary identity alias so existing downstream instrumentation uses
@@ -53,7 +57,7 @@ lint, types, examples, and Ubuntu/Windows tests on Python 3.11/3.12.
 
 ## Exit status
 
-All Phase 2 local and hosted gates are complete. The implementation remains in Draft
-[PR #5](https://github.com/bughht/SeqCraft/pull/5); `main` is unchanged. The merge review passed and
-the Phase 3 boundary was accepted in [`phase2_merge_review.md`](phase2_merge_review.md) and
-[`phase3_boundary.md`](phase3_boundary.md).
+All Phase 2 local and hosted gates completed. [PR #5](https://github.com/bughht/SeqCraft/pull/5)
+was merged as `3e4024b`. The review-time boundary is retained in
+[`phase2_merge_review.md`](phase2_merge_review.md); the delivered current boundary is documented in
+[`phase3_legalization_emission.md`](phase3_legalization_emission.md).

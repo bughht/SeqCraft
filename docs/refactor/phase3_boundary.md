@@ -5,8 +5,12 @@
 > bare `pypulseq.Sequence`, every legality failure raises, and `CompiledSequence`, `Report` and
 > `Issue` no longer exist.  For the current shape see [`../compiler.md`](../compiler.md) and
 > [`../architecture.md`](../architecture.md).
+>
+> **Superseded implementation proposal.** The accepted boundary was re-baselined after the package
+> structure and return contract changed. The completed implementation is recorded in
+> [`phase3_legalization_emission.md`](phase3_legalization_emission.md).
 
-- Status: Accepted implementation boundary; implementation not started
+- Status: Superseded by the completed legalization/emission boundary
 - Date: 2026-08-14
 - Applies after: Phase 2 merge
 - Semantic-change policy: None
@@ -106,8 +110,8 @@ Those changes belong to Phase 4 or later and require their own evidence and revi
 - [x] Rollback is the Phase 2 merge commit.
 - [x] Review units and required evidence are defined.
 
-Phase 3 coding may begin only after Phase 2 is merged and the long-lived refactor branch is
-synchronized to that merge commit.
+At the time of this proposal, implementation was gated on the Phase 2 merge. That gate was
+satisfied; the eventual implementation followed the revised boundary linked above.
 
 ## Exit evidence
 

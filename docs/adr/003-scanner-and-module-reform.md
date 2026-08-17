@@ -3,11 +3,9 @@
 - Status: Accepted
 - Date: 2026-08-15
 - Supersedes: the `System`/`regime` scanner model and the `seqcraft.modules` library
-- Amended by: [ADR-004](004-compile-returns-a-sequence.md) — `CompiledSequence` no longer exists,
-  so "`CompiledSequence` stores `opts`" below is historical and `pns(hardware)` is now the free
-  function `sc.pns(tree, opts, hardware)`.  The decision this ADR records is unaffected: the
-  scanner is still a `pp.Opts`, PNS still takes the response model explicitly, and the module
-  contract is unchanged.
+- Partially superseded by: [ADR-004](004-compile-returns-a-sequence.md), which replaces only this
+  ADR's `CompiledSequence`, report, provenance-result, and result-method decisions. The scanner,
+  PNS hardware input, raw-PyPulseq fixture, and `Module` decisions remain authoritative.
 
 ## Context
 
@@ -107,3 +105,11 @@ is removing, and required keyword-only arguments give the same guarantee.
 **Migrating the module library behind a shim.** Rejected: it was written against a base that no
 longer exists, a `System` that is deleted, and a declared `duration` that is removed, and a shim
 would keep asserting all three.
+
+## Final interpretation
+
+Read the references to `CompiledSequence` and its methods above as historical context. The current
+forms are `sc.compile(tree, opts) -> pypulseq.Sequence` and
+`sc.pns(tree, opts, hardware)`. [ADR-004](004-compile-returns-a-sequence.md) is authoritative for
+the return type and diagnostic delivery; this ADR remains authoritative for scanner and module
+ownership.

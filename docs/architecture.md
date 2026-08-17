@@ -1,5 +1,10 @@
 # Architecture
 
+> **Status: stable.** The current compiler architecture is frozen. Reopen it only for a
+> reproducible severe defect, a measured performance bottleneck, or an accepted ADR for a necessary
+> contract change. See the [freeze record](refactor/compiler_architecture_freeze.md) and
+> [maintenance checklist](compiler_maintenance.md).
+
 Two concepts, and no more — plus one object that is pypulseq's.
 
 ```
@@ -104,6 +109,11 @@ src/seqcraft/compiler/
 
 None of the stage modules is re-exported. The public surface is `compile_sequence` and nothing
 else, so a user never imports a stage type.
+
+Physical importability is not public API. `seqcraft.compiler.__all__` contains only
+`compile_sequence`; `PlacedEvent`, `PulseqReadyBlock`, `LegalizationResult`, and the individual stage
+functions exist for the implementation and repository tests. The exact inventory and source-level
+guards are recorded in the [architecture freeze](refactor/compiler_architecture_freeze.md).
 
 ---
 

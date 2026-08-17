@@ -1,14 +1,14 @@
 # ADR-000: Compiler refactor scope and compatibility policy
 
-- Status: Accepted
+- Status: Accepted; implementation complete
 - Date: 2026-08-14
-- Last amended: 2026-08-14 (private package location and core-audit boundary)
+- Last amended: 2026-08-17 (final package location and architecture freeze)
 - Baseline: `afe576bafe17e9cce3edfc768b343ad958994560`
-- **Amended by the structure revision:** the paths below are historical.  The private
-  `core/_compiler/` package became the public-by-position `seqcraft/compiler/`, and `core/`
-  no longer exists; see [`docs/architecture.md`](../architecture.md).  The decision this ADR
-  records — one facade, explicit stages, no second compile path — is unchanged and now holds
-  across seven stage modules rather than two.
+- Final disposition: the paths and compatibility surface described in the original decision are
+  historical. [ADR-003](003-scanner-and-module-reform.md) replaced `System` and the concrete module
+  library; [ADR-004](004-compile-returns-a-sequence.md) replaced the result/report surface. The
+  compiler now lives at `seqcraft/compiler/`; see
+  [the architecture freeze](../refactor/compiler_architecture_freeze.md).
 
 ## Context
 
@@ -40,16 +40,17 @@ Phase 1 must account for the existing frozen `_Placed` dataclass rather than cre
 placement model. A ready-block contract may be introduced behind adapters, but the current
 `compile_sequence` path remains authoritative until differential tests prove the replacement.
 
-`src/seqcraft/core/compiler.py` remains the compatible façade. Private contracts and extracted
-stages live under `src/seqcraft/core/_compiler/`; they are not placed at the top level of
-`seqcraft`, and they are not public imports. Phases 1–6 may organize this private compiler package
-but may not relocate unrelated core modules.
+At the time of this decision, `src/seqcraft/core/compiler.py` was the compatible façade and private
+stages were to live under `src/seqcraft/core/_compiler/`. The later structure revision removed
+`core/` and moved the single façade plus its stages to `src/seqcraft/compiler/`. Only
+`compile_sequence` is exported by that package; the stage modules and IR contracts are not public
+API. The original constraint — one compile path, with no compatibility adapter — is unchanged.
 
-The broader question of whether every current core module belongs in `core` is handled by a
-dependency- and cohesion-based audit in Phase 7. The audit records public/private imports, ownership,
-test boundaries, and keep/split/move/merge recommendations. Except for changes required to finish
-the single compiler path, its recommendations require a separate post-refactor plan and ADR before
-implementation. The audit charter is `docs/refactor/core_package_boundary_audit.md`.
+The broader `core` package question was resolved by the structure revision. The former audit
+charter is retained as a superseded record in
+[`core_package_boundary_audit.md`](../refactor/core_package_boundary_audit.md); the resulting
+dependency order is documented in [`architecture.md`](../architecture.md) and enforced from source
+by `tests/test_layering.py`.
 
 An intentional behavior change requires all of the following:
 
@@ -76,3 +77,7 @@ an automatic artifact rewrite.
 Merging a phase does not require abandoning the long-lived branch. After a phase commit is merged,
 the same branch continues with the next phase; the branch must retain the merged history and must not
 rewrite already reviewed phase commits without an explicit reason.
+
+The completed architecture is now stable. Moving compiler responsibilities or changing its public
+surface requires a concrete severe defect, measured performance bottleneck, or a new accepted ADR;
+directory shape alone is not a reason to reopen the design.
