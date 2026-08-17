@@ -126,3 +126,5 @@ what changed is only legible against what was there.
 The always-on verification cost, warning/error ownership and integer-tick boundary were reviewed
 after the legalization/emission split in
 [`refactor/phase6_verification_time_audit.md`](refactor/phase6_verification_time_audit.md).
+The final public/private inventory, legacy-path audit and source dependency guards are recorded in
+[`refactor/compiler_architecture_freeze.md`](refactor/compiler_architecture_freeze.md).

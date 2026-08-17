@@ -1,5 +1,10 @@
 # Phase 1 compiler contracts
 
+> **Historical implementation record.** The contracts remain current, but their original
+> `core/_compiler/` paths and migration alias do not. They now live in `seqcraft/compiler/model.py`,
+> with no legacy adapter; see [ADR-002](../adr/002-compiler-ir-contracts.md) and the
+> [architecture freeze](compiler_architecture_freeze.md).
+
 - Status: Complete
 - Date: 2026-08-14
 - Branch: `refactor/compiler-phases`
@@ -8,7 +13,8 @@
 
 ## Scope delivered
 
-- Added immutable `PlacedEvent` and `PulseqReadyBlock` contracts in `core/_compiler/model.py`.
+- Added immutable `PlacedEvent` and `PulseqReadyBlock` contracts in the then-current
+  `core/_compiler/model.py` path.
 - Reused `PlacedEvent` as the existing compiler's `_Placed` model instead of adding a parallel IR.
 - Centralized event-kind groups and named time-comparison/duration helpers.
 - Added structured placed-event and ready-block verifier skeletons.
@@ -45,3 +51,6 @@ passed all seven jobs: lint, types, examples, and Ubuntu/Windows tests on Python
 All Phase 1 local and hosted gates are complete. Phase 1 was merged through
 [PR #4](https://github.com/bughht/SeqCraft/pull/4) at merge commit `824f380`; the long-lived
 `refactor/compiler-phases` branch was fast-forwarded to the same commit for Phase 2.
+
+The later structure revision moved the contracts to `seqcraft/compiler/model.py`; the final
+legalization extraction added `LegalizationResult` and removed the temporary `_Placed` alias.

@@ -1,6 +1,7 @@
 # Phase 3 legalization and emission boundary
 
-- Status: Complete; local and hosted gates passed
+- Status: Complete; merged through [PR #10](https://github.com/bughht/SeqCraft/pull/10) as
+  `00fe41e`
 - Date: 2026-08-16
 - Branch: `refactor/compiler-phases`
 - Baseline: `45a404a`

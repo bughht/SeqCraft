@@ -5,6 +5,10 @@
 > bare `pypulseq.Sequence`, every legality failure raises, and `CompiledSequence`, `Report` and
 > `Issue` no longer exist.  For the current shape see [`../compiler.md`](../compiler.md) and
 > [`../architecture.md`](../architecture.md).
+>
+> Final disposition: the original artifact was re-captured after ADR-003/004 changed the public
+> architecture and raw-PyPulseq fixtures replaced module-built recipes. It remains a regression
+> baseline for current emitted structure, not proof across the original pre-refactor boundary.
 
 ## Baseline identity
 
@@ -103,5 +107,6 @@ simulation stack; they remain external Phase 0 evidence rather than a public PR 
 
 Phase 0 local and remote gates are complete. GitHub Actions
 [run #10](https://github.com/bughht/SeqCraft/actions/runs/31852265376) passed all seven jobs at
-commit `7be79bf`: lint, types, examples, and Ubuntu/Windows tests on Python 3.11 and 3.12. Phase 1 may
-begin, subject to ADR-000's no-change and private-package scope.
+commit `7be79bf`: lint, types, examples, and Ubuntu/Windows tests on Python 3.11 and 3.12. At that
+point the contract extraction was cleared to begin. Its final disposition and current paths are
+recorded in [`phase1_contracts.md`](phase1_contracts.md).

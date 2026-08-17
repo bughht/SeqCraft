@@ -9,6 +9,11 @@ The compiler's job is to find block boundaries satisfying all of that, and to co
 inside each one. It is the only complicated subsystem in seqcraft, which is deliberate: one hard
 thing, one file per stage, tested at every responsibility boundary.
 
+The current stage architecture is stable. For ownership and review steps when adding an event or
+changing boundary policy, use [`compiler_maintenance.md`](compiler_maintenance.md); changes to the
+architecture itself require the evidence described in the
+[freeze record](refactor/compiler_architecture_freeze.md).
+
 ---
 
 ## How an event's own `delay` is handled

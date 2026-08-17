@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 import seqcraft
+import seqcraft.compiler as compiler
 
 ROOT = Path(seqcraft.__file__).parent
 
@@ -40,6 +41,11 @@ ORDER = ['errors', 'design', 'compiler', 'analysis', 'display']
 
 #: Nothing under ``compiler/`` may import these *at runtime*: they are beside the compile path.
 OFF_THE_COMPILE_PATH = ['design.module', 'analysis', 'display', 'scanner']
+
+# ``compiler`` is importable so the implementation has a stable home, but its stage modules and
+# IR types remain implementation details.  ``__all__`` is the boundary Python tooling can inspect
+# without treating every imported orchestration helper as supported API.
+COMPILER_PUBLIC_API = {'compile_sequence'}
 
 
 def _imports(path: Path, *, runtime_only: bool = False) -> set[str]:
@@ -171,6 +177,56 @@ def test_emission_cannot_reach_policy_bearing_stages() -> None:
         if any(name == banned or name.startswith(f'{banned}.') for banned in forbidden)
     )
     assert not offenders, f'mechanical emission imports policy-bearing code: {offenders}'
+
+
+def test_compiler_public_surface_is_the_facade_only() -> None:
+    """Keep stage functions and IR contracts out of the supported import surface."""
+    assert set(compiler.__all__) == COMPILER_PUBLIC_API
+    assert seqcraft.compile is compiler.compile_sequence
+    assert seqcraft.compile_sequence is compiler.compile_sequence
+
+    internal_names = {
+        'LegalizationResult',
+        'PlacedEvent',
+        'PulseqReadyBlock',
+        'emit_blocks',
+        'find_boundaries',
+        'legalize_blocks',
+        'place_events',
+    }
+    assert not (internal_names & set(seqcraft.__all__))
+
+
+def test_compiler_stage_import_graph_is_acyclic() -> None:
+    """A stage may depend on an earlier stage contract, never close an import cycle."""
+    paths = _modules('compiler')
+    graph = {
+        path.relative_to(ROOT).with_suffix('').as_posix().replace('/', '.'): {
+            name for name in _imports(path)
+            if name == 'compiler' or name.startswith('compiler.')
+        }
+        for path in paths
+    }
+
+    def visit(name: str, active: tuple[str, ...], done: set[str]) -> None:
+        if name in active:
+            cycle = ' -> '.join((*active[active.index(name):], name))
+            pytest.fail(f'compiler import cycle: {cycle}')
+        if name in done:
+            return
+        for dependency in sorted(graph.get(name, set())):
+            visit(dependency, (*active, name), done)
+        done.add(name)
+
+    complete: set[str] = set()
+    for module in sorted(graph):
+        visit(module, (), complete)
+
+
+def test_legacy_compiler_paths_do_not_return() -> None:
+    """There is one compiler package, with no adapter under the removed ``core`` layout."""
+    assert not list((ROOT / 'core').rglob('*.py'))
+    assert not list((ROOT / 'compiler' / '_compiler').rglob('*.py'))
 
 
 def test_compile_returns_a_bare_pypulseq_sequence() -> None:
