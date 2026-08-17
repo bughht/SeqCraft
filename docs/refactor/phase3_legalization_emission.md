@@ -1,6 +1,6 @@
 # Phase 3 legalization and emission boundary
 
-- Status: Complete locally; hosted CI pending
+- Status: Complete; local and hosted gates passed
 - Date: 2026-08-16
 - Branch: `refactor/compiler-phases`
 - Baseline: `45a404a`
@@ -70,4 +70,15 @@ verification restored the baseline without weakening the immutable stage contrac
 | Same-runner performance guardrail | passed |
 
 The six skips require the optional `pulseq_systems` dependency and are unchanged from the baseline.
-Hosted Linux/Windows and Python 3.11/3.12 validation is the remaining phase gate.
+
+## Hosted verification
+
+[GitHub Actions run 31989728932](https://github.com/bughht/SeqCraft/actions/runs/31989728932)
+passed all seven jobs on PR #10:
+
+- tests on Ubuntu and Windows with Python 3.11 and 3.12;
+- Ruff linting;
+- strict mypy type checking; and
+- executable examples.
+
+The hosted matrix and all local gates therefore satisfy the Phase 3 exit criteria.
