@@ -1,6 +1,6 @@
 # Phase 6 verification, warning, and time-policy audit
 
-- Status: Complete locally; hosted CI pending
+- Status: Complete; local and hosted gates passed
 - Date: 2026-08-16
 - Branch: `refactor/compiler-phases`
 - Baseline: `00fe41e`
@@ -126,7 +126,19 @@ direction. Keeping the simpler existing functions is therefore preferable.
 | Phase 0 local capture | spin echo: 575 blocks, 0.594 s median, 10,978,457 peak Python bytes |
 
 The six skips require the optional `pulseq_systems` dependency and are unchanged from the existing
-local environment. Hosted Linux/Windows and Python 3.11/3.12 validation remains the final gate.
+local environment.
+
+## Hosted verification
+
+[GitHub Actions run 31991021952](https://github.com/bughht/SeqCraft/actions/runs/31991021952)
+passed all seven jobs on PR #11:
+
+- tests on Ubuntu and Windows with Python 3.11 and 3.12;
+- Ruff linting;
+- strict mypy type checking; and
+- executable examples.
+
+The hosted matrix and all local gates therefore satisfy the Phase 6 exit criteria.
 
 ## Phase disposition
 
