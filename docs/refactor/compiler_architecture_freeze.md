@@ -87,5 +87,6 @@ for spin echo, with peak Python allocations of 2,752,224 and 10,984,439 bytes re
 match the immediately preceding audit and show no performance regression from the documentation and
 source-level test changes.
 
-Hosted Linux/Windows, Python 3.11/3.12, lint, types, and examples evidence will be added after the PR
-matrix completes.
+[GitHub Actions run 31994234063](https://github.com/bughht/SeqCraft/actions/runs/31994234063)
+passed all seven jobs on PR #12: tests on Ubuntu and Windows with Python 3.11 and 3.12, Ruff,
+strict mypy, and executable examples.
