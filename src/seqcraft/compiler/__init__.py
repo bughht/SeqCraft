@@ -108,6 +108,7 @@ from .errors import CompileError, DefinitionConflict
 from .legalization import legalize_blocks
 from .placement import place_events
 from .verification import (
+    ContractViolation,
     _sequence_moments,
     check_event_sizes,
     check_label_addresses,
@@ -164,9 +165,16 @@ def _warn(notes: dict[str, list[str]]) -> None:
     *sites* merged, not how many TRs the loop ran for: a 64-line acquisition merges the same two
     modules 64 times and that is one fact, not sixty-four.
 
-    ``stacklevel=2`` so the warning points at the caller's ``sc.compile(...)`` rather than at the
+    ``stacklevel=3`` so the warning points at the caller's ``sc.compile(...)`` rather than at the
     compiler's guts.
     """
+    unnamed = tuple(
+        ContractViolation(category, 'warning note category has no display text')
+        for category, entries in sorted(notes.items())
+        if entries and category not in _WARNING_TEXT
+    )
+    require_valid_contract('warning-note', unnamed)
+
     for category, entries in sorted(notes.items()):
         if not entries:
             continue
@@ -176,7 +184,7 @@ def _warn(notes: dict[str, list[str]]) -> None:
             for site, n in counted.most_common(_WARNING_SITES)
         )
         extra = len(counted) - _WARNING_SITES
-        names = _WARNING_TEXT.get(category, (category, category))
+        names = _WARNING_TEXT[category]
         warnings.warn(
             f'{len(entries)} {names[len(entries) != 1]}: {shown}'
             + (f' (+{extra} more sites)' if extra > 0 else ''),
