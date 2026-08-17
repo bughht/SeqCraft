@@ -95,8 +95,8 @@ src/seqcraft/compiler/
 ├── __init__.py       compile_sequence — the pass that orchestrates the rest
 ├── placement.py      tree -> absolute-time events
 ├── boundaries.py     where the blocks are cut, and which readout each label addresses
-├── legalization.py   superpose, represent, resample, measure limits
-├── emission.py       ready blocks -> pypulseq.Sequence
+├── legalization.py   schedule, transform, check, and return ready blocks
+├── emission.py       mechanically add ready blocks to pypulseq.Sequence
 ├── verification.py   the IR contracts, the finished-sequence checks, the compile vs the tree
 ├── errors.py         CompileError, HardwareLimitError, DefinitionConflict
 └── model.py          the IR itself, plus block-format policy and time policy

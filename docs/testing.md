@@ -31,7 +31,8 @@ mypy src/seqcraft/design/timing.py src/seqcraft/design/units.py \
   src/seqcraft/design/module.py \
   src/seqcraft/scanner/opts.py \
   src/seqcraft/compiler/model.py src/seqcraft/compiler/placement.py \
-  src/seqcraft/compiler/boundaries.py
+  src/seqcraft/compiler/boundaries.py src/seqcraft/compiler/legalization.py \
+  src/seqcraft/compiler/emission.py
 pytest -n auto \
   -m "not slow and not bloch and not crossval and not hardware" \
   --cov=seqcraft --cov-report=term-missing

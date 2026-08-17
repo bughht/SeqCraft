@@ -156,6 +156,23 @@ def test_the_compile_path_imports_nothing_beside_it() -> None:
     assert not offenders, f'the compile path reaches beside itself: {offenders}'
 
 
+def test_emission_cannot_reach_policy_bearing_stages() -> None:
+    """Mechanical emission depends on ready blocks and errors, never scheduling policy."""
+    forbidden = (
+        'design',
+        'compiler.boundaries',
+        'compiler.legalization',
+        'compiler.placement',
+        'compiler.verification',
+    )
+    imports = _imports(ROOT / 'compiler' / 'emission.py')
+    offenders = sorted(
+        name for name in imports
+        if any(name == banned or name.startswith(f'{banned}.') for banned in forbidden)
+    )
+    assert not offenders, f'mechanical emission imports policy-bearing code: {offenders}'
+
+
 def test_compile_returns_a_bare_pypulseq_sequence() -> None:
     """
     The central contract, asserted rather than described.

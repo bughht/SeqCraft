@@ -36,25 +36,43 @@ from __future__ import annotations
 
 import functools
 import math
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pypulseq as pp
 
 from ..design import events as ev
 from ..design import units
+from ..design.events import GRADIENT_KINDS, POINT_KINDS
+from ..design.logic import BARRIER
 from ..design.timing import EPS, TICKS_PER_SECOND, to_ticks
 from ..errors import format_error
-from .errors import HardwareLimitError
-from .model import PlacedEvent, in_block_delay
+from .errors import CompileError, HardwareLimitError
+from .model import (
+    EXCLUSIVE_KINDS,
+    LegalizationResult,
+    PlacedEvent,
+    PulseqReadyBlock,
+    in_block_delay,
+)
+from .verification import require_valid_contract, verify_ready_blocks
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
-    from types import SimpleNamespace
+    from collections.abc import Iterable, Mapping, Sequence
 
     from pypulseq.opts import Opts
 
-__all__ = ['axis_gradient', 'check_limits', 'superpose']
+    from ..design.timing import Raster
+
+__all__ = [
+    'axis_gradient',
+    'check_limits',
+    'common_path',
+    'legalize_blocks',
+    'required_duration',
+    'superpose',
+]
 
 
 def superpose(
@@ -196,7 +214,7 @@ def axis_gradient(
             skip_check=True,
         )
         grad.delay = 0.0
-        return grad
+        return cast('SimpleNamespace', grad)
 
     centre = _as_arbitrary(rel_ps, amps, raster_ps)
     if centre is not None:
@@ -204,7 +222,7 @@ def axis_gradient(
         # Limits are measured on the finished block by check_limits.  Letting make_arbitrary_grad
         # raise here would report the violation before the waveform is complete, on a piece rather
         # than on the sum -- which is the one place the truth is visible.
-        return pp.make_arbitrary_grad(
+        grad = pp.make_arbitrary_grad(
             channel=axis,
             waveform=waveform,
             first=first,
@@ -214,6 +232,7 @@ def axis_gradient(
             max_slew=math.inf,
             system=opts,
         )
+        return cast('SimpleNamespace', grad)
 
     return _resampled(axis, rel_ps, amps, opts, notes, block_index, pieces, a)
 
@@ -262,7 +281,7 @@ def _resampled(
         skip_check=True,
     )
     grad.delay = 0.0
-    return grad
+    return cast('SimpleNamespace', grad)
 
 
 def check_limits(
@@ -342,3 +361,185 @@ def check_limits(
             ],
         )
         raise HardwareLimitError(msg)
+
+
+def required_duration(events: Sequence[SimpleNamespace], opts: Opts) -> float:
+    """Return the shortest block that can hold `events`, by PyPulseq's own rules."""
+    out = 0.0
+    for event in events:
+        kind = getattr(event, 'type', None)
+        delay = float(getattr(event, 'delay', 0.0) or 0.0)
+        if kind == 'rf':
+            ring = float(getattr(event, 'ringdown_time', opts.rf_ringdown_time) or 0.0)
+            out = max(out, delay + float(event.shape_dur) + ring)
+        elif kind == 'adc':
+            dead = float(getattr(event, 'dead_time', opts.adc_dead_time) or 0.0)
+            out = max(out, delay + float(event.num_samples) * float(event.dwell) + dead)
+        elif kind != BARRIER:
+            out = max(out, float(pp.calc_duration(event)))
+    return out
+
+
+def _adc_conflict(edge: float, adcs: Sequence[PlacedEvent]) -> PlacedEvent | None:
+    """Return an ADC whose sampling window contains the proposed boundary `edge`."""
+    for adc in adcs:
+        if adc.start + EPS < edge < adc.end - EPS:
+            return adc
+    return None
+
+
+def common_path(paths: Sequence[tuple[str, ...]]) -> tuple[str, ...]:
+    """Return the longest tag path common to all non-empty paths."""
+    real = [path for path in paths if path]
+    if not real:
+        return ()
+    common = list(real[0])
+    for path in real[1:]:
+        keep = 0
+        for left, right in zip(common, path):
+            if left != right:
+                break
+            keep += 1
+        common = common[:keep]
+        if not common:
+            break
+    return tuple(common)
+
+
+def legalize_blocks(  # noqa: C901, PLR0912
+    edges: Sequence[float],
+    placed: Sequence[PlacedEvent],
+    targets: Mapping[int, float],
+    opts: Opts,
+    raster: Raster,
+) -> LegalizationResult:
+    """
+    Assemble and validate every ready block for the fixed boundary and label decisions.
+
+    This is the last policy-bearing stage. It schedules point events, splits and superposes
+    gradients, checks the finished waveforms and returns immutable blocks plus explicit notes.
+    PyPulseq sequence mutation belongs to :func:`seqcraft.compiler.emission.emit_blocks`.
+    """
+    notes: dict[str, list[str]] = {}
+    blocks: list[PulseqReadyBlock] = []
+
+    grads: dict[str, list[PlacedEvent]] = {}
+    for event in placed:
+        if event.kind in GRADIENT_KINDS:
+            grads.setdefault(event.event.channel, []).append(event)
+    for pieces in grads.values():
+        pieces.sort(key=lambda event: event.start)
+    cursor = dict.fromkeys(grads, 0)
+    active: dict[str, list[PlacedEvent]] = {axis: [] for axis in grads}
+
+    # Labels are assigned at their target ADC time. The event time remains the secondary key so
+    # diagnostics stay intuitive, although label_order_conflict has already rejected groups whose
+    # meaning would depend on intra-block insertion order.
+    schedule = sorted(
+        (
+            (targets.get(index, event.res_start), event.res_start, event)
+            for index, event in enumerate(placed)
+            if event.kind in EXCLUSIVE_KINDS or event.kind in POINT_KINDS
+        ),
+        key=lambda item: (item[0], item[1]),
+    )
+    assign_at = [time for time, _, _ in schedule]
+    singles = [event for _, _, event in schedule]
+    single_cursor = 0
+    adcs = [event for event in placed if event.kind == 'adc']
+
+    for index, (start, end) in enumerate(zip(edges, edges[1:])):
+        events: list[SimpleNamespace] = []
+        paths: list[tuple[str, ...]] = []
+
+        while single_cursor < len(singles) and assign_at[single_cursor] < end - EPS:
+            event = singles[single_cursor]
+            single_cursor += 1
+            if event.kind in POINT_KINDS and not hasattr(event.event, 'delay'):
+                events.append(event.event)
+            else:
+                events.append(ev.derive(event.event, delay=in_block_delay(event, start, opts)))
+            paths.append(event.path)
+
+        for axis, pieces in grads.items():
+            while cursor[axis] < len(pieces) and pieces[cursor[axis]].start < end - EPS:
+                active[axis].append(pieces[cursor[axis]])
+                cursor[axis] += 1
+            active[axis] = [event for event in active[axis] if event.end > start + EPS]
+            here = [event for event in active[axis] if event.start < end - EPS]
+            if not here:
+                continue
+            crossing = [
+                event for event in here
+                if event.start < start - EPS or event.end > end + EPS
+            ]
+            for edge in (start, end) if crossing else ():
+                blocked = _adc_conflict(edge, adcs)
+                if blocked is None:
+                    continue
+                msg = format_error(
+                    f'a block boundary at {edge * 1e6:.1f} us falls inside a gradient on axis '
+                    f'{axis} that an ADC is sampling.',
+                    {
+                        'gradient from': ', '.join(sorted({event.where for event in crossing})),
+                        'adc from': blocked.where,
+                        'adc window': (
+                            f'{blocked.start * 1e6:.1f} .. {blocked.end * 1e6:.1f} us'
+                        ),
+                    },
+                    [
+                        'a readout gradient must stay one event -- ramp sampling and vendor '
+                        'gridding both depend on that, so the compiler will not split it',
+                        'the boundary comes from an explicit barrier, or this is a compiler bug; '
+                        'please report it with the tree that produced it',
+                    ],
+                )
+                raise CompileError(msg)
+            gradient = axis_gradient(axis, here, start, end, opts, notes, index)
+            if gradient is not None:
+                events.append(gradient)
+                paths.extend(event.path for event in here)
+
+        duration = raster.nearest(end - start)
+        ready = PulseqReadyBlock(
+            index=index,
+            start=start,
+            end=end,
+            duration=duration,
+            events=tuple(events),
+            source_paths=tuple(paths),
+            origin=common_path(paths),
+        )
+        origin = ', '.join(sorted({'.'.join(path) for path in ready.source_paths if path})) or '?'
+        if ready.events:
+            check_limits(ready.events, opts, index, origin, notes, start=start)
+            needed = required_duration(ready.events, opts)
+            if needed > ready.duration + EPS:
+                msg = format_error(
+                    f'block {index} spans {ready.duration * 1e6:.1f} us but its events need '
+                    f'{needed * 1e6:.1f} us.',
+                    {'from': origin, 'shortfall_us': round((needed - ready.duration) * 1e6, 3)},
+                    [
+                        'usually an ADC whose trailing dead time, or an RF whose ringdown, extends '
+                        'past the interval -- the module should report a longer duration',
+                        'this is a compiler bug if the module\'s duration property is correct; '
+                        'please report it with the tree that produced it',
+                    ],
+                )
+                raise CompileError(msg)
+        blocks.append(ready)
+
+    ready_blocks = tuple(blocks)
+    require_valid_contract(
+        'ready-block',
+        verify_ready_blocks(
+            ready_blocks,
+            expected_start=edges[0] if edges else None,
+        ),
+    )
+    frozen_notes = tuple(
+        (category, tuple(entries))
+        for category, entries in sorted(notes.items())
+        if entries
+    )
+    return LegalizationResult(ready_blocks, frozen_notes)
