@@ -128,6 +128,14 @@ def test_ready_verifier_reports_timing_and_exclusivity() -> None:
     assert 'contains more than one ADC event' in messages
 
 
+def test_warning_note_categories_require_explicit_display_text() -> None:
+    """A new transformation note must not silently degrade to a bare internal key."""
+    with pytest.raises(sc.CompilerContractError) as caught:
+        compiler._warn({'unnamed': ['readout']})
+    assert 'warning-note' in str(caught.value)
+    assert 'unnamed' in str(caught.value)
+
+
 def test_authoritative_compile_path_produces_both_contracts(monkeypatch, opts) -> None:
     """
     The compile path really does produce both IRs, rather than running a second algorithm beside

@@ -122,3 +122,7 @@ The compiler's responsibilities and the event/boundary support matrix are in
 [`compiler_constraint_matrix.md`](refactor/compiler_constraint_matrix.md) -- are dated,
 commit-pinned records of the pre-refactor shape and are marked historical; they are kept because
 what changed is only legible against what was there.
+
+The always-on verification cost, warning/error ownership and integer-tick boundary were reviewed
+after the legalization/emission split in
+[`refactor/phase6_verification_time_audit.md`](refactor/phase6_verification_time_audit.md).
