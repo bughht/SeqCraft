@@ -57,8 +57,11 @@ overlap without you hand-splitting blocks, or files that have to be reproducible
 later.
 
 There are no recipes here on purpose.  A recipe is somebody else's sequence choices baked into
-library code, and changing your own sequence should never mean editing a package.  seqcraft ships
-**no concrete modules at all**: what it ships is the tree, the compiler, and the contract.
+library code, and changing your own sequence should never mean editing a package.  What
+:mod:`seqcraft.modules` ships instead is a small set of MR building blocks that each leave the
+sequence choices with the caller -- ``GRE2D`` takes the list of phase-encode lines to acquire
+rather than an acceleration factor -- and every one of them was extracted from a working sequence
+rather than designed.
 
 Layout
 ------
@@ -66,6 +69,7 @@ Named for what each layer answers, in the order a sequence passes through them::
 
     scanner/     what you build against    Opts, and the PNS response model
     design/      what you build            the tree, events, timing, units
+    modules/     what you build with       the MR building blocks, each one extracted
     compiler/    the transform             boundaries, legalization, emission, verification
     analysis     measuring a tree          sample, moments, kspace, pns
     display      looking at a tree         plot_block

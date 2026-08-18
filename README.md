@@ -1,18 +1,70 @@
-# seqcraft
+# SeqCraft
 
-Composable, verifiable MRI pulse sequence programming on top of [pypulseq](https://github.com/imr-framework/pypulseq).
+**Composable, reusable MRI pulse sequence programming on top of [pypulseq](https://github.com/imr-framework/pypulseq).**
 
-Three things, and one of them is pypulseq's.
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Built on](https://img.shields.io/badge/built%20on-pypulseq-orange)
 
-| | |
-|---|---|
-| **`sc.LogicBlock`** | A tree of pulseq events, each with a start time. Two attributes, one method. Anything may overlap anything. |
-| **`sc.compile`** | Turns the tree into legal pulseq blocks: finds boundaries, sums gradients that share an axis, and validates the result against the amplifier. |
-| **`pp.Opts`** | The scanner. Not wrapped, not subclassed — the same object you pass to `pp.make_trapezoid`. |
+## Pulseq is a list. SeqCraft makes it a tree.
 
-Everything else is a way of producing logic blocks, and seqcraft imposes no structure on the code
-that produces one beyond the block itself. `sc.Module` is the standard shape for a *reusable*
-component you write; a plain function works just as well. See [*Writing your own*](#writing-your-own).
+A pulseq sequence is a **flat, sequential list of blocks**, and each block may hold at most **one RF,
+one ADC, and one gradient per axis**. That is the right shape for hardware to execute, and the wrong
+shape to write in: the moment two things you think of as separate want to happen at the same time — a
+slice rephaser and a phase-encode blip, a preparation and the train it prepares, a diffusion lobe and
+the refocusing pulse it straddles — they collide in one block. So you split waveforms at boundaries
+by hand, keep the pieces in step yourself, and every component you write has to know what its
+neighbours are doing.
+
+`sc.LogicBlock` takes that off your side of the work:
+
+- **Anything may overlap anything.** Two gradients on one axis, a gradient across an RF, an ADC while
+  three axes play. You write what you mean at the time you mean it; `sc.compile` derives the legal
+  pulseq blocks — splitting, summing and bounding — and validates them against the amplifier.
+- **Blocks nest, to any depth.** A block holds events *or other blocks*, each with a start time
+  relative to its parent. A scan holds shots, a shot holds an inversion and a train, a train holds
+  repetitions, a repetition holds an excitation and a readout — all one kind of object. The flat list
+  becomes a tree, which is the shape a pulse sequence diagram already has.
+- **So a component can be written once and reused.** This is the part that follows from the other
+  two: because nothing has to know where block boundaries will fall or what its neighbours are doing,
+  a piece of a sequence can be handed around, nested, and retimed. That is what makes `sc.Module`
+  possible — a piece of MR physics that takes parameters and returns a `LogicBlock`.
+
+```
+   what you write              the model              the compiler            the output
+ ─────────────────        ─────────────────      ──────────────────      ─────────────────
+  pypulseq events   ─►      sc.LogicBlock    ─►    block boundaries   ─►  pypulseq.Sequence
+  your own modules        a tree of events and     same-axis sums          seq.write('x.seq')
+  sc.modules.*            blocks, with relative    amplifier limits
+                          start times
+```
+
+The three sections below are the whole tool: a tree by hand, a module, then a sequence of modules.
+Print any of it with `.describe()`, draw it with `sc.plot_block`, measure it with `sc.moments`.
+
+---
+
+## Install
+
+```console
+git clone https://github.com/bughht/SeqCraft.git && cd SeqCraft
+pip install -e ".[dev,viz]"
+```
+
+Python 3.10+, `numpy`, and the pinned `pypulseq` fork (installed automatically). Optional extras:
+`viz` (matplotlib), `systems` (vendor limits), `rf` (SLR pulses), `sim` / `recon` (the simulation
+notebooks).
+
+> [!IMPORTANT]
+> **Set the dead times.** pypulseq defaults `rf_dead_time`, `rf_ringdown_time` and `adc_dead_time`
+> to **zero**, which is wrong on every real scanner: the sequence compiles cleanly, validates
+> cleanly, and is refused or silently mangled at the console. They belong to your installation, so
+> no preset can supply them.
+
+---
+
+## 1. Put pypulseq events on a timeline
+
+Events are made by pypulseq, exactly as you already do it. seqcraft only says *when* each one
+plays:
 
 ```python
 import math
@@ -22,250 +74,349 @@ import seqcraft as sc
 opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
                rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
 
+dk = 1e3 / 220.0                                     # k-space step for a 220 mm FOV, 1/m
+
 rf, gz, gz_reph = pp.make_sinc_pulse(flip_angle=math.radians(15), duration=1e-3,
-                                     slice_thickness=5e-3, apodization=0.5, time_bw_product=4,
-                                     delay=opts.rf_dead_time, use='excitation',
-                                     system=opts, return_gz=True)
-gx = pp.make_trapezoid('x', flat_area=64 * 4.0, flat_time=3.2e-3, system=opts)
+                                     slice_thickness=5e-3, delay=opts.rf_dead_time,
+                                     use='excitation', system=opts, return_gz=True)
+gx = pp.make_trapezoid('x', flat_area=64 * dk, flat_time=3.2e-3, system=opts)
 adc = pp.make_adc(num_samples=64, duration=3.2e-3, delay=gx.rise_time, system=opts)
 gx_pre = pp.make_trapezoid('x', area=-gx.area / 2, duration=1e-3, system=opts)
+gy = pp.make_trapezoid('y', area=8 * dk, duration=1e-3, system=opts)     # phase-encode line 8
 
-time_to_echo = gx.rise_time + gx.flat_time / 2          # where k = 0 sits inside the readout
-t_winders = pp.calc_duration(gz)
+t_rf_center = rf.delay + pp.calc_rf_center(rf)[0]    # TE is measured from the pulse centre
+echo_in_gx = gx.rise_time + gx.flat_time / 2         # and k = 0 sits here inside the readout
 
-seq = sc.LogicBlock('gre')
-for i, line in enumerate(range(-32, 32)):
-    t0 = i * 20e-3
-    pe = pp.make_trapezoid('y', area=line * 4.0, duration=1e-3, system=opts)
-    seq.add(t0, rf, gz)
-    seq.add(t0 + t_winders, gz_reph, pe, gx_pre)        # z, y, x — one block, no coordination
-    seq.add(t0 + 8e-3 - time_to_echo, gx, adc)          # this *is* the definition of TE
+tr = sc.LogicBlock('tr')                             # a tree, tagged for error messages
+tr.add(0.0, rf, gz)                                  # RF and slice-select: one instant
+tr.add(pp.calc_duration(gz), gz_reph, gy, gx_pre)    # z, y, x together — overlap is free
+tr.add(t_rf_center + 5e-3 - echo_in_gx, gx, adc)     # TE = 5 ms, by construction
 
-seq_out = sc.compile(seq, opts)          # a pypulseq.Sequence, or an exception
-seq_out.write('gre.seq')                 # pypulseq's own writer; the definitions are already set
+seq = sc.compile(tr, opts)                           # a pypulseq.Sequence — 4 blocks, 7.25 ms
+seq.write('tr.seq')                                  # pypulseq's own writer
 ```
 
-`sc.compile` returns a `pypulseq.Sequence` and nothing else. If the tree cannot become a legal
-sequence it **raises**; if the compiler had to change a waveform to make it legal it **warns**.
-There is no report object to inspect and no result wrapper to unpack.
+`add` is the only method you need, and it has two shapes for one meaning. `add(t, *items)` — above —
+puts these items `t` seconds into this block and returns the block, so calls chain. `add(rows)` takes
+the whole schedule as a table of `[time, *items]` rows, which is what you want as soon as the times
+are *computed* rather than written out:
 
-The three winders land in one pulseq block because they coincide, and the compiler says nothing —
-they are on different axes, so there is nothing wrong. That is the point of the design: you say
-what you mean, and never think about block boundaries.
-
-**Set the dead times.** pypulseq defaults `rf_dead_time`, `rf_ringdown_time` and `adc_dead_time` to
-**zero**, which is wrong on every real scanner. A sequence built on those compiles cleanly, passes
-every check, and is refused or silently mangled at the console. They belong to your installation,
-not to the scanner model, so no preset and no vendor database can supply them.
-
----
-
-## Install
-
-```console
-pip install -e ".[dev,viz]"
+```python
+>>> table = sc.LogicBlock('tr').add([
+...     [0.0,                             rf, gz],
+...     [pp.calc_duration(gz),            gz_reph, gy, gx_pre],
+...     [t_rf_center + 5e-3 - echo_in_gx, gx, adc],
+... ])
+>>> [n.start for n in table] == [n.start for n in tr]      # the same tree, built two ways
+True
 ```
 
-Requires the pinned `pypulseq` fork and `numpy>=1.24`. Optional extras: `viz` (matplotlib),
-`systems` ([PulseqSystems](https://github.com/nimpulseq/PulseqSystems) vendor limits), `dev`
-(pytest, ruff), `docs`.
+Rows go in in the order given and are never sorted, so `nodes` ends up identical either way. And
+`tr.duration` is *measured* from the children rather than declared — a block cannot claim a length it
+does not play.
 
-`sim` (MRzeroCore, torch) and `recon` (sigpy) are what `examples/gre_2d/02` needs. Simulating and
-reconstructing are **not** part of the package — seqcraft builds sequences, and both are downstream
-jobs with heavy dependencies of their own.
+Ask the tree what it looks like:
 
----
+```python
+>>> print(tr.describe())
+tr  7.25 ms
+  +0.0 us  rf
+  +0.0 us  trap z
+  +1260.0 us  trap z
+  +1260.0 us  trap y
+  +1260.0 us  trap x
+  +4010.0 us  trap x
+  +4010.0 us  adc
+```
 
-## What it does for you
-
-**Overlap without hand-splitting blocks.** Place a slice rephaser, a phase blip and a readout
-prephaser at the same time on three axes; the compiler puts them in one block. Two gradients on the
-*same* axis are summed with a warning naming both sources. Two RF or two ADC events overlapping is
-an error that names both and the overlap in microseconds — including when only their dead times
-touch, which pypulseq would otherwise reject 40 000 blocks later.
-
-**Limits checked where the truth is.** Two individually legal gradients on one axis can sum to an
-illegal one: an area-100 and an area-200 trapezoid on a 40 mT/m, 150 T/m/s system reach 93 % of the
-amplitude limit and **189 % of the slew limit**. No component can see that in isolation, so
-amplitude and slew are measured on the compiled waveform.
-
-**Errors that name what to change.** pypulseq says `Amplitude violation (117%)`. seqcraft says which
-of the three parameters fixes it, and what value would work.
-
-**Waveform fidelity you can check rather than trust.** What the compiler emits is compared against
-what the tree said, exactly — including a boundary landing inside a waveform, two gradients summed,
-an arbitrary waveform that must not be resampled, and long trains where float error accumulates. The
-one case where pulseq's two gradient representations genuinely cannot both be held is *reported*
-with a bound, rather than being inexact quietly.
-
-**Failures you cannot forget to check.** Every legality problem raises, with the offending
-number, the tag path it came from, the time it happens, and two concrete remedies with the values
-already computed. There is no report object, because an object carrying findings is an object whose
-findings can go unread — and the way that fails is a `.seq` the console refuses an hour later.
-
-> **No provenance sidecar, for now.** An earlier version wrote a JSON file beside the `.seq`
-> recording versions, git state and every `Opts` field. It went with the result wrapper and nothing
-> has replaced it yet, so a written `.seq` does not currently say what produced it.
+Seven events, three `add` calls, and **no blocks anywhere** — that is the point. The slice rephaser,
+the phase blip and the readout prephaser all start at `+1260 µs`; the RF shares an instant with its
+slice-select gradient; the ADC runs inside the readout gradient. Written as pulseq, deciding which of
+those may share a block and where each waveform has to be cut is your problem. Here you named times,
+and `sc.compile` turned the seven events into four legal blocks. `sc.plot_block(tr, opts)` draws the
+same thing as a diagram.
 
 ---
 
-## When to reach for it
+## 2. Wrap that TR in a module
 
-For one sequence, once, write raw pypulseq — it is a fine tool for that.
+Section 1 is one repetition, for one phase-encode line. To get the other sixty-three — and to reuse
+the whole thing inside a bigger sequence — make it a component: subclass `sc.Module`, design in
+`__init__`, assemble in `build`, return one `LogicBlock`.
 
-seqcraft pays for itself when you have a *family* of sequences, a loop over more than two axes,
-gradients that must overlap without you hand-splitting blocks, or files that have to be reproducible
-six months later. And when it does not fit, what you are holding is already the pypulseq object.
+And do not write those events a second time. Three of the pieces are already modules —
+`Excitation`, `PhaseEncode` and `CartesianLine` — and each carries the arithmetic you would
+otherwise have to get right twice: the rephaser that follows a selective pulse, one blip designed
+once and scaled per line, a prephaser that exactly cancels the readout's ramp. Composing them is
+shorter than the events were:
+
+```python
+class GRETR(sc.Module):
+    """One repetition of a 2D gradient echo, composed from the shipped leaf modules."""
+
+    def __init__(self, *, opts, fov_mm=220.0, matrix=64, thickness_mm=5.0,
+                 flip_deg=15.0, te_s=5e-3, bandwidth_hz_px=312.5, tag=None):
+        super().__init__(opts=opts, tag=tag)
+        self.exc = sc.modules.Excitation(opts=opts, flip_deg=flip_deg,
+                                         thickness_mm=thickness_mm, duration_s=1e-3)
+
+        # The blip and the readout prephaser play at the same instant, so the shorter is stretched
+        # to match: every leaf reports its own minimum and accepts an override.
+        blip = sc.modules.PhaseEncode(opts=opts, fov_mm=fov_mm, matrix=matrix, axis='y')
+        read = sc.modules.CartesianLine(opts=opts, fov_mm=fov_mm, matrix=matrix,
+                                        bandwidth_hz_px=bandwidth_hz_px)
+        winder_s = max(blip.min_duration_s, read.prephaser_duration_s)
+        self.pe = sc.modules.PhaseEncode(opts=opts, fov_mm=fov_mm, matrix=matrix, axis='y',
+                                         duration_s=winder_s)
+        self.ro = sc.modules.CartesianLine(opts=opts, fov_mm=fov_mm, matrix=matrix,
+                                           bandwidth_hz_px=bandwidth_hz_px,
+                                           prephaser_duration_s=winder_s)
+
+        # Where the readout has to start for k = 0 to land at TE.  Quantised once: a computed start
+        # time must sit on the gradient raster, and the compiler raises with this exact fix if not.
+        self._read_start_s = sc.Raster(opts.grad_raster_time).ceil(
+            self.exc.time_to_center() + te_s - self.ro.time_to_echo())
+
+    def time_to_echo(self) -> float:
+        """Seconds from the start of this block to k = 0 — two module times, added."""
+        return self._read_start_s + self.ro.time_to_echo()
+
+    def build(self, *, line: int = 0) -> sc.LogicBlock:
+        return sc.LogicBlock().add([
+            [0.0,                self.exc()],
+            [self._read_start_s, self.pe(line=line), self.ro()],     # blip on y, readout on x
+        ])
+```
+
+Two `add` calls, and no gradient areas, ramp times or dwell arithmetic anywhere: the leaves own
+that. Calling the module runs `build`, tags the block with the class name — and the block it returns
+is a **tree**, because each leaf contributed a block of its own:
+
+```python
+>>> gre_tr = GRETR(opts=opts)
+>>> gre_tr(line=40)
+LogicBlock(GRETR, 3 nodes, 7.23 ms)
+>>> print(gre_tr(line=40).describe())
+GRETR  7.23 ms
+  +0.0 us  Excitation  1.80 ms
+    +0.0 us  rf
+    +0.0 us  trap z
+    +1260.0 us  trap z
+  +3670.0 us  PhaseEncode  0.32 ms
+    +0.0 us  trap y
+  +3670.0 us  CartesianLine  3.56 ms
+    +0.0 us  trap x
+    +320.0 us  trap x
+    +320.0 us  adc
+>>> sc.moments(gre_tr(line=32), order=0)['y']      # the centre line needs no blip
+0.0
+```
+
+Three children where section 1 had seven events, and the phase blip and the readout prephaser still
+land on the same instant — `+3670 µs` — one on y and one on x. Ask for `te_s=3e-3` instead and the
+pair slides back to `+1670 µs`, alongside the slice rephaser still playing on z: three axes at once,
+five pulseq blocks becoming three, and nothing in the module changed to allow it.
+
+Three conventions make a module reusable, and all three are above:
+
+- **`__init__` designs, `build` assembles.** Waveforms and timings are computed once; sixty-four
+  lines are sixty-four cheap calls.
+- **Calls are pure.** A call must not mutate the module or its events — `PhaseEncode` derives a
+  scaled copy of its blip rather than rescaling one (`pp.scale_grad` plus `sc.events.derive`).
+  Mutating in a per-line method still compiles, and makes line 64 differ from line 1 in a way no
+  check can see.
+- **Declare no duration, declare no position.** The block measures itself, and a module that must
+  say *when* something happens inside it exposes a time instead: `time_to_echo()` is the one
+  question the tree cannot answer, because a tree knows when its events play but not which instant
+  among them is the echo.
+
+Check any module in isolation with `sc.compile(sc.LogicBlock('probe').add(0.0, gre_tr(line=40)),
+opts)`: a component that only works when something else happens to be beside it is not reusable.
+`sc.modules.GRE2DTR` is this same composition with spoiler gradients, a phase-encode rewinder and an
+RF-phase argument added — writing one out like this is how that one was written.
 
 ---
 
-## The module library
+## 3. Build the sequence from modules
 
-Seven names, and every one of them was **extracted from a working sequence** rather than designed:
+A block may hold blocks, which may hold blocks. So the same `add` builds every level: an inversion
+and the train that follows it make a **shot**, and a handful of shots at different inversion times
+make a T1-mapping **scan**.
+
+```python
+gre_tr = GRETR(opts=opts)                                                   # from section 2
+inv = sc.modules.IRPrep(opts=opts, thickness_mm=None, spoil_voxel_mm=5.0)   # ships with seqcraft
+
+tr_s = 12e-3
+raster = sc.Raster(opts.grad_raster_time)
+lines = sorted(range(64), key=lambda k: (abs(k - 32), k))    # centric: k = 0 acquired first
+
+def shot(ti_s, seg=lines):
+    """One inversion and the train recovering into it — itself just a LogicBlock."""
+    # TI runs from the inversion's effective centre to the acquisition of k = 0.  Both ends are
+    # module questions; the subtraction is the whole layout.
+    t_train = raster.ceil(inv.time_to_center() + ti_s - gre_tr.time_to_echo())
+
+    rows = [[0.0, inv()]]                                    # the inversion, then the train
+    rows += [[t_train + i * tr_s, gre_tr(line=k)] for i, k in enumerate(seg)]
+    return sc.LogicBlock('shot').add(rows)
+
+tis = (100e-3, 300e-3, 700e-3, 1500e-3)
+scan = sc.LogicBlock('ir_t1').add([[i * 4.0, shot(ti)] for i, ti in enumerate(tis)])   # 4 s apart
+
+seq = sc.compile(scan, opts, name='ir_t1')   # 1547 blocks, 14.263 s
+seq.write('ir_t1.seq')
+```
+
+`inv.time_to_center()` is 5.101 ms into its own block — a 10 ms hyperbolic secant inverts at its
+centre, not at its start, and referencing TI to the block start would be a 5 ms error in the one
+quantity the sequence exists to control. Neither that nor `gre_tr.time_to_echo()` is measurable from
+the tree, which is exactly the division of labour: **modules know the physics, the tree knows the
+times, the compiler knows pulseq.**
+
+### The tree is the sequence diagram
+
+Five levels, and every one of them is the same kind of object. Here is one shot cut down to two
+lines so it fits on the page — the real one is the same shape, 64 repetitions wide:
+
+```python
+>>> print(sc.LogicBlock('ir_t1').add(0.0, shot(300e-3, lines[:2])).describe())
+ir_t1  318.70 ms
+  +0.0 us  shot  318.70 ms
+    +0.0 us  IRPrep  11.34 ms
+      +0.0 us  rf
+      +10130.0 us  spoiler  1.21 ms
+        +0.0 us  trap z
+    +299470.0 us  GRETR  7.23 ms
+      +0.0 us  Excitation  1.80 ms
+        +0.0 us  rf
+        +0.0 us  trap z
+        +1260.0 us  trap z
+      +3670.0 us  PhaseEncode  0.32 ms
+        +0.0 us  trap y
+      +3670.0 us  CartesianLine  3.56 ms
+        +0.0 us  trap x
+        +320.0 us  trap x
+        +320.0 us  adc
+    +311470.0 us  GRETR  7.23 ms
+      +0.0 us  Excitation  1.80 ms
+        +0.0 us  rf
+        +0.0 us  trap z
+        +1260.0 us  trap z
+      +3670.0 us  PhaseEncode  0.32 ms
+        +0.0 us  trap y
+      +3670.0 us  CartesianLine  3.56 ms
+        +0.0 us  trap x
+        +320.0 us  trap x
+        +320.0 us  adc
+```
+
+`trap x` sits inside `CartesianLine`, inside `GRETR`, inside `shot`, inside the scan — and every
+offset is read against its own parent, never against the scan. That is what makes a subtree
+portable: the shot does not know it is the second one, so moving it moves everything it contains.
+
+```python
+>>> len(scan), sum(1 for _ in sc.flatten(scan))   # four children; 1800 leaf events
+(4, 1800)
+>>> scan.nodes[2].start += 20e-3                  # 450 events later, from one number
+>>> sorted({path for _, _, path in sc.flatten(scan)})
+[('ir_t1', 'shot', 'GRETR', 'CartesianLine'), ('ir_t1', 'shot', 'GRETR', 'Excitation'), ('ir_t1', 'shot', 'GRETR', 'PhaseEncode'), ('ir_t1', 'shot', 'IRPrep'), ('ir_t1', 'shot', 'IRPrep', 'spoiler')]
+```
+
+Those paths are provenance, and nobody wrote them: they are the tags on the way down, and they are
+what every warning and error message names. The rest of the tree is plain Python — `scan.nodes` is a
+list, `sc.flatten` walks it, `lb.copy()` gives you a variant to retime, and adding one block object
+at sixty-four times shares it rather than copying it.
+
+Nothing in here coordinates. `inv` does not know a train follows it, `gre_tr` does not know what
+preceded it, `shot` does not know it is one of four, and none of them knows where pulseq's block
+boundaries will fall.
+
+### The shipped modules
+
+`sc.modules` has seven building blocks, each extracted from a working sequence rather than designed:
+`Excitation`, `PhaseEncode`, `CartesianLine`, `spoiler`, `IRPrep`, `GRE2DTR` and `GRE2D`. The last
+two are a whole repetition and a whole scan, so the GRE that section 2 composed also comes
+ready-made:
 
 ```python
 gre = sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(64, 64), thickness_mm=5.0)
-seq = sc.compile(gre(lines=range(64)), opts, name='gre_2d')
-seq.write('gre_2d.seq')
+seq = sc.compile(gre(lines=range(64)), opts, name='gre_2d')      # 256 blocks, TE 4.62 ms
 ```
 
-| | |
-|---|---|
-| `Excitation` | an RF pulse and, when selective, its selection gradient and rephaser |
-| `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
-| `CartesianLine` | prephaser, readout gradient and ADC as one design |
-| `spoiler` | *n* turns of phase across a voxel — a function, because it earns nothing more |
-| `IRPrep` | an inversion pulse and its crusher, with the effective centre an inversion time is measured from |
-| `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
-| `GRE2D` | the complete scan |
-
-The previous library — 27 classes, 5 762 lines — was removed rather than migrated, because a recipe
-is somebody else's sequence choices baked into library code and changing your own scan should never
-mean editing a package. [ADR-003](docs/adr/003-scanner-and-module-reform.md) records that decision.
-What is here now is what came back under a stricter rule: **write it in the notebook first, in raw
-pypulseq, simulate it until the image is right, and only then extract it with the compiled output
-held fixed.** A module that cannot be extracted without altering the sequence is not a module; one
-whose extraction does not shorten the notebook is a wrapper.
-
-The line between a module and a recipe is who keeps the sequence choices. `CartesianLine` computes
-a prephaser that cancels the readout's ramp — arithmetic nobody should have to get right twice.
-`GRE2D` takes the **list of phase-encode lines to acquire** rather than an acceleration factor, and
-ships no generator for it, because which lines to acquire is a sequence-programming choice and the
-right answer depends on the coil array, the object and the reconstruction together.
-
-[`examples/gre_2d/`](examples/gre_2d/) is where six of them came from, and
-[`examples/mprage_2d/`](examples/mprage_2d/) is where `IRPrep` came from. A test asserts that what
-each notebook writes and what the package ships compile identically.
-
-**Two sequences deliberately did not become modules.** `MPRAGE2D` and `MP2RAGE2D` are written in
-their own build notebooks and stay there, because each has exactly one consumer — that notebook —
-and a module with one consumer belongs where its consumer is. What shipped instead is the piece two
-of them shared: `IRPrep`, and one method on `GRE2D`.
+`GRE2D` takes the **list of phase-encode lines** rather than an acceleration factor: which lines to
+acquire is a sequence-programming choice, and it stays yours. Segmenting the train across several
+inversions — an MPRAGE — is the same tree one level deeper, and
+[`examples/mprage_2d/`](examples/mprage_2d/) builds it.
 
 ---
 
-## Writing your own
+## What the compiler checks
 
-A component takes part in a sequence by returning a `LogicBlock`. That is the entire contract:
-there is no method name to match and no registry to join.
+`sc.compile(tree, opts)` returns a `pypulseq.Sequence` and nothing else. If the tree cannot become a
+legal sequence it **raises**; if it had to change a waveform to make it legal it **warns**. There is
+no report object to unpack, so there is nothing to forget to read.
 
-```python
-def spoiler(opts, *, area_per_m=800.0):                  # a function is a component
-    g = pp.make_trapezoid('z', area=area_per_m, system=opts)
-    return sc.LogicBlock('spoil').add(0.0, g)
+- **Block boundaries and overlap.** Different axes at one instant become one block. Two gradients on
+  the *same* axis are summed, with a warning naming both sources.
+- **Limits measured on the compiled waveform**, which is the only place the truth is: two
+  individually legal gradients can sum to an illegal one, and no component can see that alone.
+- **RF and ADC conflicts**, including when only their dead times touch — which pypulseq would
+  otherwise reject 40 000 blocks later.
+- **One informational warning you should expect.** Three axes ramping together exceed the
+  *vector-norm* slew bound that per-axis limits imply, routinely and legally, so seqcraft reports it
+  rather than raising.
 
+Errors name the offending number, where it happened, the tag path it came from, and what to change:
 
-class VelocityEncode:                                    # so is a class of any shape
-    def __init__(self, opts, *, m1_s_per_m, axis='y'):
-        self.lobe = pp.make_trapezoid(axis, area=..., system=opts)
-
-    def pre(self):
-        return sc.LogicBlock('venc_pre').add(0.0, self.lobe)
-
-    def post(self):
-        return sc.LogicBlock('venc_post').add(0.0, sc.events.derive(self.lobe, ...))
+```
+HardwareLimitError: slew 189% of the 150 T/m/s limit on axis x.
+  from   :  probe.a, probe.b
+  at     :  0.000 ms (block 0)
+  reached:  284.0 T/m/s
+  fix
+    lengthen the lobe, or lower the readout bandwidth
+    or design that part against sc.opts.derate(opts, slew=0.52)
 ```
 
-Two outputs named for what they are, rather than one `build(part=...)` — seqcraft has no opinion
-either way.
-
-`sc.compile(sc.LogicBlock('probe').add(0.0, component.pre()), opts)` is the whole block-level
-contract check: a component that only works when something else happens to be beside it is not
-reusable, and the compile checks the raster, the limits and block legality with a better message
-than a separate assertion could give.
-
-`sc.Module` is the standard shape for a component you intend to *reuse*: parameters in, one
-`LogicBlock` out. Four members, and no more — `opts`, `tag`, `__call__`, and the abstract `build`
-you write. It declares no duration (the block measures itself), checks no units, and holds no
-scanner wrapper.
-
-```python
-class PhaseEncode(sc.Module):
-    def __init__(self, *, opts, fov_mm, matrix, axis='y', tag=None):
-        super().__init__(opts=opts, tag=tag)
-        self.dk = 1e3 / fov_mm
-        self.g = pp.make_trapezoid(axis, area=self.dk * matrix / 2, system=opts)
-
-    def build(self, *, line=0) -> sc.LogicBlock:
-        scale = line * self.dk / float(self.g.area)
-        return sc.LogicBlock().add(0.0, sc.events.derive(self.g, ...))
-```
-
-The one check the compiler structurally **cannot** make is that a call leaves the module alone.
-It validates a tree; it never sees the second call, so `self.g.amplitude = -self.g.amplitude` in a
-per-call method compiles cleanly every TR and produces a plausible but wrong image. Three lines,
-and [`docs/writing_a_module.md`](docs/writing_a_module.md) explains why:
-
-```python
-before = {k: sc.events.content_hash(v) for k, v in vars(pe).items() if hasattr(v, 'type')}
-pe(line=17); pe(line=17)
-assert {k: sc.events.content_hash(v) for k, v in vars(pe).items() if hasattr(v, 'type')} == before
-```
+`sc.moments`, `sc.kspace`, `sc.sample` and `sc.pns` measure a tree directly, before any file is
+written.
 
 ---
 
-## Examples
+## Where to look next
 
-| | What it covers |
-|---|---|
-| [`docs/api_reference.md`](docs/api_reference.md) | **Every public name in the package**, by layer, with a runnable example for each. Executed by CI, so it cannot drift. |
-| [`01_getting_started.ipynb`](examples/01_getting_started.ipynb) | Blocks, `Opts` and `compile`; the overlap rules, provenance, the escape hatches, writing a file — and `sc.Module` at the end, once there is a reason for it. Uses no modules. |
-| [`gre_2d/01_build.ipynb`](examples/gre_2d/01_build.ipynb) | A spoiled 2D GRE three times over — raw pypulseq, the leaf modules composed inline, and the same composition written as a module. Every module in `sc.modules` came out of it. Needs nothing but seqcraft. |
-| [`gre_2d/02_simulate_and_reconstruct.ipynb`](examples/gre_2d/02_simulate_and_reconstruct.ipynb) | The same three `.seq` files against a BrainWeb phantom — PD, T1, T2, T2′, D and a synthesised B0, all six simulated — with an eight-element receive ring, then one reconstruction across three samplings. |
+Notebooks, each one a sequence that works rather than a feature tour:
 
----
+- [`examples/01_getting_started.ipynb`](examples/01_getting_started.ipynb) — blocks, `Opts` and
+  `compile`, the overlap rules and the escape hatches. Uses no modules.
+- [`examples/gre_2d/`](examples/gre_2d/) — a spoiled 2D GRE three ways, then simulated and
+  reconstructed. Six of the seven shipped modules came out of it.
+- [`examples/mprage_2d/`](examples/mprage_2d/) — segmented and inversion-prepared, with the null
+  point checked in simulation.
+- [`examples/mp2rage_2d/`](examples/mp2rage_2d/) — two trains, the `SET` label that separates them,
+  and the ratio that cancels the receive field.
 
-## Documentation
+Documentation: [`api_reference.md`](docs/api_reference.md) (every public name, executed by CI),
+[`architecture.md`](docs/architecture.md) (the layering, and what is deliberately absent),
+[`compiler.md`](docs/compiler.md) (how boundaries are chosen, what every warning means),
+[`writing_a_module.md`](docs/writing_a_module.md) (the `Module` contract in full).
 
-- [`docs/architecture.md`](docs/architecture.md) — the layering, and what is deliberately absent.
-- [`docs/compiler.md`](docs/compiler.md) — how block boundaries are chosen, how an event's own `delay` is handled, and what every warning means.
-- [`docs/writing_a_module.md`](docs/writing_a_module.md) — the `Module` contract, components that inherit nothing, and what to assert.
-- [`docs/testing.md`](docs/testing.md) — the test tiers and what each is for.
-
----
-
-## Tests
-
-```console
-pytest tests --doctest-modules src/seqcraft
-```
-
-The compiler directory is the heart of it: one case per rule, plus the adversarial ones — a gradient
-straddling an RF, a boundary that would fall inside an ADC window, a split mid-ramp, two RFs whose
-dead times overlap. Every fixture is raw pypulseq, so compiler coverage never depends on whatever a
-module library happens to contain. Every physics assertion is a number an independent calculation
-gives, not a number the code happened to produce.
+Tests: `pytest tests --doctest-modules src/seqcraft`.
 
 ---
 
-## A note on vendor data
+## Notes
 
-Siemens `.asc` gradient descriptors carry proprietary PNS and acoustic-resonance coefficients. They
-are **never** stored in, copied into or read from this repository:
-`sc.hardware.load_hardware()` resolves them only through `$SEQCRAFT_ASC_DIR` and rejects anything
-that looks like a path. `sc.hardware.synthetic_hardware()` provides a vendor-free stand-in so PNS
-checks can run anywhere — it is not a real scanner and must never be used to clear a sequence for
-human scanning.
+**When not to reach for it.** For one sequence, once, raw pypulseq is a fine tool. seqcraft pays for
+itself on a *family* of sequences, gradients that must overlap without hand-splitting blocks, or
+files that have to be reproducible six months later — and when it does not fit, what you are holding
+is already the pypulseq object.
+
+**Vendor data stays out of this repository.** Siemens `.asc` descriptors carry proprietary
+coefficients, so `sc.hardware.load_hardware()` reads them only through `$SEQCRAFT_ASC_DIR`.
+`sc.hardware.synthetic_hardware()` is a vendor-free stand-in for PNS checks — not a real scanner,
+and never to be used to clear a sequence for human scanning.
 
 ## Licence
 
