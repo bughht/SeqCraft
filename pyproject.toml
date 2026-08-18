@@ -59,8 +59,8 @@ docs = ['mkdocs', 'mkdocs-material', 'mkdocs-jupyter', 'mkdocstrings-python', 'm
 all = ['seqcraft[viz,rf,sim,recon,marcos,systems]']
 
 [project.urls]
-Homepage = 'https://github.com/cmr-group/seqcraft'
-Issues = 'https://github.com/cmr-group/seqcraft/issues'
+Homepage = 'https://github.com/bughht/SeqCraft'
+Issues = 'https://github.com/bughht/SeqCraft/issues'
 
 [tool.hatch.version]
 path = 'src/seqcraft/_version.py'
