@@ -121,7 +121,7 @@ six months later. And when it does not fit, what you are holding is already the 
 
 ## The module library
 
-Six names, and every one of them was **extracted from a working sequence** rather than designed:
+Seven names, and every one of them was **extracted from a working sequence** rather than designed:
 
 ```python
 gre = sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(64, 64), thickness_mm=5.0)
@@ -135,6 +135,7 @@ seq.write('gre_2d.seq')
 | `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
 | `CartesianLine` | prephaser, readout gradient and ADC as one design |
 | `spoiler` | *n* turns of phase across a voxel — a function, because it earns nothing more |
+| `IRPrep` | an inversion pulse and its crusher, with the effective centre an inversion time is measured from |
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
 | `GRE2D` | the complete scan |
 
@@ -152,8 +153,14 @@ a prephaser that cancels the readout's ramp — arithmetic nobody should have to
 ships no generator for it, because which lines to acquire is a sequence-programming choice and the
 right answer depends on the coil array, the object and the reconstruction together.
 
-[`examples/gre_2d/`](examples/gre_2d/) is where all six came from, and a test asserts that what the
-notebook writes and what the package ships compile identically.
+[`examples/gre_2d/`](examples/gre_2d/) is where six of them came from, and
+[`examples/mprage_2d/`](examples/mprage_2d/) is where `IRPrep` came from. A test asserts that what
+each notebook writes and what the package ships compile identically.
+
+**Two sequences deliberately did not become modules.** `MPRAGE2D` and `MP2RAGE2D` are written in
+their own build notebooks and stay there, because each has exactly one consumer — that notebook —
+and a module with one consumer belongs where its consumer is. What shipped instead is the piece two
+of them shared: `IRPrep`, and one method on `GRE2D`.
 
 ---
 

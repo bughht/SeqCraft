@@ -162,6 +162,13 @@ module with the compiled output held fixed.** Six names came out of one 2D GRE â
 [`examples/gre_2d/01_build.ipynb`](../examples/gre_2d/01_build.ipynb) still builds the same
 sequence out of raw events beside them, so each one has to keep earning its place.
 
+**The second sequence added one name, not four.** MPRAGE and MP2RAGE needed an inversion, so
+`IRPrep` shipped â€” two consumers, and a different `rf.use`, so a new `preparation/` folder. The two
+composites themselves, `MPRAGE2D` and `MP2RAGE2D`, stayed in their build notebooks: one consumer
+each, and a module with one consumer belongs where that consumer is. Promoting them waits for a
+third sequence to want them, which is the same test `GRE2D` passed by being reused there and
+`GRE2DTR` still has not.
+
 **It is a separate layer, and it depends on nothing downstream of `design`.** `modules` imports
 pypulseq and the tree; it does not import the compiler, `analysis`, `display` or `scanner`. A
 module that compiled internally to answer a question about itself would make every design call pay

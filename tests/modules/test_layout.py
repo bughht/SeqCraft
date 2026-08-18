@@ -25,7 +25,12 @@ import seqcraft.modules as modules
 ROOT = Path(modules.__file__).parent
 
 #: The folders whose files must each define a module subclass.
-ROLE_FOLDERS = ('rf', 'encoding', 'readout', 'kernel', 'imaging')
+ROLE_FOLDERS = ('rf', 'preparation', 'encoding', 'readout', 'kernel', 'imaging')
+
+#: ``rf/`` and ``preparation/`` are one field split two ways, so the split is checked rather than
+#: described: these are the uses that belong to the imaging train, and nothing in
+#: ``preparation/`` may emit one.
+TRAIN_USES = frozenset({'excitation', 'refocusing'})
 
 
 def _defined_here(module) -> list[type]:
@@ -48,6 +53,26 @@ def test_every_file_in_a_role_folder_defines_a_module(folder: str) -> None:
         assert all(issubclass(cls, sc.Module) for cls in defined), (
             f'{dotted} defines {[c.__name__ for c in defined]}, and {folder}/ is for '
             f'sc.Module subclasses'
+        )
+
+
+def test_preparation_emits_no_imaging_train_pulse() -> None:
+    """
+    The one folder rule that can be read off the source rather than off a docstring.
+
+    ``rf/`` is ``rf.use`` in {excitation, refocusing} and ``preparation/`` is the rest, so a file
+    in ``preparation/`` that set ``use='excitation'`` would be filed by habit rather than by the
+    rule -- and it is exactly the mistake a preparation module built by copying ``Excitation``
+    would make, silently, because both compile.
+    """
+    for path in sorted((ROOT / 'preparation').glob('*.py')):
+        if path.name == '__init__.py':
+            continue
+        source = path.read_text(encoding='utf-8')
+        offenders = [use for use in TRAIN_USES if f"'use': '{use}'" in source
+                     or f"use='{use}'" in source]
+        assert not offenders, (
+            f'{path.name} emits use={offenders}, which belongs in rf/ rather than preparation/'
         )
 
 

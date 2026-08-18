@@ -32,6 +32,33 @@ own tail begins and how long it is, this layer starts the other two axes there, 
 stretched to the longest of them.  The rephaser is a *participant* in the winder coupling, not a
 phase before it.
 
+Spoiling is three axes wide too, and for a different reason
+-----------------------------------------------------------
+``spoil_axis`` defaults to ``('x', 'z')`` -- the readout and the slice -- because what a spoiled
+GRE has to destroy is *transverse magnetisation carried from one repetition into the next*, and a
+gradient only destroys it along its own direction.  Winding four cycles on ``z`` leaves a
+distribution that is perfectly coherent in ``x``, so the residual FID and the stimulated echoes
+that follow it survive; they arrive at the next readout with a ky that does not belong to it, and
+the symptom is a ghost along the phase-encode direction rather than anything that looks like a
+spoiling problem.  It is worst exactly where an inversion-prepared train is worst -- a long train
+whose first repetitions carry far more magnetisation than the steady state.
+
+The **readout axis** is the cheap one and the one most often missed.  After the echo, ``kx`` has
+only half the readout's area left on it -- half a cycle across one voxel -- so the readout does
+almost none of its own spoiling despite looking like the largest gradient in the repetition.
+
+The **phase-encode axis** already has a gradient in the tail: the rewinder, which returns ``ky``
+to zero so that every repetition starts from the same place.  Naming ``'y'`` in `spoil_axis` adds
+a spoiler *beside* the rewinder rather than instead of it, and the compiler sums the two on ``y``
+-- so the net is a fixed dephasing identical every repetition, rather than one that depends on
+which line was just acquired.  It is off by default because the rewinder is what the phase-encode
+axis is for, and because ``x`` and ``z`` between them already cover two directions.
+
+Cycles are counted **per axis, across that axis's own voxel**: the slice thickness on ``z``, and
+the in-plane voxel on ``x`` and ``y``.  Those differ by a factor of three on the reference
+protocol here, so one shared area would be a different amount of spoiling on each axis while
+reading as the same number.
+
 Geometry is per axis here and scalar in the leaves
 --------------------------------------------------
 ``matrix`` is ``(nx, ny)`` -- readout then phase, matching image-array order -- and ``fov_mm`` is
@@ -48,16 +75,19 @@ from typing import TYPE_CHECKING
 
 import pypulseq as pp
 
+from ...design.events import AXES
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
-from .._support import ceil_raster, require_positive
+from .._support import ceil_raster, require_axis, require_positive
 from ..encoding.phase_encoding import PhaseEncode
 from ..readout.cartesian_line import CartesianLine
 from ..rf.excitation import Excitation
 from ..spoiler import spoiler
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from pypulseq.opts import Opts
 
 __all__ = ['GRE2DTR']
@@ -76,7 +106,8 @@ class GRE2DTR(Module):
     matrix
         ``(nx, ny)`` -- readout then phase.
     thickness_mm
-        Slice thickness.  Also the voxel dimension the spoiler winds across.
+        Slice thickness.  Also the voxel dimension a ``z`` spoiler winds across; see
+        :meth:`voxel_mm`.
     flip_deg
         Flip angle, degrees.
     te_s, tr_s
@@ -90,7 +121,12 @@ class GRE2DTR(Module):
         Readout-direction partial echo.  The phase-encode direction is undersampled by acquiring
         fewer lines, which is a *build* argument of :class:`~seqcraft.modules.GRE2D`.
     spoil_cycles_per_voxel
-        Gradient spoiling, in turns of phase across one slice thickness.
+        Gradient spoiling, in turns of phase wound across one voxel **along each spoiled axis** --
+        the slice thickness on ``z``, the in-plane voxel on ``x`` and ``y``.
+    spoil_axis
+        One axis or several.  Default ``('x', 'z')``: a gradient spoils only along its own
+        direction, so a single axis leaves the residual coherent in the other two.  Naming ``'y'``
+        adds a spoiler beside the rewinder rather than instead of it.
     tag
         Optional identity, as for any :class:`~seqcraft.Module`.
 
@@ -100,6 +136,8 @@ class GRE2DTR(Module):
     pe : PhaseEncode
     ro : CartesianLine
         The three leaf modules, held as plain attributes.  Composition needs no API.
+    spoilers : dict[str, LogicBlock]
+        The spoiler on each axis of `spoil_axis`, keyed by axis.
 
     Examples
     --------
@@ -157,6 +195,7 @@ class GRE2DTR(Module):
         bandwidth_hz_px: float = 200.0,
         partial_fourier: float = 1.0,
         spoil_cycles_per_voxel: float = 4.0,
+        spoil_axis: str | Iterable[str] = ('x', 'z'),
         tag: str | None = None,
     ) -> None:
         super().__init__(opts=opts, tag=tag)
@@ -168,6 +207,7 @@ class GRE2DTR(Module):
         self.spoil_cycles_per_voxel = require_positive(
             spoil_cycles_per_voxel, 'spoil_cycles_per_voxel',
         )
+        self.spoil_axis = _spoil_axes(spoil_axis)
 
         self.exc = Excitation(opts=opts, flip_deg=flip_deg, thickness_mm=self.thickness_mm)
 
@@ -193,8 +233,14 @@ class GRE2DTR(Module):
                                 prephaser_duration_s=self.winder_s)
         self.pe = PhaseEncode(opts=opts, fov_mm=fov_y, matrix=self.matrix[1], axis='y',
                               duration_s=self.winder_s)
-        self.spoiler = spoiler(opts, cycles_per_voxel=self.spoil_cycles_per_voxel,
-                               voxel_mm=self.thickness_mm, axis='z')
+        # One per axis, each winding its cycles across *that axis's* voxel.  The in-plane voxel is
+        # 1.7 mm where the slice is 5 mm on the reference protocol, so a shared area would be
+        # three times the spoiling on x that it is on z while reading as the same number.
+        self.spoilers = {
+            axis: spoiler(opts, cycles_per_voxel=self.spoil_cycles_per_voxel,
+                          voxel_mm=self.voxel_mm(axis), axis=axis)
+            for axis in self.spoil_axis
+        }
 
         # Building is cheap -- the design happened above -- so measure rather than declare.
         # The winder starts where the slice rephaser does, not where the excitation block ends:
@@ -205,7 +251,8 @@ class GRE2DTR(Module):
             opts.grad_raster_time,
         )
         self._ro_duration_s = self.ro().duration
-        self._tail_s = max(self.pe(line=0, rewind=True).duration, self.spoiler.duration)
+        self._tail_s = max(self.pe(line=0, rewind=True).duration,
+                           *(block.duration for block in self.spoilers.values()))
         self._te_fill_s = self._resolve_te(te_s)
         self._tr_s = self._resolve_tr(tr_s)
 
@@ -214,6 +261,22 @@ class GRE2DTR(Module):
     def center_line(self) -> int:
         """The phase-encode line that encodes ``k = 0``.  One convention, defined once."""
         return self.pe.center_line
+
+    def voxel_mm(self, axis: str) -> float:
+        """
+        The voxel dimension along `axis`, millimetres.
+
+        This is the layer that knows the scan is two-dimensional, so this is the layer that can
+        answer it: ``x`` and ``y`` are ``fov / matrix`` on their own axis and ``z`` is the slice
+        thickness.  It exists because a spoiler takes the voxel dimension **along its own axis**,
+        and passing the in-plane size for a ``z`` spoiler under-spoils by the ratio of the two --
+        which is faint residual banding rather than anything that looks like an error.
+        """
+        return {
+            'x': self.fov_mm[0] / self.matrix[0],
+            'y': self.fov_mm[1] / self.matrix[1],
+            'z': self.thickness_mm,
+        }[require_axis(axis)]
 
     @property
     def min_te_s(self) -> float:
@@ -294,9 +357,13 @@ class GRE2DTR(Module):
             # RF-spoiling schedule that moves one and not the other writes its quadratic phase
             # into ky.  This is the layer that holds both events, so this is where they agree.
             .add(start, self.ro(acquire=acquire, phase_deg=phase_deg, offset_mm=x))
+            # The rewinder stays whatever `spoil_axis` says: it returns ky to zero so that every
+            # repetition starts from the same place, and a y spoiler beside it sums to a *fixed*
+            # dephasing rather than to one that depends on the line just acquired.
             .add(tail, self.pe(line=line, rewind=True))
-            .add(tail, self.spoiler)
         )
+        for block in self.spoilers.values():
+            out.add(tail, block)
         if acquire:
             out.add(start, pp.make_label(type='SET', label='LIN', value=int(line)))
         # The block measures itself, so the fill is what makes its duration exactly TR -- which
@@ -361,6 +428,45 @@ class GRE2DTR(Module):
             )
             raise ConfigurationError(msg)
         return ceil_raster(wanted, self.opts.block_duration_raster)
+
+
+def _spoil_axes(value: str | Iterable[str]) -> tuple[str, ...]:
+    """
+    Return `spoil_axis` as an ordered, de-duplicated tuple of logical axes.
+
+    A bare string is one axis rather than an iterable of characters, which is the trap in accepting
+    both: ``spoil_axis='xz'`` would otherwise silently mean ``('x', 'z')`` on one implementation
+    and raise on another, so it raises here and the tuple is written out.
+
+    Examples
+    --------
+    >>> _spoil_axes('z')
+    ('z',)
+    >>> _spoil_axes(('z', 'x', 'z'))
+    ('x', 'z')
+    >>> _spoil_axes(())
+    Traceback (most recent call last):
+        ...
+    seqcraft.errors.ConfigurationError: spoil_axis names no axis, so nothing would be spoiled.
+    >>> _spoil_axes('xz')
+    Traceback (most recent call last):
+        ...
+    seqcraft.errors.ConfigurationError: spoil_axis must be one of 'x', 'y', 'z', got 'xz'.
+    """
+    names = (value,) if isinstance(value, str) else tuple(value)
+    if not names:
+        msg = format_error(
+            'spoil_axis names no axis, so nothing would be spoiled.',
+            {'spoil_axis': value},
+            [
+                "spoil_axis=('x', 'z') is the default: a gradient spoils only along its own "
+                'direction',
+                'RF spoiling is a separate mechanism, and rf_spoil=False turns that one off',
+            ],
+        )
+        raise ConfigurationError(msg)
+    ordered = sorted({require_axis(name, 'spoil_axis') for name in names}, key=AXES.index)
+    return tuple(ordered)
 
 
 def _pair(value: float | tuple[float, float], name: str) -> tuple[float, float]:

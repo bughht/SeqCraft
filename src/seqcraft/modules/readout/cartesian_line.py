@@ -245,7 +245,7 @@ class CartesianLine(Module):
         freq_offset = float(self.gx.amplitude) * offset_m
         # Referenced to the echo rather than to the first sample, so the shift adds no phase at
         # k = 0.  Omitting this term is a linear phase across the image that reads as a gradient
-        # delay -- the same correction _shift_slice applies at an RF pulse's effective centre.
+        # delay -- the same correction shift_slice applies at an RF pulse's effective centre.
         phase_offset = phase_rad - 2 * pi * freq_offset * (
             self._echo_in_gx - float(self.adc.delay)
         )
