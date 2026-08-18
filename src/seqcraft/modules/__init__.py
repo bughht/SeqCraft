@@ -21,30 +21,39 @@ The folders, and what each one means
 
     modules/
       spoiler.py           spoiler()          a function, not a Module
-      rf/         excitation.py        Excitation
-      encoding/   phase_encoding.py    PhaseEncode
-      readout/    cartesian_line.py    CartesianLine
-      kernel/     gre_2d_tr.py         GRE2DTR      composes leaves; one repeating unit
-      imaging/    gre_2d.py            GRE2D        composes kernels; a complete scan
+      rf/          excitation.py       Excitation
+      preparation/ ir_prep.py          IRPrep
+      encoding/    phase_encoding.py   PhaseEncode
+      readout/     cartesian_line.py   CartesianLine
+      kernel/      gre_2d_tr.py        GRE2DTR      composes leaves; one repeating unit
+      imaging/     gre_2d.py           GRE2D        composes kernels; a complete scan
 
-+---------------+------------------------------------------------------------------+
-| ``rf/``       | ``rf.use`` in {excitation, refocusing}                            |
-+---------------+------------------------------------------------------------------+
-| ``encoding/`` | gradients, no ADC, imposing a phase you intend to sample          |
-+---------------+------------------------------------------------------------------+
-| ``readout/``  | contains an ADC                                                   |
-+---------------+------------------------------------------------------------------+
-| ``kernel/``   | composes modules from more than one leaf folder -- **the          |
-|               | repeating unit**                                                  |
-+---------------+------------------------------------------------------------------+
-| ``imaging/``  | composes kernels -- **a complete scan**                           |
-+---------------+------------------------------------------------------------------+
-| top level     | what is not an ``sc.Module`` subclass                             |
-+---------------+------------------------------------------------------------------+
++-----------------+----------------------------------------------------------------+
+| ``rf/``         | ``rf.use`` in {excitation, refocusing}                          |
++-----------------+----------------------------------------------------------------+
+| ``preparation/``| ``rf.use`` in {inversion, saturation, preparation} -- played     |
+|                 | before the imaging train                                        |
++-----------------+----------------------------------------------------------------+
+| ``encoding/``   | gradients, no ADC, imposing a phase you intend to sample        |
++-----------------+----------------------------------------------------------------+
+| ``readout/``    | contains an ADC                                                 |
++-----------------+----------------------------------------------------------------+
+| ``kernel/``     | composes modules from more than one leaf folder -- **the        |
+|                 | repeating unit**                                                |
++-----------------+----------------------------------------------------------------+
+| ``imaging/``    | composes kernels -- **a complete scan**                         |
++-----------------+----------------------------------------------------------------+
+| top level       | what is not an ``sc.Module`` subclass                           |
++-----------------+----------------------------------------------------------------+
 
 The leaf rules discriminate leaf modules from one another; they cannot discriminate a leaf from a
 composite, because a GRE kernel contains an ADC and so would a whole DTI scan.  The last two
 rules do, and the split matches how the pieces are actually reused.
+
+``rf/`` and ``preparation/`` split one field rather than two ideas, and the split is worth having
+because the names differ in kind: ``rf.use`` **is** the role for an excitation or a refocusing, so
+those classes need nothing added, while several distinct physics share ``'preparation'`` and one
+shares ``'inversion'``, so those carry a ``Prep`` suffix to say which.  ``ir_prep.py`` argues it.
 
 **Folders never appear in an import path.**  This module re-exports flat, so the taxonomy stays
 cheap to revise -- which matters, because §5 of the plan that built it schedules a decision about
@@ -63,7 +72,7 @@ Examples
 ...                        thickness_mm=5.0, flip_deg=15.0)
 >>> seq = sc.compile(gre(lines=range(32)), opts, name='gre_2d')
 >>> len(seq.block_events), round(seq.duration()[0] * 1e3, 2)
-(128, 301.76)
+(128, 306.24)
 
 The provenance path is the tree, and not one tag string was written:
 
@@ -76,8 +85,11 @@ from __future__ import annotations
 from .encoding.phase_encoding import PhaseEncode
 from .imaging.gre_2d import GRE2D
 from .kernel.gre_2d_tr import GRE2DTR
+from .preparation.ir_prep import IRPrep
 from .readout.cartesian_line import CartesianLine
 from .rf.excitation import Excitation
 from .spoiler import spoiler
 
-__all__ = ['CartesianLine', 'Excitation', 'GRE2D', 'GRE2DTR', 'PhaseEncode', 'spoiler']
+__all__ = [
+    'CartesianLine', 'Excitation', 'GRE2D', 'GRE2DTR', 'IRPrep', 'PhaseEncode', 'spoiler',
+]

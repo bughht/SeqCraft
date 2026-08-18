@@ -1,5 +1,77 @@
 # Changelog
 
+## Unreleased — `IRPrep`, and an inversion time placed to the microsecond
+
+MPRAGE and MP2RAGE, and the smallest thing they needed: **one new module**, one new method, and one
+argument that moved.
+
+```python
+inv = sc.modules.IRPrep(opts=opts, thickness_mm=None, spoil_voxel_mm=5.0)
+gre = sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(128, 128), thickness_mm=5.0, flip_deg=8.0)
+
+t_train = inv.time_to_center() + ti_s - gre.time_to_center_line(lines=segment)
+```
+
+| | |
+|---|---|
+| `IRPrep` | an inversion pulse and the crusher after it, in `modules/preparation/` — a new folder, because `rf.use == 'inversion'` is not `rf/`'s membership rule |
+| `GRE2D.time_to_center_line(lines=…, dummies=…)` | block start to the readout of `center_line`. Depends on the ordering, so it is a method taking the same arguments `build` does |
+| `GRE2D.build(dummies=…)` | **moved from `__init__`.** `dummies` describes the acquisition, not a waveform, and the timing query above needs it beside `lines` |
+| `GRE2DTR(spoil_axis=…)` | spoiling is `('x', 'z')` by default rather than `'z'` alone |
+| `shift_slice` | promoted from `rf/excitation.py` to `modules/_support.py`, now that a second folder needs it |
+
+### Two sequences that deliberately did not become modules
+
+`MPRAGE2D` and `MP2RAGE2D` are written in `examples/mprage_2d/01_build.ipynb` and
+`examples/mp2rage_2d/01_build.ipynb` **and stay there.** Each has exactly one consumer — its own
+notebook — and a module with one consumer belongs where that consumer is. `IRPrep` shipped because
+two notebooks use it; `GRE2D` already shipped and now has a second consumer.
+`tests/modules/test_mprage_notebooks.py` runs both build notebooks and asserts against the classes
+they defined, so neither can drift without CI noticing.
+
+### Four things the extraction found
+
+**An inversion time is measured from the pulse's effective centre, and that is 5.1 ms into a 10 ms
+hyperbolic secant.** `IRPrep.time_to_center()` is load-bearing rather than bookkeeping: referencing
+TI to the block start instead is a 5 ms error in the one quantity the sequence exists to control,
+and the crusher after the pulse makes "half the block" wrong by a different amount again.
+
+**Where k = 0 sits inside a train is not a constant.** Centric ordering acquires it first, linear
+mid-train, and the same TI places those two trains most of a train-length apart —
+`time_to_center_line` is a method for that reason, and its `dummies` term is the one that gets
+dropped: the block starts at the first dummy, so omitting it under-reports by `dummies · TR`
+silently.
+
+**Spoiling on one axis is not spoiling.** A gradient dephases only along its own direction, so
+winding cycles on `z` alone leaves the residual coherent in `x`. The readout axis is the one most
+often missed, because after the echo only half the readout's area is left on `kx` — half a cycle
+across one voxel. `spoil_axis` now defaults to `('x', 'z')`, with cycles counted per axis across
+that axis's own voxel, which differ by a factor of three between the slice and the in-plane voxel.
+
+**Interleaved segmentation turns a shot-to-shot difference into a replica of the object.** Each shot
+owns a comb in k-space, so an amplitude difference between shots is a periodic modulation and
+therefore a ghost at FOV/n_shots. Measured on the example scan: 296 % spread across shots with no
+dummy shots, 48 % with one, 8.7 % with three. That is what `dummy_shots` is for, and it is *not* a
+spoiling problem — turning the extra spoiler axes off moves the image background by 0.01 %.
+
+### What the simulator could and could not settle
+
+`examples/mprage_2d/02` measures the null point at `TI = T1·ln2` through a real shot, to a few
+milliseconds, for two tissues — which validates the inversion, `time_to_center` and the TI
+placement in one measurement. It also found that **MRzero applies a pulse as an instantaneous
+rotation by its integrated envelope**, so an adiabatic inversion does not invert there at all: a
+10 ms hyperbolic secant arrives as 289°. `IRPrep` keeps `'hypsec'` as its default because that is
+right on a scanner; the examples pass `'block'` and say why, and `time_to_center` absorbs the
+4.5 ms difference without any other number in the timeline moving.
+
+### One thing the compiler caught on its own
+
+Pulseq labels are stateful, so emitting `SET=0` once at the start of an MP2RAGE and `SET=1` before
+each second train leaves every later shot's first train wearing the previous shot's `SET=1` — half
+the data in the wrong contrast, in a file that is perfectly legal. `sc.compile` refuses it: 96
+readouts share one `(LIN, SET)` address, found by the same check that catches a repeated
+phase-encode line. `examples/mp2rage_2d/01_build.ipynb` builds the broken version to show it.
+
 ## Unreleased — `sc.modules`, extracted from a 2D GRE
 
 seqcraft ships concrete modules again. Six names, all of them extracted from one working sequence

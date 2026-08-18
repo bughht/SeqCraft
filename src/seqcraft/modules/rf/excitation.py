@@ -31,7 +31,6 @@ mixes conventions.
 
 from __future__ import annotations
 
-from math import pi
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -41,7 +40,7 @@ from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
-from .._support import require_axis, require_positive
+from .._support import require_axis, require_positive, shift_slice
 
 if TYPE_CHECKING:
     from pypulseq.opts import Opts
@@ -244,7 +243,7 @@ class Excitation(Module):
         if phase_rad:
             rf = derive(rf, phase_offset=float(rf.phase_offset) + phase_rad)
         if position_mm:
-            rf = _shift_slice(rf, self._selection_gradient(), position_m=float(position_mm) / 1e3)
+            rf = shift_slice(rf, self._selection_gradient(), position_m=float(position_mm) / 1e3)
 
         out = LogicBlock().add(0.0, rf)
         if self.selective:
@@ -336,34 +335,3 @@ class Excitation(Module):
             )
             raise ConfigurationError(msg)
         return dict(pulse_opts)
-
-
-def _shift_slice(rf: Event, gz: Event, *, position_m: float) -> Event:
-    """
-    Return `rf` retuned to excite the slice `position_m` from isocentre along `gz`.
-
-    Two lines, and the second is the one that gets omitted::
-
-        freq_offset  = gz.amplitude * position_m
-        phase_offset = rf.phase_offset - 2*pi * freq_offset * calc_rf_center(rf)[0]
-
-    Without the phase reference every off-centre slice carries a phase that depends on where the
-    pulse's effective centre falls, so multi-slice is silently wrong -- and for a minimum-phase
-    pulse, whose centre is not its midpoint, it is wrong by a different amount than for a sinc.
-
-    This is the one real gap in pypulseq's coverage: ``make_sinc_pulse`` takes
-    ``slice_thickness`` but no position, because it builds one event at a time from explicit
-    numbers, and this needs two events plus a geometric input.  It lives in the module library
-    rather than in ``design/`` because it is **MR imaging knowledge** -- it knows what a slice is
-    -- and the core holds none.  Returning an event rather than a block makes it *not a module*;
-    it does not make it core.
-
-    Private, because the public API is ``exc(position_mm=20.0)``.  When ``Refocusing`` needs the
-    same arithmetic, promote it to ``modules/rf/_offsets.py`` -- a move inside one folder that
-    the flat re-export hides.
-    """
-    freq_offset = float(gz.amplitude) * position_m
-    phase_offset = float(rf.phase_offset) - 2 * pi * freq_offset * float(
-        pp.calc_rf_center(rf)[0]
-    )
-    return derive(rf, freq_offset=freq_offset, phase_offset=phase_offset)

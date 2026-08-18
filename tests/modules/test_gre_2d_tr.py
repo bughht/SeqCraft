@@ -184,12 +184,91 @@ def test_the_slice_axis_ends_on_the_spoiler_rather_than_at_zero(opts, tr) -> Non
     pulse's centre.  So a raw moment over one repetition is the sum of the two, and the sum is
     what a reader should expect to see here rather than zero.
     """
-    spoiler_area = tr.spoil_cycles_per_voxel / (tr.thickness_mm / 1e3)
+    spoiler_area = tr.spoil_cycles_per_voxel / (tr.voxel_mm('z') / 1e3)
     before_the_pulse = float(tr.exc.gz.area) + float(tr.exc.gzr.area)
 
     assert sc.moments(tr(line=0))['z'] == pytest.approx(
         spoiler_area + before_the_pulse, rel=1e-6,
     )
+
+
+# ---------------------------------------------------------------------- the spoilers
+def test_spoiling_is_more_than_one_axis_by_default(opts, tr) -> None:
+    """
+    ``('x', 'z')``, because a gradient dephases only along its own direction.
+
+    Winding cycles on ``z`` alone leaves the residual perfectly coherent in ``x``, so the FID and
+    the stimulated echoes that follow it reach the next readout carrying a ``ky`` that does not
+    belong to it -- which is a ghost along the phase-encode direction rather than anything that
+    reads as a spoiling problem.
+    """
+    assert tr.spoil_axis == ('x', 'z')
+    assert sorted(tr.spoilers) == ['x', 'z']
+
+
+def test_each_axis_winds_its_cycles_across_its_own_voxel(opts, tr) -> None:
+    """
+    The in-plane voxel and the slice differ by a factor of three here, so one shared area would
+    be a different amount of spoiling on each axis while reading as the same number.
+    """
+    assert tr.voxel_mm('z') == tr.thickness_mm
+    assert tr.voxel_mm('x') == pytest.approx(tr.fov_mm[0] / tr.matrix[0])
+    assert tr.voxel_mm('y') == pytest.approx(tr.fov_mm[1] / tr.matrix[1])
+
+    for axis, block in tr.spoilers.items():
+        area = float(block.nodes[0].item.area)
+        assert area == pytest.approx(tr.spoil_cycles_per_voxel / (tr.voxel_mm(axis) / 1e3))
+
+
+def test_the_readout_axis_does_almost_no_spoiling_of_its_own(opts) -> None:
+    """
+    The measurement that makes ``'x'`` a default rather than an option.
+
+    After the echo only half the readout's area is left on ``kx``, which is half a cycle across
+    one voxel -- so the largest gradient in the repetition contributes almost nothing, and a
+    reader who assumed otherwise would leave the axis unspoiled.
+    """
+    bare = sc.modules.GRE2DTR(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
+                              spoil_axis='z')
+
+    voxel_m = bare.voxel_mm('x') / 1e3
+    cycles = sc.moments(bare(line=0))['x'] * voxel_m
+
+    assert 0.4 < cycles < 0.6, f'{cycles:.3f} cycles per voxel from the readout alone'
+
+
+def test_naming_y_adds_a_spoiler_beside_the_rewinder_not_instead_of_it(opts) -> None:
+    """
+    So the net dephasing on ``y`` is the same every repetition, whatever line was acquired.
+
+    Replacing the rewinder would make it line-dependent, which is a different sequence and a
+    worse one: the point of spoiling is that every repetition starts from the same place.
+    """
+    spoiled = sc.modules.GRE2DTR(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
+                                 spoil_axis=('x', 'y', 'z'))
+
+    expected = spoiled.spoil_cycles_per_voxel / (spoiled.voxel_mm('y') / 1e3)
+    for line in (0, 7, spoiled.center_line, 31):
+        assert sc.moments(spoiled(line=line))['y'] == pytest.approx(expected, rel=1e-6)
+
+
+def test_one_axis_is_still_allowed_and_is_shorter(opts, tr) -> None:
+    """The default costs tail time, so turning it off has to remain a one-word change."""
+    bare = sc.modules.GRE2DTR(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
+                              spoil_axis='z')
+
+    assert bare.spoil_axis == ('z',)
+    assert bare.min_tr_s < tr.min_tr_s
+    assert sc.moments(bare(line=0))['x'] < sc.moments(tr(line=0))['x']
+
+
+def test_an_unknown_or_empty_spoil_axis_raises(opts) -> None:
+    with pytest.raises(sc.ConfigurationError, match='spoil_axis'):
+        sc.modules.GRE2DTR(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
+                           spoil_axis='xz')
+    with pytest.raises(sc.ConfigurationError, match='nothing would be spoiled'):
+        sc.modules.GRE2DTR(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
+                           spoil_axis=())
 
 
 # ------------------------------------------------------------------------- the label

@@ -9,16 +9,22 @@ argument that fixes it.
 :func:`area_until` is the one that is arithmetic rather than validation, and it is here rather
 than in :mod:`seqcraft.design.events` because only the module library has ever needed it -- the
 compiler integrates whole events, and a *partial* integral is a question about physics (where is
-the echo?) rather than about legality.
+the echo?) rather than about legality.  :func:`shift_slice` is the second of those, and it is here
+for a sharper reason: it has two consumers, :class:`~seqcraft.modules.Excitation` in ``rf/`` and
+:class:`~seqcraft.modules.IRPrep` in ``preparation/``, and they are in **different folders**.  A
+cross-folder import of another folder's private name is worse than one shared file whose whole
+purpose is being shared.
 """
 
 from __future__ import annotations
 
+from math import pi
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pypulseq as pp
 
-from ..design.events import AXES, knots_of, pwl_moment
+from ..design.events import AXES, derive, knots_of, pwl_moment
 from ..design.timing import Raster
 from ..errors import ConfigurationError, format_error
 
@@ -27,7 +33,10 @@ if TYPE_CHECKING:
 
     from ..design.events import Event
 
-__all__ = ['area_until', 'ceil_raster', 'require_axis', 'require_positive', 'require_range']
+__all__ = [
+    'area_until', 'ceil_raster', 'require_axis', 'require_positive', 'require_range',
+    'shift_slice',
+]
 
 
 def require_positive(value: float, name: str, *, fixes: Iterable[str] = ()) -> float:
@@ -156,3 +165,48 @@ def area_until(event: Event, t_end: float) -> float:
     cut = int(np.searchsorted(times, t_end))
     edge = float(np.interp(t_end, times, amps))
     return float(pwl_moment(np.append(times[:cut], t_end), np.append(amps[:cut], edge)))
+
+
+def shift_slice(rf: Event, gz: Event, *, position_m: float) -> Event:
+    """
+    Return `rf` retuned to excite the slice `position_m` from isocentre along `gz`.
+
+    Two lines, and the second is the one that gets omitted::
+
+        freq_offset  = gz.amplitude * position_m
+        phase_offset = rf.phase_offset - 2*pi * freq_offset * calc_rf_center(rf)[0]
+
+    Without the phase reference every off-centre slice carries a phase that depends on where the
+    pulse's effective centre falls, so multi-slice is silently wrong -- and for a minimum-phase
+    pulse, whose centre is not its midpoint, it is wrong by a different amount than for a sinc.
+    A 10 ms hyperbolic secant is the extreme case: its centre is 5 ms in, so the term it drops is
+    five milliseconds' worth of a frequency that can be tens of kilohertz.
+
+    This is the one real gap in pypulseq's coverage: ``make_sinc_pulse`` takes ``slice_thickness``
+    but no position, because it builds one event at a time from explicit numbers, and this needs
+    two events plus a geometric input.  It lives in the module library rather than in ``design/``
+    because it is **MR imaging knowledge** -- it knows what a slice is -- and the core holds none.
+    Returning an event rather than a block makes it *not a module*; it does not make it core.
+
+    Not public API: the spelling a caller writes is ``exc(position_mm=20.0)`` or
+    ``irprep(position_mm=20.0)``.  It is unprefixed inside this already-private file so that both
+    of them import a name rather than a name with an underscore in it.
+
+    Examples
+    --------
+    >>> import numpy as np, pypulseq as pp
+    >>> from pypulseq.opts import Opts
+    >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s')
+    >>> rf, gz, _ = pp.make_sinc_pulse(flip_angle=np.pi / 2, duration=3e-3,
+    ...                                slice_thickness=5e-3, return_gz=True, system=o)
+    >>> shifted = shift_slice(rf, gz, position_m=0.02)
+    >>> round(shifted.freq_offset)                      # gz.amplitude * 20 mm
+    5333
+    >>> abs(shift_slice(rf, gz, position_m=0.0).freq_offset)
+    0.0
+    """
+    freq_offset = float(gz.amplitude) * position_m
+    phase_offset = float(rf.phase_offset) - 2 * pi * freq_offset * float(
+        pp.calc_rf_center(rf)[0]
+    )
+    return derive(rf, freq_offset=freq_offset, phase_offset=phase_offset)

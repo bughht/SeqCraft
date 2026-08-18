@@ -160,9 +160,8 @@ def test_a_whole_scan_compiles_to_the_same_thing(notebook, pair) -> None:
         bandwidth_hz_px=notebook['BANDWIDTH_HZ_PX'],
         tr_s=notebook['TR_S'],
         spoil_cycles_per_voxel=notebook['SPOIL_CYCLES'],
-        dummies=notebook['DUMMIES'],
         rf_spoil_deg=notebook['RF_SPOIL_DEG'],
-    )(lines=lines)
+    )(lines=lines, dummies=notebook['DUMMIES'])
 
     assert _digest(by_hand) == _digest(from_module)
 

@@ -981,13 +981,22 @@ Re-exported **flat**, so no import path names a folder:
 | `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
 | `CartesianLine` | prephaser, readout gradient and ADC as one design |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
+| `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
 | `GRE2D` | the complete scan |
 
-The folders behind that table are taxonomy, and each has a rule: `rf/` is `rf.use`, `encoding/` is
-gradients with no ADC, `readout/` contains an ADC, `kernel/` composes more than one leaf folder,
-`imaging/` composes kernels, and the top level holds what is not an `sc.Module` subclass.
-`tests/modules/test_layout.py` asserts all of it.
+The folders behind that table are taxonomy, and each has a rule: `rf/` is `rf.use` in
+{excitation, refocusing}, `preparation/` is the rest of `rf.use` — everything played before the
+imaging train — `encoding/` is gradients with no ADC, `readout/` contains an ADC, `kernel/`
+composes more than one leaf folder, `imaging/` composes kernels, and the top level holds what is
+not an `sc.Module` subclass. `tests/modules/test_layout.py` asserts all of it, including that
+nothing in `preparation/` emits an excitation or a refocusing.
+
+Classes in `preparation/` end in `Prep` — `IRPrep`, and after it `T2Prep`, `MTPrep`, `CESTPrep`.
+The rule is that a class is named after its role: for `rf/` the `use` value *is* the role, while
+several distinct physics share one `use` here, so the name carries both parts. It also resolves a
+real collision — a diffusion *preparation* and a diffusion *encoding* are different modules in
+different folders, and without the suffix both would be `Diffusion`.
 
 **Nothing here was designed in the abstract.** Every module was extracted from
 [`examples/gre_2d/01_build.ipynb`](../examples/gre_2d/README.md), which builds the same sequence
@@ -1004,7 +1013,15 @@ the questions a tree of events cannot:
 | `Excitation.time_to_center()` | to the RF's effective centre — for a minimum-phase pulse, nowhere near the midpoint |
 | `Excitation.time_to_rephaser()` | where the slice rephaser begins, so another axis can start there |
 | `CartesianLine.time_to_echo()` | to k = 0, which is not the middle of the ADC window |
+| `IRPrep.time_to_center()` | to the inversion's effective centre — 5.1 ms into a 10 ms hyperbolic secant, and what an inversion time is measured from |
+| `GRE2D.time_to_center_line(lines=…, dummies=…)` | to the readout of `center_line`, which depends on the ordering and on the dummy count, so it takes the same arguments `build` does |
 | `GRE2DTR.min_te_s` / `min_tr_s` | feasibility, known at design time; a shorter request raises |
+
+Those four compose by addition only because every one of them is measured from the start of the
+block *that module's* `build` returns. An inversion time is
+`inv.time_to_center() + ti_s - gre.time_to_center_line(lines=segment)` from the start of a shot to
+the start of its train, and a term measured from anywhere else would be wrong in a way no other
+number in the sequence could contradict.
 
 ## The two couplings
 
@@ -1012,6 +1029,16 @@ the questions a tree of events cannot:
 phase-encode blip on `y`, the readout prephaser on `x`. Each leaf reports its minimum and accepts
 an override; `GRE2DTR` takes the maximum and passes it down. Stretching the short ones keeps TE at
 its minimum, which inserting a delay would not.
+
+**Spoiling is more than one axis, for a different reason.** `spoil_axis` defaults to `('x', 'z')`,
+because a gradient dephases only along its own direction: winding cycles on `z` alone leaves the
+residual coherent in `x`, and what survives reaches the next readout carrying a `ky` that does not
+belong to it — a ghost along the phase-encode direction rather than anything that reads as a
+spoiling problem. The readout axis is the one most often missed, because after the echo only half
+the readout's area is left on `kx` — half a cycle across one voxel. Naming `'y'` adds a spoiler
+*beside* the rewinder rather than instead of it, so the net is a fixed dephasing rather than one
+that depends on the line just acquired. Cycles are counted per axis across that axis's own voxel,
+which `GRE2DTR.voxel_mm(axis)` answers.
 
 **The receiver is phase-locked to the transmitter.** `GRE2DTR` gives the same `phase_deg` to the
 excitation and to the readout. Moving one and not the other writes the RF-spoiling schedule's
@@ -1024,12 +1051,18 @@ the readout direction stays perfectly correct.
 gre(lines=range(ny))                               # fully sampled
 gre(lines=sorted(acs | set(range(0, ny, 3))))      # undersampled with a calibration block
 gre(lines=reversed(range(ny)))                     # ordering, with no new argument
+gre(lines=segment, dummies=20)                     # the same instance, with a run-in
 ```
 
 One argument replaces acceleration, phase-encode partial Fourier, multi-shot and ordering, because
 each of those is a different list — and **no generators ship**, because which lines to acquire is a
 sequence-programming choice ([ADR-003](adr/003-scanner-and-module-reform.md)). Out-of-range or
 duplicate indices raise; a pattern omitting the centre of k-space warns.
+
+`dummies` is a build argument for the same reason: it designs no waveform — `build` plays the first
+acquired line's gradients with `acquire=False` — and it describes what the acquisition does, exactly
+as `lines` does. That is also what lets `time_to_center_line` mirror `build` instead of reading one
+of its two terms off `self`.
 
 ---
 
@@ -1321,6 +1354,7 @@ at import.
 | `GRADIENT_KINDS` | `design.events` | constant |
 | `GRE2D` | `modules` | class |
 | `GRE2DTR` | `modules` | class |
+| `IRPrep` | `modules` | class |
 | `HANDLED_KINDS` | `design.events` | constant |
 | `HardwareLimitError` | `compiler.errors` | exception |
 | `INDIVISIBLE_KINDS` | `compiler.model` | constant |

@@ -86,7 +86,7 @@ def test_the_phase_follows_the_quadratic_schedule(opts, gre) -> None:
     assert [gre.phase_deg(n) for n in range(5)] == [0.0, 117.0, 351.0, 702.0, 1170.0]
 
 
-def test_the_phase_counter_runs_across_the_dummies(opts) -> None:
+def test_the_phase_counter_runs_across_the_dummies(opts, gre) -> None:
     """
     Repetition *n* is counted from the first dummy, not from the first acquired line.
 
@@ -94,10 +94,7 @@ def test_the_phase_counter_runs_across_the_dummies(opts) -> None:
     established is a steady state *of a particular phase sequence*, and resetting the counter
     discards it at the moment it starts to matter.
     """
-    with_dummies = sc.modules.GRE2D(opts=opts, fov_mm=250.0, matrix=MATRIX,
-                                    thickness_mm=5.0, dummies=3)
-
-    phases = _rf_phases(with_dummies(lines=range(NY)))
+    phases = _rf_phases(gre(lines=range(NY), dummies=3))
 
     assert len(phases) == NY + 3
     expected = [(0.5 * 117.0 * n * (n + 1)) % 360.0 for n in range(NY + 3)]
@@ -131,14 +128,12 @@ def test_a_custom_spoil_increment_is_used(opts) -> None:
 
 
 # ---------------------------------------------------------------------- dummies
-def test_dummies_come_first_and_sample_nothing(opts) -> None:
-    dummied = sc.modules.GRE2D(opts=opts, fov_mm=250.0, matrix=MATRIX,
-                               thickness_mm=5.0, dummies=4)
-
-    scan = dummied(lines=range(NY))
+def test_dummies_come_first_and_sample_nothing(opts, gre) -> None:
+    scan = gre(lines=range(NY), dummies=4)
     seq = sc.compile(scan, opts)
 
     assert len(scan) == NY + 4
+    assert scan.duration == pytest.approx((NY + 4) * gre.tr.tr_s, abs=1e-9)
     adcs = [e for _, e, _ in sc.flatten(scan) if getattr(e, 'type', '') == 'adc']
     assert len(adcs) == NY, 'four repetitions played and none of them sampled'
     labels = [int(v) for v in np.atleast_1d(
@@ -146,12 +141,26 @@ def test_dummies_come_first_and_sample_nothing(opts) -> None:
     assert labels == list(range(NY)), 'and none of them wrote a line index'
 
 
+def test_one_instance_serves_two_dummy_counts(opts, gre) -> None:
+    """
+    The reason `dummies` moved to ``build``: showing what they fix is a two-call experiment.
+
+    With it on ``__init__`` this needed two objects, which is two designs of identical waveforms
+    and a comparison a reader has to take on trust rather than read off one line.
+    """
+    without, with_them = gre(lines=range(NY)), gre(lines=range(NY), dummies=7)
+
+    assert len(without) == NY
+    assert len(with_them) == NY + 7
+    assert with_them.duration - without.duration == pytest.approx(7 * gre.tr.tr_s, abs=1e-9)
+
+
 def test_a_dummy_is_gradient_identical_to_the_repetition_it_precedes(opts) -> None:
     """What it is establishing has to be the steady state that then gets acquired."""
-    dummied = sc.modules.GRE2D(opts=opts, fov_mm=250.0, matrix=MATRIX,
-                               thickness_mm=5.0, dummies=1, rf_spoil=False)
+    unspoiled = sc.modules.GRE2D(opts=opts, fov_mm=250.0, matrix=MATRIX,
+                                 thickness_mm=5.0, rf_spoil=False)
 
-    scan = dummied(lines=[7])
+    scan = unspoiled(lines=[7], dummies=1)
     first, second = (n.item for n in scan)
 
     assert sc.moments(first) == pytest.approx(sc.moments(second))
@@ -195,9 +204,82 @@ def test_a_pattern_carrying_the_centre_is_silent(opts, gre) -> None:
         gre(lines=[gre.center_line])
 
 
-def test_negative_dummies_raise(opts) -> None:
+def test_negative_dummies_raise(opts, gre) -> None:
     with pytest.raises(sc.ConfigurationError, match='dummies'):
-        sc.modules.GRE2D(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0, dummies=-1)
+        gre(lines=range(NY), dummies=-1)
+
+
+# ------------------------------------------------------------- time_to_center_line
+def test_the_ordering_moves_the_centre_line_by_half_a_train(opts, gre) -> None:
+    """
+    The reason this is a method and not a constant.
+
+    Centric acquires k = 0 first; linear acquires it mid-train.  The same TI therefore places
+    those two trains hundreds of milliseconds apart, and a sequence that used one number for both
+    would be wrong for whichever one it was not written against.
+    """
+    lines = tuple(range(NY))
+    centric = tuple(sorted(lines, key=lambda line: abs(line - gre.center_line)))
+
+    linear_s = gre.time_to_center_line(lines=lines)
+    centric_s = gre.time_to_center_line(lines=centric)
+
+    assert centric_s == pytest.approx(gre.tr.time_to_echo())
+    assert linear_s - centric_s == pytest.approx(gre.center_line * gre.tr.tr_s, abs=1e-12)
+
+
+def test_the_dummies_term_is_there(opts, gre) -> None:
+    """
+    Held apart from the ordering, because it is the term most likely to be dropped.
+
+    The block starts at the first dummy, not at the first acquired line, so omitting this is a
+    silent ``dummies * tr_s`` of TI error -- and it is invisible against a test that varies only
+    the ordering.
+    """
+    lines = tuple(range(NY))
+
+    moved = gre.time_to_center_line(lines=lines, dummies=20)
+
+    assert moved - gre.time_to_center_line(lines=lines) == pytest.approx(
+        20 * gre.tr.tr_s, abs=1e-12,
+    )
+
+
+@pytest.mark.parametrize('dummies', [0, 5])
+@pytest.mark.parametrize('ordering', ['linear', 'centric', 'reversed'])
+def test_the_query_agrees_with_the_block_it_describes(opts, gre, ordering, dummies) -> None:
+    """
+    ``sc.kspace`` on the built block puts the ``center_line`` readout where the query says.
+
+    A timing query that can disagree with its own block is worse than no query at all: every
+    number downstream of it is derived, and nothing else in the sequence would notice.
+    """
+    lines = {
+        'linear': tuple(range(NY)),
+        'centric': tuple(sorted(range(NY), key=lambda line: abs(line - gre.center_line))),
+        'reversed': tuple(reversed(range(NY))),
+    }[ordering]
+
+    k = sc.kspace(gre(lines=lines, dummies=dummies), opts)
+    nx = gre.tr.matrix[0]
+    t_echo = k['t_adc'].reshape(len(lines), nx)[lines.index(gre.center_line), nx // 2]
+
+    assert t_echo == pytest.approx(gre.time_to_center_line(lines=lines, dummies=dummies),
+                                   abs=1e-9)
+
+
+def test_a_table_without_the_centre_has_no_answer(opts, gre) -> None:
+    """Returning one would be worse: there is no k = 0 in this train to measure to."""
+    with pytest.warns(sc.SeqCraftWarning), pytest.raises(sc.ConfigurationError, match='no k = 0'):
+        gre.time_to_center_line(lines=[n for n in range(NY) if n != gre.center_line])
+
+
+def test_the_query_refuses_the_tables_build_refuses(opts, gre) -> None:
+    """It reuses ``_check``, so the two cannot come to disagree about what is acquirable."""
+    with pytest.raises(sc.ConfigurationError, match='more than once'):
+        gre.time_to_center_line(lines=[16, 16])
+    with pytest.raises(sc.ConfigurationError, match='dummies'):
+        gre.time_to_center_line(lines=range(NY), dummies=-1)
 
 
 # ---------------------------------------------------------------- the whole thing
