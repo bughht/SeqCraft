@@ -13,6 +13,7 @@ against a deliberately slow slew rate it is off by whole ``dk`` steps.
 from __future__ import annotations
 
 import numpy as np
+import pypulseq as pp
 import pytest
 from pypulseq.opts import Opts
 
@@ -326,3 +327,94 @@ def test_the_line_index_is_not_an_argument(opts) -> None:
 
     with pytest.raises(TypeError, match='line'):
         ro(line=3)
+
+
+# ------------------------------------------------------------------ prephase=False
+#: The whole argument for the boolean is that **nothing else moves**.  Every designed number is
+#: listed here rather than spot-checked, because "nothing else moves" is the claim.
+DESIGNED = ('dwell_s', 'bandwidth_hz_px', 'num_samples', 'pre_echo_samples', 'dk_per_m')
+
+
+@pytest.mark.parametrize('partial_fourier', [1.0, 0.75, 0.625])
+def test_prephase_false_changes_no_designed_number(opts, partial_fourier) -> None:
+    """A second readout module would have been a copy of all of this, kept in step by hand."""
+    kwargs = dict(opts=opts, fov_mm=250.0, matrix=128, bandwidth_hz_px=200.0,
+                  partial_fourier=partial_fourier)
+    winding = sc.modules.CartesianLine(**kwargs)
+    spin_echo = sc.modules.CartesianLine(**kwargs, prephase=False)
+
+    for name in DESIGNED:
+        assert getattr(spin_echo, name) == getattr(winding, name), name
+    assert float(spin_echo.gx.amplitude) == float(winding.gx.amplitude)
+    assert float(spin_echo.gx.flat_time) == float(winding.gx.flat_time)
+    assert sc.events.content_hash(spin_echo.gx) == sc.events.content_hash(winding.gx)
+    assert sc.events.content_hash(spin_echo.adc) == sc.events.content_hash(winding.adc)
+
+
+@pytest.mark.parametrize('partial_fourier', [1.0, 0.75, 0.625])
+def test_area_to_echo_is_minus_the_prephaser(opts, partial_fourier) -> None:
+    """
+    The physics number and the event's number, stated as the identity between them.
+
+    ``area_to_echo_per_m`` is what a spin echo's crusher pair is balanced around, and it is
+    available with **no** prephaser -- which is what lets one module serve both sequences.
+    """
+    kwargs = dict(opts=opts, fov_mm=250.0, matrix=128, bandwidth_hz_px=200.0,
+                  partial_fourier=partial_fourier)
+    winding = sc.modules.CartesianLine(**kwargs)
+    spin_echo = sc.modules.CartesianLine(**kwargs, prephase=False)
+
+    assert winding.area_to_echo_per_m == pytest.approx(-winding.prephaser_area_per_m, abs=1e-9)
+    assert spin_echo.area_to_echo_per_m == pytest.approx(winding.area_to_echo_per_m, abs=1e-12)
+    assert spin_echo.area_to_echo_per_m == pytest.approx(
+        area_until(spin_echo.gx, spin_echo.time_to_echo()), abs=1e-12)
+
+
+def test_prephase_false_is_the_gradient_and_its_adc_and_nothing_else(opts) -> None:
+    """The block starts at zero, so the caller's own lobe is what precedes it."""
+    ro = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=128, bandwidth_hz_px=200.0,
+                                  prephase=False)
+
+    block = ro()
+
+    assert sorted(n.item.type for n in block) == ['adc', 'trap']
+    assert block.duration == pytest.approx(float(pp.calc_duration(ro.gx)))
+    assert 0.0 < ro.time_to_echo() < block.duration
+    assert ro(acquire=False).duration == block.duration
+    assert [n.item.type for n in ro(acquire=False)] == ['trap']
+
+
+def test_time_to_echo_measures_from_the_readout_gradient_when_there_is_no_prephaser(opts) -> None:
+    """Both are 'from the start of the block build returns' -- and the block starts elsewhere."""
+    winding = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=128, bandwidth_hz_px=200.0)
+    spin_echo = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=128,
+                                         bandwidth_hz_px=200.0, prephase=False)
+
+    assert spin_echo.time_to_echo() == pytest.approx(
+        winding.time_to_echo() - winding.prephaser_duration_s, abs=1e-12)
+
+
+@pytest.mark.parametrize('name', ['prephaser_duration_s', 'prephaser_area_per_m'])
+def test_asking_for_a_prephaser_that_does_not_exist_raises(opts, name) -> None:
+    """The shape the library already uses for an argument that cannot take effect."""
+    ro = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=128, bandwidth_hz_px=200.0,
+                                  prephase=False)
+
+    with pytest.raises(sc.ConfigurationError, match='prephase=False'):
+        getattr(ro, name)
+
+
+def test_a_prephaser_duration_with_prephase_false_names_both_arguments(opts) -> None:
+    with pytest.raises(sc.ConfigurationError, match='prephase') as caught:
+        sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=128, bandwidth_hz_px=200.0,
+                                 prephase=False, prephaser_duration_s=600e-6)
+
+    assert 'prephaser_duration_s' in str(caught.value)
+
+
+def test_the_spin_echo_readout_is_pure_and_compiles_alone(opts, component_checks) -> None:
+    """Starting at zero is what makes that true; a prephaser is not what made it legal."""
+    component_checks.all(
+        sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=64, bandwidth_hz_px=250.0,
+                                 prephase=False),
+    )

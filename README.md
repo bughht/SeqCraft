@@ -334,10 +334,10 @@ boundaries will fall.
 
 ### The shipped modules
 
-`sc.modules` has seven building blocks, each extracted from a working sequence rather than designed:
-`Excitation`, `PhaseEncode`, `CartesianLine`, `spoiler`, `IRPrep`, `GRE2DTR` and `GRE2D`. The last
-two are a whole repetition and a whole scan, so the GRE that section 2 composed also comes
-ready-made:
+`sc.modules` has eight building blocks, each extracted from a working sequence rather than designed:
+`Excitation`, `Refocusing`, `PhaseEncode`, `CartesianLine`, `spoiler`, `IRPrep`, `GRE2DTR` and
+`GRE2D`. The last two are a whole repetition and a whole scan, so the GRE that section 2 composed
+also comes ready-made:
 
 ```python
 gre = sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(64, 64), thickness_mm=5.0)
@@ -348,6 +348,23 @@ seq = sc.compile(gre(lines=range(64)), opts, name='gre_2d')      # 256 blocks, T
 acquire is a sequence-programming choice, and it stays yours. Segmenting the train across several
 inversions — an MPRAGE — is the same tree one level deeper, and
 [`examples/mprage_2d/`](examples/mprage_2d/) builds it.
+
+`Refocusing` is the newest, and the one that shows what a module is *for*. A refocusing pulse
+conjugates k, so between consecutive refocusing centres every axis's gradient area before the echo
+has to equal its area after it — measured to the RF's **effective centre**, not to the middle of the
+block. Getting that wrong leaves a residual that alternates sign echo to echo and reads as a
+hardware fault, and both pulseq reference implementations avoid it only by setting their transmit
+dead time and ringdown to the same number:
+
+```python
+refoc = sc.modules.Refocusing(opts=opts, thickness_mm=6.25, crush_voxel_mm=5.0)
+
+assert refoc.area_to_center_per_m == refoc.area_from_center_per_m    # 600.000000 both
+assert refoc.time_to_center() == refoc().duration / 2                # exactly, to 0 ns
+```
+
+A spin echo and a sixteen-echo turbo spin echo are then the same composition with a longer list,
+and [`examples/fse_2d/`](examples/fse_2d/) writes both.
 
 ---
 
@@ -396,6 +413,11 @@ Notebooks, each one a sequence that works rather than a feature tour:
   point checked in simulation.
 - [`examples/mp2rage_2d/`](examples/mp2rage_2d/) — two trains, the `SET` label that separates them,
   and the ratio that cancels the receive field.
+- [`examples/se_2d/`](examples/se_2d/) — a spin echo, the area balance that makes it one, and the
+  measurement that says the echo is a **T2** echo rather than a T2\* one. `Refocusing` came out of it.
+- [`examples/fse_2d/`](examples/fse_2d/) — the same composition at sixteen echoes and then
+  seventy-two: 4.3 minutes becomes 18 seconds, and what that costs is measured —
+  including a ghost that every arithmetic check passes through.
 
 Documentation: [`api_reference.md`](docs/api_reference.md) (every public name, executed by CI),
 [`architecture.md`](docs/architecture.md) (the layering, and what is deliberately absent),

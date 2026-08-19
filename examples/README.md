@@ -6,6 +6,8 @@
 | [`gre_2d/`](gre_2d/) | A complete spoiled 2D gradient echo, built three ways and then simulated and reconstructed. This is where most of `sc.modules` came from. |
 | [`mprage_2d/`](mprage_2d/) | An inversion-prepared segmented GRE: where `IRPrep` and `GRE2D.time_to_center_line` came from, and where an inversion time gets placed to the microsecond. Defines `MPRAGE2D` in its own notebook. |
 | [`mp2rage_2d/`](mp2rage_2d/) | One inversion, two trains, and the `SET` label that separates them — plus the ratio that cancels the receive field. Defines `MP2RAGE2D` in its own notebook. |
+| [`se_2d/`](se_2d/) | A spin echo, and the one rule that makes it one: between refocusing centres, area before the echo equals area after it. Where `Refocusing` and `CartesianLine(prephase=False)` came from. Defines `SE2D` in its own notebook. |
+| [`fse_2d/`](fse_2d/) | The same composition at 1, 16 and 72 echoes — TSE and HASTE — and what an echo train costs in blurring, ghosting and signal. Defines `FSE2D` in its own notebook. |
 
 ## `gre_2d/`
 
@@ -40,10 +42,44 @@ and a module with one consumer belongs where that consumer is.
 build notebooks and asserts against what they defined, so a tutorial that stays a tutorial still
 cannot drift silently.
 
+## `se_2d/` and `fse_2d/`
+
+| | |
+|---|---|
+| [`se_2d/01_build.ipynb`](se_2d/01_build.ipynb) | One interval placed by hand out of the shipped modules, then the whole shot, then `SE2D`. Every check is `sc.kspace` at the echo *sample*, signed, because `|k|` is symmetric and a k-space extent check passes on a mirrored image. **Needs nothing but `seqcraft`.** |
+| [`se_2d/02_simulate_and_reconstruct.ipynb`](se_2d/02_simulate_and_reconstruct.ipynb) | The one claim arithmetic cannot make: the spin echo recovers the phantom's **T2** and the same sweep without the 180 recovers **T2\***. Then the image, and which weighting the protocol landed on. **Needs `seqcraft[sim,recon]`.** |
+| [`fse_2d/01_build.ipynb`](fse_2d/01_build.ipynb) | `FSE2D`, turbo 1 → 16 → 72 on one instance, three orderings as data, the echo-band warning, and HASTE with `partial_fourier`. Four `.seq` files. **Needs nothing but `seqcraft`.** |
+| [`fse_2d/02_simulate_and_reconstruct.ipynb`](fse_2d/02_simulate_and_reconstruct.ipynb) | The echo envelope measured, the point-spread width per ordering, contrast and blurring as two separate knobs, and **the ghost a scattered table makes** — a periodic modulation of `ky`, which is a replica of the object rather than a blur. Then HASTE with POCS. **Everything is measured on one spin**: a ghost is a modulation of `ky`, and a point object's k-space *is* that modulation — 1.3 s per sequence instead of 173 s, and no reconstruction in between. **Needs `seqcraft[sim,recon]`**; runs in 16 s. |
+
+`SE2D` and `FSE2D` are **defined in those notebooks and do not ship**, for the same reason
+`MPRAGE2D` and `MP2RAGE2D` do not: one consumer each.
+[`tests/modules/test_se_notebooks.py`](../tests/modules/test_se_notebooks.py) runs both build
+notebooks, asserts k at every echo of every train length, and pins `FSE2D(echoes=1)` against what
+`se_2d/01` writes — event for event, which is what makes two example directories safe.
+
 ## Requirements
 
 Building needs only `seqcraft`. Simulating and reconstructing need `MRzeroCore`, `torch` and
 `sigpy` — `pip install "seqcraft[sim,recon]"`.
+
+### What a simulation notebook is allowed to cost
+
+MRzero's inner loop is dense complex linear algebra and it takes every core it is offered — sixteen
+threads by default on a 32-core machine. A draft of [`fse_2d/02`](fse_2d/02_simulate_and_reconstruct.ipynb)
+ran several 16-echo, 9-shot acquisitions in a single cell, minutes of saturated CPU with no output
+until it finished, and took a workstation down.
+
+So the two spin-echo `02` notebooks each set `SIM_THREADS` **before importing torch**, print their
+budget in the first cell, and keep anything expensive behind a named switch that is off by default.
+`se_2d/02` is 38 s. `fse_2d/02` is 15 s of measurement plus 4 minutes of images, and the images
+are the part behind the switch — every *number* in it is measured on a single spin, because a ghost
+is a modulation of `ky` and a point object's k-space is that modulation.
+
+If you add a simulation to an example, price it first: the cost is voxels × repetitions × states, and
+a 16-echo train has all three. Two of the three are not negotiable — the repetitions are the
+sequence, and dropping `max_state_count` from 200 to 32 is 5 % wrong because a CPMG train's
+stimulated pathways *are* the physics. The slab thickness was the one that turned out to be free, and
+only because it was measured rather than assumed.
 
 ## `data/`
 
