@@ -402,3 +402,20 @@ Two more that are worth writing for any module with a refocusing pulse:
 
 Use `calculate_kspacePP` as the oracle for the first, rather than writing your own integrator: it
 handles the refocusing conjugation itself.
+
+**And ask it two-sided, once there is more than one refocusing pulse.** That advice was written for
+a spiral, where "is k zero at the echo?" is the whole question. In an echo train it is necessary and
+not sufficient, because the conjugation makes the *next* echo depend on the balance around the pulse
+between them:
+
+> Between consecutive refocusing centres, each axis's gradient area **before** the echo equals its
+> area **after** it — measured to the RF's *effective centre*, which for an asymmetric pulse is
+> nowhere near the middle of anything.
+
+`Refocusing` owns that on the selection axis, because both its crushers straddle its own pulse; a
+composite owns it on every other axis, because the pair that has to balance there lives in two
+different blocks. The failure mode is worth knowing by sight: an imbalance of δ gives
+`k = δ, 0, δ, 0` down the train, because `k_n = -k_(n-1) + δ`. It is an **odd/even modulation**, it
+is invisible in a k-space extent check (|k| is symmetric), and against a symmetric phantom it
+produces a plausible image. `tests/modules/test_refocusing.py` asserts the failure mode as well as
+the fix, for exactly that reason.

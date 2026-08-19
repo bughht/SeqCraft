@@ -1,5 +1,167 @@
 # Changelog
 
+## Unreleased — `Refocusing`, and the one rule that makes a spin echo one
+
+Spin echo, turbo spin echo and HASTE, and the smallest thing they needed: **one new module and one
+boolean.**
+
+```python
+refoc = sc.modules.Refocusing(opts=opts, thickness_mm=6.25, crush_voxel_mm=5.0)
+line = sc.modules.CartesianLine(opts=opts, fov_mm=256.0, matrix=128,
+                                bandwidth_hz_px=200.0, prephase=False)
+
+assert refoc.area_to_center_per_m == refoc.area_from_center_per_m   # 600.000000 both
+assert refoc.time_to_center() == refoc().duration / 2               # exactly, to 0 ns
+```
+
+| | |
+|---|---|
+| `Refocusing` | a 180 and its crusher pair, as **one continuous waveform** on the selection axis, symmetric about the RF's effective centre in time *and* in area. `rf/`'s second membership value — `use == 'refocusing'` — which until now had no member |
+| `CartesianLine(prephase=False)` | drops the prephaser event and **nothing else**. In a CPMG train the readout's dephasing is half of a pair straddling a *refocusing pulse*, so there is no event of its own to cancel it |
+| `CartesianLine.area_to_echo_per_m` | new, and always available: what the readout accumulates by the echo. Minus the prephaser when there is one, and the number a crusher pair is balanced around when there is not |
+| `Refocusing.time_to_crusher()` | where the trailing crusher window begins, so the readout block starts **inside** the refocusing block |
+| everything else | unchanged. `Excitation`, `PhaseEncode`, `spoiler`, `GRE2DTR`, `GRE2D`, `IRPrep`, `design/` and `compiler/` are untouched |
+
+### The one rule
+
+A refocusing pulse conjugates k, so between consecutive refocusing centres **each axis's gradient
+area before the echo equals its area after it**. Everything in the design is one consequence of
+that, and the two worth writing down are the two the references get wrong.
+
+**"Equal-area crushers" means measured to the RF's *effective centre*, not the same trapezoid
+twice.** The selection plateau's own halves are unequal whenever the transmit dead time and the
+ringdown differ, or the pulse is asymmetric. On a 100 µs / 30 µs system that residual is 11.2 1/m —
+and since $k_n = -k_{n-1} + \delta$ it **alternates sign echo to echo**: the odd/even modulation an
+FSE is famous for, which reads as a hardware fault. `writeTSE.m` and `write_tse.py` avoid it only by
+setting their dead time and ringdown to the same 100 µs.
+
+**Two fixes, because they fix different halves.** The plateau is *symmetrised* about the effective
+centre (`time_to_center() == duration / 2`, which is what puts the echo at the midpoint between two
+pulses and what the stimulated-echo pathways depend on), and the crusher areas are then *solved by
+integration* rather than by formula. With a symmetrised plateau the solve returns two equal
+amplitudes — which is the point: it is then the check that says the symmetrisation worked, on a
+pulse shape nobody has tried.
+
+### Two sequences that deliberately did not become modules
+
+`SE2D` and `FSE2D` are written in `examples/se_2d/01_build.ipynb` and
+`examples/fse_2d/01_build.ipynb` **and stay there** — one consumer each, the same rule that kept
+`MPRAGE2D` and `MP2RAGE2D` out. `Refocusing` ships because two notebook pairs use it, and it is the
+obvious base for SE-EPI, diffusion and T2 preparation.
+`tests/modules/test_se_notebooks.py` runs both build notebooks, asserts k at every echo for
+`echoes` in `(1, 8, 16, 72)`, and pins `FSE2D(echoes=1)` against what `se_2d/01` writes — event for
+event, which is what makes two example directories safe.
+
+### Five things the extraction found
+
+**The excitation needs no change at all.** A first draft added `Excitation.build(rephase=False)` so
+the slice rephasing could be folded into the first crusher "as the references do". That was a
+consequence of measuring the crusher area from the *block edge* rather than from the *RF centre*:
+once `area_to_center_per_m` includes the selection plateau's own half — which it must, because that
+is where the conjugation happens — the first-interval condition on `z` becomes *net zero from the
+excitation's centre*, which is the ordinary rephaser.
+
+**The readout block starts at the refocusing block's trailing crusher, not after it.** The slice
+crusher, the phase-encode blip and the readout's own lobe all live in **one window on three axes** —
+the same coupling `GRE2DTR` resolves for its winder, moved one sequence over. Laying the two blocks
+end to end costs a measured **1.4 ms per echo, 13 %** of the minimum echo spacing, and 30 extra
+pulseq blocks per eight echoes. `time_to_crusher()` exists for that and nothing else.
+
+**The crusher belongs on the slice axis, and only there.** The two readout-axis lobes that bracket
+a readout are a *balance*, not a crusher: the conjugation cancels whatever they share, so their
+common area has no k-space consequence at all and is set to **zero** — an imperfect 180's FID is
+already dephased by three cycles across the slice. What is *not* optional is their **difference**,
+which is one half-dwell's worth of readout area (0.87 of one `dk` on the reference protocol), split
+`+skew` and `-skew`. `writeTSE.m` and `write_tse.py` do add a readout-axis crusher (`rSpoilFac`) and
+also drop the half-dwell term, which makes their two lobes identical at the price of a half-pixel
+image shift. `examples/se_2d/01` derives the difference from the readout's own knots, so partial
+Fourier and ramp sampling produce it too.
+
+**There are three minima on the echo spacing and one of them is not about timing.** The train, the
+first interval, and **`z` clearance under the ADC**: the next refocusing block's leading crusher may
+not start before the readout's trailing one, or the slice gradient is on while the ADC is open. That
+is signal loss rather than an illegal block, so it shows up in none of the k-space checks and the
+composite has to bound it explicitly. The train and the first interval cross between 250 and
+300 Hz/px, and above that the first interval binds.
+
+**`sc.compile` does not check RF amplitude at all**, and a 180 is where that first bites: peak B1
+scales with the flip angle, so a 2 ms sinc 180 at TBW 4 asks 130 % of a 20 µT `max_b1`.
+`Refocusing` refuses it with the duration that fixes it. `Excitation` has the same hole and is
+deliberately left alone — widening a new module's change to patch an old one is how a one-module
+change becomes five.
+
+### What the simulator could and could not settle
+
+`examples/se_2d/02` measures the headline: the spin echo recovers the phantom's **T2** — 80.0 and
+100.0 ms fitted against 80 and 100 — and the same sweep without the 180 recovers **T2\*** at 21.8
+and 28.6 ms. `examples/fse_2d/02` measures the point-spread width per ordering and separates
+contrast from blurring.
+
+**And it found a ghost that every arithmetic check in `01` passes through.** Shot 0 starts from
+thermal equilibrium and every later shot starts from whatever the last TR recovered to. With
+interleaved segmentation shot 0 owns *every eighth k-space line*, so that single difference is a
+periodic modulation of `ky` — and a periodic modulation is a **replica of the object**, at FOV/8.
+Nothing in `01` can see it: the k-space *positions* are exact to 10⁻⁷ 1/m, and it is the
+*amplitudes* that differ. It is absent from HASTE, because one shot cannot be inconsistent with
+anything, and that asymmetry is what identifies it.
+
+Measured on a **one-voxel** phantom, because a ghost is a modulation of `ky` and the k-space of a
+point object *is* that modulation: shot 0's lines come back **11.5 % brighter** than the other seven
+shots', and the FOV/8 replica sits at 0.0149 of the peak. One dummy shot takes those to **−1.8 %**
+and **0.0057**. `examples/fse_2d/01` therefore builds every multi-shot file with `DUMMY_SHOTS = 1`,
+and `02` reads the comb back off `ky` to confirm it. It is the same effect
+`examples/mprage_2d/02` found for a segmented GRE, one sequence over.
+
+It was also confirmed on the object -- **0.2313 against 0.0301**, a factor 7.7. The one-spin number
+is what a notebook can afford to *measure*, because it costs 1.3 s
+against 66 s and has none of the failure modes an image-space metric has: three separate attempts to
+read this ghost off a picture were wrong before one was right, first because ESPIRiT maps are ~0
+exactly where a replica lands, then because the object's own edge dominated the region, then because
+thermal noise at SNR 60 is the same size as the ghost.
+
+**And the measurement replaced a simulation that had to go.** An earlier draft of
+`examples/fse_2d/02` reconstructed five 16-echo, 9-shot acquisitions against a 128 x 128 x 4 phantom
+in a single cell -- 173 s of saturated CPU each, sixteen threads by default, eight minutes with no
+output until it finished. It took a 32-core workstation down three times. Peak memory was 1.2 GB, so
+it was load and not RAM; and cutting `max_state_count` was not available, because 200 -> 32 saves
+half the time and is 5 % wrong -- a CPMG train's stimulated pathways are the sequence.
+
+What made the images affordable was the slab: `gre_2d/02` uses four slices because a phantom one
+voxel thick returns exactly zero signal under a slice-select gradient, and **two** turns out to
+reproduce the four-slice replica to 4 % (0.0301 against 0.0289, ratio 7.7 against 7.8) for half the
+voxels. So `fse_2d/02` draws all three orderings in **4 minutes** at
+`SIM_THREADS = 4`, against eight at sixteen threads for fewer pictures -- 5.8x less work at a
+quarter the instantaneous load. Both `02` notebooks now set their thread count **before importing
+torch**, print their budget in the first cell, free each phase graph after use, and keep the
+expensive part behind a named switch.
+
+Two things are **named rather than worked around**. The `z` **crusher balance** is not simulable
+here: a slab four voxels thick has nothing for a slice gradient to dephase across within a voxel, so
+an unbalanced crusher simulates as perfectly fine and is wrong on a scanner — which is why it is
+asserted arithmetically, with the alternating failure mode as its own test. And MRzero's phase-graph
+model is **insensitive to the CPMG phase relation**: sweeping the refocusing phase from 0° to 90° at
+`B1 = 0.8` changes the echo magnitudes by 6 × 10⁻⁸. Both notebooks say so where a reader would
+otherwise assume coverage.
+
+### Measured
+
+| | |
+|---|---|
+| worst error in k at the echo, all three axes | **2.0 × 10⁻⁷ 1/m** over 8 and over 16 echoes, **6.0 × 10⁻⁸** over a 72-echo HASTE shot |
+| `Refocusing` time symmetry | **0 ns**; area to centre against area from centre, **600.000000** both |
+| refocusing pulse spacing uniformity | **0 ps**; echo displacement from the midpoint **+1.95 µs**, within one gradient raster |
+| minimum echo spacing, reference protocol at 200 Hz/px | **10.70 ms**, train-bound (train / first interval / ADC clearance = 10.684 / 9.320 / 10.616 ms) |
+| not sharing one crusher window across three axes | **+1.4 ms per echo, 13 %**, and 49 pulseq blocks instead of 19 |
+| plateau padding to symmetrise about the effective centre | **70 µs**, exactly the difference between the dead time and the ringdown |
+| pulseq blocks | **5** for a single-echo spin echo, **296** for 8 shots × 16 echoes, **293** for a 72-echo HASTE shot |
+| scan time, 128 lines | **4.3 min** at one echo per TR, **18 s** at sixteen with a run-in, **0.8 s** for HASTE |
+| shot-to-shot comb depth, interleaved | **+11.5 %** with no dummy shots, **-1.8 %** with one |
+| the FOV/8 replica it puts in the point spread | **0.0149** against **0.0057** |
+| `examples/fse_2d/02`, end to end | **4 min** at 4 threads with every image drawn, or **15 s** with `BRAIN_IMAGES = False`; the draft that crashed took ~8 min at 16 threads for less |
+| one-spin measurement against one brain image | **1.3 s** against **66 s**, same conclusion |
+
+---
+
 ## Unreleased — `IRPrep`, and an inversion time placed to the microsecond
 
 MPRAGE and MP2RAGE, and the smallest thing they needed: **one new module**, one new method, and one

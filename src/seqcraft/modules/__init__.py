@@ -22,6 +22,7 @@ The folders, and what each one means
     modules/
       spoiler.py           spoiler()          a function, not a Module
       rf/          excitation.py       Excitation
+                   refocusing.py       Refocusing
       preparation/ ir_prep.py          IRPrep
       encoding/    phase_encoding.py   PhaseEncode
       readout/     cartesian_line.py   CartesianLine
@@ -88,8 +89,10 @@ from .kernel.gre_2d_tr import GRE2DTR
 from .preparation.ir_prep import IRPrep
 from .readout.cartesian_line import CartesianLine
 from .rf.excitation import Excitation
+from .rf.refocusing import Refocusing
 from .spoiler import spoiler
 
 __all__ = [
-    'CartesianLine', 'Excitation', 'GRE2D', 'GRE2DTR', 'IRPrep', 'PhaseEncode', 'spoiler',
+    'CartesianLine', 'Excitation', 'GRE2D', 'GRE2DTR', 'IRPrep', 'PhaseEncode', 'Refocusing',
+    'spoiler',
 ]

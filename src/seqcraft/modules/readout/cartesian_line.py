@@ -37,6 +37,23 @@ free and generalises without a second derivation to the two cases where even the
 closed form stops holding: **ramp sampling**, where the ADC opens during the ramp, and **partial
 echo**, where the echo is not at the centre of the readout.  Hand-deriving each of those
 separately is how the ramp gets dropped from one of them.
+
+The prephaser is an argument rather than a second module
+--------------------------------------------------------
+``prephase=False`` drops the prephaser event and nothing else, which is what a **spin-echo** readout
+needs.  In a CPMG train the readout's dephasing is not cancelled by an event of its own: it is half
+of a pair that straddles a *refocusing pulse*, and the refocusing pulse's conjugation does the
+cancelling.  So there is no prephaser to design -- but everything else here is identical, down to
+the last microsecond: the dwell resolution and its raster snap, ``num_samples`` and
+``pre_echo_samples`` from `partial_fourier`, the amplitude ``dk / dwell``, the flat top rounded onto
+the gradient raster, the ADC-dead-time overrun fix, and the exact pre-echo area.  A sibling module
+would have been a second copy of all of that, kept in step by hand, so that the two could come to
+disagree about a dwell time.
+
+:attr:`~CartesianLine.area_to_echo_per_m` is the other half of the argument.  It is the *physics*
+number -- what the readout accumulates by the echo -- rather than the *event's* number, so it is
+what a prephaser cancels when there is one and what a symmetric crusher pair is balanced around when
+there is not.  Exposing it is what lets one module serve both.
 """
 
 from __future__ import annotations
@@ -83,9 +100,16 @@ class CartesianLine(Module):
     partial_fourier
         Fraction of the full k-space extent that is sampled, with the missing part taken off the
         **pre-echo** side.  ``1.0`` is a symmetric full echo.  ``0 < partial_fourier <= 1``.
+    prephase
+        ``False`` drops the prephaser event, leaving the readout gradient and its ADC starting at
+        zero.  That is the **spin-echo** readout: its dephasing is half of a pair straddling a
+        refocusing pulse, so there is no event of its own to cancel it and the caller places the
+        two lobes.  Nothing else moves -- see :attr:`area_to_echo_per_m`.
     prephaser_duration_s
         Lengthen the prephaser beyond its own minimum.  ``None`` is the minimum.  A composite
-        passes the winder maximum here; see :class:`~seqcraft.modules.GRE2DTR`.
+        passes the winder maximum here; see :class:`~seqcraft.modules.GRE2DTR`.  Passing it with
+        ``prephase=False`` raises, in the shape this library already uses for an argument that
+        cannot take effect.
     axis
         Logical gradient channel.
     tag
@@ -117,6 +141,18 @@ class CartesianLine(Module):
     96
     >>> round(pf.pre_echo_samples / pf.num_samples, 3)          # (2*pf - 1) / (2*pf) = 1/3
     0.333
+
+    ``prephase=False`` changes no designed number -- only which events come out:
+
+    >>> se = CartesianLine(opts=o, fov_mm=250.0, matrix=128, bandwidth_hz_px=250.0,
+    ...                    prephase=False)
+    >>> (se.dwell_s, se.num_samples, se.pre_echo_samples) == (
+    ...     ro.dwell_s, ro.num_samples, ro.pre_echo_samples)
+    True
+    >>> se()                                    # the readout gradient and its ADC, and that is all
+    LogicBlock(CartesianLine, 2 nodes, 4.06 ms)
+    >>> abs(se.area_to_echo_per_m + ro.prephaser_area_per_m) < 1e-9
+    True
 
     Notes
     -----
@@ -151,6 +187,7 @@ class CartesianLine(Module):
         bandwidth_hz_px: float | None = None,
         dwell_s: float | None = None,
         partial_fourier: float = 1.0,
+        prephase: bool = True,
         prephaser_duration_s: float | None = None,
         axis: str = 'x',
         tag: str | None = None,
@@ -159,6 +196,7 @@ class CartesianLine(Module):
         self.fov_mm = require_positive(fov_mm, 'fov_mm')
         self.matrix = int(matrix)
         self.axis = require_axis(axis)
+        self.prephase = bool(prephase)
         self.partial_fourier = require_range(partial_fourier, 'partial_fourier', low=0.0, high=1.0)
         if self.matrix < 1:
             msg = format_error(f'matrix must be at least 1, got {self.matrix}.',
@@ -188,31 +226,50 @@ class CartesianLine(Module):
         self.gx, self.adc = self._design_readout()
         #: Seconds from the readout gradient's own start to k = 0.
         self._echo_in_gx = float(self.adc.delay) + (self.pre_echo_samples + 0.5) * self.dwell_s
-        self._prephaser = self._design_prephaser(prephaser_duration_s)
+        self._prephaser = (
+            self._design_prephaser(prephaser_duration_s) if self.prephase
+            else self._refuse_prephaser_duration(prephaser_duration_s)
+        )
 
     # ------------------------------------------------------------------ what it knows
     @property
+    def area_to_echo_per_m(self) -> float:
+        """
+        What the **readout gradient** has accumulated by the echo, 1/m.  Always available.
+
+        The physics number rather than an event's: it is what the prephaser cancels when there is
+        one (``prephaser_area_per_m == -area_to_echo_per_m``), and it is the number a symmetric
+        crusher pair straddling a refocusing pulse is balanced around when there is not.  Exposing
+        it is what lets one module serve a gradient echo and a spin echo.
+
+        Integrated from the readout's own knots, so partial Fourier, ramp sampling and the
+        half-dwell sample offset all come out of it without a second derivation.
+        """
+        return area_until(self.gx, self._echo_in_gx)
+
+    @property
     def prephaser_duration_s(self) -> float:
         """Seconds the prephaser occupies -- its own minimum unless one was requested."""
-        return float(pp.calc_duration(self._prephaser))
+        return float(pp.calc_duration(self._require_prephaser()))
 
     @property
     def prephaser_area_per_m(self) -> float:
         """
-        The prephaser's area, 1/m -- negative, and exactly minus what the readout accumulates.
+        The prephaser's area, 1/m -- negative, and exactly minus :attr:`area_to_echo_per_m`.
 
         Exposed so a test can assert that identity without reaching into the block.
         """
-        return float(self._prephaser.area)
+        return float(self._require_prephaser().area)
 
     def time_to_echo(self) -> float:
         """
         Seconds from the start of this module's block to k = 0.
 
-        Not measurable from the tree: the block knows when its events play, not which instant
-        among them is the echo.
+        Measured from the readout gradient's own start when ``prephase=False``, because that is
+        then where the block begins.  Not measurable from the tree either way: the block knows when
+        its events play, not which instant among them is the echo.
         """
-        return self.prephaser_duration_s + self._echo_in_gx
+        return (self.prephaser_duration_s if self.prephase else 0.0) + self._echo_in_gx
 
     # ----------------------------------------------------------------------- assembly
     def build(
@@ -232,8 +289,12 @@ class CartesianLine(Module):
         offset_mm
             Shift the FOV along `axis`, by demodulating at a shifted frequency.
         """
-        start = self.prephaser_duration_s
-        out = LogicBlock().add(0.0, self._prephaser).add(start, self.gx)
+        out = LogicBlock()
+        start = 0.0
+        if self.prephase:
+            start = self.prephaser_duration_s
+            out.add(0.0, self._prephaser)
+        out.add(start, self.gx)
         if acquire:
             out.add(start, self._adc_for(float(offset_mm) / 1e3, float(np.deg2rad(phase_deg))))
         return out
@@ -325,9 +386,40 @@ class CartesianLine(Module):
             )
         return gx, adc
 
+    def _require_prephaser(self) -> Event:
+        """Return the prephaser, or refuse a question about an event that was not designed."""
+        if self._prephaser is None:
+            msg = format_error(
+                'this readout has no prephaser, because prephase=False.',
+                {'prephase': False, 'area_to_echo_per_m': self.area_to_echo_per_m},
+                [
+                    'read area_to_echo_per_m instead: it is what the readout accumulates by the '
+                    'echo, which is the number a crusher pair is balanced around',
+                    'or pass prephase=True for a readout that cancels its own dephasing',
+                ],
+            )
+            raise ConfigurationError(msg)
+        return self._prephaser
+
+    def _refuse_prephaser_duration(self, requested_s: float | None) -> None:
+        """Refuse a prephaser duration for a prephaser that will not exist, and return no event."""
+        if requested_s is not None:
+            msg = format_error(
+                f'prephaser_duration_s = {requested_s * 1e6:.1f} us was passed with '
+                f'prephase=False, so it cannot take effect.',
+                {'prephase': False, 'prephaser_duration_s': requested_s},
+                [
+                    'drop prephaser_duration_s: with prephase=False there is no prephaser to '
+                    'stretch',
+                    'or pass prephase=True, whose winder duration it then sets',
+                ],
+            )
+            raise ConfigurationError(msg)
+        return None
+
     def _design_prephaser(self, requested_s: float | None) -> Event:
         """Return the prephaser that puts k = 0 at the echo, stretched if one was requested."""
-        area = -area_until(self.gx, self._echo_in_gx)
+        area = -self.area_to_echo_per_m
         shortest = pp.make_trapezoid(channel=self.axis, area=area, system=self.opts)
         self._min_prephaser_duration_s = float(pp.calc_duration(shortest))
         if requested_s is None:

@@ -978,8 +978,9 @@ Re-exported **flat**, so no import path names a folder:
 | Name | What |
 |---|---|
 | `Excitation` | an RF pulse and, when selective, its selection gradient and rephaser |
+| `Refocusing` | a 180 and its crusher pair, as one waveform symmetric about the pulse's effective centre in time *and* area |
 | `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
-| `CartesianLine` | prephaser, readout gradient and ADC as one design |
+| `CartesianLine` | prephaser, readout gradient and ADC as one design — `prephase=False` drops the prephaser, which is the spin-echo readout |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
@@ -1012,7 +1013,10 @@ the questions a tree of events cannot:
 |---|---|
 | `Excitation.time_to_center()` | to the RF's effective centre — for a minimum-phase pulse, nowhere near the midpoint |
 | `Excitation.time_to_rephaser()` | where the slice rephaser begins, so another axis can start there |
+| `Refocusing.time_to_center()` | to the **conjugation instant** — where `calculate_kspacePP` flips the sign of k, and what every echo time in a spin echo is measured from |
+| `Refocusing.time_to_crusher()` | where the trailing crusher window begins, so the readout block can start *inside* the refocusing block. Worth 1.4 ms per echo |
 | `CartesianLine.time_to_echo()` | to k = 0, which is not the middle of the ADC window |
+| `CartesianLine.area_to_echo_per_m` | what the readout accumulates by the echo — minus the prephaser when there is one, and the number a spin echo's crusher pair is balanced around when there is not |
 | `IRPrep.time_to_center()` | to the inversion's effective centre — 5.1 ms into a 10 ms hyperbolic secant, and what an inversion time is measured from |
 | `GRE2D.time_to_center_line(lines=…, dummies=…)` | to the readout of `center_line`, which depends on the ordering and on the dummy count, so it takes the same arguments `build` does |
 | `GRE2DTR.min_te_s` / `min_tr_s` | feasibility, known at design time; a shorter request raises |
@@ -1039,6 +1043,32 @@ the readout's area is left on `kx` — half a cycle across one voxel. Naming `'y
 *beside* the rewinder rather than instead of it, so the net is a fixed dephasing rather than one
 that depends on the line just acquired. Cycles are counted per axis across that axis's own voxel,
 which `GRE2DTR.voxel_mm(axis)` answers.
+
+**A refocusing pulse conjugates k, and that is a third coupling.** Between consecutive refocusing
+centres each axis's gradient area *before* the echo must equal its area *after* it, and the balance
+point is the RF's **effective centre** rather than the middle of anything. `Refocusing` owns the
+selection axis — both its crushers straddle its own pulse, so it symmetrises the plateau about the
+centre and then solves the two amplitudes by integration. It cannot own the readout axis: the lobe
+after readout *n* and the lobe before readout *n+1* are the pair that has to balance, and they live
+in two different readout blocks, so the caller places those and `area_to_echo_per_m` is the number
+it balances them around.
+
+**Those readout-axis lobes are a balance, not a crusher.** Their *common* area is cancelled by the
+conjugation, so it has no k-space consequence and `examples/se_2d/` sets it to zero — the crusher
+belongs on the slice axis, where `Refocusing` puts it. Their *difference* is `gx.area − 2 ·
+area_to_echo_per_m`, one half-dwell's worth of readout area, and that part is not optional.
+
+```python
+refoc = sc.modules.Refocusing(opts=opts, thickness_mm=6.25, crush_voxel_mm=5.0)
+line = sc.modules.CartesianLine(opts=opts, fov_mm=256.0, matrix=128,
+                                bandwidth_hz_px=200.0, prephase=False)
+
+assert abs(refoc.area_to_center_per_m - refoc.area_from_center_per_m) < 1e-9
+assert abs(refoc.time_to_center() - refoc().duration / 2) < 1e-12   # the time half of it
+skew = (float(line.gx.area) - 2 * line.area_to_echo_per_m) / 2      # the two lobes differ by 2*skew
+crush_s = max(refoc.min_crush_duration_s,                           # one window, three axes
+              sc.modules.PhaseEncode(opts=opts, fov_mm=256.0, matrix=128).min_duration_s)
+```
 
 **The receiver is phase-locked to the transmitter.** `GRE2DTR` gives the same `phase_deg` to the
 excitation and to the readout. Moving one and not the other writes the RF-spoiling schedule's
@@ -1372,6 +1402,7 @@ at import.
 | `PulseqReadyBlock` | `compiler.model` | class |
 | `Raster` | `design.timing` | class |
 | `RasterError` | `design.timing` | exception |
+| `Refocusing` | `modules` | class |
 | `SeqCraftError` | `errors` | exception |
 | `SeqCraftWarning` | `errors` | warning |
 | `TICKS_PER_SECOND` | `design.timing` | constant |
