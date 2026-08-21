@@ -33,7 +33,14 @@ EXAMPLES = Path(__file__).resolve().parents[2] / 'examples'
 
 @pytest.fixture(scope='module')
 def ph():
-    """Import ``examples/phantom.py`` by path -- it is not on the package path, deliberately."""
+    """
+    Import ``examples/phantom.py`` by path -- it is not on the package path, deliberately.
+
+    The skip is here rather than at :func:`fetched` because ``phantom.py`` imports ``torch`` at
+    module scope, so the import itself is what the fast tier cannot do.  ``MRzeroCore`` it imports
+    lazily, inside the one function that needs it, which is why that guard stays where it is.
+    """
+    pytest.importorskip('torch', reason='needs seqcraft[sim]')
     spec = importlib.util.spec_from_file_location('example_phantom', EXAMPLES / 'phantom.py')
     if spec is None or spec.loader is None:            # pragma: no cover
         pytest.skip('examples/phantom.py is not present')
