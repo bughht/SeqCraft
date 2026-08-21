@@ -981,6 +981,7 @@ Re-exported **flat**, so no import path names a folder:
 | `Refocusing` | a 180 and its crusher pair, as one waveform symmetric about the pulse's effective centre in time *and* area |
 | `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
 | `CartesianLine` | prephaser, readout gradient and ADC as one design — `prephase=False` drops the prephaser, which is the spin-echo readout |
+| `EPI2D` | the whole echo-planar train: prephasers, alternating lobes, blips on the zero crossings, one ADC per echo, and the labels a reconstruction reads back |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
@@ -1017,6 +1018,10 @@ the questions a tree of events cannot:
 | `Refocusing.time_to_crusher()` | where the trailing crusher window begins, so the readout block can start *inside* the refocusing block. Worth 1.4 ms per echo |
 | `CartesianLine.time_to_echo()` | to k = 0, which is not the middle of the ADC window |
 | `CartesianLine.area_to_echo_per_m` | what the readout accumulates by the echo — minus the prephaser when there is one, and the number a spin echo's crusher pair is balanced around when there is not |
+| `EPI2D.echo_sample(echo)` | **which ADC sample** of that echo carries k = 0 — `pre_echo_samples` forward, its mirror reverse. One line of arithmetic whose wrong branch is an N/2 ghost |
+| `EPI2D.polarity(echo)` | `+1` or `-1`, counted across the whole train. `echo` is an **offset from the first imaging echo**, so `-navigator_echoes … -1` are the navigators and `range(-navigator_echoes, len(lines))` walks the file's readouts in order |
+| `EPI2D.k_read_per_m` | where a forward lobe's samples land in k, per sample. With ramp sampling that is not `dk` times an index, and nothing outside the module can derive it |
+| `EPI2D.time_to_center_line(lines)` | to the acquisition of `center_line`, which the ordering decides. **This is TE**, and it is not the first echo |
 | `IRPrep.time_to_center()` | to the inversion's effective centre — 5.1 ms into a 10 ms hyperbolic secant, and what an inversion time is measured from |
 | `GRE2D.time_to_center_line(lines=…, dummies=…)` | to the readout of `center_line`, which depends on the ordering and on the dummy count, so it takes the same arguments `build` does |
 | `GRE2DTR.min_te_s` / `min_tr_s` | feasibility, known at design time; a shorter request raises |
@@ -1093,6 +1098,89 @@ duplicate indices raise; a pattern omitting the centre of k-space warns.
 acquired line's gradients with `acquire=False` — and it describes what the acquisition does, exactly
 as `lines` does. That is also what lets `time_to_center_line` mirror `build` instead of reading one
 of its two terms off `self`.
+
+## The echo-planar train, and the two rules that make it one
+
+`EPI2D` is the same idea as `CartesianLine` at a different scale: not one line but the whole of
+k-space in one shot, so the ordering lives *inside* the readout and the lobes alternate sign.
+
+```python
+epi = sc.modules.EPI2D(opts=opts, fov_mm=220.0, matrix=(128, 128), dwell_s=2.5e-6)
+shot = epi(lines=range(128), segment=0)                    # one shot, in acquisition order
+
+assert abs(2 * epi.guard_s + epi.num_samples * epi.dwell_s - epi.echo_spacing_s) < 1e-12
+assert epi.k_read_per_m[epi.echo_sample(0)] == 0.0         # k = 0 is a sample, not a moment
+assert epi.polarity(1) == -1                               # so echo 1 is k_read_per_m[::-1]
+```
+
+**Rule 1 — the sampling window is exactly centred in its lobe**, `T = 2*guard + N*dwell`, with
+equality. A trapezoid is symmetric about its own midpoint, so only a centred window makes sample
+`i` of a forward lobe and sample `N-1-i` of the reverse lobe that follows it land on the *same* k.
+Write the lobe the way a *line* is written — flat top rounded up onto the gradient raster, slack
+left after the last sample — and the two polarities sample grids up to half a raster apart. That is
+an N/2 ghost the sequence made itself, it is invisible in the block structure, and it is
+indistinguishable from the artefact an EPI notebook exists to measure.
+
+**Rule 2 — the blip is centred on the seam, and `sc.barrier()` is forced there.** The seam is where
+the readout gradient passes through zero: the lowest simultaneous demand on the amplifier, and the
+only placement needing half a blip of guard rather than a whole one. But a centred blip *straddles*
+the boundary the compiler has to cut between two ADCs, and no instant in that gap cuts nothing —
+left to choose, the compiler takes the midpoint and splits **every readout lobe in the train** into
+arbitrary gradients. That compiles, passes every k-space check and simulates correctly; the only
+report of it is a `merge` warning naming the readout axis. `EPI2D` is the first module to emit a
+barrier, and [§1.2](#12-flatten-span-barrier) is what it emits.
+
+The consequence to expect, not to fix: each block then carries the trailing half of one blip and
+the leading half of the next, so the compiler sums them and says so — one `merge` warning on the
+**blip** axis per compile.
+
+Four properties are the reconstruction's whole interface, and none is derivable from the file's
+geometry alone:
+
+| | |
+|---|---|
+| `k_read_per_m` | what to grid from — non-uniform under `ramp_sampling`, and the same for every echo up to the reversal |
+| `pre_echo_samples`, `echo_sample(echo)` | where k = 0 sits in the window, forward and reverse |
+| `polarity(echo)`, and the `REV` label | which echoes to reverse. Read off the file rather than recomputed, which is why the label is emitted |
+| `oversampling` | why the flat top is sampled densely enough to regrid at all. It costs no echo spacing: twice the samples at half the dwell is the same sampling duration, so the lobe does not move |
+
+Parallel imaging adds **no argument to the readout**: `blip_lines=R` is the acceleration and
+`lines` is the table. The one addition is `reference=`, which emits the `REF`/`IMA` pair, because a
+reconstruction has to tell a calibration shot from an imaging one and counting shots is how it
+comes to guess wrong.
+
+**The calibration data is not an EPI.** A table of length one is a Cartesian gradient echo that
+happens to use the EPI's own readout lobe: same gradient, same ADC, same ramp sampling, so one
+regridding operator serves both — but no train, no blips, no alternating polarity, and no
+`ky`-versus-time ramp for GRAPPA to mistake for receive sensitivity.
+
+```python
+r = 3
+accel = sc.modules.EPI2D(opts=opts, fov_mm=220.0, matrix=(128, 128), dwell_s=2.5e-6,
+                         blip_lines=r)
+imaging = accel(lines=range(accel.center_line % r, 128, r), segment=0, reference=False)
+
+first = accel.center_line - 16                              # a 32-line calibration band
+calib = [accel(lines=[line], segment=n, reference=True,     # one line per excitation
+               phase_deg=0.5 * 117.0 * n * (n + 1))         # ...and it is a spoiled scan
+         for n, line in enumerate(range(first, first + 32))]
+```
+
+`lines=range(center_line % r, ny, r)` rather than `range(0, ny, r)`: `range(0, 128, 3)` does not
+contain 64, and a scan that never acquires the centre of k-space has no echo time —
+`time_to_center_line` refuses it rather than returning one.
+
+**`phase_deg` is the receiver phase, and it is not optional in a spoiled sequence.** Whatever
+carrier phase the excitation was given, every ADC of the train it opens has to demodulate at — one
+train is one excitation, so one number covers all of its echoes. Leaving it at zero while the
+transmitter runs a spoiling schedule writes that schedule's quadratic phase into the *shot*, which
+under segmentation is a different constant per shot: a period-`shots` modulation of `ky`, and a
+replica at `Ny/shots`. `CartesianLine.build` has always taken this argument; `EPI2D.build` takes it
+for the same reason.
+
+`examples/gre_epi_2d/02` §7 prices the separately acquired calibration band against a
+self-calibration no real scan can have, and §8 decomposes a segmented EPI's replica at `Ny/shots`
+over the TR, the run-in and the spoiling schedule.
 
 ---
 
@@ -1376,6 +1464,7 @@ at import.
 | `ConfigurationError` | `errors` | exception |
 | `ContractViolation` | `compiler.verification` | class |
 | `DefinitionConflict` | `compiler.errors` | exception |
+| `EPI2D` | `modules` | class |
 | `EPS` | `design.timing` | constant |
 | `EXCLUSIVE_KINDS` | `compiler.model` | constant |
 | `Event` | `design.events` | type alias |

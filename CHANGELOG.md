@@ -1,5 +1,213 @@
 # Changelog
 
+## Unreleased — `EPI2D`, and the two rules that stop an EPI ghosting on its own
+
+The whole of k-space in one shot, as **one new module and one promoted helper.**
+
+```python
+epi = sc.modules.EPI2D(opts=opts, fov_mm=220.0, matrix=(128, 128), dwell_s=2.5e-6)
+
+assert 2 * epi.guard_s + epi.num_samples * epi.dwell_s == epi.echo_spacing_s   # exactly
+assert epi.k_read_per_m[epi.echo_sample(0)] == 0.0        # k = 0 is a sample, not a moment
+assert epi.polarity(1) == -1                              # so echo 1 is k_read_per_m[::-1]
+```
+
+| | |
+|---|---|
+| `EPI2D` | prephasers, alternating readout lobes, blips on the zero crossings, one ADC per echo, the barrier that keeps the lobes whole, and the `LIN`/`REV`/`NAV`/`SEG`/`REF`/`IMA` labels a reconstruction reads back. `readout/`, because it contains ADCs and no RF |
+| `require_pair` | `_pair`, promoted out of `kernel/gre_2d_tr.py` into `modules/_support.py`. It now has two callers in **different folders**, which is the argument `shift_slice` already makes there. `GRE2DTR` imports it and its output is byte-identical |
+| everything else | unchanged. `design/`, `compiler/`, `Excitation`, `Refocusing`, `PhaseEncode`, `CartesianLine`, `spoiler`, `IRPrep`, `GRE2DTR` and `GRE2D` are untouched |
+
+### The two rules
+
+**Rule 1 — the sampling window is exactly centred in its lobe**: `T = 2*guard + N*dwell`, with
+equality. A trapezoid is symmetric about its own midpoint, so only a centred window makes sample
+`i` of a forward lobe and sample `N-1-i` of the reverse lobe land on the *same* k. Write the lobe
+the way `CartesianLine` correctly writes a **line** — flat top rounded up onto the gradient raster,
+slack after the last sample — and the two polarities sample grids up to half a raster apart. That
+is an N/2 ghost the sequence made itself, and no build-notebook check would catch it.
+
+**Rule 2 — the blip is centred on the seam, and `sc.barrier()` is forced there.** The seam is where
+the readout gradient passes through zero: the least the two axes ask of the amplifier together, and
+the only placement needing half a blip of guard rather than a whole one — 700 µs of echo spacing
+against 760. But a centred blip *straddles* the boundary the compiler has to cut between two ADCs,
+and no instant in that gap cuts nothing. Left to choose, the compiler takes the midpoint and splits
+**every readout lobe in the train** into arbitrary gradients: 127 of 129 `gx` events, on a sequence
+that still compiles, still passes every k-space check and still simulates correctly. The only
+report of it is a `merge` warning naming the readout axis. `EPI2D` is the first module in the
+library to emit a barrier, and it is deliberate.
+
+What the barrier costs is one `merge` warning on the **blip** axis per compile — the two halves of
+each split blip summed back together, reported instead of hidden. `FSE2D` already produces 71 of
+the same kind.
+
+### Three things that are arguments, and one that is not
+
+`oversampling` defaults to **2** and costs no echo spacing at all: twice the samples at half the
+dwell is the same sampling duration, so the lobe, the guard, the peak gradient and the bandwidth
+per reconstructed pixel do not move. What it buys is the sample *spacing* — at `oversampling=1` a
+ramp-sampled flat top leaves gaps above one reconstruction `dk`, so the readout does not sample the
+grid it is reconstructed onto and no interpolator can recover what was never measured.
+
+`ramp_sampling` is not a bandwidth trick: it is 880 µs of echo spacing against 700 at the same
+nominal rate, bought with a higher peak gradient and paid for with a non-uniform `k_read_per_m`.
+
+`blip_lines` **prices an ordering before it is built** — 700 µs at one line and half as much again
+at the 126 a centric single shot steps — which is information no table of integers carries on its
+own.
+
+And parallel imaging adds **nothing** to the readout. `blip_lines=R` is the acceleration and `lines`
+is the table, both of which already exist for their own reasons. The single addition is
+`reference=`, which emits the `REF`/`IMA` pair, because a reconstruction has to tell a calibration
+shot from an imaging one and counting shots is how it comes to guess wrong.
+
+What the calibration band is **not** is more EPI shots. A table of length one is a Cartesian
+gradient echo on the EPI’s own readout lobe -- same gradient, same ADC, same ramp sampling, so one
+regridding operator serves both, and no train, no blips, no alternating polarity and no
+`ky`-versus-time ramp for GRAPPA to mistake for receive sensitivity. Because it *is* a Cartesian
+gradient echo it is written as one: a small flip, the shortest echo time the lobe allows, and RF
+spoiling. `gre_epi_2d/02` §7 prices it against a self-calibration taken from the fully sampled
+data's own centre -- the ceiling no acquisition can reach -- and it costs 1.18x that at R = 3.
+The term that does *not* appear is the one the argument predicted: acquiring the band at 60 Hz
+costs 1.00x, because displacement follows the time from excitation and one lobe is 0.04 px where
+the R = 3 train is 1.9.
+
+### `EPI2D.build` takes `phase_deg`, which it should have had from the start
+
+`CartesianLine.build` has always taken a receiver phase, and its docstring has always said it is
+not optional in a spoiled sequence. `EPI2D.build` did not take one at all, so a spoiled EPI could
+not be written: the transmitter would run a schedule the receiver knew nothing about, and that
+schedule's quadratic phase would land in `ky` rather than in the carrier. One number reaches every
+ADC of the train -- navigators included -- because one train is one excitation.
+
+Found the way the other two below were: by building a **segmented** acquisition and simulating it.
+Four interleaved shots put consecutive `ky` lines in different shots, so anything that differs
+between shots is a period-4 modulation of `ky`, which is a replica of the object at `Ny/4` -- and
+it reads as an under-sampling artefact. On a **shimmed** brain, with the ordering, the off-resonance
+and the echo time all held fixed, `gre_epi_2d/02` §8 measures that replica across three files:
+
+| file | TR | run-in | RF spoiling | replica at `Ny/4` |
+|---|---|---|---|---|
+| `gre_epi_4shot_naive` | 200 ms | 1 shot | none | 0.1499 |
+| `gre_epi_4shot_tr1s` | 1 s | 1 shot | none | 0.0377 |
+| `gre_epi_4shot` | 1 s | 2 shots | 117° | 0.0156 |
+
+The mechanism is one number. A perfectly spoiled 90° excitation reaches its steady state in one TR
+whatever the TR is, so the transient is entirely what the gradient spoiler fails to destroy, and
+that is `exp(-TR/T2)`: **8.2%** at 200 ms against 4e-6 at 1 s. Hence the ordering of the table --
+the TR is worth 4.0x and the run-in the rest, for 9.6x in total.
+
+RF spoiling is therefore worth nothing measurable *at a 1 s TR*, and it is in the sequence because
+it is correct and because at the 200 ms TR of a real segmented protocol it is not optional. Only
+that third row is the module's; the other two are the notebook's, and this one could not have been
+fixed in the notebook at all.
+
+### Two refusals that were not refusals
+
+Both found by using the module rather than by reading it, which is the argument for the notebooks
+being part of the change rather than documentation of it.
+
+**An over-limit readout amplitude escaped as pypulseq's exception.** `_check_hardware` ran *after*
+the lobe was built, and `pp.make_trapezoid` refuses an over-limit amplitude first — with
+`ValueError: Amplitude violation (133%)` and nothing else: no bandwidth, no field of view, no note
+that ramp sampling puts the peak above the nominal `dk/dwell`, and no way to tell which of the
+module's several trapezoids raised it. The check now runs on the amplitude *before* each build, so
+the refusal is the module's own and carries its remedies. Surfaced by moving the examples to a
+128 matrix, where the amplitude binds before the ramps do.
+
+**A navigator echo could not be addressed at all.** `polarity`, `echo_sample` and `time_to_echo`
+refused every negative index, but a reconstruction of a navigated shot needs exactly those: it
+regrids the navigator readouts, which needs their polarity. `echo` is now an offset from the first
+imaging echo, so `-navigator_echoes … -1` are the navigators and a reconstruction can write
+`range(-navigator_echoes, len(lines))` to get the file's readouts in order. `time_to_echo` needed
+more than a relaxed bound — a navigator is **not** `echo * echo_spacing_s` before imaging echo
+zero, because the blip-axis prephaser plays between them, and that offset is the reason it is a
+method and not a formula. Measured at 0 ps across the whole train.
+
+### The four notebooks, and the measurement each one is for
+
+`GREEPI2D` and `SEEPI2D` are written in `examples/gre_epi_2d/01_build.ipynb` and
+`examples/se_epi_2d/01_build.ipynb` **and stay there** — one consumer each, the same rule that kept
+`SE2D` and `FSE2D` out.
+
+`gre_epi_2d/01` builds both rules the **wrong** way as well as the right way, because both failures
+compile: dropping the barrier turns 63 of 65 `gx` events into arbitrary gradients, and letting the
+blip end at the seam costs 570 µs of echo spacing against 510. It also prints `sc.pns` against
+`sc.hardware.synthetic_hardware()` at 130, 150 and 180 T/m/s — the slew rate this family runs at is
+what makes ramp sampling and partial echo build *together*, and it costs 19 % more predicted
+stimulation.
+
+`gre_epi_2d/02` measures the regridding operator against **exact** k-space and finds the answer is
+`scipy.interpolate.CubicSpline` materialised as a matrix — it reproduces scipy to 3.1e-15 and
+applies 18× faster because it does not depend on the data. Before that it measures the question
+that comes first: at `oversampling=1` every interpolator fails, including on the band-limited object
+the least-squares sinc is supposed to be optimal for. Then off-resonance against a `B0 = 0` control
+(2 px at 60 Hz, predicted 1.96), the navigator correction and the Fourier **dual** of it that does
+nothing at all, and interleaved against blocked at the same lines and the same shots — **0.059
+against 0.152**, from the ordering alone.
+
+`se_epi_2d/02` is the one worth reading for the result that is not what the name suggests: **a spin
+echo does not fix EPI distortion.** Same shift, same prediction, same ghost as the gradient echo at
+the same echo spacing, because the pulse refocuses at one instant and the distortion accumulates
+between echoes. What it *does* fix is the envelope: 4.3× the signal on the lines that carry the
+contrast, and half the excess point-spread width — measured against a **flat-envelope floor**,
+because a finite window blurs on its own and without that row neither claim could be sized.
+
+And since only a shorter train touches the distortion, §5 shortens one: the same 128 lines at the
+same echo time, in one, two and four **interleaved shots**. The train falls 89.6 → 46.1 → 23.7 ms
+and the residual against the shimmed image falls 0.127 → 0.073 → 0.047 with it. That is the train
+an `R = 4` acceleration would buy, without a calibration band, a kernel or an unfolding residual --
+affordable here precisely because a spin-echo TR is long for reasons that have nothing to do with
+EPI. What segmentation *does* cost is that the shots have to agree, and the replica at `Ny/S` that
+measures whether they do is 0.021 at two shots and 0.022 at four, against the run-in every file in
+the notebook now carries.
+
+**All four files are written at one echo time**, and both EPI notebooks now check that invariant and
+print the residual spread -- 7.50 us across nine files in `gre_epi_2d`, 0.00 across four in
+`se_epi_2d`. Every figure that had grown a per-family grey scale is back to one scale throughout.
+At one T2 of echo time a contrast difference between two panels dwarfs anything the acquisition
+does, and a figure that shares a ceiling across panels that do not share a contrast is one that
+lies.
+
+### The examples share one phantom, and one field map that is not a formula
+
+`examples/phantom.py` is new and is not a module of the library: it is the BrainWeb slab every 2D
+example simulates against, prepared once. Five notebooks had grown five copies of the same twenty
+lines and they had drifted — two download URLs, two spellings of one slice range. The parameters
+stay in the notebooks, because a slice count with a reason attached is a choice; the preparation
+does not.
+
+`field_hz` hands back **the phantom's own B0 map**, and the interesting part is what that map
+turns out to be. `subject05.npz` carries PD, T1, T2, T2' and D and **no `B0_map`**; MRzero's loader
+notices and calls its own `generate_B0_B1`, whose comment reads *"generate a somewhat plausible B0
+and B1 map, visually fitted"*. Two Lorentzians, demeaned over the proton density. So it arrives
+centred on zero -- nothing needs to shim it -- and it is analytic rather than measured, which the
+EPI notebook says out loud before showing a distortion figure, because the file name invites the
+opposite assumption.
+
+It spans about -11 to +45 Hz, which at 128 lines and a 700 us echo spacing is -1 to +4 pixels of
+displacement: real, mild, and the same field the other five notebooks run against, which is what
+makes their numbers and the EPI ones comparable.
+
+A first version of this module synthesised its own map instead -- a susceptibility volume with a
+frontal sinus in it, through the dipole kernel, shimmed to second order, plus a skull shell and a
+smoothing term to cover for BrainWeb being a brain in a vacuum. It produced a stronger and more
+interesting picture and it was **~150 lines of physics nobody asked for**, sitting beside a map the
+phantom already had and every other example already used. It is gone; `field_hz` is four lines.
+
+**Orientation is the other thing in it, and it took three corrections to get right.** The phantom
+is indexed `[x, y]` with **x left-right and y anterior-posterior, anterior at high y** — read off
+the anatomy (the cerebellum and the splenium sit at low `y`; the inferior slices sit ten voxels
+posterior of the brain's centroid) rather than assumed. A reconstruction is `image[ky, kx]`, so it
+needs no transform and a *map* needs one, which is `same_frame`. And every example draws with
+`origin='lower'`, without which the frontal lobe comes out at the bottom.
+
+Getting the first of those backwards is not a cosmetic error: it placed the frontal sinus against
+one ear, which showed up as a field map that looked asymmetric rather than as a mistake in a
+coordinate. `tests/examples/test_phantom.py` now pins the anterior direction, the midline and the
+transpose, because nothing else does — notebooks are not run by the fast test tier, and a phantom
+that turns sideways makes every number in them wrong without making any of them fail.
+
 ## Unreleased — `Refocusing`, and the one rule that makes a spin echo one
 
 Spin echo, turbo spin echo and HASTE, and the smallest thing they needed: **one new module and one

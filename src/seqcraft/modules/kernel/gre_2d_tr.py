@@ -79,7 +79,7 @@ from ...design.events import AXES
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
-from .._support import ceil_raster, require_axis, require_positive
+from .._support import ceil_raster, require_axis, require_pair, require_positive
 from ..encoding.phase_encoding import PhaseEncode
 from ..readout.cartesian_line import CartesianLine
 from ..rf.excitation import Excitation
@@ -199,8 +199,8 @@ class GRE2DTR(Module):
         tag: str | None = None,
     ) -> None:
         super().__init__(opts=opts, tag=tag)
-        fov_x, fov_y = _pair(fov_mm, 'fov_mm')
-        nx, ny = _pair(matrix, 'matrix')
+        fov_x, fov_y = require_pair(fov_mm, 'fov_mm')
+        nx, ny = require_pair(matrix, 'matrix')
         self.fov_mm = (fov_x, fov_y)
         self.matrix = (int(nx), int(ny))
         self.thickness_mm = require_positive(thickness_mm, 'thickness_mm')
@@ -467,33 +467,3 @@ def _spoil_axes(value: str | Iterable[str]) -> tuple[str, ...]:
         raise ConfigurationError(msg)
     ordered = sorted({require_axis(name, 'spoil_axis') for name in names}, key=AXES.index)
     return tuple(ordered)
-
-
-def _pair(value: float | tuple[float, float], name: str) -> tuple[float, float]:
-    """
-    Return `value` as an ``(x, y)`` pair, accepting a scalar as "the same on both axes".
-
-    Examples
-    --------
-    >>> _pair(250.0, 'fov_mm')
-    (250.0, 250.0)
-    >>> _pair((250.0, 180.0), 'fov_mm')
-    (250.0, 180.0)
-    >>> _pair((256, 128, 64), 'matrix')
-    Traceback (most recent call last):
-        ...
-    seqcraft.errors.ConfigurationError: matrix must be a pair (x, y), got 3 values.
-    """
-    if isinstance(value, (int, float)):
-        return (float(value), float(value))
-    try:
-        first, second = value
-    except (TypeError, ValueError):
-        count = len(value) if hasattr(value, '__len__') else '?'
-        msg = format_error(
-            f'{name} must be a pair (x, y), got {count} values.',
-            {name: value},
-            [f'{name}=250.0 means square', f'{name}=(250.0, 180.0) is readout then phase'],
-        )
-        raise ConfigurationError(msg) from None
-    return (float(first), float(second))
