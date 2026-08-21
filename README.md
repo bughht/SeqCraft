@@ -334,10 +334,10 @@ boundaries will fall.
 
 ### The shipped modules
 
-`sc.modules` has eight building blocks, each extracted from a working sequence rather than designed:
-`Excitation`, `Refocusing`, `PhaseEncode`, `CartesianLine`, `spoiler`, `IRPrep`, `GRE2DTR` and
-`GRE2D`. The last two are a whole repetition and a whole scan, so the GRE that section 2 composed
-also comes ready-made:
+`sc.modules` has nine building blocks, each extracted from a working sequence rather than designed:
+`Excitation`, `Refocusing`, `PhaseEncode`, `CartesianLine`, `EPI2D`, `spoiler`, `IRPrep`, `GRE2DTR`
+and `GRE2D`. The last two are a whole repetition and a whole scan, so the GRE that section 2
+composed also comes ready-made:
 
 ```python
 gre = sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(64, 64), thickness_mm=5.0)
@@ -349,7 +349,7 @@ acquire is a sequence-programming choice, and it stays yours. Segmenting the tra
 inversions — an MPRAGE — is the same tree one level deeper, and
 [`examples/mprage_2d/`](examples/mprage_2d/) builds it.
 
-`Refocusing` is the newest, and the one that shows what a module is *for*. A refocusing pulse
+`Refocusing` is the one that shows what a module is *for*. A refocusing pulse
 conjugates k, so between consecutive refocusing centres every axis's gradient area before the echo
 has to equal its area after it — measured to the RF's **effective centre**, not to the middle of the
 block. Getting that wrong leaves a residual that alternates sign echo to echo and reads as a
@@ -365,6 +365,31 @@ assert refoc.time_to_center() == refoc().duration / 2                # exactly, 
 
 A spin echo and a sixteen-echo turbo spin echo are then the same composition with a longer list,
 and [`examples/fse_2d/`](examples/fse_2d/) writes both.
+
+`EPI2D` is the newest, and the one where the arithmetic is the module. It is the whole of k-space in
+one shot — alternating readout lobes, blips on the zero crossings, one ADC per echo — and an EPI
+ghosts because those lobes alternate. Two rules follow. The sampling window is **exactly** centred
+in its lobe, because only then do the two polarities sample one k grid; write the lobe the way a
+single *line* is correctly written and they sample two grids half a gradient raster apart, which is
+an N/2 ghost the sequence made itself. And the blip sits on the readout's zero crossing with
+`sc.barrier()` pinned there, because otherwise the compiler splits every readout lobe in the train
+and the only report of it is a merge warning:
+
+```python
+epi = sc.modules.EPI2D(opts=opts, fov_mm=220.0, matrix=(128, 128), dwell_s=2.5e-6)
+
+assert 2 * epi.guard_s + epi.num_samples * epi.dwell_s == epi.echo_spacing_s   # exactly
+assert epi.k_read_per_m[epi.echo_sample(0)] == 0.0     # k = 0 is a sample, not a moment
+```
+
+Parallel imaging then needs nothing added: `blip_lines=R` is the acceleration and `lines` is the
+table. The calibration band is more `build` calls too — but with a table of **length one**, which
+is a Cartesian gradient echo on the EPI's own readout lobe rather than another EPI shot.
+
+**Segmentation** needs exactly one thing: `phase_deg`, the receiver phase, because a spoiled EPI
+needs its receiver locked to a transmitter that is advancing its carrier. Four shots that differ
+from one another for *any* reason put a replica of the object at `Ny/4`, and it reads as an
+under-sampling artefact.
 
 ---
 
@@ -408,7 +433,7 @@ Notebooks, each one a sequence that works rather than a feature tour:
 - [`examples/01_getting_started.ipynb`](examples/01_getting_started.ipynb) — blocks, `Opts` and
   `compile`, the overlap rules and the escape hatches. Uses no modules.
 - [`examples/gre_2d/`](examples/gre_2d/) — a spoiled 2D GRE three ways, then simulated and
-  reconstructed. Six of the seven shipped modules came out of it.
+  reconstructed. Six of the nine shipped modules came out of it.
 - [`examples/mprage_2d/`](examples/mprage_2d/) — segmented and inversion-prepared, with the null
   point checked in simulation.
 - [`examples/mp2rage_2d/`](examples/mp2rage_2d/) — two trains, the `SET` label that separates them,
@@ -418,6 +443,15 @@ Notebooks, each one a sequence that works rather than a feature tour:
 - [`examples/fse_2d/`](examples/fse_2d/) — the same composition at sixteen echoes and then
   seventy-two: 4.3 minutes becomes 18 seconds, and what that costs is measured —
   including a ghost that every arithmetic check passes through.
+- [`examples/gre_epi_2d/`](examples/gre_epi_2d/) — the whole of k-space in one shot, and the two
+  rules that stop it ghosting on its own. Both are built the **wrong** way too, because both
+  failures compile. `EPI2D` came out of it.
+- [`examples/se_epi_2d/`](examples/se_epi_2d/) — the same readout after a refocusing pulse, and the
+  measurement most readers expect to come out the other way: **a spin echo does not fix EPI
+  distortion.**
+
+All seven simulation notebooks share one phantom — [`examples/phantom.py`](examples/phantom.py) —
+including the off-resonance map the EPI examples distort against, which is the phantom's own.
 
 Documentation: [`api_reference.md`](docs/api_reference.md) (every public name, executed by CI),
 [`architecture.md`](docs/architecture.md) (the layering, and what is deliberately absent),

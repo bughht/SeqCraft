@@ -26,6 +26,7 @@ The folders, and what each one means
       preparation/ ir_prep.py          IRPrep
       encoding/    phase_encoding.py   PhaseEncode
       readout/     cartesian_line.py   CartesianLine
+                   epi_2d.py           EPI2D
       kernel/      gre_2d_tr.py        GRE2DTR      composes leaves; one repeating unit
       imaging/     gre_2d.py           GRE2D        composes kernels; a complete scan
 
@@ -88,11 +89,12 @@ from .imaging.gre_2d import GRE2D
 from .kernel.gre_2d_tr import GRE2DTR
 from .preparation.ir_prep import IRPrep
 from .readout.cartesian_line import CartesianLine
+from .readout.epi_2d import EPI2D
 from .rf.excitation import Excitation
 from .rf.refocusing import Refocusing
 from .spoiler import spoiler
 
 __all__ = [
-    'CartesianLine', 'Excitation', 'GRE2D', 'GRE2DTR', 'IRPrep', 'PhaseEncode', 'Refocusing',
-    'spoiler',
+    'CartesianLine', 'EPI2D', 'Excitation', 'GRE2D', 'GRE2DTR', 'IRPrep', 'PhaseEncode',
+    'Refocusing', 'spoiler',
 ]
