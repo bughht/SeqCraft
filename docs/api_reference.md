@@ -980,7 +980,7 @@ Re-exported **flat**, so no import path names a folder:
 | `Excitation` | an RF pulse and, when selective, its selection gradient and rephaser |
 | `Refocusing` | a 180 and its crusher pair, as one waveform symmetric about the pulse's effective centre in time *and* area |
 | `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
-| `CartesianLine` | prephaser, readout gradient and ADC as one design — `prephase=False` drops the prephaser, which is the spin-echo readout |
+| `CartesianLine` | prephaser, readout gradient and ADC as one design — `prephase=False` drops the prephaser, which is the spin-echo readout, and `echoes`/`polarity` read the same line more than once, which is a multi-echo gradient echo |
 | `EPI2D` | the whole echo-planar train: prephasers, alternating lobes, blips on the zero crossings, one ADC per echo, and the labels a reconstruction reads back |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
@@ -1016,7 +1016,11 @@ the questions a tree of events cannot:
 | `Excitation.time_to_rephaser()` | where the slice rephaser begins, so another axis can start there |
 | `Refocusing.time_to_center()` | to the **conjugation instant** — where `calculate_kspacePP` flips the sign of k, and what every echo time in a spin echo is measured from |
 | `Refocusing.time_to_crusher()` | where the trailing crusher window begins, so the readout block can start *inside* the refocusing block. Worth 1.4 ms per echo |
-| `CartesianLine.time_to_echo()` | to k = 0, which is not the middle of the ADC window |
+| `CartesianLine.time_to_echo(echo=0)` | to k = 0, which is not the middle of the ADC window. The no-argument call is the **first** echo, which is what TE means in a multi-echo protocol |
+| `CartesianLine.te_s` | k = 0 per echo, `len == echoes`. **The only sanctioned source of echo times** — a bipolar train's are *not* uniformly spaced, and dividing a phase difference by `echo_spacing_s` instead is a 0.75 % scale error in every voxel of a two-point field map |
+| `CartesianLine.echo_spacing_s` / `min_echo_spacing_s` | the **seam-to-seam period**, and the shortest legal one. Not the spacing between echo *times*; see `te_s` |
+| `CartesianLine.polarity_of(echo)` / `echo_sample(echo)` | `+1`/`-1`, and **which ADC sample** carries k = 0 — `pre_echo_samples` forward, `num_samples - 1 - pre_echo_samples` reverse. The wrong branch is a mirrored echo, which against a symmetric phantom looks correct |
+| `CartesianLine.flyback_area_per_m` / `flyback_duration_s` | the monopolar fly-back. Minus the lobe's **total** area, not `-area_to_echo_per_m`, which is half of it and is a number the module already exposes |
 | `CartesianLine.area_to_echo_per_m` | what the readout accumulates by the echo — minus the prephaser when there is one, and the number a spin echo's crusher pair is balanced around when there is not |
 | `EPI2D.echo_sample(echo)` | **which ADC sample** of that echo carries k = 0 — `pre_echo_samples` forward, its mirror reverse. One line of arithmetic whose wrong branch is an N/2 ghost |
 | `EPI2D.polarity(echo)` | `+1` or `-1`, counted across the whole train. `echo` is an **offset from the first imaging echo**, so `-navigator_echoes … -1` are the navigators and `range(-navigator_echoes, len(lines))` walks the file's readouts in order |
@@ -1073,6 +1077,72 @@ assert abs(refoc.time_to_center() - refoc().duration / 2) < 1e-12   # the time h
 skew = (float(line.gx.area) - 2 * line.area_to_echo_per_m) / 2      # the two lobes differ by 2*skew
 crush_s = max(refoc.min_crush_duration_s,                           # one window, three axes
               sc.modules.PhaseEncode(opts=opts, fov_mm=256.0, matrix=128).min_duration_s)
+```
+
+## Reading the same line more than once
+
+`echoes` and `polarity` turn one Cartesian line into a multi-echo gradient echo. `polarity` has
+**no default** and is required above one echo: the two modes produce files that differ in the
+dwell, the echo times, the k ordering of every second echo and the block count, and look identical
+in a protocol printout.
+
+```python
+one = sc.modules.CartesianLine(opts=opts, fov_mm=220.0, matrix=128, bandwidth_hz_px=500.0)
+
+# eight echoes, one k grid, uniform echo times, a fly-back between each pair
+mono = sc.modules.CartesianLine(opts=opts, fov_mm=220.0, matrix=128, bandwidth_hz_px=500.0,
+                                echoes=8, polarity='monopolar')
+
+# eight echoes, no fly-back, every second echo reversed
+bipolar = sc.modules.CartesianLine(opts=opts, fov_mm=220.0, matrix=128, bandwidth_hz_px=500.0,
+                                   echoes=8, polarity='bipolar')
+
+# a requested period rather than the shortest one
+slower = sc.modules.CartesianLine(opts=opts, fov_mm=220.0, matrix=128, bandwidth_hz_px=500.0,
+                                  echoes=6, polarity='monopolar', echo_spacing_s=3.0e-3)
+
+# a multi-echo spin echo: the caller places the winders, as examples/se_2d/ does
+spin = sc.modules.CartesianLine(opts=opts, fov_mm=220.0, matrix=128, bandwidth_hz_px=500.0,
+                                echoes=4, polarity='monopolar', prephase=False)
+
+# `echoes=1` is the module that shipped before the train existed, byte for byte
+assert sc.events.content_hash(mono.gx) == sc.events.content_hash(one.gx)
+assert (mono.dwell_s, mono.num_samples) == (one.dwell_s, one.num_samples)
+
+# monopolar echo times are uniform; bipolar ones alternate by two dwells about the period
+import numpy as np
+assert float(np.ptp(np.diff(mono.te_s))) < 1e-12
+assert abs(float(np.ptp(np.diff(bipolar.te_s))) - 2 * bipolar.dwell_s) < 1e-12
+assert bipolar.echo_spacing_s < mono.echo_spacing_s
+assert [bipolar.polarity_of(n) for n in range(4)] == [1, -1, 1, -1]
+```
+
+**Three things change with a second echo**, and each is a place where the obvious implementation
+compiles, passes every k-space extent check and produces a plausible image:
+
+| | |
+|---|---|
+| **the lobe** | A trapezoid is symmetric about its own midpoint, so a reverse lobe samples the forward lobe's grid only if the window is *exactly* centred — `T == 2*guard + num_samples*dwell`, with equality. The flat-top rounding that is correct for a single line puts the two polarities **0.2051 Δk** apart, which is a linear phase ramp between odd and even echoes and therefore a wrong number in a field map rather than an artefact. `'bipolar'` redesigns the lobe; `'monopolar'` reuses the shipped one unchanged, because every lobe in it is that same lobe |
+| **the dwell** | The guard is the ADC's `delay`, and pypulseq's timing check divides those by `rf_raster_time`, not the ten-times-finer `adc_raster_time`. So `num_samples * dwell_s` must be an even number of RF rasters, and under `'bipolar'` the dwell is snapped **up** onto that quantum — 500 ns at 128 samples. The same request therefore gives 500.8 Hz/px monopolar and 488.3 bipolar, and `bandwidth_hz_px` reads back what was achieved |
+| **the fly-back** | Minus the lobe's **total** area, ramps included. `-area_to_echo_per_m` is the pre-echo part alone — 294.638695 against 585.664336 1/m at the reference protocol — and each echo would then start half a k-space further along than the last |
+
+`ECO` and `REV` are emitted on **every acquired echo of a train**, including echo 0 and including
+monopolar, because pulseq labels are stateful: a skipped `SET` inherits rather than defaults, and a
+monopolar train that inherits `REV = 1` from an EPI train elsewhere in the file is mirrored by the
+reconstruction. At `echoes=1` neither is emitted, which is what keeps that case byte-identical.
+`acquire=False` suppresses both with the ADC.
+
+`GRE2DTR` and `GRE2D` forward `echoes`, `polarity` and `echo_spacing_s` and gain **no arithmetic**:
+the winder coupling, `min_te_s`, `min_tr_s`, `build` and the spoiler all take a longer readout
+without an edit, because each of them measures the block rather than predicting it. So **there is
+no `MEGRE2D`** — a multi-echo gradient echo is `GRE2D` with two more arguments, and
+[`examples/megre_2d/`](../examples/megre_2d/) is the one example directory that defines no class.
+
+```python
+megre = sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(128, 128), thickness_mm=3.0,
+                         flip_deg=15.0, bandwidth_hz_px=500.0, tr_s=40e-3,
+                         echoes=8, polarity='monopolar')
+assert len(megre.tr.ro.te_s) == 8
 ```
 
 **The receiver is phase-locked to the transmitter.** `GRE2DTR` gives the same `phase_deg` to the

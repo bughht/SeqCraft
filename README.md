@@ -391,6 +391,29 @@ needs its receiver locked to a transmitter that is advancing its carrier. Four s
 from one another for *any* reason put a replica of the object at `Ny/4`, and it reads as an
 under-sampling artefact.
 
+`CartesianLine` **reads its line more than once** when asked, which is a multi-echo gradient echo —
+`echoes` and `polarity`, where `'monopolar'` plays every lobe the same sign with a fly-back between
+them and `'bipolar'` alternates the sign and pays instead. `polarity` has no default above one
+echo, because the two produce files that differ in the dwell, the echo times, the k ordering of
+every second echo and the block count, and look identical in a protocol printout:
+
+```python
+mono = sc.modules.CartesianLine(opts=opts, fov_mm=220.0, matrix=128, bandwidth_hz_px=500.0,
+                                echoes=8, polarity='monopolar')
+
+assert len(mono.te_s) == 8                                        # k = 0, once per echo
+assert abs(mono.flyback_area_per_m + float(mono.gx.area)) < 1e-9   # minus the WHOLE lobe -- and
+assert abs(mono.flyback_area_per_m) > 1.9 * mono.area_to_echo_per_m  # not the pre-echo half of it
+```
+
+`te_s` is not `echo_spacing_s` and that is the trap worth knowing: `k = 0` is a *sample*, so a
+bipolar train's echo *times* alternate about its period by one dwell either way — and a two-point
+field map divided by the period instead is **0.75 % low in every voxel**, which is the kind of
+wrong no image inspection finds. `GRE2DTR` and `GRE2D` forward the same three arguments and gain
+**no arithmetic**, so there is no `MEGRE2D`: a multi-echo GRE is `GRE2D(..., echoes=8,
+polarity='monopolar')`, and [`examples/megre_2d/`](examples/megre_2d/) is the one example
+directory that defines no class of its own.
+
 ---
 
 ## What the compiler checks

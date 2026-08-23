@@ -390,3 +390,173 @@ def test_the_provenance_path_is_the_tree(opts, tr) -> None:
 
 def test_it_is_pure_and_compiles_alone(opts, tr, component_checks) -> None:
     component_checks.all(tr, line=17)
+
+
+# ============================================================================================
+# The echo train, forwarded
+# ============================================================================================
+#
+# **These tests are written to fail loudly if the design is wrong.**  The claim being checked is
+# that ``GRE2DTR`` gains three forwarded arguments and **no arithmetic** -- that the winder
+# coupling, ``min_te_s``, ``min_tr_s``, ``build`` and the spoiler all take a readout that is read
+# eight times without a line of new code, because each of them measures the block rather than
+# predicting it.  If any of the five needs an edit, ``docs/multi_echo_api.md`` section 8 is wrong
+# and this is where it shows.
+
+TRAIN = dict(fov_mm=220.0, matrix=(128, 128), thickness_mm=3.0, flip_deg=15.0,
+             bandwidth_hz_px=500.0, tr_s=40e-3)
+
+
+def _tr(opts, **kwargs):
+    return sc.modules.GRE2DTR(opts=opts, **TRAIN, **kwargs)
+
+
+def _digest(tree) -> list[tuple[float, str]]:
+    return sorted((round(t, 12), sc.events.content_hash(e)) for t, e, _ in sc.flatten(tree))
+
+
+def test_one_echo_is_the_repetition_that_shipped(opts) -> None:
+    """
+    ``echoes=1`` is event-for-event what ``GRE2DTR`` built before the train existed, at the
+    default and at a second protocol.  Compared against a repetition built with the three
+    arguments *omitted*, which is the call every existing example and notebook makes.
+    """
+    default = sc.modules.GRE2DTR(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0)
+    explicit = sc.modules.GRE2DTR(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
+                                  echoes=1, polarity=None, echo_spacing_s=None)
+
+    assert _digest(default(line=17)) == _digest(explicit(line=17))
+    assert _digest(default(line=0, acquire=False)) == _digest(explicit(line=0, acquire=False))
+    assert (default.min_te_s, default.min_tr_s) == (explicit.min_te_s, explicit.min_tr_s)
+
+
+@pytest.mark.parametrize('polarity', ['monopolar', 'bipolar'])
+def test_te_still_means_the_first_echo(opts, polarity) -> None:
+    """
+    ``min_te_s`` is unchanged by `echoes` at a fixed lobe: the first echo does not move, which is
+    what TE means in a multi-echo protocol.  The rest of the train is ``tr.ro.te_s``, and nothing
+    in this layer needs to know how long it is.
+
+    Compared within one polarity, because bipolar *does* move the dwell -- and therefore the lobe
+    and therefore TE -- which is a fact about the readout's sampling rate and not about the echo
+    count.
+    """
+    two = _tr(opts, echoes=2, polarity=polarity)
+    eight = _tr(opts, echoes=8, polarity=polarity)
+
+    assert eight.min_te_s == pytest.approx(two.min_te_s, abs=1e-15)
+    assert eight.te_s == pytest.approx(two.te_s, abs=1e-15)
+    assert eight.time_to_echo() == pytest.approx(two.time_to_echo(), abs=1e-15)
+    assert len(eight.ro.te_s) == 8
+
+
+@pytest.mark.parametrize('polarity', ['monopolar', 'bipolar'])
+def test_min_tr_grows_by_exactly_the_extra_echoes(opts, polarity) -> None:
+    """
+    **The arithmetic-free claim.**  ``min_tr_s`` is built from ``self.ro().duration`` and the
+    block measures itself, so six more echoes lengthen TR by exactly six echo spacings and by
+    nothing else.  Measured discrepancy: 0.000 ns.
+
+    Two trains of the same polarity rather than one against ``echoes=1``, because the bipolar lobe
+    is a different lobe -- Rule 1 -- and comparing across that would be measuring the lobe rather
+    than the train.
+    """
+    two = _tr(opts, echoes=2, polarity=polarity)
+    eight = _tr(opts, echoes=8, polarity=polarity)
+    period = eight.ro.echo_spacing_s
+
+    assert eight.ro().duration - two.ro().duration == pytest.approx(6 * period, abs=1e-12)
+    assert eight.min_tr_s - two.min_tr_s == pytest.approx(6 * period, abs=1e-12)
+
+
+@pytest.mark.parametrize('polarity', ['monopolar', 'bipolar'])
+def test_the_winder_coupling_needs_no_edit(opts, polarity) -> None:
+    """
+    The prephaser is unchanged by `echoes`: there is still exactly one, and it still cancels the
+    **first** lobe's pre-echo area.  So the three-way winder maximum is the same number it was,
+    and the readout's own prephaser is still stretched to it.
+    """
+    two = _tr(opts, echoes=2, polarity=polarity)
+    eight = _tr(opts, echoes=8, polarity=polarity)
+
+    assert eight.winder_s == pytest.approx(two.winder_s, abs=1e-15)
+    assert eight.ro.prephaser_duration_s == pytest.approx(eight.winder_s, abs=1e-12)
+    assert eight.ro.prephaser_area_per_m == pytest.approx(-eight.ro.area_to_echo_per_m, abs=1e-9)
+
+
+@pytest.mark.parametrize('polarity', ['monopolar', 'bipolar'])
+def test_lin_is_emitted_once_and_eco_runs_inside_it(opts, polarity) -> None:
+    """
+    Two labels from two layers, and the split is the rule rather than a coincidence: a Cartesian
+    line does not know *which* line it is, so the repetition says; the train's length is the
+    readout's own argument, so the readout says.  ``LIN`` once per repetition, ``ECO`` 0 .. 7
+    inside it.
+    """
+    tr = _tr(opts, echoes=8, polarity=polarity)
+    labels = [(e.label, e.value) for _, e, _ in sc.flatten(tr(line=40))
+              if getattr(e, 'type', '') == 'labelset']
+
+    assert [v for name, v in labels if name == 'LIN'] == [40]
+    assert [v for name, v in labels if name == 'ECO'] == list(range(8))
+    assert [v for name, v in labels if name == 'REV'] == (
+        [0] * 8 if polarity == 'monopolar' else [0, 1] * 4)
+
+
+@pytest.mark.parametrize('polarity', ['monopolar', 'bipolar'])
+def test_a_dummy_repetition_emits_no_label_at_all(opts, polarity) -> None:
+    """``acquire=False`` drops the ADCs, ``LIN``, ``ECO`` and ``REV``, and moves no gradient."""
+    tr = _tr(opts, echoes=8, polarity=polarity)
+    live, dummy = tr(line=40), tr(line=40, acquire=False)
+    kinds = lambda tree, k: [e for _, e, _ in sc.flatten(tree)          # noqa: E731
+                             if getattr(e, 'type', '') == k]
+
+    assert dummy.duration == pytest.approx(live.duration, abs=1e-15)
+    assert not kinds(dummy, 'labelset')
+    assert not kinds(dummy, 'adc')
+    assert len(kinds(live, 'adc')) == 8
+
+
+@pytest.mark.parametrize('polarity', ['monopolar', 'bipolar'])
+def test_the_spoiler_is_the_same_fixed_area_every_repetition(opts, polarity) -> None:
+    """
+    A bipolar train leaves ``kx`` at ``+k_max`` or ``-k_max`` depending on ``echoes``'s parity,
+    but ``echoes`` does not vary between repetitions -- so the end-of-TR dephasing is still
+    identical every TR, which is all a spoiler asks.  No edit, and this is the test that says so.
+    """
+    tr = _tr(opts, echoes=8, polarity=polarity)
+    one = _tr(opts, echoes=1)
+
+    assert set(tr.spoilers) == set(one.spoilers)
+    for axis, block in tr.spoilers.items():
+        assert _digest(block) == _digest(one.spoilers[axis])
+    assert _digest(tr(line=3)) == _digest(tr(line=3)), 'and the repetition is deterministic'
+
+
+@pytest.mark.parametrize('polarity', ['monopolar', 'bipolar'])
+def test_the_provenance_path_is_unchanged_by_the_train(opts, polarity) -> None:
+    """Four leaf tags under one kernel, whatever the readout does inside itself."""
+    tr = _tr(opts, echoes=8, polarity=polarity)
+    tree = sc.LogicBlock('scan').add(0.0, tr(line=17))
+
+    assert {path for _, _, path in sc.flatten(tree)} == {
+        ('scan', 'GRE2DTR'),
+        ('scan', 'GRE2DTR', 'Excitation'),
+        ('scan', 'GRE2DTR', 'PhaseEncode'),
+        ('scan', 'GRE2DTR', 'CartesianLine'),
+        ('scan', 'GRE2DTR', 'spoiler'),
+    }
+
+
+@pytest.mark.parametrize('polarity', ['monopolar', 'bipolar'])
+def test_the_multi_echo_repetition_is_pure_and_compiles_alone(
+    opts, polarity, component_checks,
+) -> None:
+    component_checks.all(_tr(opts, echoes=6, polarity=polarity), line=17)
+
+
+def test_a_polarity_that_cannot_take_effect_is_refused_through_the_kernel(opts) -> None:
+    """The leaf's refusals reach a caller that never touched the leaf, which is the point."""
+    with pytest.raises(sc.ConfigurationError, match='echoes=1'):
+        _tr(opts, polarity='bipolar')
+    with pytest.raises(sc.ConfigurationError, match='polarity is required'):
+        _tr(opts, echoes=4)

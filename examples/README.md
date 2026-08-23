@@ -10,6 +10,7 @@
 | [`fse_2d/`](fse_2d/) | The same composition at 1, 16 and 72 echoes — TSE and HASTE — and what an echo train costs in blurring, ghosting and signal. Defines `FSE2D` in its own notebook. |
 | [`gre_epi_2d/`](gre_epi_2d/) | The whole of k-space in one shot: the centred sampling window, the blip on the zero crossing, ramp sampling and the operator that undoes it, off-resonance and the N/2 ghost, and GRAPPA. Where `EPI2D` came from. Defines `GREEPI2D` in its own notebook. |
 | [`se_epi_2d/`](se_epi_2d/) | The same readout after a refocusing pulse — and the measurement that a spin echo **does not** fix EPI distortion. Defines `SEEPI2D` in its own notebook. |
+| [`megre_2d/`](megre_2d/) | Eight echoes off one excitation, monopolar and bipolar, fitted for T2\* and ΔB0 against a phantom that carries the ground truth for both. **Defines no class**, which no other directory here can say. |
 
 ## `gre_2d/`
 
@@ -78,6 +79,37 @@ the spin echo where the kernel says it is.
 Both `01`s are in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); the `02`s are
 not, for the reason the other simulation notebooks are not.
 
+## `megre_2d/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](megre_2d/01_build.ipynb) | The four numbers that are wrong *quietly*: the reverse lobe's grid (**0.2051 Δk** on the lobe that is right for a single line, built the wrong way first and plotted so a reader sees that the two trajectories *look* identical); the fly-back's area, with all three plausible wrong answers built and their trajectories drawn; the dwell quantum and why it is the RF raster; and `te_s` against `echo_spacing_s`, whose consequence — **0.75 % low everywhere** in a two-point field map — is computed from `te_s` alone, with no simulator. Plus the barrier table, which reports a prediction that turned out **false**. Three `.seq` files, **one flip, one TR, one matrix and one slice across all of them**, checked and printed. **Needs nothing but `seqcraft`.** |
+| [`02_simulate_and_reconstruct.ipynb`](megre_2d/02_simulate_and_reconstruct.ipynb) | **One reconstruction for all three files** — ESPIRiT coil maps estimated once (a coil sensitivity belongs to the coil, and using one set is what makes echo *e*'s phase comparable with echo 0's), POCS for the partial echo, then SENSE, because RSS throws away the phase that is half of this notebook. All eight echoes shown in magnitude *and* phase before anything is fitted, then T2\* and ΔB0 fitted for **all three readouts** against the phantom's own `T2dash_map` and `field_hz()` — maps, residuals and scatter side by side, not just the best one. **The phantom is 192 mm across and the protocol images 220 mm**, so the oracle is resampled onto the reconstruction's pixel grid before anything is subtracted, by nearest neighbour so it stays a set of values the phantom contains; the alignment is checked with a Dice overlap rather than assumed. Finally what partial echo costs and what POCS gets back, measured against the full-echo image. **Needs `seqcraft[sim,recon]`.** |
+
+**This is the one example directory that defines no class**, and that is the result rather than an
+omission. `MPRAGE2D`, `SE2D`, `FSE2D`, `GREEPI2D` and `SEEPI2D` each exist because their sequence
+is a composition the package does not have. A multi-echo gradient echo is not: it is a spoiled GRE
+whose readout was told to read the line more than once, so the whole protocol is
+
+```python
+sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(128, 128), thickness_mm=3.0, flip_deg=15.0,
+                 bandwidth_hz_px=500.0, tr_s=40e-3, echoes=8, polarity='monopolar')
+```
+
+Inventing a `MEGRE2D` to say that would be exactly the wrapper the rule above warns about — one
+whose extraction shortens no notebook. `CartesianLine` gained three arguments and `GRE2DTR` and
+`GRE2D` gained three pass-throughs and **no arithmetic**; that last part is the design's own
+falsification test, and `tests/modules/test_gre_2d_tr.py` is where it would have failed.
+
+[`tests/modules/test_megre_notebooks.py`](../tests/modules/test_megre_notebooks.py) runs `01` and
+asserts what fails silently: every readout gradient still a `trap`, signed `k` at the `k = 0`
+sample of every echo, the reverse echoes landing on the forward grid, `ECO` and `REV` read off the
+*compiled* sequence, and the written `te_s` matching the module's to a nanosecond — which is the
+one that matters most, because `02` fits against those numbers and a wrong echo time is a scaled
+map with nothing to look wrong. `01` is in
+[`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is not, for the reason the
+other simulation notebooks are not.
+
 ## Requirements
 
 Building needs only `seqcraft`. Simulating and reconstructing need `MRzeroCore`, `torch` and
@@ -95,6 +127,15 @@ their budget in the first cell, and keep anything expensive behind a named switc
 default. `se_2d/02` is 38 s. `fse_2d/02` is 15 s of measurement plus 4 minutes of images, and the
 images are the part behind the switch — every *number* in it is measured on a single spin, because a
 ghost is a modulation of `ky` and a point object's k-space is that modulation.
+
+`megre_2d/02` is three acquisitions and 24 SENSE reconstructions, and it has no switch because it
+does not need one: it **picks up a GPU when there is one**, and the MRzero simulation — which is
+essentially all of its cost — is a torch computation that moves there wholesale. Both `DEVICE` and
+sigpy's `RECON_DEVICE` are chosen by *probing* rather than by asking, because
+`torch.cuda.is_available()` reports the driver and comes back true on a machine whose devices are
+all hidden, and because cupy needs a toolkit to compile against where torch needs only a driver to
+talk to — so the two can disagree, and a machine can simulate on its GPU with no working cupy at
+all. Either way the notebook is the same notebook, and every step prints what it cost.
 
 The two EPI `02`s take the same bargain at a different scale: about a minute of one-voxel
 measurement each, then `BRAIN_IMAGES` for the slab. `gre_epi_2d/02`'s switch also covers §7, which

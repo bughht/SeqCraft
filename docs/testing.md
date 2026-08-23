@@ -16,8 +16,10 @@ Every push to `main` and every pull request runs four gates:
 2. `types`: strict mypy checking of the pure-arithmetic core on Python 3.11.
 3. `test`: pytest and source doctests on Linux and Windows with Python 3.11 and 3.12.
 4. `examples`: isolated execution of the **build-only** notebooks on Linux with Python 3.11 --
-   `01_getting_started.ipynb` and `gre_2d/01_build.ipynb`.  The simulation notebook is deliberately
-   absent: it needs MRzeroCore, torch and sigpy plus a phantom download, which is the lab tier.
+   the list in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py), which is
+   `01_getting_started.ipynb` and every example directory's `01_build.ipynb`.  The `02`
+   simulation notebooks are deliberately absent: they need MRzeroCore, torch and sigpy plus a
+   phantom download, which is the lab tier.
 
 The notebook runner copies `examples/` to a temporary directory before execution. Generated
 sequence files therefore never modify the working tree.

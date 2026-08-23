@@ -14,28 +14,42 @@ for a sharper reason: it has two consumers, :class:`~seqcraft.modules.Excitation
 :class:`~seqcraft.modules.IRPrep` in ``preparation/``, and they are in **different folders**.  A
 cross-folder import of another folder's private name is worse than one shared file whose whole
 purpose is being shared.
+
+:func:`halve_onto` and :func:`dwell_quantum` are here on a *related* argument rather than that
+one, and the difference is worth stating because it is the first time this file has taken
+something for a reason other than the folders.  Both came out of
+:class:`~seqcraft.modules.EPI2D`, and both are now also called by
+:class:`~seqcraft.modules.CartesianLine` -- which is in the **same** folder, ``readout/``.  What
+makes them shared rather than imported across is the *direction*: ``CartesianLine`` is the older,
+smaller module that ``GRE2DTR``, ``MPRAGE2D`` and three example notebooks already stand on, and
+``EPI2D`` is the newer one that stands on nothing.  ``from .epi_2d import _halve`` would point the
+dependency the wrong way round -- every existing GRE would import the EPI train to find out how to
+split a guard -- and it would do it through a private name.  One shared file, and neither module
+knows the other exists.
 """
 
 from __future__ import annotations
 
-from math import pi
+from math import gcd, pi
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pypulseq as pp
 
 from ..design.events import AXES, derive, knots_of, pwl_moment
-from ..design.timing import Raster
+from ..design.timing import Raster, from_ticks, to_ticks
 from ..errors import ConfigurationError, format_error
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from pypulseq.opts import Opts
+
     from ..design.events import Event
 
 __all__ = [
-    'area_until', 'ceil_raster', 'require_axis', 'require_pair', 'require_positive',
-    'require_range', 'shift_slice',
+    'area_until', 'ceil_raster', 'dwell_quantum', 'halve_onto', 'require_axis', 'require_count',
+    'require_pair', 'require_positive', 'require_range', 'shift_slice',
 ]
 
 
@@ -123,6 +137,35 @@ def require_pair(value: float | tuple[float, float], name: str) -> tuple[float, 
     return (float(first), float(second))
 
 
+def require_count(value: int, name: str, *, low: int = 1, hint: str = '') -> int:
+    """
+    Return `value` as an int at or above `low`.
+
+    Five arguments across two modules are counts with a floor -- `oversampling`, `blip_lines` and
+    `navigator_echoes` on :class:`~seqcraft.modules.EPI2D`, `echoes` on
+    :class:`~seqcraft.modules.CartesianLine` -- and one function is better than five that differ
+    only in the noun.  It was private to ``epi_2d.py`` while those were three, on the rule that
+    keeps this file the shared things and not the leftovers; the fourth caller, in a module
+    ``epi_2d`` must not be imported *by*, is what moved it.
+
+    Examples
+    --------
+    >>> require_count(4, 'blip_lines')
+    4
+    >>> require_count(-1, 'navigator_echoes', low=0)
+    Traceback (most recent call last):
+        ...
+    seqcraft.errors.ConfigurationError: navigator_echoes must not be negative, got -1.
+    """
+    count = int(value)
+    if count < low:
+        floor = 'not be negative' if low == 0 else f'be at least {low}'
+        msg = format_error(f'{name} must {floor}, got {count}.', {name: count},
+                           [hint] if hint else ())
+        raise ConfigurationError(msg)
+    return count
+
+
 def require_axis(axis: str, name: str = 'axis') -> str:
     """
     Return `axis` having checked it names a logical gradient channel.
@@ -163,6 +206,111 @@ def ceil_raster(value: float, raster: float) -> float:
     0.005
     """
     return float(Raster(raster).ceil(value))
+
+
+def halve_onto(total_s: float, sample_s: float, raster_s: float, *, opts: Opts) -> float:
+    """
+    Return ``(total_s - sample_s) / 2`` **in integer ticks**, refusing a half that is not legal.
+
+    Not a float subtraction.  ``(470 us - 409.6 us) / 2`` evaluates to 30.200000000000003 us,
+    which is 302.00000000000006 ADC rasters, and pypulseq's timing check rejects it -- naming the
+    block rather than the femtosecond.  This is the drift :mod:`seqcraft.design.timing` exists to
+    remove, and it is the one place in either caller where the arithmetic has to leave floating
+    point.
+
+    The refusal is Rule 1's parity condition made concrete: the guard is half of a gap that has to
+    land on `raster_s`, so the sampling duration must be an **even** number of them.
+
+    **`raster_s` is an argument because the two callers pass different rasters, and which one is
+    not guessable.**  :class:`~seqcraft.modules.EPI2D` halves onto the *ADC* raster, because its
+    lobe duration and its sample count already force the guard onto the RF raster between them.
+    :class:`~seqcraft.modules.CartesianLine`'s bipolar lobe halves onto the *RF* raster, because
+    that is what pypulseq's ``_check_timing_block`` divides an ``adc`` event's ``delay`` by -- see
+    :func:`dwell_quantum`.  `opts` is here to name the raster in the refusal rather than quote it
+    in nanoseconds, which is the difference between a message that says what to change and one
+    that says what happened.
+
+    Examples
+    --------
+    >>> import pypulseq as pp
+    >>> from pypulseq.opts import Opts
+    >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=180, slew_unit='T/m/s')
+    >>> round(halve_onto(4080e-6, 4032e-6, o.rf_raster_time, opts=o) * 1e6, 3)
+    24.0
+
+    The worked example, which is why this is not a subtraction.  In floating point
+    ``(470e-6 - 409.6e-6) / 2`` is 302.00000000000006 ADC rasters and pypulseq refuses it; in
+    ticks it is 302 of them exactly:
+
+    >>> (470e-6 - 409.6e-6) / 2 / o.adc_raster_time
+    302.00000000000006
+    >>> halve_onto(470e-6, 409.6e-6, o.adc_raster_time, opts=o) / o.adc_raster_time
+    302.0
+
+    An **odd** gap is the one this refuses, because half of it is not a delay at all:
+
+    >>> halve_onto(470e-6, 409.7e-6, o.adc_raster_time, opts=o)
+    Traceback (most recent call last):
+        ...
+    seqcraft.errors.ConfigurationError: the guard would be 30.1500 us, which is not a whole adc_raster_time (0.100 us).
+    """
+    raster_ticks = to_ticks(float(raster_s))
+    gap = to_ticks(float(total_s)) - to_ticks(float(sample_s))
+    if gap % (2 * raster_ticks):
+        name = _raster_name(raster_s, opts)
+        msg = format_error(
+            f'the guard would be {from_ticks(gap) / 2 * 1e6:.4f} us, which is not a whole '
+            f'{name} ({float(raster_s) * 1e6:.3f} us).',
+            {'total_s': float(total_s), 'sample_s': float(sample_s), name: float(raster_s)},
+            [f'the sampling duration must be an even number of {name}'],
+        )
+        raise ConfigurationError(msg)
+    return from_ticks(gap // 2)
+
+
+def dwell_quantum(num_samples: int, *, opts: Opts) -> float:
+    """
+    Return the coarsest step a dwell must land on for ``num_samples * dwell`` to be a legal guard.
+
+    The fact this exists for is **not in pulseq's specification** and is two lines of pypulseq
+    source: ``_check_timing_block`` divides an ``adc``, ``rf`` or ``output`` event's ``delay`` by
+    ``rf_raster_time`` -- 1 us on Siemens -- and everything else by ``grad_raster_time``.  The
+    guard *is* the ADC's delay, so it lives on the RF raster and not on the ten-times-finer ADC
+    raster the dwell itself lives on.  Since the lobe duration is on the gradient raster, the
+    whole burden falls on ``num_samples * dwell``, which must be an even number of RF rasters.
+
+    Solved in integer ticks rather than searched.  With ``a`` the ADC raster and
+    ``u = 2 * rf_raster``, a dwell of ``k*a`` works exactly when ``N*k*a`` is a multiple of ``u``,
+    i.e. when ``k`` is a multiple of ``u / gcd(N*a, u)``.  Coarse, visible in the protocol table,
+    and much better found here than in a timing-check failure that names a block and not a
+    femtosecond.
+
+    The **quantum** rather than the dwell, so each caller keeps its own "exactly one of bandwidth
+    and dwell" refusal and its own rounding direction.  Both round *up*: rounding down raises the
+    bandwidth, which shortens the lobe, which is the direction that turns a feasible protocol into
+    a refusal.
+
+    Examples
+    --------
+    >>> import pypulseq as pp
+    >>> from pypulseq.opts import Opts
+    >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=180, slew_unit='T/m/s')
+    >>> round(dwell_quantum(128, opts=o) * 1e9)                 # 500 ns, five ADC rasters
+    500
+    >>> round(dwell_quantum(320, opts=o) * 1e9)                 # 320 samples: the ADC raster
+    100
+    """
+    adc_ticks = to_ticks(float(opts.adc_raster_time))
+    pair_ticks = 2 * to_ticks(float(opts.rf_raster_time))
+    return from_ticks(adc_ticks * (pair_ticks // gcd(int(num_samples) * adc_ticks, pair_ticks)))
+
+
+def _raster_name(raster_s: float, opts: Opts) -> str:
+    """Return the ``Opts`` field `raster_s` came from, or a spelled-out fallback."""
+    for name in ('adc_raster_time', 'rf_raster_time', 'grad_raster_time', 'block_duration_raster'):
+        if to_ticks(float(getattr(opts, name, -1.0))) == to_ticks(float(raster_s)):
+            return name
+    return 'raster'
 
 
 def area_until(event: Event, t_end: float) -> float:

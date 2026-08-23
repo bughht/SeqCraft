@@ -72,12 +72,19 @@ class GRE2D(Module):
     Parameters
     ----------
     opts, fov_mm, matrix, thickness_mm, flip_deg, te_s, tr_s, bandwidth_hz_px,
-    partial_fourier, spoil_cycles_per_voxel, spoil_axis
+    partial_fourier, echoes, polarity, echo_spacing_s, spoil_cycles_per_voxel, spoil_axis
         Forwarded unchanged to :class:`~seqcraft.modules.GRE2DTR`, which is the one
         :class:`~seqcraft.Module` this constructs and holds.  `partial_fourier` stays an
         ``__init__`` argument because it is the *readout* direction: it changes the prephaser
         area and the echo time inside the readout, which no list of phase-encode indices can
-        express, and it is designed once.
+        express, and it is designed once.  `echoes`, `polarity` and `echo_spacing_s` are
+        ``__init__`` arguments for the same reason and one more: the lobe, the fly-back and the
+        period are designed once, so a per-call echo count would make ``duration`` depend on the
+        call -- which the TR arithmetic above reads exactly once.  A caller wanting two echo
+        counts builds two instances, as ``examples/fse_2d/`` does for turbo factors.
+
+        **A multi-echo GRE is this class with two more arguments**, which is why no ``MEGRE2D``
+        ships and why ``examples/megre_2d/`` defines no class of its own.
     rf_spoil
         Quadratic phase increment on the excitation.  Default on.
     rf_spoil_deg
@@ -153,6 +160,9 @@ class GRE2D(Module):
         tr_s: float | None = None,
         bandwidth_hz_px: float = 200.0,
         partial_fourier: float = 1.0,
+        echoes: int = 1,
+        polarity: str | None = None,
+        echo_spacing_s: float | None = None,
         rf_spoil: bool = True,
         rf_spoil_deg: float | None = None,
         spoil_cycles_per_voxel: float = 4.0,
@@ -163,7 +173,8 @@ class GRE2D(Module):
         self.tr = GRE2DTR(
             opts=opts, fov_mm=fov_mm, matrix=matrix, thickness_mm=thickness_mm,
             flip_deg=flip_deg, te_s=te_s, tr_s=tr_s, bandwidth_hz_px=bandwidth_hz_px,
-            partial_fourier=partial_fourier, spoil_cycles_per_voxel=spoil_cycles_per_voxel,
+            partial_fourier=partial_fourier, echoes=echoes, polarity=polarity,
+            echo_spacing_s=echo_spacing_s, spoil_cycles_per_voxel=spoil_cycles_per_voxel,
             spoil_axis=spoil_axis,
         )
         self.rf_spoil = bool(rf_spoil)
