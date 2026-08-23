@@ -120,6 +120,13 @@ class GRE2DTR(Module):
     partial_fourier
         Readout-direction partial echo.  The phase-encode direction is undersampled by acquiring
         fewer lines, which is a *build* argument of :class:`~seqcraft.modules.GRE2D`.
+    echoes, polarity, echo_spacing_s
+        Forwarded unchanged to :class:`~seqcraft.modules.CartesianLine`, and **that is the entire
+        change to this class**: a multi-echo GRE is this repetition with a readout that is read
+        more than once.  `te_s` here stays the *first* echo's, which is what TE means; the array
+        is ``tr.ro.te_s``.  Nothing else moves -- the winder coupling, :attr:`min_te_s`,
+        :attr:`min_tr_s`, the rewinder and the spoiler all take a longer readout without a line
+        of new arithmetic, because each of them measures the block rather than predicting it.
     spoil_cycles_per_voxel
         Gradient spoiling, in turns of phase wound across one voxel **along each spoiled axis** --
         the slice thickness on ``z``, the in-plane voxel on ``x`` and ``y``.
@@ -194,6 +201,9 @@ class GRE2DTR(Module):
         tr_s: float | None = None,
         bandwidth_hz_px: float = 200.0,
         partial_fourier: float = 1.0,
+        echoes: int = 1,
+        polarity: str | None = None,
+        echo_spacing_s: float | None = None,
         spoil_cycles_per_voxel: float = 4.0,
         spoil_axis: str | Iterable[str] = ('x', 'z'),
         tag: str | None = None,
@@ -219,8 +229,15 @@ class GRE2DTR(Module):
         # Each leaf reports its own minimum and accepts an override, so the composite takes the
         # maximum and passes it down.  Stretching the short ones keeps TE at its minimum, which
         # inserting a delay would not -- and no leaf knows the other two exist.
+        # The train's three arguments go to the probe as well as to the real one.  The prephaser
+        # is unchanged by `echoes` -- there is still exactly one and it still cancels the *first*
+        # lobe's pre-echo area -- but a bipolar train moves the dwell, and the dwell moves the
+        # prephaser's area and therefore its minimum duration.  A probe built without them would
+        # be measuring a different readout.
+        train = dict(echoes=echoes, polarity=polarity, echo_spacing_s=echo_spacing_s)
         probe_ro = CartesianLine(opts=opts, fov_mm=fov_x, matrix=self.matrix[0], axis='x',
-                                 bandwidth_hz_px=bandwidth_hz_px, partial_fourier=partial_fourier)
+                                 bandwidth_hz_px=bandwidth_hz_px, partial_fourier=partial_fourier,
+                                 **train)
         probe_pe = PhaseEncode(opts=opts, fov_mm=fov_y, matrix=self.matrix[1], axis='y')
         self.winder_s = ceil_raster(
             max(probe_ro.prephaser_duration_s, probe_pe.min_duration_s,
@@ -230,7 +247,7 @@ class GRE2DTR(Module):
 
         self.ro = CartesianLine(opts=opts, fov_mm=fov_x, matrix=self.matrix[0], axis='x',
                                 bandwidth_hz_px=bandwidth_hz_px, partial_fourier=partial_fourier,
-                                prephaser_duration_s=self.winder_s)
+                                prephaser_duration_s=self.winder_s, **train)
         self.pe = PhaseEncode(opts=opts, fov_mm=fov_y, matrix=self.matrix[1], axis='y',
                               duration_s=self.winder_s)
         # One per axis, each winding its cycles across *that axis's* voxel.  The in-plane voxel is
@@ -280,7 +297,15 @@ class GRE2DTR(Module):
 
     @property
     def min_te_s(self) -> float:
-        """Shortest achievable echo time, seconds.  A feasibility fact known at design time."""
+        """
+        Shortest achievable echo time, seconds.  A feasibility fact known at design time.
+
+        **TE means the first echo**, in a multi-echo protocol as in any other, which is what
+        ``ro.time_to_echo()`` already returns.  The rest of the train follows at
+        ``ro.echo_spacing_s`` and a caller reads the whole array off ``ro.te_s`` -- so `echoes`
+        adds no arithmetic here, and it adds none to :attr:`min_tr_s` either, because that is
+        built from a block that measures itself.
+        """
         return self._winder_start_s - self.exc.time_to_center() + self.ro.time_to_echo()
 
     @property

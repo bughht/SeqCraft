@@ -9,6 +9,8 @@ compiled sequence.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -326,3 +328,103 @@ def test_the_sampled_trajectory_covers_the_requested_lines(opts, gre) -> None:
 
 def test_it_is_pure_and_compiles_alone(opts, gre, component_checks) -> None:
     component_checks.all(gre, lines=range(0, NY, 4))
+
+
+# ============================================================================================
+# The echo train, forwarded again -- and no MEGRE2D
+# ============================================================================================
+#
+# A multi-echo GRE *is* ``GRE2D`` with two more arguments.  There is no class to test, which is
+# the finding; what there is to test is that the phase encoding and the echo train do not
+# interact, and that the loop, the schedule and the validation are untouched by either.
+
+
+def _megre(opts, **kwargs):
+    return sc.modules.GRE2D(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
+                            bandwidth_hz_px=500.0, **kwargs)
+
+
+def test_one_echo_is_the_scan_that_shipped(opts, gre) -> None:
+    """The three arguments omitted and the three arguments defaulted are the same acquisition."""
+    explicit = sc.modules.GRE2D(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
+                                echoes=1, polarity=None, echo_spacing_s=None)
+    digest = lambda tree: sorted(  # noqa: E731
+        (round(t, 12), sc.events.content_hash(e)) for t, e, _ in sc.flatten(tree))
+
+    assert digest(gre(lines=range(NY))) == digest(explicit(lines=range(NY)))
+    assert digest(gre(lines=[3, 4], dummies=2)) == digest(explicit(lines=[3, 4], dummies=2))
+
+
+@pytest.mark.parametrize('polarity', ['monopolar', 'bipolar'])
+def test_the_phase_encode_and_the_echo_train_do_not_interact(opts, polarity) -> None:
+    """
+    **The check the whole forwarding rests on**, and the one that a mirrored echo would fail:
+    every echo of every TR lands at ``k_x = 0`` and on the ``k_y`` its own line asked for.
+
+    Signed, on both axes, at the sample ``echo_sample`` names.  ``|k|`` is symmetric, so a mirrored
+    echo passes any extent check -- and against a symmetric phantom it looks like an image.
+    """
+    echoes = 4
+    scan = _megre(opts, echoes=echoes, polarity=polarity, tr_s=25e-3)
+    ro, lines = scan.tr.ro, list(range(0, NY, 4))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', sc.SeqCraftWarning)
+        k = sc.kspace(sc.LogicBlock('probe').add(0.0, scan(lines=lines)), opts)['k_adc']
+    k = k.reshape(3, len(lines) * echoes, ro.num_samples)
+    dky = 1e3 / 250.0
+
+    for row, line in enumerate(lines):
+        for echo in range(echoes):
+            sample = ro.echo_sample(echo)
+            kx, ky = k[0][row * echoes + echo, sample], k[1][row * echoes + echo, sample]
+            assert abs(kx) < 1e-6, f'line {line} echo {echo}: k_x = {kx:.3e}'
+            assert abs(ky - (line - scan.center_line) * dky) < 1e-6, (
+                f'line {line} echo {echo}: k_y = {ky:.3e}'
+            )
+
+
+@pytest.mark.parametrize('polarity', ['monopolar', 'bipolar'])
+def test_the_scan_stacks_a_longer_repetition_with_no_new_arithmetic(opts, polarity) -> None:
+    """``len(scan)`` is still one block per line, and its duration is still ``n * tr_s``."""
+    scan = _megre(opts, echoes=6, polarity=polarity, tr_s=30e-3)
+    block = scan(lines=range(NY), dummies=4)
+
+    assert len(block) == NY + 4
+    assert block.duration == pytest.approx((NY + 4) * scan.tr.tr_s, abs=1e-9)
+    assert scan.tr.tr_s >= scan.tr.min_tr_s
+
+
+@pytest.mark.parametrize('polarity', ['monopolar', 'bipolar'])
+def test_the_spoiling_schedule_still_reaches_both_halves(opts, polarity) -> None:
+    """
+    One carrier phase per repetition covers the whole train, because one train is one excitation.
+    Every ADC of the eight gets the phase its own RF got.
+    """
+    scan = _megre(opts, echoes=8, polarity=polarity, tr_s=40e-3)
+    block = scan(lines=[3], dummies=2)
+
+    rf = [e for _, e, _ in sc.flatten(block) if getattr(e, 'type', '') == 'rf']
+    adcs = [e for _, e, _ in sc.flatten(block) if getattr(e, 'type', '') == 'adc']
+
+    assert len(rf) == 3 and len(adcs) == 8, 'the dummies play no ADC'
+    wanted = float(np.deg2rad(scan.phase_deg(2)))
+    assert [float(a.phase_offset) for a in adcs] == pytest.approx([wanted] * 8, abs=1e-12)
+    assert float(rf[2].phase_offset) == pytest.approx(wanted, abs=1e-12)
+
+
+def test_a_multi_echo_gre_needs_no_class_of_its_own(opts) -> None:
+    """
+    ``MEGRE2D`` does not exist, and this is the assertion that says so is a design decision rather
+    than an omission: the whole protocol of ``examples/megre_2d/`` is one constructor call.
+    """
+    assert not hasattr(sc.modules, 'MEGRE2D')
+
+    megre = sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(128, 128), thickness_mm=3.0,
+                             flip_deg=15.0, bandwidth_hz_px=500.0, tr_s=40e-3,
+                             echoes=8, polarity='monopolar')
+
+    assert len(megre.tr.ro.te_s) == 8
+    assert megre.tr.ro.polarity == 'monopolar'
+    assert megre.tr.te_s == pytest.approx(megre.tr.ro.te_s[0] - megre.tr.exc.time_to_center()
+                                          + megre.tr._readout_start_s, abs=1e-12)

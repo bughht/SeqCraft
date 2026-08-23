@@ -1,5 +1,121 @@
 # Changelog
 
+## Unreleased — a Cartesian line, read more than once
+
+A multi-echo gradient echo, as **three arguments on one module and three helper promotions.**
+No new module, no new class — including in the example.
+
+```python
+mono = sc.modules.CartesianLine(opts=opts, fov_mm=220.0, matrix=128, bandwidth_hz_px=500.0,
+                                echoes=8, polarity='monopolar')
+
+assert len(mono.te_s) == 8                                         # k = 0, once per echo
+assert abs(mono.flyback_area_per_m + float(mono.gx.area)) < 1e-9   # the WHOLE lobe
+assert [mono.polarity_of(n) for n in range(4)] == [1, 1, 1, 1]     # 1, -1, 1, -1 under 'bipolar'
+
+megre = sc.modules.GRE2D(opts=opts, fov_mm=220.0, matrix=(128, 128), thickness_mm=3.0,
+                         flip_deg=15.0, bandwidth_hz_px=500.0, tr_s=40e-3,
+                         echoes=8, polarity='monopolar')           # and that is the whole sequence
+```
+
+| | |
+|---|---|
+| `CartesianLine` | `echoes`, `polarity` and `echo_spacing_s`; and `te_s`, `min_echo_spacing_s`, `polarity_of`, `echo_sample`, `flyback_area_per_m`, `flyback_duration_s`. **`build` does not change** — not one argument, not one default — because the echo count is a property of the *design*, as `matrix` and `partial_fourier` are |
+| `halve_onto`, `dwell_quantum`, `require_count` | promoted out of `readout/epi_2d.py` into `modules/_support.py`. Not on the usual different-folders argument — both callers are in `readout/` — but on the **direction**: `CartesianLine` is what `GRE2DTR`, `MPRAGE2D` and three notebooks already stand on, and `from .epi_2d import _halve` would point that dependency backwards through a private name |
+| `GRE2DTR`, `GRE2D` | the same three arguments, forwarded. **No arithmetic in either**, which was the design's own falsification test and is what says a multi-echo GRE needs no class |
+| `MEGRE2D` | **does not exist.** `examples/megre_2d/` is the first example directory that defines no class, and that is the result rather than an omission |
+| everything else | unchanged. `design/`, `compiler/`, `analysis`, `EPI2D`, `Excitation`, `Refocusing`, `PhaseEncode`, `IRPrep` and `spoiler` are untouched, and `tests/modules/test_epi_2d.py` passes **unedited**, which is the acceptance test for the promotion |
+
+### `echoes=1` is byte-identical, and it is pinned
+
+Same dwell, same lobe, same prephaser, same block, same duration, same `time_to_echo()` — asserted
+against `content_hash` digests captured from the module **before** the train existed, at three
+bandwidths and three `partial_fourier` values. A change there is a claim about every existing GRE,
+MPRAGE and SE example rather than about this feature, so it is the first test in the file. `ECO`
+and `REV` are emitted only above one echo for the same reason: two extra events are not identical.
+
+### Four numbers that are wrong quietly
+
+**The reverse lobe's grid.** A trapezoid is symmetric about its own midpoint, so a reverse lobe
+samples the forward lobe's grid only if the window is *exactly* centred — `T == 2*guard +
+N*dwell`, with equality. The flat-top rounding that is right for a single line, and right for a
+monopolar train because every lobe in it is that same lobe, puts the two polarities **0.9324 1/m =
+0.2051 Δk** apart. Every k-space extent check passes on it; `max|k|` is identical to four decimals,
+and only the *signed* difference separates them. It is a linear phase ramp between odd and even
+echoes, which is exactly what a field map measures — so it is never an artefact, only a wrong
+number. `'bipolar'` redesigns the lobe and the same measurement is **1.7 × 10⁻¹³ 1/m**.
+
+**The fly-back's area.** Minus the lobe's *total* area, ramps included. The dangerous wrong answer
+is `-area_to_echo_per_m`, because it is a number the module already computes and already exposes,
+and it is **294.638695 against 585.664336 1/m** — half, near enough to look right in a plot, and
+each echo would then start half a k-space further along than the last.
+
+**The dwell.** The guard is the ADC's `delay`, and pypulseq's `_check_timing_block` divides those
+by `rf_raster_time`, not by the ten-times-finer `adc_raster_time`. So `num_samples * dwell_s` must
+be an even number of RF rasters, and under `'bipolar'` the dwell is snapped **up** onto that
+quantum — 500 ns at 128 samples. 500 Hz/px asked for is **500.8 achieved monopolar and 488.3
+bipolar**, which is a fact about the file and belongs in the protocol table.
+
+**The echo times.** `k = 0` is a *sample*, not an instant: index `pre_echo_samples` forward and
+`num_samples - 1 - pre_echo_samples` reverse, which are different distances into identical lobes.
+So a bipolar train's ΔTE alternates by two dwells — measured **32.00 µs** at 500 Hz/px and
+**1953.00 µs** at `partial_fourier=0.75` and 250 Hz/px, both matching `2·|N-1-2·p|·τ` to the
+nanosecond. Nothing checks this. A two-point field map divided by `echo_spacing_s` instead of by
+`te_s[1] - te_s[0]` is **0.75 % low in every voxel**; an eight-echo least-squares fit is 0.0358 %
+low, because a symmetric alternation largely cancels. `te_s` is the only sanctioned source of echo
+times, and `echo_spacing_s` is documented as the seam-to-seam period and nothing else.
+
+### One prediction that turned out to be false
+
+The design document said the barriers were load-bearing: that without them the compiler would take
+the midpoint of the gap between consecutive ADCs, land inside a lobe, and split it into arbitrary
+waveforms. **Measured, that is wrong for this design.** Two barriers, one and none compile to the
+identical block count — 16 monopolar, 9 bipolar at eight echoes — with every gradient still a
+`trap` and no `merge` warning, at 250, 500 and 1000 Hz/px. `find_boundaries` already offers every
+*gradient edge* as an opportunistic candidate and accepts one that falls strictly inside no
+gradient, and every seam here is exactly that: the lobe ends where the fly-back starts and the
+fly-back ends where the next lobe starts, with nothing overlapping either join. That is the
+difference from `EPI2D`, whose blip is **centred on** the seam and therefore covers it.
+
+The barriers stay, because that rule is documented as *a preference, not a requirement* and one
+barrier per gradient edge makes the block structure a property of the design rather than of a
+preference. They cost nothing — the emitted file is byte-identical with and without — and the test
+asserts the **measured** fact rather than the claim it replaced.
+
+### `examples/megre_2d/`
+
+Two notebooks, and **neither defines a class**. `01` builds the wrong lobe before the right one
+and plots both, derives the fly-back out loud with all three wrong areas' trajectories drawn
+beside it, and computes what assuming a uniform ΔTE costs **from `te_s` alone, with no
+simulator**. It writes three files — monopolar, bipolar, and monopolar at `partial_fourier=0.75`
+— each carrying `echoes`, `polarity`, the echo samples, the echo polarities and the `te_s` array
+in its `[DEFINITIONS]`, so `02` reads the echo times *out of the file* rather than rebuilding the
+module.
+
+`02` puts all three through **one reconstruction** — ESPIRiT coil maps estimated once, POCS for
+the partial echo, then SENSE — and fits both maps against oracles that are in the **phantom**
+rather than in the fit: `subject05.npz` carries `T2dash_map`, so `1/(1/T2 + 1/T2′)` is the true
+T2\* voxelwise, and `phantom.field_hz()` is the map the simulation ran against. All three readouts
+land on a field-map slope of 1.001 and about half a hertz of scatter, and what is left of the T2\*
+spread is partial volume at tissue boundaries, named rather than explained away.
+
+One set of coil maps for every echo is not economy: it is what makes echo *e*'s phase comparable
+with echo 0's, which is the entire ΔB0 measurement. And the oracle is resampled onto the
+reconstruction's pixel grid before anything is subtracted — the phantom is 192 mm across and the
+protocol images 220 mm, so an image pixel is not the phantom voxel with the same index; scored in
+the phantom's own frame the same fits give a slope of 0.963 and seven times the scatter, which
+reads as a calibration problem and is a geometry one.
+
+### Out of scope, named
+
+No ramp sampling — `area_until` would make it come out right and nothing here needs it, which is
+also why there is no `k_read_per_m`: the ADC never opens on a ramp, so sample *i* of echo *e* is at
+`(i - echo_sample(e)) * dk_per_m * polarity_of(e)`. No through-zero seam, worth one rise time per
+echo — 40 µs of a 2130 µs period — and costing every lobe its `trap`; `EPI2D` made the same call.
+No Dixon: what a water–fat separation needs from this design is the exact `te_s`, and that ships.
+And **`polarity='bipolar'` with `prephase=False` raises**, because balancing reversed lobes across
+a refocusing pulse is a different question and nobody has measured it.
+
 ## Unreleased — `EPI2D`, and the two rules that stop an EPI ghosting on its own
 
 The whole of k-space in one shot, as **one new module and one promoted helper.**

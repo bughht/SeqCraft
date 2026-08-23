@@ -109,7 +109,6 @@ reconstructed onto and no interpolator can recover what was never measured.  At 
 from __future__ import annotations
 
 import math
-from math import gcd
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -123,7 +122,10 @@ from ...errors import ConfigurationError, format_error
 from .._support import (
     area_until,
     ceil_raster,
+    dwell_quantum,
+    halve_onto,
     require_axis,
+    require_count,
     require_pair,
     require_positive,
     require_range,
@@ -335,11 +337,11 @@ class EPI2D(Module):
         self.ramp_sampling = bool(ramp_sampling)
         self.prephase = bool(prephase)
         self.partial_fourier = require_range(partial_fourier, 'partial_fourier', low=0.0, high=1.0)
-        self.oversampling = _require_count(oversampling, 'oversampling', hint='1 turns it off')
-        self.blip_lines = _require_count(
+        self.oversampling = require_count(oversampling, 'oversampling', hint='1 turns it off')
+        self.blip_lines = require_count(
             blip_lines, 'blip_lines', hint='1 is single-shot and blocked multi-shot',
         )
-        self.navigator_echoes = _require_count(
+        self.navigator_echoes = require_count(
             navigator_echoes, 'navigator_echoes', low=0, hint='3 is the usual number',
         )
         self._check_axes()
@@ -646,11 +648,17 @@ class EPI2D(Module):
         lives on.  So Rule 1 tightens: ``T - N*dwell`` must be an even number of RF rasters, and
         since ``T`` is on the gradient raster the whole burden falls on ``N*dwell``.
 
-        Solved in integer ticks rather than searched.  With ``a`` the ADC raster and
+        Solved in integer ticks rather than searched, by
+        :func:`~seqcraft.modules._support.dwell_quantum`.  With ``a`` the ADC raster and
         ``u = 2*rf_raster``, a dwell of ``k*a`` works exactly when ``N*k*a`` is a multiple of
         ``u``, i.e. when ``k`` is a multiple of ``u / gcd(N*a, u)`` -- at 128 samples, a multiple
         of 500 ns.  Coarse, visible in the protocol table, and much better found here than in a
         timing-check failure that names a block and not a femtosecond.
+
+        The quantum is shared with :class:`~seqcraft.modules.CartesianLine`'s bipolar train, which
+        is why it is a helper rather than four lines here: **the rounding direction is not**.  Each
+        caller keeps its own, and each keeps its own "exactly one of bandwidth and dwell" refusal,
+        because those are statements about this module's arguments rather than about the raster.
 
         Rounded **up**, not to nearest: rounding down raises the bandwidth, which shortens the
         lobe, which is the direction that turns a feasible protocol into a refusal.  A longer
@@ -673,9 +681,7 @@ class EPI2D(Module):
             else 1.0 / (require_positive(bandwidth_hz_px, 'bandwidth_hz_px')
                         * self.matrix[0] * self.oversampling)
         )
-        adc_ticks = to_ticks(float(self.opts.adc_raster_time))
-        pair_ticks = 2 * to_ticks(float(self.opts.rf_raster_time))
-        quantum = adc_ticks * (pair_ticks // gcd(self.num_samples * adc_ticks, pair_ticks))
+        quantum = to_ticks(dwell_quantum(self.num_samples, opts=self.opts))
         asked = to_ticks(require_positive(wanted, 'dwell_s'))
         return from_ticks(max(quantum, -(-asked // quantum) * quantum))
 
@@ -755,7 +761,8 @@ class EPI2D(Module):
 
         if self.ramp_sampling:
             total_s = ceil_raster(sample_time + 2 * self._guard_min_s, self.opts.grad_raster_time)
-            guard_s = self._halve(total_s, sample_time)
+            guard_s = halve_onto(total_s, sample_time, self.opts.adc_raster_time,
+                                 opts=self.opts)
             rise_s = self._solve_ramp(total_s, guard_s, k_window)
         else:
             # Flat-top sampling: the amplitude is the nominal one by definition, and the ramp is
@@ -766,7 +773,8 @@ class EPI2D(Module):
                 max(amplitude / slew, self._guard_min_s), self.opts.grad_raster_time,
             )
             total_s = 2 * rise_s + ceil_raster(sample_time, self.opts.grad_raster_time)
-            guard_s = self._halve(total_s, sample_time)
+            guard_s = halve_onto(total_s, sample_time, self.opts.adc_raster_time,
+                                 opts=self.opts)
 
         gx = self._lobe_at(total_s, rise_s, guard_s, k_window)
         self._check_hardware(gx, rise_s, guard_s, total_s)
@@ -786,34 +794,6 @@ class EPI2D(Module):
             )
             raise ConfigurationError(msg)
         return gx, adc, guard_s
-
-    def _halve(self, total_s: float, sample_time: float) -> float:
-        """
-        Return ``(T - N*dwell) / 2`` **in integer ticks**, and refuse a half that is not a delay.
-
-        Not a float subtraction.  ``(470 us - 409.6 us) / 2`` evaluates to 30.200000000000003 us,
-        which is 302.00000000000006 ADC rasters, and pypulseq's timing check rejects it -- naming
-        the block rather than the femtosecond.  This is the drift
-        :mod:`seqcraft.design.timing` exists to remove, and it is the one place in this module
-        where the arithmetic has to leave floating point.
-
-        The refusal is Rule 1's parity condition made concrete: the guard is half of a gap that
-        has to land on the ADC raster, so the sampling duration must be an **even** number of ADC
-        rasters.  An even :attr:`num_samples` gives that for any legal dwell, so nothing this
-        module builds should reach it -- which is the point of stating it rather than assuming it.
-        """
-        raster_ticks = to_ticks(float(self.opts.adc_raster_time))
-        gap = to_ticks(total_s) - to_ticks(sample_time)
-        if gap % (2 * raster_ticks):
-            msg = format_error(
-                f'the guard would be {from_ticks(gap) / 2 * 1e6:.4f} us, which is not a whole '
-                f'ADC raster.',
-                {'num_samples': self.num_samples, 'dwell_s': self.dwell_s,
-                 'echo_spacing_s': total_s},
-                ['num_samples * dwell_s must be an even number of ADC rasters'],
-            )
-            raise ConfigurationError(msg)
-        return from_ticks(gap // 2)
 
     def _lobe_at(self, total_s: float, rise_s: float, guard_s: float, k_window: float) -> Event:
         """
@@ -1142,30 +1122,3 @@ class EPI2D(Module):
             )
             raise ConfigurationError(msg)
         return self.winder_s
-
-
-def _require_count(value: int, name: str, *, low: int = 1, hint: str = '') -> int:
-    """
-    Return `value` as an int at or above `low`.
-
-    Three arguments here are counts with a floor -- `oversampling`, `blip_lines` and
-    `navigator_echoes` -- and one function is better than three that differ only in the noun.
-    Private rather than in ``_support`` because those three are its only callers, which is the
-    rule that keeps that file the shared things and not the leftovers.
-
-    Examples
-    --------
-    >>> _require_count(4, 'blip_lines')
-    4
-    >>> _require_count(-1, 'navigator_echoes', low=0)
-    Traceback (most recent call last):
-        ...
-    seqcraft.errors.ConfigurationError: navigator_echoes must not be negative, got -1.
-    """
-    count = int(value)
-    if count < low:
-        floor = 'not be negative' if low == 0 else f'be at least {low}'
-        msg = format_error(f'{name} must {floor}, got {count}.', {name: count},
-                           [hint] if hint else ())
-        raise ConfigurationError(msg)
-    return count
