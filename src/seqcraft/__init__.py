@@ -70,6 +70,7 @@ Named for what each layer answers, in the order a sequence passes through them::
     scanner/     what you build against    Opts, and the PNS response model
     design/      what you build            the tree, events, timing, units
     modules/     what you build with       the MR building blocks, each one extracted
+    exchange/    what crosses languages    LBTX schema, codec, semantic hash
     compiler/    the transform             boundaries, legalization, emission, verification
     analysis     measuring a tree          sample, moments, kspace, pns
     display      looking at a tree         plot_block
@@ -96,7 +97,7 @@ from __future__ import annotations
 
 import importlib
 
-from . import _compat, modules
+from . import _compat, exchange, modules
 from ._version import __version__
 from .analysis import kspace, moments, pns, sample
 from .compiler import compile_sequence as compile  # noqa: A001, A004
@@ -112,6 +113,16 @@ from .errors import (
     MissingExtraError,
     SeqCraftError,
     SeqCraftWarning,
+)
+from .exchange import (
+    ExchangeError,
+    exchange_schema,
+    export_logicblock,
+    import_logicblock,
+    read_logicblock,
+    semantic_hash,
+    validate_document,
+    write_logicblock,
 )
 from .scanner import hardware, opts
 from .scanner.opts import UnknownFieldError
@@ -159,6 +170,7 @@ __all__ = [
     'CompilerContractError',
     'ConfigurationError',
     'DefinitionConflict',
+    'ExchangeError',
     'HardwareLimitError',
     'Item',
     'LogicBlock',
@@ -178,17 +190,25 @@ __all__ = [
     'convert',
     'display',
     'events',
+    'exchange',
+    'exchange_schema',
+    'export_logicblock',
     'flatten',
     'hardware',
+    'import_logicblock',
     'kspace',
     'moments',
     'modules',
     'opts',
     'plot_block',
     'pns',
+    'read_logicblock',
     'sample',
     'scanner',
+    'semantic_hash',
     'span',
     'timing',
     'units',
+    'validate_document',
+    'write_logicblock',
 ]
