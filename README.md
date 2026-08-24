@@ -416,32 +416,6 @@ directory that defines no class of its own.
 
 ---
 
-## MATLAB frontend and portable trees
-
-LogicBlock Tree Exchange Format (LBTX) is the compiler-input format shared by Python and MATLAB. A
-Python tree can be saved and restored without losing nesting, relative starts, insertion order,
-events, scanner options, or definitions:
-
-```python
-sc.write_logicblock('scan.lb.json', scan, opts, definitions={'FOV': [0.22, 0.22, 0.005]})
-restored, restored_opts, definitions = sc.read_logicblock('scan.lb.json')
-```
-
-MATLAB builds the same document with `seqcraft.LogicBlock`, then calls the authoritative Python
-compiler:
-
-```matlab
-addpath("matlab")
-root = seqcraft.LogicBlock("gre");
-root = root.add(0, seqcraft.delay(1e-3));
-seqcraft.writeTree(root, opts, definitions, "gre.lb.json");
-result = seqcraft.compileTree("gre.lb.json", "gre.seq");
-```
-
-This is a MATLAB frontend, not a separate MATLAB compiler. Setup, supported events, diagnostics, and
-cross-platform invocation are documented in
-[`docs/matlab_interoperability.md`](docs/matlab_interoperability.md).
-
 ## What the compiler checks
 
 `sc.compile(tree, opts)` returns a `pypulseq.Sequence` and nothing else. If the tree cannot become a

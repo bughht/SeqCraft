@@ -41,10 +41,6 @@ Measperm*
 # Reviewed compiler snapshots are source-controlled regression inputs, not scan output.
 !tests/baselines/*.json
 
-# Versioned LBTX schemas and golden protocol documents are reviewed source fixtures.
-!src/seqcraft/exchange/*.schema.json
-!tests/fixtures/lbtx/*.lb.json
-
 # Generated sequences and sidecars.  Regenerate by running the notebooks.
 *.seq
 *.seq.json

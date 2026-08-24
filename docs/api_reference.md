@@ -9,7 +9,6 @@ Read §0 first — the rest is reference.
 - [0. The whole package in one page](#0-the-whole-package-in-one-page)
 - [1. `design/` — what you build](#1-design--what-you-build)
 - [2. `scanner/` — what you build against](#2-scanner--what-you-build-against)
-- [2b. `exchange/` — language-neutral compiler input](#2b-exchange--language-neutral-compiler-input)
 - [3. `compiler/` — the transform](#3-compiler--the-transform)
 - [4. `analysis` — measuring a tree](#4-analysis--measuring-a-tree)
 - [5. `display` — looking at a tree](#5-display--looking-at-a-tree)
@@ -71,11 +70,6 @@ Everything reachable as `sc.<name>`. This is the whole of what `__init__.py` re-
 | `timing`, `Raster` | module, class | [1.5](#15-designtiming--exact-time-arithmetic) |
 | `units`, `convert` | module, function | [1.6](#16-designunits--one-conversion-function) |
 | `scanner`, `opts`, `hardware` | module | [2](#2-scanner--what-you-build-against) |
-| `exchange` | module | [2b](#2b-exchange--language-neutral-compiler-input) |
-| `export_logicblock`, `import_logicblock` | function | [2b](#2b-exchange--language-neutral-compiler-input) |
-| `read_logicblock`, `write_logicblock` | function | [2b](#2b-exchange--language-neutral-compiler-input) |
-| `validate_document`, `exchange_schema`, `semantic_hash` | function | [2b](#2b-exchange--language-neutral-compiler-input) |
-| `ExchangeError` | exception | [2b](#2b-exchange--language-neutral-compiler-input) |
 | `analysis`, `sample`, `moments`, `kspace`, `pns` | module, function | [4](#4-analysis--measuring-a-tree) |
 | `display`, `plot_block` | module, function | [5](#5-display--looking-at-a-tree) |
 | `SeqCraftError`, `ConfigurationError`, `MissingExtraError` | exception | [6](#6-errors--the-exception-hierarchy) |
@@ -646,50 +640,6 @@ raises `ConfigurationError`. The returned model carries `.source`, a provenance 
 ```python
 hw = sc.hardware.load_hardware('CimaX.asc')             # needs $SEQCRAFT_ASC_DIR
 ```
-
----
-
-# 2b. `exchange/` — language-neutral compiler input
-
-LogicBlock Tree Exchange Format (LBTX) is the versioned JSON boundary after a Python or MATLAB
-builder has produced a tree and before compiler placement. It preserves relative starts, insertion
-order, nesting, overlap, scanner options, event fields, and definitions. It is not a `.seq` importer
-and the compiler never imports it.
-
-```python
-document = sc.export_logicblock(
-    tr, opts, definitions={'FOV': [0.22, 0.22, 0.005]},
-    provenance={'producer': 'api-reference'},
-)
-restored, restored_opts, restored_definitions = sc.import_logicblock(document)
-assert [node.start for node in restored] == [node.start for node in tr]
-assert restored_opts.grad_raster_time == opts.grad_raster_time
-assert restored_definitions['FOV'][0] == 0.22
-assert len(sc.semantic_hash(document)) == 64
-```
-
-`write_logicblock(path, root, opts, ...)` and `read_logicblock(path)` are the file equivalents.
-`validate_document(document)` raises `ExchangeError` with a JSON path such as
-`$.root.nodes[2].item.payload.delay_s`. `exchange_schema()` returns an independent copy of the
-Draft 2020-12 schema; its constants are `SCHEMA_NAME == 'seqcraft.logicblock'` and
-`SCHEMA_VERSION == '0.1'` in `seqcraft.exchange`.
-
-All time values are decimal strings in seconds. Other fields use explicitly named SI units.
-Provenance and namespaced extensions are excluded from `semantic_hash`; definitions are included
-because they are compiler input.
-
-The machine boundary used by MATLAB is:
-
-```console
-seqcraft validate-tree input.lb.json --diagnostics json
-seqcraft compile-tree input.lb.json --output output.seq --diagnostics json
-```
-
-Exit 0 is success, 2 is an exchange/input failure, 3 is a compiler rejection, and 4 is an adapter
-or file-system failure. JSON mode writes exactly one diagnostic object to stdout.
-
-See [`matlab_interoperability.md`](matlab_interoperability.md) and
-[ADR-005](adr/005-logicblock-tree-exchange.md).
 
 ---
 
@@ -1340,8 +1290,7 @@ The difference between the two pictures is exactly the block structure the compi
 SeqCraftError                  # the base; catch this to catch everything
 ├── ConfigurationError         # a call is wrong: bad type, unknown unit, unusable Opts
 │   ├── RasterError            #   a time is off a raster            (design/timing.py)
-│   ├── UnknownFieldError      #   an Opts override that is not a field (scanner/opts.py)
-│   └── ExchangeError          #   malformed or unsupported LBTX     (exchange/errors.py)
+│   └── UnknownFieldError      #   an Opts override that is not a field (scanner/opts.py)
 ├── CompileError               # this tree cannot become a legal sequence (compiler/errors.py)
 ├── HardwareLimitError         # the machine cannot play it          (compiler/errors.py)
 ├── DefinitionConflict         # two sources claim one [DEFINITIONS] key (compiler/errors.py)
@@ -1588,7 +1537,6 @@ at import.
 | `EPI2D` | `modules` | class |
 | `EPS` | `design.timing` | constant |
 | `EXCLUSIVE_KINDS` | `compiler.model` | constant |
-| `ExchangeError` | `exchange` | exception |
 | `Event` | `design.events` | type alias |
 | `Excitation` | `modules` | class |
 | `GAMMA_1H` | `design.units` | constant |
@@ -1614,8 +1562,6 @@ at import.
 | `Raster` | `design.timing` | class |
 | `RasterError` | `design.timing` | exception |
 | `Refocusing` | `modules` | class |
-| `SCHEMA_NAME` | `exchange` | constant |
-| `SCHEMA_VERSION` | `exchange` | constant |
 | `SeqCraftError` | `errors` | exception |
 | `SeqCraftWarning` | `errors` | warning |
 | `TICKS_PER_SECOND` | `design.timing` | constant |
@@ -1639,16 +1585,13 @@ at import.
 | `emit_blocks` | `compiler.emission` | function |
 | `exact_diff` | `design.timing` | function |
 | `exact_sum` | `design.timing` | function |
-| `exchange_schema` | `exchange` | function |
 | `expected_addresses` | `compiler.verification` | function |
-| `export_logicblock` | `exchange` | function |
 | `find_boundaries` | `compiler.boundaries` | function |
 | `flatten` | `design.logic` | function |
 | `format_error` | `errors` | function |
 | `from_scanner` | `scanner.opts` | function |
 | `from_ticks` | `design.timing` | function |
 | `in_block_delay` | `compiler.model` | function |
-| `import_logicblock` | `exchange` | function |
 | `interval_duration` | `compiler.model` | function |
 | `knots_of` | `design.events` | function |
 | `known_units` | `design.units` | function |
@@ -1663,12 +1606,10 @@ at import.
 | `plot_block` | `display` | function |
 | `pns` | `analysis` | function |
 | `pwl_moment` | `design.events` | function |
-| `read_logicblock` | `exchange` | function |
 | `require` | `_compat` | function |
 | `require_valid_contract` | `compiler.verification` | function |
 | `required_duration` | `compiler.legalization` | function |
 | `sample` | `analysis` | function |
-| `semantic_hash` | `exchange` | function |
 | `spoiler` | `modules` | function |
 | `span` | `design.logic` | function |
 | `superpose` | `compiler.legalization` | function |
@@ -1678,9 +1619,7 @@ at import.
 | `time_equal` | `compiler.model` | function |
 | `time_strictly_between` | `compiler.model` | function |
 | `to_ticks` | `design.timing` | function |
-| `validate_document` | `exchange` | function |
 | `verify_against_tree` | `compiler.verification` | function |
 | `verify_placed_events` | `compiler.verification` | function |
 | `verify_ready_blocks` | `compiler.verification` | function |
 | `waveform_of` | `design.events` | function |
-| `write_logicblock` | `exchange` | function |

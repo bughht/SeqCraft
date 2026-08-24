@@ -50,7 +50,6 @@ _INDEXED = {
     'seqcraft.errors': 'errors',
     'seqcraft.analysis': 'analysis',
     'seqcraft.display': 'display',
-    'seqcraft.exchange': 'exchange',
     'seqcraft.design.logic': 'design.logic',
     'seqcraft.design.module': 'design.module',
     'seqcraft.design.events': 'design.events',
@@ -72,7 +71,7 @@ _INDEXED = {
 
 #: Names the index deliberately omits: package re-exports of a whole submodule, and the two
 #: type aliases that are documented in prose but are not functions or classes.
-_NOT_INDEXED = {'events', 'exchange', 'logic', 'module', 'timing', 'units', 'hardware', 'opts'}
+_NOT_INDEXED = {'events', 'logic', 'module', 'timing', 'units', 'hardware', 'opts'}
 
 
 def _blocks(text: str) -> list[tuple[int, str]]:
