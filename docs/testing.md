@@ -67,6 +67,19 @@ The public CI result therefore proves the compiler, the `Module` contract, docum
 file round-trip, and the getting-started notebook on the supported matrix. It does not prove vendor
 hardware, full simulation, reconstruction, or external cross-validation.
 
+LBTX Python codec, schema, CLI, CartesianLine, and Spiral conformance tests run in the normal pytest
+tier under `tests/exchange/`. MATLAB tests are marked `crossval`, because public runners do not carry
+a MATLAB installation or licence. On a configured workstation run:
+
+```bash
+pytest -m crossval tests/exchange/test_matlab.py
+matlab -batch "addpath('matlab'); results=runtests('matlab/tests'); assert(all([results.Passed]));"
+```
+
+The cross-language tier checks Python writer -> MATLAB reader/writer -> Python reader, MATLAB writer
+-> Python validator/compiler, structured diagnostics, and `.seq` creation. It compares the LBTX
+semantic hash and physical sequence quantities rather than JSON formatting.
+
 ## What the fixtures are made of
 
 Every compiler and integration fixture is **raw pypulseq**. That is a standing rule, not an

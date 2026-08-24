@@ -1,0 +1,107 @@
+{
+  "schema": "seqcraft.logicblock",
+  "version": "0.1",
+  "units": "SI",
+  "opts": {
+    "max_b1_hz": 851.52,
+    "max_grad_hz_per_m": 1703040.0,
+    "max_slew_hz_per_m_per_s": 6386400000.0,
+    "max_frequency_offset_hz": 250000.0,
+    "rf_dead_time_s": "0.0001",
+    "rf_ringdown_time_s": "3.0000000000000001e-05",
+    "adc_dead_time_s": "1.0000000000000001e-05",
+    "adc_raster_time_s": "9.9999999999999995e-08",
+    "rf_raster_time_s": "9.9999999999999995e-07",
+    "grad_raster_time_s": "1.0000000000000001e-05",
+    "block_duration_raster_s": "1.0000000000000001e-05",
+    "adc_samples_limit": 0,
+    "rf_samples_limit": 0,
+    "adc_samples_divisor": 4,
+    "trigger_identifier_supported": true,
+    "gamma_hz_per_t": 42576000.0,
+    "b0_t": 3.0
+  },
+  "definitions": {
+    "FOV": [
+      0.22,
+      0.22,
+      0.005
+    ]
+  },
+  "root": {
+    "tag": "cartesian",
+    "nodes": [
+      {
+        "start_s": "0",
+        "item": {
+          "kind": "block",
+          "block": {
+            "tag": "CartesianLine",
+            "nodes": [
+              {
+                "start_s": "0",
+                "item": {
+                  "kind": "event",
+                  "event_type": "trap",
+                  "payload": {
+                    "channel": "x",
+                    "amplitude_hz_per_m": -928977.2727272728,
+                    "rise_time_s": "0.00016000000000000001",
+                    "flat_time_s": "0",
+                    "fall_time_s": "0.00016000000000000001",
+                    "area_per_m": -148.63636363636365,
+                    "flat_area_per_m": -0.0,
+                    "delay_s": "0",
+                    "first_hz_per_m": 0.0,
+                    "last_hz_per_m": 0.0
+                  }
+                }
+              },
+              {
+                "start_s": "0.00032000000000000003",
+                "item": {
+                  "kind": "event",
+                  "event_type": "trap",
+                  "payload": {
+                    "channel": "x",
+                    "amplitude_hz_per_m": 90909.09090909093,
+                    "rise_time_s": "2.0000000000000002e-05",
+                    "flat_time_s": "0.0032000000000000002",
+                    "fall_time_s": "2.0000000000000002e-05",
+                    "area_per_m": 292.7272727272728,
+                    "flat_area_per_m": 290.909090909091,
+                    "delay_s": "0",
+                    "first_hz_per_m": 0.0,
+                    "last_hz_per_m": 0.0
+                  }
+                }
+              },
+              {
+                "start_s": "0.00032000000000000003",
+                "item": {
+                  "kind": "event",
+                  "event_type": "adc",
+                  "payload": {
+                    "num_samples": 64,
+                    "dwell_s": "4.9999999999999996e-05",
+                    "delay_s": "2.0000000000000002e-05",
+                    "frequency_offset_hz": 0.0,
+                    "phase_offset_rad": 0.0,
+                    "frequency_offset_ppm": 0.0,
+                    "phase_offset_ppm": 0.0,
+                    "dead_time_s": "1.0000000000000001e-05",
+                    "phase_modulation_rad": []
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "producer": "seqcraft-golden",
+    "producer_version": "0.1"
+  }
+}
