@@ -1,7 +1,7 @@
 function value = barrier(tag)
-%BARRIER Construct an LBTX SeqCraft boundary marker.
+%BARRIER Return a zero-duration SeqCraft block-boundary marker.
 arguments
     tag (1, 1) string = "barrier"
 end
-value = seqcraft.event("seqcraft_barrier", struct("tag", tag));
+value = struct("type", "seqcraft_barrier", "tag", tag, "delay", 0);
 end

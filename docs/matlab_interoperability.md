@@ -1,93 +1,151 @@
-# MATLAB interoperability preview
+# MATLAB frontend
 
-SeqCraft's MATLAB support is a frontend for LogicBlock Tree Exchange Format (LBTX) 0.1. MATLAB
-builds or reads the same compiler-input tree as Python; the existing Python compiler remains the
-only authority and writes the final Pulseq `.seq`.
+SeqCraft's MATLAB frontend mirrors the Python Module and LogicBlock concepts while using official
+MATLAB Pulseq scanner options, event structs, and final Sequence objects. Python remains the only
+SeqCraft compiler.
 
 ## Setup
 
-Install SeqCraft in a dedicated Python environment and add the repository MATLAB package to the
-MATLAB path:
+Add both official MATLAB Pulseq and the SeqCraft MATLAB package to the MATLAB path:
 
 ```matlab
+addpath("/path/to/pulseq/matlab")
 addpath("/path/to/SeqCraft/matlab")
 ```
 
-Choose the Python executable in one of two ways:
+Choose a Python environment containing SeqCraft either globally or per compile:
 
 ```matlab
 setenv("SEQCRAFT_PYTHON", "/path/to/environment/bin/python")
-% or pass PythonExecutable=... to validateTree/compileTree
+% or: seqcraft.compile(..., PythonExecutable="/path/to/python")
 ```
 
-On Windows use the environment's `python.exe`. Paths are shell-quoted by the adapter on Windows,
-macOS, and Linux. The selected Python must be able to run `python -m seqcraft`; an editable install
-or normal package installation both satisfy that.
+The executable must support `python -m seqcraft compile-tree ...`. On Windows pass the environment's
+`python.exe`.
 
-## Build and compile a tree
+## Build and compile
 
-Protocol scanner values use canonical SI/PyPulseq units: gradients in Hz/m, slew in Hz/m/s, RF in
-Hz, and times in seconds.
+Use the same official Pulseq objects a normal MATLAB sequence uses:
 
 ```matlab
-opts = seqcraft.scannerOpts(1703040, 6386400000, ...
-    RFDeadTimeSeconds=100e-6, ...
-    RFRingdownTimeSeconds=30e-6, ...
-    ADCDeadTimeSeconds=10e-6, ...
-    B0T=3);
+opts = mr.opts( ...
+    "MaxGrad", 40, "GradUnit", "mT/m", ...
+    "MaxSlew", 150, "SlewUnit", "T/m/s", ...
+    "rfDeadTime", 100e-6, ...
+    "rfRingdownTime", 30e-6, ...
+    "adcDeadTime", 10e-6, ...
+    "B0", 3);
 
-gx = seqcraft.trapezoid("x", 100000, 100e-6, 800e-6, 100e-6);
-adc = seqcraft.adc(64, 10e-6, DelaySeconds=100e-6, DeadTimeSeconds=10e-6);
+gx = mr.makeTrapezoid("x", opts, "Area", 80, "Duration", 1e-3);
+adc = mr.makeAdc(64, opts, "Dwell", 10e-6, "Delay", gx.riseTime);
 
 readout = seqcraft.LogicBlock("readout");
-readout = readout.add(0, gx, adc);       % value object: keep the returned value
+readout.add(0, gx, adc);
+
 root = seqcraft.LogicBlock("gre");
-root = root.add(0, readout);
+root.add(0, readout);
 
 definitions = struct("FOV", [0.22 0.22 0.005]);
-seqcraft.writeTree(root, opts, definitions, "gre.lb.json");
-validation = seqcraft.validateTree("gre.lb.json");
-compiled = seqcraft.compileTree("gre.lb.json", "gre.seq");
-assert(validation.ok && compiled.ok)
+seq = seqcraft.compile(root, opts, "gre.seq", Definitions=definitions);
 ```
 
-`LogicBlock` preserves insertion order and relative starts; it never sorts nodes or legalizes
-overlap. Assign the return from `add` because MATLAB classes in this frontend are value objects.
+`compile` performs four operations: writes a temporary LBTX file, invokes the existing Python
+compiler, writes the requested `.seq`, then loads it with `mr.Sequence(opts).read(...)`. The returned
+value is an official `mr.Sequence`, so the normal Pulseq workflow continues unchanged:
 
-## Supported events
+```matlab
+seq.plot();
+[ok, report] = seq.checkTiming();
+[ktraj_adc, t_adc] = seq.calculateKspacePP();
+```
 
-The MATLAB package provides `delay`, `trapezoid`, `arbitraryGradient`, `rf`, `adc`, `label`,
-`trigger`, `output`, and `barrier`. Their arguments expose protocol physical fields directly.
-Nested `LogicBlock` values cover the other item kind.
+Any write, Python compile, output-file, or MATLAB read failure raises an exception. There is no
+`result.ok` value that must be checked separately.
 
-`readTree` returns `[root, opts, definitions, document]`. `writeTree` accepts the semantic first
-three values and optional provenance. Unknown semantic fields and event types are rejected by the
-Python validator; optional producer-specific data belongs in namespaced `extensions` at the JSON
-protocol level.
+## LogicBlock semantics
 
-## Diagnostics and failures
+`LogicBlock` is a handle class because Python blocks are mutable references too. `add` changes the
+same object and returns it only to permit chaining:
 
-`validateTree` and `compileTree` always request JSON diagnostics. The returned struct contains:
+```matlab
+block = seqcraft.LogicBlock("readout");
+alias = block;
+block.add(0, gx, adc);
+assert(numel(alias.nodes) == 2)
+```
 
-- `ok` and `exit_code`;
-- `diagnostics`, with severity, category, error type, message, and optional JSON source path;
-- for a successful compile, `output`, `duration_s`, and `block_count`.
+Nodes stay in insertion order and their `start` values are seconds relative to the enclosing block.
+Overlap is legal; the Python compiler legalizes it. `duration` is measured from child events with
+`mr.calcDuration`. `copy()` copies the block and node container but deliberately shares nested
+blocks, matching Python's shallow-copy contract.
 
-Exit code 2 means malformed/unsupported LBTX input, 3 means the compiler rejected a valid tree, and
-4 means an adapter or file-system failure. Compiler warnings are returned as warning diagnostics;
-they are not hidden or converted into success text.
+A SeqCraft barrier is the one non-Pulseq item:
 
-If invocation fails before a JSON result is produced, MATLAB raises `seqcraft:CLIProtocol` and
-includes the command status and captured output. Temporary files are caller-owned and retained on
-failure so the exact compiler input remains available for diagnosis.
+```matlab
+root.add(2e-3, seqcraft.barrier("readout-boundary"));
+```
 
-## Compatibility and testing
+## Writing a Module
 
-Version 0.1 rejects unknown semantic fields. Time values are decimal strings in seconds and survive
-Python/MATLAB round trips without changing raster classification. Provenance does not affect the
-semantic hash.
+As in Python, a module constructor designs events once and the build step only assembles them. A
+MATLAB subclass implements protected `buildImplicit`; users call the base `build` method:
 
-Run `matlab/tests/testLBTX.m` for MATLAB-local builder coverage and
-`pytest -m crossval tests/exchange/test_matlab.py` for the bidirectional bridge. The normal Python
-suite additionally checks CartesianLine echo/sample semantics and a Spiral arbitrary-gradient
-stress case. See [ADR-005](adr/005-logicblock-tree-exchange.md) for the protocol decisions.
+```matlab
+classdef Readout < seqcraft.Module
+    properties
+        gx
+        adc
+    end
+
+    methods
+        function obj = Readout(opts)
+            obj@seqcraft.Module(opts);
+            obj.gx = mr.makeTrapezoid("x", opts, "Area", 80, "Duration", 1e-3);
+            obj.adc = mr.makeAdc(64, opts, "Dwell", 10e-6, ...
+                "Delay", obj.gx.riseTime);
+        end
+    end
+
+    methods (Access = protected)
+        function block = buildImplicit(obj, varargin)
+            block = seqcraft.LogicBlock();
+            block.add(0, obj.gx, obj.adc);
+        end
+    end
+end
+```
+
+```matlab
+readout = Readout(opts);
+block = readout.build();
+```
+
+The base `build` verifies the return type and gives an unnamed block the module tag or class name.
+`buildImplicit` is the MATLAB implementation hook corresponding to the Python subclass `build`;
+there is still only one module-build lifecycle.
+
+## Explicit exchange files
+
+Most users should call `compile`. To inspect, version, or transfer compiler input explicitly:
+
+```matlab
+seqcraft.writeLBTX(root, opts, "gre.lbtx.json", Definitions=definitions);
+```
+
+LBTX stores official event public fields, normalized to snake_case, rather than defining SeqCraft
+event builders or payload types. Version 1 is intentionally one-way: MATLAB writes and Python reads.
+It does not promise a Python writer, MATLAB reader/round-trip, semantic hash, provenance, or a full
+diagnostics protocol.
+
+## Tests
+
+With `PULSEQ_MATLAB_PATH` pointing to official MATLAB Pulseq:
+
+```bash
+pytest -m crossval tests/exchange/test_matlab.py
+matlab -batch "addpath(getenv('PULSEQ_MATLAB_PATH')); addpath('matlab'); \
+  results=runtests('matlab/tests'); assert(all([results.Passed]));"
+```
+
+The normal Python test tier validates the small schema, reader, compile command, and handwritten
+fixture. See [ADR-005](adr/005-logicblock-tree-exchange.md) for ownership and deferred features.

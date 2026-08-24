@@ -347,8 +347,8 @@ src/seqcraft/
                  logic.py  module.py  events.py
                  timing.py (Raster, RasterError)  units.py
 
-  exchange/      language-neutral compiler input
-                 LBTX schema, validation, codec, semantic hash
+  exchange/      MATLAB-to-Python compiler input
+                 small LBTX schema and generic reader
 
   compiler/      the transform
                  __init__.py  compile_sequence
@@ -367,7 +367,7 @@ tests/        analysis/  design/  exchange/  logic/  compiler/  module/  modules
 examples/     01_getting_started.ipynb   uses no modules, on purpose
               gre_2d/                    the sequence sc.modules was extracted from
 salvage/      physics lifted out of the deleted library; not packaged, not imported
-matlab/       +seqcraft/                 LBTX value objects, event builders, CLI adapter
+matlab/       +seqcraft/                 Module, LogicBlock, LBTX writer, compile adapter
 docs/         api_reference  architecture  compiler  writing_a_module
               testing  serialization  matlab_interoperability
               adr/     005 is LBTX; 004 is the return type; 003 the scanner/module reform
@@ -378,7 +378,13 @@ them only ever points forward. That is the whole of the membership rule, and unl
 compile path?" — which put the unit table, the geometry and the report in one directory with the
 scheduler — it can be checked mechanically, which is what `test_layering.py` does.
 
-`exchange/` is an upstream adapter beside the compiler stages. It imports `design` and reconstructs
-a plain `pypulseq.Opts`; the compiler never imports it. `cli.py` is the application boundary allowed
-to import both exchange and compiler. This keeps LBTX and MATLAB concerns out of placement,
-legalization, and emission.
+`exchange/` is an upstream adapter beside the compiler stages. It generically reconstructs official
+Pulseq event fields and a plain `pypulseq.Opts` from a MATLAB-written LBTX file; it does not define
+event constructors or a second event type system. The compiler never imports it. `cli.py` is the
+small application boundary allowed to import both exchange and compiler. This keeps LBTX and MATLAB
+concerns out of placement, legalization, and emission.
+
+The MATLAB side mirrors the same user concepts without wrapping Pulseq: `mr.opts` is the scanner,
+`mr.make*` structs are events, `seqcraft.Module` builds a `seqcraft.LogicBlock`, and
+`seqcraft.compile` returns an official `mr.Sequence`. LBTX is optional for Python and is not part of
+the normal `sc.compile` path.

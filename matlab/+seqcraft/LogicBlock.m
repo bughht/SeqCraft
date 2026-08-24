@@ -1,58 +1,61 @@
-classdef LogicBlock
-    %LOGICBLOCK MATLAB value-object builder for an LBTX tree.
+classdef LogicBlock < handle
+    %LOGICBLOCK A tree of Pulseq events with relative start times.
 
-    properties (SetAccess = private)
-        Tag (1, 1) string = ""
-        Nodes (1, :) cell = {}
+    properties
+        tag (1, 1) string = ""
+        nodes (1, :) cell = {}
+    end
+
+    properties (Dependent, SetAccess = private)
+        duration (1, 1) double
     end
 
     methods
         function obj = LogicBlock(tag)
             if nargin > 0
-                obj.Tag = string(tag);
+                obj.tag = string(tag);
             end
         end
 
         function obj = add(obj, startSeconds, varargin)
-            %ADD Append items at one start time, preserving insertion order.
-            start = seqcraft.decimal(startSeconds);
+            %ADD Append Pulseq events or nested blocks without sorting them.
+            validateattributes(startSeconds, {'numeric'}, {'scalar', 'real', 'finite'});
             for index = 1:numel(varargin)
-                node = struct();
-                node.start_s = start;
-                node.item = seqcraft.encodeItem(varargin{index});
-                obj.Nodes{end + 1} = node;
+                item = varargin{index};
+                isEvent = isstruct(item) && isscalar(item) && isfield(item, "type");
+                if ~isa(item, "seqcraft.LogicBlock") && ~isEvent
+                    error("seqcraft:InvalidItem", ...
+                        "LogicBlock.add accepts mr.make* events or nested LogicBlocks, got %s.", ...
+                        class(item));
+                end
+                obj.nodes{end + 1} = struct("start", double(startSeconds), "item", item);
             end
         end
 
-        function value = toStruct(obj)
-            %TOSTRUCT Return the JSON-ready LBTX block payload.
-            value = struct();
-            value.tag = char(obj.Tag);
-            value.nodes = obj.Nodes;
-        end
-    end
-
-    methods (Static)
-        function obj = fromStruct(value)
-            %FROMSTRUCT Reconstruct a builder from a decoded LBTX block.
-            obj = seqcraft.LogicBlock(string(value.tag));
-            nodes = value.nodes;
-            if isempty(nodes)
+        function value = get.duration(obj)
+            if isempty(obj.nodes)
+                value = 0;
                 return
             end
-            if isstruct(nodes)
-                nodes = num2cell(nodes);
-            end
-            for index = 1:numel(nodes)
-                node = nodes{index};
-                item = node.item;
-                if string(item.kind) == "block"
-                    decoded = seqcraft.LogicBlock.fromStruct(item.block);
+            ends = zeros(1, numel(obj.nodes));
+            for index = 1:numel(obj.nodes)
+                node = obj.nodes{index};
+                if isa(node.item, "seqcraft.LogicBlock")
+                    itemDuration = node.item.duration;
+                elseif string(node.item.type) == "seqcraft_barrier"
+                    itemDuration = 0;
                 else
-                    decoded = item;
+                    itemDuration = mr.calcDuration(node.item);
                 end
-                obj = obj.add(str2double(string(node.start_s)), decoded);
+                ends(index) = node.start + itemDuration;
             end
+            value = max(ends);
+        end
+
+        function out = copy(obj)
+            %COPY Copy this block and its node container, sharing child items.
+            out = seqcraft.LogicBlock(obj.tag);
+            out.nodes = obj.nodes;
         end
     end
 end

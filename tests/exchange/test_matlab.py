@@ -1,22 +1,22 @@
-"""Cross-language conformance through the repository MATLAB frontend."""
+"""Cross-language checks for the small MATLAB-to-Python path."""
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 import numpy as np
-import pypulseq as pp
 import pytest
 
-import seqcraft as sc
+from seqcraft.exchange import read_logicblock
 
 ROOT = Path(__file__).parents[2]
 MATLAB = Path('/Applications/MATLAB_R2024b.app/bin/matlab')
 FRONTEND = ROOT / 'matlab'
+MATLAB_PULSEQ = Path(os.environ.get('PULSEQ_MATLAB_PATH', '/Users/yiyund/Code_mgh/pulseq/matlab'))
+HAS_MATLAB = MATLAB.exists() and MATLAB_PULSEQ.exists()
 
 
 def _quote(path: str | Path) -> str:
@@ -30,77 +30,66 @@ def _matlab(code: str):
         'MPLCONFIGDIR': '/tmp/seqcraft-mpl-cache',
         'NUMBA_CACHE_DIR': '/tmp/seqcraft-numba-cache',
     }
+    setup = f"addpath('{_quote(MATLAB_PULSEQ)}'); addpath('{_quote(FRONTEND)}');"
     return subprocess.run(
-        [str(MATLAB), '-batch', f"addpath('{_quote(FRONTEND)}'); {code}"],
+        [str(MATLAB), '-batch', f'{setup} {code}'],
         cwd=ROOT, capture_output=True, text=True, env=env, check=False, timeout=120,
     )
 
 
 @pytest.mark.crossval
-@pytest.mark.skipif(not MATLAB.exists(), reason='MATLAB R2024b is not installed')
-def test_python_writer_matlab_reader_writer_python_reader(tmp_path) -> None:
-    opts = pp.Opts(
-        max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s', B0=3.0,
-        rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6, max_b1=1000,
-    )
-    rf = pp.make_block_pulse(
-        flip_angle=0.5, duration=100e-6, delay=opts.rf_dead_time, use='excitation', system=opts,
-    )
-    gradient = pp.make_arbitrary_grad(
-        'x', np.array([0.0, 100.0, 0.0]), first=0.0, last=0.0, system=opts,
-    )
-    source = tmp_path / 'python-all-events.lb.json'
-    output = tmp_path / 'matlab-roundtrip.lb.json'
-    root = sc.LogicBlock('cross-language').add([
-        [0.0, rf], [0.3e-3, gradient], [0.4e-3, pp.make_delay(0.1e-3)],
-    ])
-    sc.write_logicblock(source, root, opts, definitions={'FOV': [0.22, 0.22, 0.005]})
-    completed = _matlab(
-        f"[root, opts, definitions] = seqcraft.readTree('{_quote(source)}'); "
-        f"seqcraft.writeTree(root, opts, definitions, '{_quote(output)}');"
-    )
-
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    before = json.loads(source.read_text(encoding='utf-8'))
-    after = json.loads(output.read_text(encoding='utf-8'))
-    sc.validate_document(after)
-    assert sc.semantic_hash(after) == sc.semantic_hash(before)
-
-
-@pytest.mark.crossval
-@pytest.mark.skipif(not MATLAB.exists(), reason='MATLAB R2024b is not installed')
-def test_matlab_builder_validates_and_compiles_through_python(tmp_path) -> None:
-    tree = tmp_path / 'matlab-built.lb.json'
-    sequence = tmp_path / 'matlab-built.seq'
-    python = Path(sys.executable)
+@pytest.mark.skipif(not HAS_MATLAB, reason='MATLAB R2024b or MATLAB Pulseq is not installed')
+def test_matlab_native_events_are_read_generically(tmp_path) -> None:
+    tree = tmp_path / 'native.lbtx.json'
     code = (
-        "opts = seqcraft.scannerOpts(1703040, 6386400000, "
-        "RFDeadTimeSeconds=100e-6, RFRingdownTimeSeconds=30e-6, "
-        "ADCDeadTimeSeconds=10e-6, B0T=3); "
-        "readout = seqcraft.LogicBlock('readout'); "
-        "gx = seqcraft.trapezoid('x', 100000, 100e-6, 800e-6, 100e-6); "
-        "adc = seqcraft.adc(64, 10e-6, DelaySeconds=100e-6, DeadTimeSeconds=10e-6); "
-        "readout = readout.add(0, gx, adc); "
-        "root = seqcraft.LogicBlock('matlab-minimal'); root = root.add(0, readout); "
-        f"seqcraft.writeTree(root, opts, struct('FOV', [0.22 0.22 0.005]), '{_quote(tree)}'); "
-        f"validation = seqcraft.validateTree('{_quote(tree)}', "
-        f"PythonExecutable='{_quote(python)}'); assert(validation.ok); "
-        f"compiled = seqcraft.compileTree('{_quote(tree)}', '{_quote(sequence)}', "
-        f"PythonExecutable='{_quote(python)}'); assert(compiled.ok);"
+        "opts=mr.opts('MaxGrad',40,'GradUnit','mT/m','MaxSlew',150,'SlewUnit','T/m/s',"
+        "'rfDeadTime',100e-6,'rfRingdownTime',30e-6,'adcDeadTime',10e-6,'B0',3); "
+        "gx=mr.makeArbitraryGrad('x',[0 1000 0],opts,'first',0,'last',0); "
+        "rf=mr.makeArbitraryRf([1+1i 1-1i],pi/1200,opts,'use','excitation'); "
+        "root=seqcraft.LogicBlock('native'); root.add(0,gx); root.add(0.2e-3,rf); "
+        f"seqcraft.writeLBTX(root,opts,'{_quote(tree)}',Definitions=struct('FOV',[.22 .22 .005]));"
     )
     completed = _matlab(code)
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    root, opts, definitions = sc.read_logicblock(tree)
-    assert root.tag == 'matlab-minimal'
+    root, opts, definitions = read_logicblock(tree)
+    gradient = root.nodes[0].item
+    rf = root.nodes[1].item
+    assert gradient.type == 'grad'
+    assert np.array_equal(gradient.waveform, np.array([0.0, 1000.0, 0.0]))
+    assert np.iscomplexobj(rf.signal)
+    assert rf.signal.size > 0
+    assert opts.B0 == 3
     assert definitions['FOV'] == [0.22, 0.22, 0.005]
-    assert sc.compile(root, opts, definitions=definitions).duration()[0] == 0.001
+
+
+@pytest.mark.crossval
+@pytest.mark.skipif(not HAS_MATLAB, reason='MATLAB R2024b or MATLAB Pulseq is not installed')
+def test_matlab_compile_returns_official_sequence(tmp_path) -> None:
+    output_dir = tmp_path / 'path with spaces'
+    output_dir.mkdir()
+    sequence = output_dir / 'matlab-built.seq'
+    python = Path(sys.executable)
+    code = (
+        "opts=mr.opts('MaxGrad',40,'GradUnit','mT/m','MaxSlew',150,'SlewUnit','T/m/s',"
+        "'adcDeadTime',10e-6,'B0',3); "
+        "gx=mr.makeTrapezoid('x',opts,'Area',80,'Duration',1e-3); "
+        "adc=mr.makeAdc(64,opts,'Dwell',10e-6,'Delay',gx.riseTime); "
+        "root=seqcraft.LogicBlock('matlab-minimal'); root.add(0,gx,adc); "
+        f"seq=seqcraft.compile(root,opts,'{_quote(sequence)}',"
+        f"PythonExecutable='{_quote(python)}',Definitions=struct('FOV',[.22 .22 .005])); "
+        "assert(isa(seq,'mr.Sequence')); [ok,report]=seq.checkTiming; "
+        "assert(ok,strjoin(report,newline));"
+    )
+    completed = _matlab(code)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     assert sequence.exists()
 
 
 @pytest.mark.crossval
-@pytest.mark.skipif(not MATLAB.exists(), reason='MATLAB R2024b is not installed')
+@pytest.mark.skipif(not HAS_MATLAB, reason='MATLAB R2024b or MATLAB Pulseq is not installed')
 def test_matlab_unit_suite() -> None:
-    completed = _matlab("results = runtests('matlab/tests/testLBTX.m'); assert(all([results.Passed]));")
+    completed = _matlab("results=runtests('matlab/tests'); assert(all([results.Passed]));")
 
     assert completed.returncode == 0, completed.stdout + completed.stderr

@@ -1,8 +1,10 @@
 # Serialization — the gap, and what is deferred
 
-**Status: tree exchange is implemented; `.seq` provenance sidecars remain deferred.** LBTX 0.1 can
-save and load a `LogicBlock`, its scanner options, and definitions through `sc.write_logicblock`
-and `sc.read_logicblock`. See [ADR-005](adr/005-logicblock-tree-exchange.md) and
+**Status: the one-way MATLAB compiler-input exchange is implemented; general Python tree
+serialization and `.seq` provenance sidecars remain deferred.** MATLAB can write a LogicBlock,
+official `mr.opts`, official `mr.make*` events, and definitions through `seqcraft.writeLBTX`; the
+Python adapter reads that file only to invoke the existing compiler. See
+[ADR-005](adr/005-logicblock-tree-exchange.md) and
 [`matlab_interoperability.md`](matlab_interoperability.md).
 
 ---
@@ -62,13 +64,15 @@ written.
 
 ## What LBTX now provides
 
-- Versioned JSON Schema and explicit SI event/scanner fields.
-- Python semantic round-trip with insertion order, nested tags, relative timing, and overlap intact.
-- Separate provenance metadata and a semantic hash that excludes provenance and extensions.
-- MATLAB read/write/build support and a structured Python compilation CLI.
+- A versioned JSON structure for tags, ordered nodes, relative timing, scanner options, definitions,
+  and official Pulseq event fields.
+- MATLAB `Module` and `LogicBlock` builders using native `mr.opts` and `mr.make*` values.
+- One direction only: MATLAB writes, then the Python adapter reads and compiles.
 
-LBTX is compiler input, not a `.seq` sidecar. It lets a caller rebuild the sequence, but it does not
-automatically record the environment whenever `pypulseq.Sequence.write()` is called.
+LBTX is compiler input, not a `.seq` sidecar or a mandatory Python IR. It does not currently provide
+a Python writer, a MATLAB reader, a semantic hash, provenance metadata, or general round-trip
+serialization. Those are deliberately deferred instead of being inferred from the existence of the
+one-way adapter.
 
 ## What a `.seq` provenance replacement still has to decide
 
@@ -78,8 +82,8 @@ automatically record the environment whenever `pypulseq.Sequence.write()` is cal
   the caller writes itself.
 - **What it records.** The old set was right as far as it went. It should also carry whatever the
   *tree* knew that the `.seq` does not.
-- **How it links to LBTX.** A sidecar can carry the LBTX semantic hash and producer environment
-  without embedding a second copy of the tree.
+- **How it links to LBTX.** This remains undecided; the first version has no semantic hash or
+  provenance contract.
 - **Determinism.** The old one was careful about this and the care is worth keeping: `sort_keys`
   everywhere, no wall-clock value in the `.seq` itself, numpy arrays summarised by shape/dtype/hash
   rather than dumped, and a dirty git tree recorded as such so a comparison can be marked

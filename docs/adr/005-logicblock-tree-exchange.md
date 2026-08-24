@@ -1,108 +1,103 @@
-# ADR-005: LBTX is the versioned compiler-input exchange boundary
+# ADR-005: LBTX is a thin, one-way MATLAB-to-Python boundary
 
 - Status: Accepted
 - Date: 2026-08-24
-- Protocol version: 0.1
 
 ## Context
 
-Pulseq `.seq` is already portable between Python and MATLAB, but it is the output of the SeqCraft
-compiler. It no longer contains the nested `LogicBlock` structure, relative starts, insertion-order
-tie breaking, pre-legalization overlap, or tree provenance. A MATLAB frontend that builds SeqCraft
-trees therefore needs a boundary before placement, not a `.seq` importer and not a second compiler.
+SeqCraft's established Python path is already small:
 
-Python objects are not that boundary. `LogicBlock`, `pypulseq.Opts`, and PyPulseq events contain
-language-specific representation and mutable registration caches. Dumping their `__dict__` values
-would turn implementation details into a protocol and make MATLAB depend on a particular PyPulseq
-release.
+```text
+Python Module -> Python LogicBlock -> sc.compile -> pypulseq.Sequence
+```
+
+MATLAB users need the same Module and LogicBlock composition model while retaining the official
+MATLAB Pulseq objects they already use. The first LBTX implementation instead added a scanner
+wrapper, event builders, a per-event wire type system, Python writer/round-trip, semantic hash,
+provenance, and structured diagnostics. Those layers repeated definitions already owned by MATLAB
+Pulseq, PyPulseq, or SeqCraft and made the exchange feature resemble a second Pulseq implementation.
 
 ## Decision
 
-SeqCraft defines **LogicBlock Tree Exchange Format (LBTX)** as a versioned JSON document. Version
-0.1 uses the schema identifier `seqcraft.logicblock`, SI units, and the provisional `.lb.json`
-extension. The extension is a preview convention rather than a permanent promise.
-
-The boundary is after a frontend or module has produced its tree and before compiler placement:
+LBTX version 1 is the smallest representation needed for this path:
 
 ```text
-Python or MATLAB builder -> LBTX -> Python importer -> existing sc.compile -> Pulseq .seq
+mr.opts + mr.make* -> MATLAB LogicBlock -> LBTX -> Python reader -> sc.compile -> .seq
+                                                                         |
+                                                                         v
+                                                                    mr.Sequence
 ```
 
-The compiler remains the only authoritative implementation. It does not import the exchange
-package, and no compiler stage or warning policy changes for LBTX.
+Python's normal compilation path does not use LBTX. The existing Python `Module`, `LogicBlock`,
+compiler stages, public compile signature, warning policy, and return type are unchanged.
 
-### Time and numeric representation
+### Ownership
 
-Every time value is a base-10 string in seconds. Readers parse a finite decimal number; writers use
-the shortest decimal that round-trips through binary64. This preserves the current in-memory model
-while preventing a JSON parser from pre-rounding a timing value before the receiving language can
-apply its raster policy. Other physical values are finite JSON numbers in their named SI units.
+LBTX owns only:
 
-Integer ticks were rejected because one time base cannot express all scanner-defined rasters without
-adding a second conversion policy. Rational pairs were rejected because they add substantial MATLAB
-surface while the current tree and PyPulseq events are binary64 values. A future major version may
-choose either if cross-language fixtures demonstrate a real loss.
+- `format`, integer `version`, and compatible Pulseq version;
+- a normalized snapshot of official `mr.opts` fields;
+- definitions passed to the compiler;
+- block tags, ordered nodes, and relative `start_s` values;
+- three node variants: nested `block`, official Pulseq `event`, and SeqCraft `barrier`.
 
-### Schema and compatibility
+An event is the public struct returned by `mr.make*`, with field names normalized from camelCase to
+snake_case. It keeps its official `type` and public fields directly. LBTX does not define event
+constructors, per-event payload schemas, derived-field rules, or physical validation. MATLAB Pulseq
+creates and measures the event; the existing Python compiler validates what it receives.
 
-- `schema` is exactly `seqcraft.logicblock`; `version` is independently versioned from SeqCraft.
-- Version 0.1 rejects unknown semantic fields and unknown event types. Silent guessing is forbidden.
-- Optional forward data belongs in `extensions`, whose names must be namespaced. Readers ignore it.
-- A breaking semantic change requires a new major protocol version, an ADR, migration notes, and old
-  fixtures. A minor reader may add optional fields only when their absence has an explicit default.
-- Validation failures identify a JSON path. The CLI never requires MATLAB to parse a traceback.
+JSON numbers carry numeric values. A complex MATLAB value, principally RF `signal`, is represented
+as `{"real": [...], "imag": [...]}`. This is the only value-level encoding not handled directly by
+JSON.
 
-### Scanner options
+### MATLAB user contract
 
-The schema lists the `Opts` values needed to reconstruct the compiler input and its physical
-interpretation. Names include their units. Values are canonical (`Hz/m`, `Hz/m/s`, `Hz`, seconds),
-not the display units originally passed to `Opts`. `rise_time` is intentionally absent: it is a
-constructor rule for deriving `max_slew`, while the resulting limit is already explicit.
+- scanner: official `mr.opts`;
+- events: official `mr.make*` structs;
+- `seqcraft.LogicBlock < handle`: `add` mutates and returns the same block, matching Python;
+- `LogicBlock.duration`: measured with `mr.calcDuration`, never declared;
+- `LogicBlock.copy`: new block/node container, shared child items, matching Python's shallow copy;
+- `seqcraft.Module`: `opts`, `tag`, and one build lifecycle;
+- `seqcraft.compile`: writes `.seq`, reads it through `mr.Sequence.read`, returns `mr.Sequence`;
+- `seqcraft.writeLBTX`: optional public exchange-file API, secondary to `compile`.
 
-### Events
+MATLAB does not emulate Python callable objects. The user calls `module.build(...)`. A subclass
+implements protected `buildImplicit(...)`; the base `build(...)` calls it, checks that it returned a
+`LogicBlock`, and supplies the module tag when the block is unnamed. `buildImplicit` is a confirmed
+language-adapter name, not a second lifecycle. A future rename should migrate only this hook and its
+documentation.
 
-Version 0.1 covers delay, trapezoid and arbitrary/extended gradients, RF, ADC, label set/increment,
-trigger, digital output, and SeqCraft barrier events. Each has a discriminated payload containing
-physical fields only. Registration IDs, shape-library IDs, object identity, caches, and producer
-classes are excluded.
+### Python process boundary
 
-RF complex samples use separate real and imaginary arrays. Gradient and RF sample times remain
-explicit, so extended trapezoids and nonuniform RF shapes do not acquire a uniform-raster
-assumption during exchange.
+The Python exchange package contains a generic reader and structural schema. It restores event
+objects as `SimpleNamespace` values without calling per-event constructors and checks their `type`
+against the existing `HANDLED_KINDS` vocabulary. Scanner fields are matched to the public `Opts`
+signature rather than copied into another scanner class.
 
-### Definitions, provenance, and semantic identity
+The CLI has one operation, `compile-tree`. It prints ordinary errors and warnings and uses its exit
+status; it does not introduce a diagnostic result model. MATLAB turns non-zero status into an
+exception and successful compiler output into a MATLAB warning.
 
-`definitions` are compiler input and therefore semantic. `provenance` and `extensions` are not.
-`semantic_hash(document)` validates and imports a document, re-exports its semantic content in
-canonical form, and hashes sorted compact JSON. Producer version, git commit, wall-clock time, and
-metadata consequently cannot change the physical identity.
+## Deferred
 
-Semantic equality means that canonical imported trees preserve node order, relative starts, nested
-tags, event payloads, scanner options, and definitions. It does not mean byte-identical `.seq`
-files; library IDs and writer metadata can differ without changing sequence meaning.
+Version 1 intentionally has no:
 
-### Diagnostics and exit codes
+- Python LBTX writer or mandatory Python LBTX path;
+- MATLAB LBTX reader or round-trip;
+- semantic hash;
+- provenance or extensions framework;
+- validation command or structured diagnostics protocol;
+- native MATLAB compiler.
 
-`seqcraft validate-tree` and `seqcraft compile-tree` support human output and one JSON object on
-stdout. JSON diagnostics contain severity, category, exception type, message, and an optional source
-path. Exit codes are:
-
-| Code | Meaning |
-| --- | --- |
-| 0 | Validated or compiled successfully |
-| 2 | LBTX/schema/input error |
-| 3 | SeqCraft compiler rejected the imported tree |
-| 4 | File-system or unexpected adapter failure |
-
-Compiler warnings are captured and returned as structured warning diagnostics without changing the
-compiler's own warning contract.
+Each requires independent user evidence and an approved design change.
 
 ## Consequences
 
-MATLAB can use ordinary value objects and structs and invoke a stable CLI while Python owns all
-placement and legalization. Protocol fixtures become the shared correctness source. Supporting a
-new event requires an explicit schema/codec/conformance change, but cannot accidentally change the
-compiler.
+There is one compiler and one set of Pulseq event constructors. New official Pulseq public fields
+can cross the language boundary without adding an event-specific branch, subject to the declared
+Pulseq compatibility version and the existing compiler vocabulary.
 
-This does not provide compilation without Python. A native MATLAB or shared native compiler remains
-deferred until deployment or measured performance evidence justifies reopening that decision.
+The tradeoff is deliberately asymmetric: version 1 solves MATLAB authoring and compilation, not
+general serialization. A consumer needing Python export, offline MATLAB import, provenance, or
+machine-readable diagnostics must propose that feature rather than assuming it is bundled with
+LBTX.
