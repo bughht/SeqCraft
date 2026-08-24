@@ -436,7 +436,9 @@ seq.plot();
 `seqcraft.compile` returns the official `mr.Sequence` read from the emitted `.seq`; exchange files
 are optional and can be written explicitly with `seqcraft.writeLBTX`. This is a MATLAB frontend,
 not a second compiler. Setup and the Module/LogicBlock APIs are documented in
-[`docs/matlab_interoperability.md`](docs/matlab_interoperability.md).
+[`docs/matlab_interoperability.md`](docs/matlab_interoperability.md). The paired
+[`examples/matlab`](examples/matlab/) scripts build the same small GRE 2D directly from a
+`LogicBlock` and through an example-only `Module`.
 
 ## What the compiler checks
 

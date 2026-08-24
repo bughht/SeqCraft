@@ -38,6 +38,7 @@ verifyEqual(testCase, numel(copied.nodes), 2);
 nested.add(0, mr.makeDelay(0.5e-3));
 verifyEqual(testCase, original.nodes{1}.item.duration, 0.5e-3, AbsTol=1e-15);
 verifyEqual(testCase, copied.nodes{1}.item.duration, 0.5e-3, AbsTol=1e-15);
+verifyEqual(testCase, original.duration, 0.5e-3, AbsTol=1e-15);
 end
 
 function testModuleBuildImplicitIsFinalized(testCase)

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from pypulseq import Sequence
 
 from seqcraft.exchange import read_logicblock
 
@@ -16,6 +17,7 @@ ROOT = Path(__file__).parents[2]
 MATLAB = Path('/Applications/MATLAB_R2024b.app/bin/matlab')
 FRONTEND = ROOT / 'matlab'
 MATLAB_PULSEQ = Path(os.environ.get('PULSEQ_MATLAB_PATH', '/Users/yiyund/Code_mgh/pulseq/matlab'))
+MATLAB_EXAMPLES = ROOT / 'examples' / 'matlab'
 HAS_MATLAB = MATLAB.exists() and MATLAB_PULSEQ.exists()
 
 
@@ -93,3 +95,46 @@ def test_matlab_unit_suite() -> None:
     completed = _matlab("results=runtests('matlab/tests'); assert(all([results.Passed]));")
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+@pytest.mark.crossval
+@pytest.mark.skipif(not HAS_MATLAB, reason='MATLAB R2024b or MATLAB Pulseq is not installed')
+def test_matlab_gre_examples_have_matching_sequence_semantics(tmp_path) -> None:
+    logic_path = tmp_path / 'gre-logicblock.seq'
+    module_path = tmp_path / 'gre-module.seq'
+    python = Path(sys.executable)
+    code = (
+        f"addpath('{_quote(MATLAB_EXAMPLES)}'); "
+        f"pythonExecutable='{_quote(python)}'; "
+        f"outputPath='{_quote(logic_path)}'; "
+        "run('examples/matlab/gre_2d_logicblock.m'); logicRoot=root; "
+        f"outputPath='{_quote(module_path)}'; "
+        "run('examples/matlab/gre_2d_module.m'); "
+        "assert(abs(logicRoot.duration-root.duration)<1e-12); "
+        "assert(logicRoot.duration==0.16); "
+        "assert(numel(logicRoot.nodes)==8 && numel(root.nodes)==8);"
+    )
+    completed = _matlab(code)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    sequences = []
+    for path in (logic_path, module_path):
+        sequence = Sequence()
+        sequence.read(str(path))
+        sequences.append(sequence)
+
+    def semantics(sequence: Sequence):
+        blocks = [sequence.get_block(index) for index in range(1, len(sequence.block_events) + 1)]
+        return (
+            len(blocks),
+            sequence.duration()[0],
+            sum(block.adc is not None for block in blocks),
+            sum(bool(block.label) for block in blocks),
+        )
+
+    assert semantics(sequences[0]) == pytest.approx((40, 0.16, 8, 8))
+    assert semantics(sequences[1]) == pytest.approx(semantics(sequences[0]))
+    for sequence in sequences:
+        assert np.allclose(sequence.definitions['FOV'], [0.22, 0.22, 0.005])
+        assert np.array_equal(sequence.definitions['Matrix'], [16, 8])

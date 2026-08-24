@@ -33,6 +33,18 @@ classdef LogicBlock < handle
         end
 
         function value = get.duration(obj)
+            value = obj.calculateDuration();
+        end
+
+        function out = copy(obj)
+            %COPY Copy this block and its node container, sharing child items.
+            out = seqcraft.LogicBlock(obj.tag);
+            out.nodes = obj.nodes;
+        end
+    end
+
+    methods (Access = private)
+        function value = calculateDuration(obj)
             if isempty(obj.nodes)
                 value = 0;
                 return
@@ -41,7 +53,7 @@ classdef LogicBlock < handle
             for index = 1:numel(obj.nodes)
                 node = obj.nodes{index};
                 if isa(node.item, "seqcraft.LogicBlock")
-                    itemDuration = node.item.duration;
+                    itemDuration = node.item.calculateDuration();
                 elseif string(node.item.type) == "seqcraft_barrier"
                     itemDuration = 0;
                 else
@@ -50,12 +62,6 @@ classdef LogicBlock < handle
                 ends(index) = node.start + itemDuration;
             end
             value = max(ends);
-        end
-
-        function out = copy(obj)
-            %COPY Copy this block and its node container, sharing child items.
-            out = seqcraft.LogicBlock(obj.tag);
-            out.nodes = obj.nodes;
         end
     end
 end

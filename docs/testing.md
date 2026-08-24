@@ -81,8 +81,10 @@ matlab -batch "addpath(getenv('PULSEQ_MATLAB_PATH')); addpath('matlab'); \
 
 The cross-language tier checks native `mr.opts`/`mr.make*` events through the MATLAB writer and
 generic Python reader, MATLAB -> Python compilation, `.seq` creation, and the returned official
-`mr.Sequence`. There is deliberately no Python writer, MATLAB reader/round-trip, semantic hash, or
-structured diagnostics protocol in this first version.
+`mr.Sequence`. It also runs both small GRE 2D scripts under `examples/matlab/` and checks that the
+direct-`LogicBlock` and example-`Module` forms have matching duration, block, ADC, label, definition,
+and Pulseq timing semantics. There is deliberately no Python writer, MATLAB reader/round-trip,
+semantic hash, or structured diagnostics protocol in this first version.
 
 ## What the fixtures are made of
 

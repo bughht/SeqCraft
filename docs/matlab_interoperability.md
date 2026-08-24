@@ -124,6 +124,18 @@ The base `build` verifies the return type and gives an unnamed block the module 
 `buildImplicit` is the MATLAB implementation hook corresponding to the Python subclass `build`;
 there is still only one module-build lifecycle.
 
+## Examples
+
+[`examples/matlab`](../examples/matlab/) contains the same small GRE 2D built in two forms:
+
+- `gre_2d_logicblock.m` places native `mr.make*` events directly in nested `LogicBlock` objects;
+- `gre_2d_module.m` uses an example-only `seqcraft_examples.GRE2D` whose constructor designs events
+  and whose protected `buildImplicit` method only assembles them.
+
+Both compile to an official `mr.Sequence`, use identical parameters and definitions, and are checked
+for matching duration, block, ADC, label, and timing semantics. The example class is deliberately
+outside `+seqcraft`, so it does not expand the MATLAB frontend's production API.
+
 ## Explicit exchange files
 
 Most users should call `compile`. To inspect, version, or transfer compiler input explicitly:
