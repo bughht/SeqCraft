@@ -129,12 +129,14 @@ there is still only one module-build lifecycle.
 [`examples/matlab`](../examples/matlab/) contains the same small GRE 2D built in two forms:
 
 - `gre_2d_logicblock.m` places native `mr.make*` events directly in nested `LogicBlock` objects;
-- `gre_2d_module.m` uses an example-only `seqcraft_examples.GRE2D` whose constructor designs events
-  and whose protected `buildImplicit` method only assembles them.
+- `gre_2d_module.m` uses an example-only `seqcraft_examples.GRE2DTR`, corresponding to the Python
+  repeating-unit layer. `build(lineIndex)` returns one TR and the script owns the line loop.
 
 Both compile to an official `mr.Sequence`, use identical parameters and definitions, and are checked
-for matching duration, block, ADC, label, and timing semantics. The example class is deliberately
-outside `+seqcraft`, so it does not expand the MATLAB frontend's production API.
+for matching duration, block, ADC, label, timing, phase-rewind, and Cartesian k-space semantics. The
+example class is deliberately outside `+seqcraft`, so it does not expand the MATLAB frontend's
+production API. Each script adds only this checkout's internal paths relative to its own location;
+users still add official MATLAB Pulseq because it is an external dependency.
 
 ## Explicit exchange files
 

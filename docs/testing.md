@@ -83,8 +83,10 @@ The cross-language tier checks native `mr.opts`/`mr.make*` events through the MA
 generic Python reader, MATLAB -> Python compilation, `.seq` creation, and the returned official
 `mr.Sequence`. It also runs both small GRE 2D scripts under `examples/matlab/` and checks that the
 direct-`LogicBlock` and example-`Module` forms have matching duration, block, ADC, label, definition,
-and Pulseq timing semantics. There is deliberately no Python writer, MATLAB reader/round-trip,
-semantic hash, or structured diagnostics protocol in this first version.
+Pulseq timing, phase-rewind, and Cartesian ADC k-space semantics. The example test starts without
+pre-adding SeqCraft's MATLAB package, proving that the scripts resolve repository-owned paths from
+their own location. There is deliberately no Python writer, MATLAB reader/round-trip, semantic
+hash, or structured diagnostics protocol in this first version.
 
 ## What the fixtures are made of
 

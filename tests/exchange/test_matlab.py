@@ -25,14 +25,16 @@ def _quote(path: str | Path) -> str:
     return str(path).replace("'", "''")
 
 
-def _matlab(code: str):
+def _matlab(code: str, *, add_frontend: bool = True):
     env = {
         **os.environ,
         'PYTHONPATH': str(ROOT / 'src'),
         'MPLCONFIGDIR': '/tmp/seqcraft-mpl-cache',
         'NUMBA_CACHE_DIR': '/tmp/seqcraft-numba-cache',
     }
-    setup = f"addpath('{_quote(MATLAB_PULSEQ)}'); addpath('{_quote(FRONTEND)}');"
+    setup = f"addpath('{_quote(MATLAB_PULSEQ)}');"
+    if add_frontend:
+        setup += f" addpath('{_quote(FRONTEND)}');"
     return subprocess.run(
         [str(MATLAB), '-batch', f'{setup} {code}'],
         cwd=ROOT, capture_output=True, text=True, env=env, check=False, timeout=120,
@@ -104,18 +106,24 @@ def test_matlab_gre_examples_have_matching_sequence_semantics(tmp_path) -> None:
     module_path = tmp_path / 'gre-module.seq'
     python = Path(sys.executable)
     code = (
-        f"addpath('{_quote(MATLAB_EXAMPLES)}'); "
         f"pythonExecutable='{_quote(python)}'; "
         "plotSequence=false; "
         f"outputPath='{_quote(logic_path)}'; "
-        "run('examples/matlab/gre_2d_logicblock.m'); logicRoot=root; "
+        f"run('{_quote(MATLAB_EXAMPLES / 'gre_2d_logicblock.m')}'); logicRoot=root; "
         f"outputPath='{_quote(module_path)}'; "
-        "run('examples/matlab/gre_2d_module.m'); "
+        f"run('{_quote(MATLAB_EXAMPLES / 'gre_2d_module.m')}'); "
+        "assert(isa(greTR,'seqcraft_examples.GRE2DTR')); "
+        "probe=greTR.build(0); yArea=0; "
+        "for nodeIndex=1:numel(probe.nodes), item=probe.nodes{nodeIndex}.item; "
+        "if isstruct(item) && isfield(item,'channel') && string(item.channel)=='y', "
+        "yArea=yArea+item.area; end; end; "
+        "assert(abs(yArea)<1e-12); "
+        "assert(abs(probe.duration-greTR.trSeconds)<1e-12); "
         "assert(abs(logicRoot.duration-root.duration)<1e-12); "
         "assert(logicRoot.duration==0.16); "
         "assert(numel(logicRoot.nodes)==8 && numel(root.nodes)==8);"
     )
-    completed = _matlab(code)
+    completed = _matlab(code, add_frontend=False)
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
@@ -136,6 +144,15 @@ def test_matlab_gre_examples_have_matching_sequence_semantics(tmp_path) -> None:
 
     assert semantics(sequences[0]) == pytest.approx((40, 0.16, 8, 8))
     assert semantics(sequences[1]) == pytest.approx(semantics(sequences[0]))
+    trajectories = []
     for sequence in sequences:
         assert np.allclose(sequence.definitions['FOV'], [0.22, 0.22, 0.005])
         assert np.array_equal(sequence.definitions['Matrix'], [16, 8])
+        assert np.array_equal(sequence.evaluate_labels(evolution='adc')['LIN'], np.arange(8))
+        k_adc = np.asarray(sequence.calculate_kspacePP()[0]).reshape(3, 8, 16)
+        trajectories.append(k_adc)
+        center = k_adc[:, :, 8]
+        assert np.allclose(center[0], 0.0, atol=2e-4)
+        assert np.allclose(center[1], (np.arange(8) - 4) / 0.22, atol=5e-5)
+        assert np.allclose(center[2], 0.0, atol=2e-4)
+    assert np.allclose(trajectories[0], trajectories[1], atol=1e-9)
