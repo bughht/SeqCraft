@@ -10,7 +10,11 @@ if isempty(which("mr.opts"))
 end
 
 if ~exist("outputPath", "var") || strlength(string(outputPath)) == 0
-    outputPath = fullfile(tempdir, "seqcraft_gre_2d_module.seq");
+    sequenceDir = fullfile(exampleDir, "seq");
+    if ~isfolder(sequenceDir)
+        mkdir(sequenceDir);
+    end
+    outputPath = fullfile(sequenceDir, "gre_2d_module.seq");
 end
 if ~exist("pythonExecutable", "var") || ...
         strlength(strtrim(string(pythonExecutable))) == 0

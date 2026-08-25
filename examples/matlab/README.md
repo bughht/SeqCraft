@@ -17,10 +17,11 @@ run("/path/to/SeqCraft/examples/matlab/gre_2d_module.m")
 ```
 
 Both build the same small GRE 2D scan, return an official `mr.Sequence` in `seq`, and call
-`seq.plot()` after the timing check. They write to separate files under `tempdir` by default. Set
-`outputPath` before running a script to keep the `.seq` somewhere else; set `pythonExecutable` to
-override `SEQCRAFT_PYTHON` for that run. For automated or headless execution, set
-`plotSequence = false` before running the script.
+`seq.plot()` after the timing check. Like the Python examples, they create a `seq/` directory beside
+the scripts and write `gre_2d_logicblock.seq` and `gre_2d_module.seq` there by default. Generated
+sequences are ignored by Git. Set `outputPath` before running a script to write the `.seq` somewhere
+else; set `pythonExecutable` to override `SEQCRAFT_PYTHON` for that run. For automated or headless
+execution, set `plotSequence = false` before running the script.
 
 If neither `pythonExecutable` nor `SEQCRAFT_PYTHON` is set, the script asks for the Python
 executable at the keyboard. Enter the executable from an environment where SeqCraft is installed,
