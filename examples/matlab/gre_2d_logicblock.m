@@ -12,8 +12,17 @@ end
 if ~exist("outputPath", "var") || strlength(string(outputPath)) == 0
     outputPath = fullfile(tempdir, "seqcraft_gre_2d_logicblock.seq");
 end
-if ~exist("pythonExecutable", "var")
-    pythonExecutable = "";
+if ~exist("pythonExecutable", "var") || ...
+        strlength(strtrim(string(pythonExecutable))) == 0
+    pythonExecutable = string(getenv("SEQCRAFT_PYTHON"));
+end
+if strlength(strtrim(string(pythonExecutable))) == 0
+    pythonExecutable = string(input( ...
+        "Python executable with SeqCraft installed: ", "s"));
+end
+if strlength(strtrim(string(pythonExecutable))) == 0
+    error("seqcraft_examples:MissingPython", ...
+        "Enter a Python executable or set SEQCRAFT_PYTHON before running the example.");
 end
 if ~exist("plotSequence", "var")
     plotSequence = true;

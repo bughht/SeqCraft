@@ -22,6 +22,11 @@ Both build the same small GRE 2D scan, return an official `mr.Sequence` in `seq`
 override `SEQCRAFT_PYTHON` for that run. For automated or headless execution, set
 `plotSequence = false` before running the script.
 
+If neither `pythonExecutable` nor `SEQCRAFT_PYTHON` is set, the script asks for the Python
+executable at the keyboard. Enter the executable from an environment where SeqCraft is installed,
+for example `/path/to/seqcraft-dev/bin/python`. An empty response stops with a focused error rather
+than silently using an unrelated `python` from the MATLAB process path.
+
 Each script finds this checkout's `matlab/` and `examples/matlab/` directories relative to its own
 file and adds them for the current MATLAB session. Official MATLAB Pulseq remains an external
 dependency whose path the user supplies; the scripts raise a focused error if `mr.opts` is absent.
