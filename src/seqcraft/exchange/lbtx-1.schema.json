@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seqcraft.org/schema/lbtx-1.schema.json",
+  "title": "SeqCraft LogicBlock Exchange Format 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "version", "pulseq", "opts", "definitions", "root"],
+  "properties": {
+    "format": {"const": "seqcraft.logicblock"},
+    "version": {"const": 1},
+    "pulseq": {"const": "1.5"},
+    "opts": {"type": "object"},
+    "definitions": {"type": "object"},
+    "root": {"$ref": "#/$defs/block"}
+  },
+  "$defs": {
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "nodes"],
+      "properties": {
+        "tag": {"type": "string"},
+        "nodes": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {"$ref": "#/$defs/blockNode"},
+              {"$ref": "#/$defs/eventNode"},
+              {"$ref": "#/$defs/barrierNode"}
+            ]
+          }
+        }
+      }
+    },
+    "blockNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_s", "block"],
+      "properties": {
+        "start_s": {"type": "number"},
+        "block": {"$ref": "#/$defs/block"}
+      }
+    },
+    "eventNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_s", "event"],
+      "properties": {
+        "start_s": {"type": "number"},
+        "event": {
+          "type": "object",
+          "required": ["type"],
+          "properties": {"type": {"type": "string"}}
+        }
+      }
+    },
+    "barrierNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_s", "barrier"],
+      "properties": {
+        "start_s": {"type": "number"},
+        "barrier": {"type": "string"}
+      }
+    }
+  }
+}

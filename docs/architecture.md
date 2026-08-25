@@ -8,11 +8,12 @@
 Two concepts, and no more — plus one object that is pypulseq's.
 
 ```
-   any Python you like                                  seqcraft does this
-  ─────────────────────────                          ──────────────────────────
+   Python or MATLAB frontend                           seqcraft does this
+  ──────────────────────────                        ──────────────────────────
   a function                ─┐
   a class of your own shape  ├─►  LogicBlock  ──►    sc.compile(tree, opts)
   an sc.Module subclass     ─┘    lb.add(t, ...)       finds block boundaries
+  MATLAB builder ──────────────►  LBTX -> LogicBlock
                                                        sums same-axis gradients
                                                        checks the amplifier
                                                        ──► pypulseq.Sequence
@@ -346,6 +347,9 @@ src/seqcraft/
                  logic.py  module.py  events.py
                  timing.py (Raster, RasterError)  units.py
 
+  exchange/      MATLAB-to-Python compiler input
+                 small LBTX schema and generic reader
+
   compiler/      the transform
                  __init__.py  compile_sequence
                  placement.py  boundaries.py  legalization.py  emission.py
@@ -356,18 +360,31 @@ src/seqcraft/
                  rf/  encoding/  readout/     the leaves
                  kernel/  imaging/            the two composite levels
 
-tests/        analysis/  design/  logic/  compiler/  module/  modules/  opts/  integration/
+tests/        analysis/  design/  exchange/  logic/  compiler/  module/  modules/  opts/
+              integration/
               conftest.py                the two checks the compiler cannot make
               test_layering.py           the layout, asserted
 examples/     01_getting_started.ipynb   uses no modules, on purpose
               gre_2d/                    the sequence sc.modules was extracted from
 salvage/      physics lifted out of the deleted library; not packaged, not imported
+matlab/       +seqcraft/                 Module, LogicBlock, LBTX writer, compile adapter
 docs/         api_reference  architecture  compiler  writing_a_module
-              testing  serialization
-              adr/     004 is the return type; 003 the scanner and module reform
+              testing  serialization  matlab_interoperability
+              adr/     005 is LBTX; 004 is the return type; 003 the scanner/module reform
 ```
 
 The layers are the questions in the order a sequence passes through them, and the arrow between
 them only ever points forward. That is the whole of the membership rule, and unlike "is this on the
 compile path?" — which put the unit table, the geometry and the report in one directory with the
 scheduler — it can be checked mechanically, which is what `test_layering.py` does.
+
+`exchange/` is an upstream adapter beside the compiler stages. It generically reconstructs official
+Pulseq event fields and a plain `pypulseq.Opts` from a MATLAB-written LBTX file; it does not define
+event constructors or a second event type system. The compiler never imports it. `cli.py` is the
+small application boundary allowed to import both exchange and compiler. This keeps LBTX and MATLAB
+concerns out of placement, legalization, and emission.
+
+The MATLAB side mirrors the same user concepts without wrapping Pulseq: `mr.opts` is the scanner,
+`mr.make*` structs are events, `seqcraft.Module` builds a `seqcraft.LogicBlock`, and
+`seqcraft.compile` returns an official `mr.Sequence`. LBTX is optional for Python and is not part of
+the normal `sc.compile` path.

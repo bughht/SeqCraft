@@ -416,6 +416,30 @@ directory that defines no class of its own.
 
 ---
 
+## MATLAB frontend and portable trees
+
+The MATLAB frontend uses official MATLAB Pulseq scanner options and events, adds the same Module and
+LogicBlock concepts as Python, and sends the tree to the authoritative Python compiler through the
+small LogicBlock Exchange Format (LBTX) boundary:
+
+```matlab
+addpath("/path/to/pulseq/matlab")
+addpath("matlab")
+opts = mr.opts(...);
+gx = mr.makeTrapezoid("x", opts, "Area", 80);
+root = seqcraft.LogicBlock("gre");
+root.add(0, gx);
+seq = seqcraft.compile(root, opts, "gre.seq");
+seq.plot();
+```
+
+`seqcraft.compile` returns the official `mr.Sequence` read from the emitted `.seq`; exchange files
+are optional and can be written explicitly with `seqcraft.writeLBTX`. This is a MATLAB frontend,
+not a second compiler. Setup and the Module/LogicBlock APIs are documented in
+[`docs/matlab_interoperability.md`](docs/matlab_interoperability.md). The paired
+[`examples/matlab`](examples/matlab/) scripts build the same small GRE 2D directly from a
+`LogicBlock` and through an example-only `Module`.
+
 ## What the compiler checks
 
 `sc.compile(tree, opts)` returns a `pypulseq.Sequence` and nothing else. If the tree cannot become a

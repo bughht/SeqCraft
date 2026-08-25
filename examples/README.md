@@ -11,6 +11,7 @@
 | [`gre_epi_2d/`](gre_epi_2d/) | The whole of k-space in one shot: the centred sampling window, the blip on the zero crossing, ramp sampling and the operator that undoes it, off-resonance and the N/2 ghost, and GRAPPA. Where `EPI2D` came from. Defines `GREEPI2D` in its own notebook. |
 | [`se_epi_2d/`](se_epi_2d/) | The same readout after a refocusing pulse — and the measurement that a spin echo **does not** fix EPI distortion. Defines `SEEPI2D` in its own notebook. |
 | [`megre_2d/`](megre_2d/) | Eight echoes off one excitation, monopolar and bipolar, fitted for T2\* and ΔB0 against a phantom that carries the ground truth for both. **Defines no class**, which no other directory here can say. |
+| [`matlab/`](matlab/) | The same small GRE 2D built two ways with official MATLAB Pulseq events: direct `LogicBlock` assembly and an example-only single-repetition `GRE2DTR` Module. Both compile through Python and return `mr.Sequence`. |
 
 ## `gre_2d/`
 

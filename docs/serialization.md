@@ -1,7 +1,11 @@
 # Serialization — the gap, and what is deferred
 
-**Status: nothing here is implemented.** This document exists because three places in the package
-now point at it, and a dead link is worse than an honest statement of what is missing.
+**Status: the one-way MATLAB compiler-input exchange is implemented; general Python tree
+serialization and `.seq` provenance sidecars remain deferred.** MATLAB can write a LogicBlock,
+official `mr.opts`, official `mr.make*` events, and definitions through `seqcraft.writeLBTX`; the
+Python adapter reads that file only to invoke the existing compiler. See
+[ADR-005](adr/005-logicblock-tree-exchange.md) and
+[`matlab_interoperability.md`](matlab_interoperability.md).
 
 ---
 
@@ -58,7 +62,19 @@ its `Opts`, reload it, and get the same sequence — and a provenance record is 
 that looks like a strong one. Designing the weak one first is how the strong one stops being
 written.
 
-## What a replacement has to decide
+## What LBTX now provides
+
+- A versioned JSON structure for tags, ordered nodes, relative timing, scanner options, definitions,
+  and official Pulseq event fields.
+- MATLAB `Module` and `LogicBlock` builders using native `mr.opts` and `mr.make*` values.
+- One direction only: MATLAB writes, then the Python adapter reads and compiles.
+
+LBTX is compiler input, not a `.seq` sidecar or a mandatory Python IR. It does not currently provide
+a Python writer, a MATLAB reader, a semantic hash, provenance metadata, or general round-trip
+serialization. Those are deliberately deferred instead of being inferred from the existence of the
+one-way adapter.
+
+## What a `.seq` provenance replacement still has to decide
 
 - **Where it lives.** `sc.compile` returns a `pypulseq.Sequence`, which is pypulseq's type; a
   seqcraft sidecar cannot hang off `write()` any more. Most likely a free function:
@@ -66,9 +82,8 @@ written.
   the caller writes itself.
 - **What it records.** The old set was right as far as it went. It should also carry whatever the
   *tree* knew that the `.seq` does not.
-- **Whether it round-trips.** If a tree can be serialised, the sidecar is a by-product of that
-  rather than a feature of its own — which is an argument for doing tree save/load first and
-  letting provenance fall out.
+- **How it links to LBTX.** This remains undecided; the first version has no semantic hash or
+  provenance contract.
 - **Determinism.** The old one was careful about this and the care is worth keeping: `sort_keys`
   everywhere, no wall-clock value in the `.seq` itself, numpy arrays summarised by shape/dtype/hash
   rather than dumped, and a dirty git tree recorded as such so a comparison can be marked

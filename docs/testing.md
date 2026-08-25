@@ -67,6 +67,27 @@ The public CI result therefore proves the compiler, the `Module` contract, docum
 file round-trip, and the getting-started notebook on the supported matrix. It does not prove vendor
 hardware, full simulation, reconstruction, or external cross-validation.
 
+The small LBTX schema, generic Python reader, and compile CLI tests run in the normal pytest tier
+under `tests/exchange/`. MATLAB tests are marked `crossval`, because public runners do not carry a
+MATLAB installation or licence. On a configured workstation set the official MATLAB Pulseq path
+and run:
+
+```bash
+export PULSEQ_MATLAB_PATH=/path/to/pulseq/matlab
+pytest -m crossval tests/exchange/test_matlab.py
+matlab -batch "addpath(getenv('PULSEQ_MATLAB_PATH')); addpath('matlab'); \
+  results=runtests('matlab/tests'); assert(all([results.Passed]));"
+```
+
+The cross-language tier checks native `mr.opts`/`mr.make*` events through the MATLAB writer and
+generic Python reader, MATLAB -> Python compilation, `.seq` creation, and the returned official
+`mr.Sequence`. It also runs both small GRE 2D scripts under `examples/matlab/` and checks that the
+direct-`LogicBlock` and example-`Module` forms have matching duration, block, ADC, label, definition,
+Pulseq timing, phase-rewind, and Cartesian ADC k-space semantics. The example test starts without
+pre-adding SeqCraft's MATLAB package, proving that the scripts resolve repository-owned paths from
+their own location. There is deliberately no Python writer, MATLAB reader/round-trip, semantic
+hash, or structured diagnostics protocol in this first version.
+
 ## What the fixtures are made of
 
 Every compiler and integration fixture is **raw pypulseq**. That is a standing rule, not an
