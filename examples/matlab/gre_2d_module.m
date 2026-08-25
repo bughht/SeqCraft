@@ -6,6 +6,9 @@ end
 if ~exist("pythonExecutable", "var")
     pythonExecutable = "";
 end
+if ~exist("plotSequence", "var")
+    plotSequence = true;
+end
 
 matrix = [16 8];
 fovM = [0.22 0.22];
@@ -36,5 +39,8 @@ seq = seqcraft.compile( ...
     PythonExecutable=string(pythonExecutable));
 [timingOk, timingReport] = seq.checkTiming();
 assert(timingOk, strjoin(timingReport, newline));
+if plotSequence
+    seq.plot();
+end
 
 fprintf("Wrote %s\n", string(outputPath));

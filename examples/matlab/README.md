@@ -18,9 +18,11 @@ run("/path/to/SeqCraft/examples/matlab/gre_2d_logicblock.m")
 run("/path/to/SeqCraft/examples/matlab/gre_2d_module.m")
 ```
 
-Both build the same small GRE 2D scan and return an official `mr.Sequence` in `seq`. They write to
-separate files under `tempdir` by default. Set `outputPath` before running a script to keep the
-`.seq` somewhere else; set `pythonExecutable` to override `SEQCRAFT_PYTHON` for that run.
+Both build the same small GRE 2D scan, return an official `mr.Sequence` in `seq`, and call
+`seq.plot()` after the timing check. They write to separate files under `tempdir` by default. Set
+`outputPath` before running a script to keep the `.seq` somewhere else; set `pythonExecutable` to
+override `SEQCRAFT_PYTHON` for that run. For automated or headless execution, set
+`plotSequence = false` before running the script.
 
 `gre_2d_logicblock.m` is the minimal path: native `mr.make*` events are placed directly in nested
 `seqcraft.LogicBlock` objects. `gre_2d_module.m` uses the example-only

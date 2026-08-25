@@ -106,6 +106,7 @@ def test_matlab_gre_examples_have_matching_sequence_semantics(tmp_path) -> None:
     code = (
         f"addpath('{_quote(MATLAB_EXAMPLES)}'); "
         f"pythonExecutable='{_quote(python)}'; "
+        "plotSequence=false; "
         f"outputPath='{_quote(logic_path)}'; "
         "run('examples/matlab/gre_2d_logicblock.m'); logicRoot=root; "
         f"outputPath='{_quote(module_path)}'; "
