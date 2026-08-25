@@ -1,5 +1,10 @@
 classdef GRE2DTR < seqcraft.Module
-    %GRE2DTR One example GRE 2D repetition built from native Pulseq events.
+    %GRE2DTR Example Module that builds one Cartesian GRE repetition.
+    %   The constructor designs and caches official MATLAB Pulseq events.
+    %   build(lineIndex) assembles exactly one LogicBlock for the requested
+    %   zero-based phase-encoding line; the calling script owns the scan loop.
+    %   This example-only class mirrors the responsibility of Python
+    %   GRE2DTR without becoming part of the public MATLAB frontend.
 
     properties (SetAccess = private)
         matrix (1, 2) double
@@ -50,7 +55,7 @@ classdef GRE2DTR < seqcraft.Module
             obj.sliceThicknessM = options.SliceThicknessM;
             obj.trSeconds = options.TRSeconds;
 
-            % The constructor designs events; buildImplicit only assembles one requested TR.
+            % Design native events once; buildImplicit only assembles a requested TR.
             [obj.rf, obj.gz, gzRephaseMinimum] = mr.makeSincPulse( ...
                 options.FlipAngleRad, opts, ...
                 "Duration", 1e-3, ...
@@ -67,6 +72,8 @@ classdef GRE2DTR < seqcraft.Module
                 "Dwell", options.DwellSeconds, ...
                 "Delay", obj.gx.riseTime);
 
+            % Place kx = 0 at the centre ADC sample, including ramp area and
+            % Pulseq's half-dwell sample-centre convention.
             preEchoSample = floor(obj.matrix(1) / 2);
             flatBeforeEcho = ...
                 obj.adc.delay - obj.gx.riseTime + ...
@@ -74,6 +81,8 @@ classdef GRE2DTR < seqcraft.Module
             prephaserArea = -obj.gx.amplitude * ...
                 (0.5 * obj.gx.riseTime + flatBeforeEcho);
 
+            % Couple slice rephasing and x/y prephasing to one duration.
+            % The scaled limits keep the simultaneous vector waveform legal.
             winderMaxGrad = opts.maxGrad / sqrt(3);
             winderMaxSlew = opts.maxSlew / sqrt(3);
             gzRephaseConstrainedMinimum = mr.makeTrapezoid( ...
@@ -99,6 +108,7 @@ classdef GRE2DTR < seqcraft.Module
                 "x", opts, "Area", prephaserArea, "Duration", winderSeconds, ...
                 "maxGrad", winderMaxGrad, "maxSlew", winderMaxSlew);
 
+            % Couple the phase rewind with x/z spoilers under vector limits.
             tailMaxGrad = opts.maxGrad / sqrt(3);
             tailMaxSlew = opts.maxSlew / sqrt(3);
             gyRewindMaximum = mr.makeTrapezoid( ...
@@ -119,6 +129,7 @@ classdef GRE2DTR < seqcraft.Module
             obj.phaseEncodes = cell(1, obj.matrix(2));
             obj.phaseRewinds = cell(1, obj.matrix(2));
             obj.lineLabels = cell(1, obj.matrix(2));
+            % Cache every line because the phase encode and rewind are paired.
             for lineIndex = 0:(obj.matrix(2) - 1)
                 phaseArea = (lineIndex - centerLine) / obj.fovM(2);
                 obj.phaseEncodes{lineIndex + 1} = mr.makeTrapezoid( ...
@@ -160,6 +171,8 @@ classdef GRE2DTR < seqcraft.Module
             end
 
             offset = lineIndex + 1;
+            % Preserve the excitation, winder, readout, tail, and TR-fill
+            % boundaries used by the direct LogicBlock example.
             line = seqcraft.LogicBlock();
             line.add(0, obj.rf, obj.gz);
             line.add( ...
