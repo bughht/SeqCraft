@@ -110,6 +110,12 @@ class GRE2DTR(Module):
         :meth:`voxel_mm`.
     flip_deg
         Flip angle, degrees.
+    rf_duration_s
+        Excitation pulse length, seconds.  ``None`` is
+        :class:`~seqcraft.modules.Excitation`'s own default, and the argument exists because this
+        is usually the largest term in :attr:`min_te_s`: a 3 ms pulse puts 1.5 ms into TE before
+        any gradient is played, which a short readout cannot shorten.  Forwarded unchanged, and it
+        adds no arithmetic here -- the winder and TE measure the excitation rather than predict it.
     te_s, tr_s
         Requested echo and repetition times.  ``None`` is "as short as possible".  A request
         below :attr:`min_te_s` or :attr:`min_tr_s` raises rather than being silently lengthened;
@@ -197,6 +203,7 @@ class GRE2DTR(Module):
         matrix: tuple[int, int],
         thickness_mm: float,
         flip_deg: float = 15.0,
+        rf_duration_s: float | None = None,
         te_s: float | None = None,
         tr_s: float | None = None,
         bandwidth_hz_px: float = 200.0,
@@ -219,7 +226,12 @@ class GRE2DTR(Module):
         )
         self.spoil_axis = _spoil_axes(spoil_axis)
 
-        self.exc = Excitation(opts=opts, flip_deg=flip_deg, thickness_mm=self.thickness_mm)
+        # ``None`` rather than a repeated ``3e-3``: the pulse length is Excitation's decision and a
+        # default copied to here is a second one that can disagree with it.  This layer only
+        # forwards, and the pulse is worth forwarding because it is usually the largest term in
+        # min_te_s -- at 800 Hz/px the readout is 1.3 ms and the default pulse is 3.
+        pulse = {} if rf_duration_s is None else {'duration_s': rf_duration_s}
+        self.exc = Excitation(opts=opts, flip_deg=flip_deg, thickness_mm=self.thickness_mm, **pulse)
 
         # The winder coupling, resolved once, over **three** participants.  The slice rephaser is
         # on z, the phase-encode blip on y and the readout prephaser on x, and all three play at
