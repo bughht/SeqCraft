@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
+import numpy as np
 import pypulseq as pp
 import pytest
 
@@ -23,10 +25,11 @@ from seqcraft.compiler.model import (
     time_strictly_between,
 )
 from seqcraft.compiler.verification import (
+    _traversed,
     verify_placed_events,
     verify_ready_blocks,
 )
-from seqcraft.design.events import GRADIENT_KINDS, HANDLED_KINDS
+from seqcraft.design.events import GRADIENT_KINDS, HANDLED_KINDS, knots_of, pwl_moment
 
 
 def _event(kind: str) -> SimpleNamespace:
@@ -170,3 +173,56 @@ def test_authoritative_compile_path_produces_both_contracts(monkeypatch, opts) -
     # Provenance is no longer returned -- it is used where it is produced, to name the source in
     # an error message -- so what is checkable from here is that emission computed one per block.
     assert all(isinstance(block.origin, tuple) for block in seen_ready)
+
+
+# --------------------------------------------------- the tolerance an out-and-back event needs
+def _out_and_back(opts, *, samples: int = 400, peak: float = 1.0e6):
+    """One arbitrary gradient that runs out to a large area and comes back to the origin.
+
+    A spiral in miniature: the net area is zero and the area *traversed* is thousands of times
+    ``dk``, which is the only shape in the library where those two numbers differ at all.
+    """
+    ramp = np.sin(np.linspace(0.0, np.pi, samples // 2)) * peak
+    return pp.make_arbitrary_grad(
+        channel='x', waveform=np.concatenate([ramp, -ramp]), first=0.0, last=0.0,
+        max_grad=np.inf, max_slew=np.inf, system=opts)
+
+
+def test_the_m0_tolerance_scales_with_the_area_traversed_not_the_net(opts) -> None:
+    """An out-and-back gradient compiles, and the same one with a lobe removed still does not.
+
+    Both halves are the test.  Scaled by ``|net area|`` the tolerance collapses onto its ``1e-6``
+    floor -- where pypulseq's own shape compression already sits -- and a legal readout is refused
+    by a message blaming a split that never happened.  Scaled by ``integral |g|`` it is four orders
+    of magnitude above the compression noise and four orders *below* a genuinely lost lobe.
+    """
+    event = _out_and_back(opts)
+    tree = sc.LogicBlock('out-and-back').add(0.0, event)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', sc.SeqCraftWarning)
+        seq = sc.compile(tree, opts)
+    assert len(seq.block_events) == 1
+
+    net = abs(pwl_moment(*knots_of(event)))
+    traversed = _traversed(*knots_of(event))
+    assert net < 1e-6 * traversed, 'the shape under test must nearly cancel'
+    assert traversed > 1e5 * max(net, 1e-9)
+
+    # The same waveform with one lobe deleted: a real loss, and still four orders of magnitude
+    # above the corrected tolerance of 1e-6 * traversed.
+    half = np.asarray(event.waveform)[: len(event.waveform) // 2]
+    lost = abs(pwl_moment(*knots_of(pp.make_arbitrary_grad(
+        channel='x', waveform=half, first=0.0, last=0.0, max_grad=np.inf, max_slew=np.inf,
+        system=opts))))
+    assert lost > 1e4 * (1e-6 * traversed)
+
+
+def test_traversed_area_counts_both_signs_of_a_sign_change() -> None:
+    """``integral |g|``, split at the zero crossing -- the two lines the m0 tolerance rests on."""
+    trapezoid = (np.array([0.0, 1.0, 2.0, 3.0]), np.array([0.0, 1.0, 1.0, 0.0]))
+    bipolar = (np.array([0.0, 1.0, 2.0, 3.0, 4.0]), np.array([0.0, 1.0, 0.0, -1.0, 0.0]))
+    through_zero = (np.array([0.0, 2.0]), np.array([-1.0, 1.0]))
+    assert _traversed(*trapezoid) == pytest.approx(pwl_moment(*trapezoid))
+    assert _traversed(*bipolar) == pytest.approx(2.0)
+    assert pwl_moment(*bipolar) == pytest.approx(0.0)
+    assert _traversed(*through_zero) == pytest.approx(1.0)
