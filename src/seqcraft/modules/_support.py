@@ -30,7 +30,7 @@ knows the other exists.
 
 from __future__ import annotations
 
-from math import gcd, pi
+from math import ceil, gcd, hypot, lcm, pi
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -48,8 +48,9 @@ if TYPE_CHECKING:
     from ..design.events import Event
 
 __all__ = [
-    'area_until', 'ceil_raster', 'dwell_quantum', 'halve_onto', 'require_axis', 'require_count',
-    'require_pair', 'require_positive', 'require_range', 'shift_slice',
+    'area_until', 'ceil_raster', 'dwell_quantum', 'halve_onto', 'oblique_trapezoid',
+    'require_axis', 'require_count', 'require_pair', 'require_positive', 'require_range',
+    'sample_quantum', 'segment_samples', 'shift_slice',
 ]
 
 
@@ -396,3 +397,159 @@ def shift_slice(rf: Event, gz: Event, *, position_m: float) -> Event:
         pp.calc_rf_center(rf)[0]
     )
     return derive(rf, freq_offset=freq_offset, phase_offset=phase_offset)
+
+
+def oblique_trapezoid(
+    *,
+    area_per_m: tuple[float, float],
+    opts: Opts,
+    axes: tuple[str, str] = ('x', 'y'),
+    duration_s: float | None = None,
+) -> tuple[Event, Event]:
+    """
+    Return one trapezoid of area ``hypot(ax, ay)``, split across `axes` by direction cosines.
+
+    The amplifier's limit on a 2D gradient is on the **vector** slew, and two axes designed
+    independently and stretched to a common duration each reach ``max_slew`` and together ask for
+    ``sqrt(2)`` times it.  :func:`~seqcraft.events.check_limits` measures the summed waveform per
+    axis and does not see that -- it reports a ``slew_norm`` warning, which is the right report
+    for a phase-encode blip beside a prewinder and the wrong one for a dephaser that *is* one
+    oblique vector.  Measured on the reference protocol, a naive per-axis pair asks **250.3 T/m/s
+    of a 180 T/m/s amplifier at 45 degrees and 395.3 at 57.3 degrees**, compiling cleanly at both;
+    this asks 177.93 at every angle, with the timing identical at every angle too.  The worst case
+    is not at 45 degrees, which is the second reason to solve this rather than bound it: two
+    independent trapezoids of unequal area are stretched to a common duration, and it is the
+    *shorter* one that then slews hardest.
+
+    Here rather than in :class:`~seqcraft.modules.Spiral2D` because it is what a caller builds
+    when the readout does *not*: ``prephase=False`` hands back
+    :meth:`~seqcraft.modules.Spiral2D.k_start_per_m` and gets out of the way, and what the caller
+    then writes is a separate event -- so the vector limit becomes theirs to respect.  A spiral's
+    own joins live inside its arbitrary gradient, where they are triangles rather than trapezoids
+    and there is no sum for the compiler to take.
+
+    Parameters
+    ----------
+    area_per_m
+        The 2D area to deliver, ``(on axes[0], on axes[1])``, in 1/m.
+    opts
+        The scanner.  The trapezoid is designed against its limits as a single vector.
+    axes
+        The two logical channels, which must differ.
+    duration_s
+        Stretch both to this length.  ``None`` is the shortest legal one.
+
+    Examples
+    --------
+    >>> import numpy as np, pypulseq as pp
+    >>> from pypulseq.opts import Opts
+    >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=180, slew_unit='T/m/s')
+    >>> gx, gy = oblique_trapezoid(area_per_m=(200.0, 0.0), opts=o)
+    >>> round(float(gx.area), 6), round(float(gy.area), 6)
+    (200.0, 0.0)
+
+    Timing and vector peak do not depend on the angle, which is the property it exists for:
+
+    >>> shapes = set()
+    >>> for angle in (0.0, np.pi / 4, 1.0):
+    ...     pair = oblique_trapezoid(
+    ...         area_per_m=(200.0 * np.cos(angle), 200.0 * np.sin(angle)), opts=o)
+    ...     shapes.add((round(pp.calc_duration(*pair) * 1e6),
+    ...                 round(float(np.hypot(pair[0].amplitude, pair[1].amplitude)))))
+    >>> len(shapes)
+    1
+    """
+    if axes[0] == axes[1]:
+        msg = format_error(f'axes must differ, got {axes!r}.', {'axes': axes})
+        raise ConfigurationError(msg)
+    components = (float(area_per_m[0]), float(area_per_m[1]))
+    total = require_positive(hypot(*components), 'hypot(*area_per_m)',
+                             fixes=['a zero area needs no event at all'])
+    kwargs: dict[str, object] = {'channel': require_axis(axes[0]), 'area': total, 'system': opts}
+    if duration_s is not None:
+        kwargs['duration'] = require_positive(duration_s, 'duration_s')
+    duration = float(pp.calc_duration(pp.make_trapezoid(**kwargs)))
+    return tuple(
+        derive(pp.scale_grad(
+            pp.make_trapezoid(channel=require_axis(axis), area=total, duration=duration,
+                              system=opts),
+            component / total))
+        for axis, component in zip(axes, components)
+    )
+
+
+def sample_quantum(*, dwell_s: float, opts: Opts) -> int:
+    """
+    Return the multiple every ADC event's sample count must be, when the count comes from a time.
+
+    Two constraints, and only one of them is seqcraft's.  A sampling window's duration is
+    ``n * dwell``, and for the block boundary that ends it to land on the **gradient raster**,
+    ``n`` must be a multiple of ``grad_raster / gcd(grad_raster, dwell)``.  And pypulseq's own
+    timing check enforces ``adc_samples_divisor`` -- 4 on Siemens -- which nothing in this library
+    had ever met by accident, because every other readout here picks a power-of-two sample count
+    for its own reasons.  A spiral picks its count from a *duration*, so it meets neither unless
+    it is made to.
+
+    The companion of :func:`dwell_quantum` and its mirror image: there the sample count is known
+    and the *dwell* is snapped, here the dwell is the caller's and the *count* is snapped.
+
+    Examples
+    --------
+    >>> from pypulseq.opts import Opts
+    >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=180, slew_unit='T/m/s')
+    >>> sample_quantum(dwell_s=2.5e-6, opts=o)              # four dwells to a raster, divisor 4
+    4
+    >>> sample_quantum(dwell_s=3e-6, opts=o)                # 10 us / gcd(10, 3) us = 10, then 4
+    20
+    """
+    raster_ticks = to_ticks(float(opts.grad_raster_time))
+    dwell_ticks = to_ticks(require_positive(dwell_s, 'dwell_s'))
+    by_raster = raster_ticks // gcd(raster_ticks, dwell_ticks)
+    return lcm(by_raster, int(getattr(opts, 'adc_samples_divisor', 1) or 1))
+
+
+def segment_samples(total: int, *, dwell_s: float, limit: int, opts: Opts) -> tuple[int, ...]:
+    """
+    Split `total` samples into the fewest ADC events under `limit`, each a whole quantum long.
+
+    Solved rather than searched: a segment's duration is ``n * dwell``, so `n` being a multiple of
+    :func:`sample_quantum` is exactly what puts every seam on the gradient raster and every count
+    on ``adc_samples_divisor``.  `total` is rounded **down** onto the quantum, because rounding up
+    is what would put the last sample past the gradient that positions it.
+
+    Filled greedily to the limit with the short segment **last**, which is not cosmetic.  A seam
+    is where samples are lost -- one ``adc_dead_time`` at each side, 3.28 ``dk`` at the reference
+    protocol -- and a greedy fill puts it as far as possible from the start of the region.  For a
+    spiral in/out pair that start is where ``|k|`` is largest, so the seam falls as far as it can
+    from the echo, which is the sample the readout exists for.
+
+    Parameters
+    ----------
+    total
+        Samples that fit in the acquisition, before quantisation.
+    dwell_s, opts
+        What :func:`sample_quantum` needs.
+    limit
+        ``opts.adc_samples_limit``, or any interpreter's ceiling.  Zero or below is pypulseq's
+        "no limit" convention and returns one segment.
+
+    Examples
+    --------
+    >>> from pypulseq.opts import Opts
+    >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=180, slew_unit='T/m/s')
+    >>> segment_samples(5286, dwell_s=2.5e-6, limit=8192, opts=o)       # fits in one
+    (5284,)
+    >>> segment_samples(20956, dwell_s=2.5e-6, limit=8192, opts=o)      # the short one last
+    (8192, 8192, 4572)
+    >>> segment_samples(20956, dwell_s=2.5e-6, limit=0, opts=o)         # pypulseq's "no limit"
+    (20956,)
+    """
+    quantum = sample_quantum(dwell_s=dwell_s, opts=opts)
+    whole = (int(total) // quantum) * quantum
+    if whole <= 0:
+        return ()
+    if int(limit) <= 0 or whole <= int(limit):
+        return (whole,)
+    usable = (int(limit) // quantum) * quantum
+    count = ceil(whole / usable)
+    return (*(usable,) * (count - 1), whole - usable * (count - 1))

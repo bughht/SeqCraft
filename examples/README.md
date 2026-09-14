@@ -11,6 +11,8 @@
 | [`gre_epi_2d/`](gre_epi_2d/) | The whole of k-space in one shot: the centred sampling window, the blip on the zero crossing, ramp sampling and the operator that undoes it, off-resonance and the N/2 ghost, and GRAPPA. Where `EPI2D` came from. Defines `GREEPI2D` in its own notebook. |
 | [`se_epi_2d/`](se_epi_2d/) | The same readout after a refocusing pulse — and the measurement that a spin echo **does not** fix EPI distortion. Defines `SEEPI2D` in its own notebook. |
 | [`megre_2d/`](megre_2d/) | Eight echoes off one excitation, monopolar and bipolar, fitted for T2\* and ΔB0 against a phantom that carries the ground truth for both. **Defines no class**, which no other directory here can say. |
+| [`gre_spiral_2d/`](gre_spiral_2d/) | The three things a spiral is — the path, the traversal, and what the amplifier actually does — with three wrong versions built too, because all three compile. Variable density as data, the ADC split the sample limit forces, and a reconstruction that puts the field map *inside* the forward model. Where `Spiral2D` came from. Defines `GRESpiral2D` in its own notebook. |
+| [`se_spiral_2d/`](se_spiral_2d/) | Spiral in/out after a refocusing pulse, where **the seam, the `k = 0` sample and the spin echo are one instant** — and the same sequence built with the readout placed against its first sample instead, which compiles. Defines `SESpiral2D` in its own notebook. |
 | [`matlab/`](matlab/) | The same small GRE 2D built two ways with official MATLAB Pulseq events: direct `LogicBlock` assembly and an example-only single-repetition `GRE2DTR` Module. Both compile through Python and return `mr.Sequence`. |
 
 ## `gre_2d/`
@@ -79,6 +81,26 @@ the spin echo where the kernel says it is.
 
 Both `01`s are in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); the `02`s are
 not, for the reason the other simulation notebooks are not.
+
+## `gre_spiral_2d/` and `se_spiral_2d/`
+
+| | |
+|---|---|
+| [`gre_spiral_2d/01_build.ipynb`](gre_spiral_2d/01_build.ipynb) | **The path and the traversal are two questions**, and `v = 0` at both ends of the arm is the design decision the module rests on — it is what makes one arm reversible and therefore four variants one class. The slew-limited regime measured rather than assumed, with the `max_grad` crossover *found*; seven densities side by side, with the turn spacing measured off the built trajectory; the four variants and `echoes`; the ADC split at one shot and the 6.6 `Δk` hole each seam costs. Then **three wrong versions**, because all three compile: a rephaser overlapping the arm, a join measured in isolation (0.024 `Δk` of residual `k`), and a naive per-axis prephaser at 45° (250 T/m/s on a 180 T/m/s amplifier). `GRESpiral2D`, six imaging `.seq` files at **one flip, one TE, one TR and one matrix**, and the dual-echo Cartesian reference that calibrates them. **Needs nothing but `seqcraft`.** |
+| [`gre_spiral_2d/02_simulate_and_reconstruct.ipynb`](gre_spiral_2d/02_simulate_and_reconstruct.ipynb) | The calibration first — B0 map, ESPIRiT maps, and the wrap check as an assertion. Then the blur **on one spin**, against a `B0 = 0` control and against readout length, because a point object's point spread *is* the answer. The brain uncorrected, corrected, and **corrected with the sign flipped** — the failure that reads as "correction does not help". The exact operator against the segmented one at 64², four interleaves solved jointly against four solved separately, the variable-density file at `edge_undersampling = 2.0`, T2\* from the three-echo file, and the gradient-delay sweep, which is the one calibration neither sidecar nor field map supplies. **Needs `seqcraft[sim,recon]`.** |
+| [`se_spiral_2d/01_build.ipynb`](se_spiral_2d/01_build.ipynb) | `Spiral2D(variant='in-out', prephase=False)` after a refocusing pulse, with the 2D dephaser **before** the 180 carrying the sign the conjugation will flip — one oblique trapezoid, because two independent ones reach `sqrt(2)·max_slew` and compile cleanly. TE as **two numbers**, the gradient echo and the spin echo, brought within half a dwell of each other. **Built wrong first**: the readout placed against its first sample rather than its seam, which compiles, whose every `k` is right, and which acquires the centre of k-space a whole arm from the spin echo. Four `.seq` files at one echo time. **Needs nothing but `seqcraft`.** |
+| [`se_spiral_2d/02_simulate_and_reconstruct.ipynb`](se_spiral_2d/02_simulate_and_reconstruct.ipynb) | That it is a **T2** echo and not a T2\* one, swept over `T2'`. Then the section the directory exists for: **an in-out spiral's point spread is nearly real and an out spiral's is not**, measured on a point object at the same echo time and the same arm — and what that does to a brain. Correction on both and the residual after it, then the honest negative: correction fixes the blur and does nothing for the through-plane dephasing a 3 mm slice in the same field is also suffering. **Needs `seqcraft[sim,recon]`.** |
+
+`Spiral2D` is the one module that ships out of this pair; `GRESpiral2D` and `SESpiral2D` are
+**defined in those notebooks and do not ship**, one consumer each. Both `01`s are in
+[`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
+
+[`noncartesian_recon.py`](noncartesian_recon.py) sits beside [`phantom.py`](phantom.py) for the
+same reason that one does: it is shared example code, and it is **not** in `src/`, because the
+package builds sequences and a reconstruction module there would put an ESPIRiT dependency on
+the compile path. Its operator is composed from `sigpy.linop` primitives rather than
+hand-written, so the adjoint is *derived* — a conjugate gradient on a nearly adjoint pair does
+not raise, it converges to the wrong image and looks under-regularised.
 
 ## `megre_2d/`
 

@@ -1,5 +1,138 @@
 # Changelog
 
+## Unreleased — a variable-density spiral, and two tolerances that refused a legal one
+
+The whole of k-space on a curve, as **one new module, three promoted helpers, and two changes to
+the compiler's own contract check** — which is one more than the plan for it predicted, and both
+of them refused sequences that were correct.
+
+```python
+spiral = sc.modules.Spiral2D(opts=opts, fov_mm=220.0, matrix=128, shots=4, dwell_s=2.5e-6,
+                             density=(1.0, 0.5))            # half the FOV at the edge
+
+k = spiral.k_per_m(shot=2)                                  # (2, n): WHERE THE SAMPLES ARE
+assert spiral.worst_turn_gap_dk <= 2.0 * 1.001              # 2x undersampled at the edge, measured
+assert abs(k[:, spiral.echo_sample(0)]).max() < 0.05 * spiral.dk_per_m     # k = 0 is a sample
+```
+
+| | |
+|---|---|
+| `Spiral2D` | the density-modulated path, its time-optimal traversal, the raster waveform, the ADCs the interpreter's sample limit needs, the prephaser, the fly-backs, the rewinder, the `LIN`/`ECO`/`SEG`/`SET`/`REF`/`IMA` labels — and **the trajectory that plays**, measured off the built events rather than off the design. `readout/`, because it contains ADCs and no RF |
+| `oblique_trapezoid` | one trapezoid of area `hypot(ax, ay)`, split across two axes by direction cosines. A caller's 2D dephaser, for the `prephase=False` spin-echo placement |
+| `sample_quantum`, `segment_samples` | the ADC split in integer ticks, the way `dwell_quantum` already solves the dwell |
+| `compiler/verification.py` | `magnitude` is now the integral of `\|g\|` rather than `\|integral of g\|`, and the m1 coefficient moved from 1e-9 to 1e-7. Both are below |
+| `examples/noncartesian_recon.py` | the forward model and the solve, beside `phantom.py`. **Not** in `src/`: the package builds sequences, and a reconstruction module there would put an ESPIRiT dependency on the compile path |
+| everything else | unchanged. `design/`, `analysis`, `CartesianLine`, `EPI2D`, `Excitation`, `Refocusing`, `PhaseEncode`, `IRPrep` and `spoiler` are untouched, and every existing test passes **unedited** |
+
+### The path and the traversal are two questions
+
+Conflating them is the commonest way to get a spiral wrong, and the symptom is a readout that
+**cannot be reversed**: integrate one ODE in time — which is what `vds.m` does — and the trajectory
+ends at full gradient, so its time-reverse *begins* at full gradient, which is a waveform no block
+can start with.
+
+So the design is two passes and **neither imports pypulseq**. The path is the Nyquist condition and
+nothing else, `dtheta/dkr = 2*pi*FOV(kr)/shots`. The traversal is a forward–backward sweep with
+`v = 0` at *both* ends, and those boundary conditions are the design decision rather than the
+algorithm: an arm that starts and ends at rest is reversible, and reversibility is what makes
+`'out'`, `'in'`, `'in-out'` and `'out-in'` one class rather than four. Every join then falls where
+`g = 0`, so all four variants and any number of echoes join continuously with no connector — and
+`'in-out'`'s seam **is** `k = 0`, which is why it is the natural spin-echo readout.
+
+`echoes` therefore needs no `polarity` beside it: the one-arm variants pay a fly-back between
+echoes and the two-arm variants pay nothing, which is exactly the monopolar/bipolar trade
+`CartesianLine` makes, at a spiral's scale.
+
+### `density` is sampled FOV multipliers, not polynomial coefficients
+
+`(1.0, 0.5)` halves the field of view at the edge of k-space. Under `vds.m`'s convention — which
+the first draft of the API took — the same tuple silently means a FOV that *grows* by half: an
+oversampled outer ring, a readout 60 % longer, and nothing raises. It reads as a slow design rather
+than as a typo, and it is exactly the slip a reader makes on first meeting the argument.
+
+Sampled values cannot express that mistake, because every number written *is* the thing it
+controls. Measured turn spacing matches `1/density` everywhere, and the same edge undersampling
+reached three different ways costs 55 %, 64 % and 71 % of the uniform readout — a trade that is
+invisible from `edge_undersampling` alone.
+
+### `k` has to be **known**, not exact
+
+A Cartesian readout has to land its samples on a grid; a spiral has no grid and a NUFFT is *told*
+the positions. So `kmax` coming out 0.03 % low is a 0.03 % scaling of the resolution and nothing
+else, and `k` reported one gradient raster from where it played is a blur, a shading and a wrong
+field map.
+
+`k_per_m` is therefore measured off the **built events** — their own knots, integrated exactly —
+and the design pass's `k` is discarded and held on no attribute. Against `sc.kspace`, which shares
+no code with it, the two agree to **1.3–4.7e-5 1/m**: 3–10e-6 of one Nyquist step, and pypulseq's
+own shape-compression floor rather than anything a module can improve.
+
+### The two compiler tolerances, and why both were wrong
+
+**`verify_against_tree` scaled its m0 tolerance by `|net area|` per event**, which its own comment
+described as *"the total area traversed, not the net"*. Those agree for a trapezoid, which has one
+sign, and differ by five orders of magnitude for one arbitrary gradient that runs out to `kmax` and
+comes back: traversed 9308 1/m against a net of 3.6e-5, so the tolerance collapsed onto its `1e-6`
+floor — where pypulseq's shape compression already sits at 1.1e-5 1/m. A legal spiral was refused,
+by a message saying *"a split or a merge lost area"* when nothing split and nothing merged.
+
+`magnitude` now accumulates the integral of `|g|`, which is what the comment always claimed. It is
+strictly more permissive and only where an event changes sign, which no other module's gradient
+does — and it makes the check *sharper*, not blunter: a gradient laid across the spiral's own axes
+forces a resample that moves m0 by 0.046 1/m, and against a tolerance of 9.3e-3 that is now caught
+outright where the old floor could not tell it from the compression noise.
+
+**The m1 coefficient was at the same floor and had no headroom at all.** A 4000-knot arbitrary
+gradient round-trips with an m1 error of 1.7e-9 of what its axis traversed, and the check refused
+at 1e-9 — for one density and not the next, which is the worst way for a tolerance to fail. The
+failure m1 exists for is a lobe played at the wrong time, and one raster of displacement moves m1
+by 5e-5 of the traversed m1 on the same readout. 1e-7 clears the floor by sixty and stays five
+hundred below the signal.
+
+### The ADC, which is the one hardware limit a spiral meets that nothing else here does
+
+`check_event_sizes` already existed because of a spiral — *"nothing checked them until a
+67 388-sample spiral readout reached a scanner"* — and this module stops it at design time. Three
+constraints: one `adc_dead_time` guard at each end of an acquisition and **two** between events of
+the same one; `adc_samples_divisor`, which nothing in this library had ever met by accident because
+every other readout picks a power-of-two count for its own reasons; and the limit itself, which a
+single-shot arm exceeds by two and a half times.
+
+**An acquisition region is not an arm.** Arms that join at `g = 0` are one continuous gradient, so
+one ADC spans both — which is what puts an in-out readout's `k = 0` *inside* a sampling window at
+0.02 `dk` instead of in the guard between two. `adc_segments` is a *recovery* and `shots` is the
+answer: `adc_segments=1` refuses rather than splitting, and names the smallest `shots` that fits.
+
+The one label the API document did not predict is **`SET`**, which carries which ADC event of a
+split acquisition a readout is. Without it every segment of one region shares an address and
+`check_label_addresses` refuses the file — correctly, and for a reason that only exists because a
+spiral is the first readout here whose ADC is split by something other than encoding.
+
+### A join's area is not the join's alone
+
+Every join is built **inside** the arm's own arbitrary gradient, as a triangle rather than a
+trapezoid, because an arbitrary gradient's samples sit at raster centres and a trapezoid's knots at
+raster edges — the compiler holds either lattice exactly and their sum on neither. With nothing to
+superpose there is no `resample` warning anywhere in the readout.
+
+And a raster-centre waveform is piecewise linear through its samples, so the segment running from
+the previous piece's last sample to this one's first carries area a join designed in isolation does
+not count. Measured, a rewinder exact to floating point on its own left `k` **0.108 1/m** from the
+origin — 0.024 `dk`, invisible in every plot, and a phase ramp across the next excitation's image.
+Corrected on the *assembled* waveform by one rescale, which is exact because a piecewise-linear
+integral is linear in the amplitudes, and the last join is measured against the end of the block
+rather than its own end, because a residual there has nothing after it to absorb one.
+
+### What is deliberately not here
+
+No `Spiral3D`, no stack-of-spirals, no cones — 2D throughout, because MRzero cannot follow 3D and
+nothing in a `02` could check it. No anisotropic FOV: a spiral's density is radial, and an
+elliptical one is a different path integral. No shipped density presets and no shipped ordering
+tables — `density` is data and `angle_rad` is an argument. No `polarity`: `variant` carries it. And
+**no `REV`**, though an earlier draft emitted one on every inward arm: `k_per_m` says where every
+sample is and `t_adc_s` says when, so nothing has to be un-reversed, and an emitted label with no
+reader is a promise about the file that nobody keeps.
+
 ## Unreleased — a Cartesian line, read more than once
 
 A multi-echo gradient echo, as **three arguments on one module and three helper promotions.**

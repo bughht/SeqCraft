@@ -371,6 +371,30 @@ def _address_violations(
     return out
 
 
+def _traversed(times: np.ndarray, amps: np.ndarray) -> float:
+    """
+    Return ``integral |g| dt`` over a piecewise-linear waveform's knots.
+
+    Closed form on each segment, split at the zero crossing when the two ends differ in sign, so
+    a lobe that goes out and comes back contributes twice its net rather than nothing.  That is
+    the only difference from :func:`~seqcraft.events.pwl_moment` at order zero, and the only
+    place it matters is an event whose gradient changes sign inside itself -- a spiral readout,
+    a bipolar pair written as one arbitrary gradient.
+    """
+    if len(times) < 2:
+        return 0.0
+    t0, t1 = np.asarray(times[:-1]), np.asarray(times[1:])
+    g0, g1 = np.asarray(amps[:-1]), np.asarray(amps[1:])
+    h = t1 - t0
+    same = g0 * g1 >= 0.0
+    # A sign change splits the segment at the crossing into two triangles, whose areas are
+    # h * g^2 / (2 * |g0 - g1|) each; where it does not, the trapezoid rule is already exact.
+    span = np.abs(g0 - g1)
+    crossing = np.divide(h * (g0**2 + g1**2), 2.0 * span, out=np.zeros_like(h),
+                         where=~same & (span > 0.0))
+    return float(np.sum(np.where(same, 0.5 * h * np.abs(g0 + g1), crossing)))
+
+
 def verify_against_tree(
     placed: Sequence[PlacedEvent],
     targets: Mapping[int, float] | None,
@@ -439,6 +463,14 @@ def verify_against_tree(
     # prephaser very nearly cancel, so a relative tolerance on the net would demand exactness
     # that float summation over thousands of pieces cannot deliver -- while a tolerance on the
     # total still catches a whole lost lobe, which is what this is for.
+    #
+    # Traversed means ``integral |g|``, not ``|integral g|``.  Those agree for a trapezoid, which
+    # has one sign, and differ by five orders of magnitude for one arbitrary gradient that runs
+    # out to kmax and comes back: on a four-shot spiral the traversed area is 9308 1/m and the
+    # net is 3.6e-5, so the net collapses the tolerance onto its 1e-6 floor and pypulseq's own
+    # shape compression -- 5e-8 relative, 1.1e-5 1/m of m0 -- then trips it, with a message
+    # blaming a split that never happened.  A genuinely lost lobe stays four orders of magnitude
+    # above the corrected tolerance.
     magnitude: dict[str, float] = {}
     # m1 referenced to the start of the sequence, computed **exactly** on both sides.
     #
@@ -453,7 +485,7 @@ def verify_against_tree(
             knots = knots_of(p.event, p.node_t)
             area = pwl_moment(*knots, 0)
             want[channel] = want.get(channel, 0.0) + area
-            magnitude[channel] = magnitude.get(channel, 0.0) + abs(area)
+            magnitude[channel] = magnitude.get(channel, 0.0) + _traversed(*knots)
             want_m1[channel] = want_m1.get(channel, 0.0) + pwl_moment(*knots, 1)
 
     if want:
@@ -470,12 +502,21 @@ def verify_against_tree(
                     )
                 )
             # Both sides are exact closed forms, so the only error is float summation over the
-            # pieces.  Scaled by area *traversed* times the horizon, for the same reason m0's
-            # is scaled by area traversed: a readout and its prephaser nearly cancel, so a
-            # tolerance on the net would demand more than float64 can carry.  A lobe displaced
-            # by one raster changes m1 by area * 10 us, comfortably above this.
+            # pieces plus whatever the shape round-trip costs.  Scaled by area *traversed*
+            # times the horizon, for the same reason m0's is scaled by area traversed: a
+            # readout and its prephaser nearly cancel, so a tolerance on the net would demand
+            # more than float64 can carry.
+            #
+            # 1e-7, not 1e-9, and both bounds were measured on a spiral.  pypulseq's shape
+            # compression round-trips a 4000-knot arbitrary gradient with an m1 error of
+            # 1.7e-9 of what that axis traversed -- at 1e-9 the check refused a legal
+            # variable-density readout, and did it for one density and not the next.  The
+            # failure this exists for is a lobe played at the wrong time, and one raster of
+            # displacement moves m1 by area * 10 us, which is 5e-5 of the traversed m1 on the
+            # same readout.  So 1e-7 clears the floor by sixty and stays five hundred below
+            # the signal, where 1e-9 cleared the floor by nothing at all.
             m1_scale = max(scale * max(tree_duration_s, 1e-3), 1.0)
-            if abs(actual_m1.get(axis, 0.0) - want_m1.get(axis, 0.0)) > 1e-9 * m1_scale:
+            if abs(actual_m1.get(axis, 0.0) - want_m1.get(axis, 0.0)) > 1e-7 * m1_scale:
                 violations.append(
                     ContractViolation(
                         f'axis {axis} m1',

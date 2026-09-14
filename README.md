@@ -334,9 +334,9 @@ boundaries will fall.
 
 ### The shipped modules
 
-`sc.modules` has nine building blocks, each extracted from a working sequence rather than designed:
-`Excitation`, `Refocusing`, `PhaseEncode`, `CartesianLine`, `EPI2D`, `spoiler`, `IRPrep`, `GRE2DTR`
-and `GRE2D`. The last two are a whole repetition and a whole scan, so the GRE that section 2
+`sc.modules` has ten building blocks, each extracted from a working sequence rather than designed:
+`Excitation`, `Refocusing`, `PhaseEncode`, `CartesianLine`, `EPI2D`, `Spiral2D`, `spoiler`, `IRPrep`,
+`GRE2DTR` and `GRE2D`. The last two are a whole repetition and a whole scan, so the GRE that section 2
 composed also comes ready-made:
 
 ```python
@@ -390,6 +390,28 @@ is a Cartesian gradient echo on the EPI's own readout lobe rather than another E
 needs its receiver locked to a transmitter that is advancing its carrier. Four shots that differ
 from one another for *any* reason put a replica of the object at `Ny/4`, and it reads as an
 under-sampling artefact.
+
+`Spiral2D` is the one readout with no grid at all, and the requirement changes with it. A
+NUFFT is *told* where the samples are, so the trajectory does not have to land anywhere in
+particular — it has to be **known**, to a small fraction of `dk`. So `k_per_m` is measured off
+the built events rather than read off the design, and `sc.kspace`, which shares no code with
+it, agrees to 2.6e-5 1/m — pypulseq's own shape-compression floor, and 6e-6 of one `dk`:
+
+```python
+spiral = sc.modules.Spiral2D(opts=opts, fov_mm=220.0, matrix=128, shots=4, dwell_s=2.5e-6,
+                             density=(1.0, 0.5))       # half the FOV at the edge, 70 % of
+                                                       # the uniform readout, same kmax
+k = spiral.k_per_m(shot=2)                             # (2, n): WHERE THE SAMPLES ARE
+assert spiral.worst_turn_gap_dk <= 2.0 * 1.001         # 2x undersampled at the edge, measured
+```
+
+The path and the timing are **two questions** — the Nyquist condition first, with no time in
+it, then a forward–backward sweep with `v = 0` at both ends. Those boundary conditions are the
+design decision: an arm that starts and ends at rest is reversible, and reversibility is what
+makes `'out'`, `'in'`, `'in-out'` and `'out-in'` one class rather than four. `'in-out'`'s seam
+**is** `k = 0`, which is why it is the spin-echo readout, and `density` is sampled FOV
+multipliers rather than polynomial coefficients, so `(1.0, 0.5)` cannot silently mean a field
+of view that *grows* by half.
 
 `CartesianLine` **reads its line more than once** when asked, which is a multi-echo gradient echo —
 `echoes` and `polarity`, where `'monopolar'` plays every lobe the same sign with a fly-back between
@@ -496,8 +518,13 @@ Notebooks, each one a sequence that works rather than a feature tour:
 - [`examples/se_epi_2d/`](examples/se_epi_2d/) — the same readout after a refocusing pulse, and the
   measurement most readers expect to come out the other way: **a spin echo does not fix EPI
   distortion.**
+- [`examples/gre_spiral_2d/`](examples/gre_spiral_2d/) — the three things a spiral is: the
+  path, the traversal and what the amplifier actually does. Three wrong versions built too,
+  because all three compile. `Spiral2D` came out of it.
+- [`examples/se_spiral_2d/`](examples/se_spiral_2d/) — spiral in/out after a refocusing pulse,
+  where the seam, the `k = 0` sample and the spin echo are the same instant.
 
-All seven simulation notebooks share one phantom — [`examples/phantom.py`](examples/phantom.py) —
+All nine simulation notebooks share one phantom — [`examples/phantom.py`](examples/phantom.py) —
 including the off-resonance map the EPI examples distort against, which is the phantom's own.
 
 Documentation: [`api_reference.md`](docs/api_reference.md) (every public name, executed by CI),

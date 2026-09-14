@@ -982,6 +982,7 @@ Re-exported **flat**, so no import path names a folder:
 | `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
 | `CartesianLine` | prephaser, readout gradient and ADC as one design — `prephase=False` drops the prephaser, which is the spin-echo readout, and `echoes`/`polarity` read the same line more than once, which is a multi-echo gradient echo |
 | `EPI2D` | the whole echo-planar train: prephasers, alternating lobes, blips on the zero crossings, one ADC per echo, and the labels a reconstruction reads back |
+| `Spiral2D` | a variable-density spiral: the density-modulated path, its time-optimal traversal, the raster waveform, the ADCs the sample limit needs, the joins — and **the trajectory that plays**, measured off the built events |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
@@ -1026,6 +1027,11 @@ the questions a tree of events cannot:
 | `EPI2D.polarity(echo)` | `+1` or `-1`, counted across the whole train. `echo` is an **offset from the first imaging echo**, so `-navigator_echoes … -1` are the navigators and `range(-navigator_echoes, len(lines))` walks the file's readouts in order |
 | `EPI2D.k_read_per_m` | where a forward lobe's samples land in k, per sample. With ramp sampling that is not `dk` times an index, and nothing outside the module can derive it |
 | `EPI2D.time_to_center_line(lines)` | to the acquisition of `center_line`, which the ordering decides. **This is TE**, and it is not the first echo |
+| `Spiral2D.k_per_m(shot)` | **where the samples are**, `(2, n)` in 1/m — measured off the built events rather than off the design, because a spiral's `k` has to be *known* rather than exact, and nothing outside the module can derive it |
+| `Spiral2D.te_s` / `echo_sample(echo)` | one time per acquired k = 0, and which sample carries it. Read off the measured trajectory: solving for the crossing and then finding the nearest sample is how the two come to disagree by half a dwell |
+| `Spiral2D.k_start_per_m(shot)` / `k_end_per_m(shot)` | the 2D `k` a caller's dephaser has to supply and its rewinder has to cancel — a **vector**, which is why `oblique_trapezoid` exists |
+| `Spiral2D.worst_sample_gap_dk` / `worst_turn_gap_dk` | how well sampled the arm is along its own path, and how far apart the turns of the interleaved set are. Both in `dk`, both measured |
+| `Spiral2D.fov_mm_of(kr_norm)` | the density evaluated — the FOV supported at each radius, which is what an analytic density compensation is built from |
 | `IRPrep.time_to_center()` | to the inversion's effective centre — 5.1 ms into a 10 ms hyperbolic secant, and what an inversion time is measured from |
 | `GRE2D.time_to_center_line(lines=…, dummies=…)` | to the readout of `center_line`, which depends on the ordering and on the dummy count, so it takes the same arguments `build` does |
 | `GRE2DTR.min_te_s` / `min_tr_s` | feasibility, known at design time; a shorter request raises |
@@ -1251,6 +1257,90 @@ for the same reason.
 `examples/gre_epi_2d/02` §7 prices the separately acquired calibration band against a
 self-calibration no real scan can have, and §8 decomposes a segmented EPI's replica at `Ny/shots`
 over the TR, the run-in and the spoiling schedule.
+
+## The spiral, and the two questions it is
+
+A Cartesian readout has to land its samples **on a grid**, and most of `EPI2D`'s arithmetic
+exists for that. `Spiral2D` has no grid and a NUFFT is *told* the positions, so the
+requirement is different and weaker in one direction and much stronger in the other:
+
+> The trajectory does not have to land anywhere in particular. It has to be **known** — the
+> array handed back has to be where the samples actually are, to a small fraction of `dk`.
+
+So `k_per_m` is measured off the built events' own knots, the design pass's `k` is discarded,
+and `sc.kspace` — which shares no code with the module — is the oracle.
+
+```python
+spiral = sc.modules.Spiral2D(opts=opts, fov_mm=220.0, matrix=128, shots=4, dwell_s=2.5e-6)
+shot = spiral(shot=2, segment=0)                       # exactly one of shot= and angle_rad=
+
+k = spiral.k_per_m(shot=2)                             # (2, n) in 1/m, in acquisition order
+assert abs(k[:, spiral.echo_sample(0)]).max() < 0.05 * spiral.dk_per_m   # k = 0 is a sample
+assert spiral.worst_turn_gap_dk <= 1.001               # Nyquist, measured off the path
+```
+
+**The path and the timing are two questions**, and conflating them is the commonest way to
+get a spiral wrong — the symptom is a readout that cannot be reversed. The path is the
+Nyquist condition and nothing else, `dtheta/dkr = 2*pi*FOV(kr)/shots`; the traversal is a
+forward–backward sweep with **`v = 0` at both ends**, which is the design decision the whole
+module rests on. An arm that starts and ends at rest is reversible, and reversibility is what
+makes four variants and any number of echoes one class:
+
+| `variant` | arms | between echoes | the Cartesian analogue |
+|---|---|---|---|
+| `'out'` | `a` × `echoes` | a **rewinder** back to the origin | `polarity='monopolar'` |
+| `'in'` | `r` × `echoes` | a **prephaser** back out to `kmax` | `polarity='monopolar'` |
+| `'in-out'` | `r a` × `echoes` | **nothing** | `polarity='bipolar'` |
+| `'out-in'` | `a r` × (`echoes`−1) | **nothing** | `polarity='bipolar'` |
+
+Both joins of the two-arm variants fall where `g = 0`, which is why `echoes` needs no
+`polarity` beside it: `variant` already carries it. `'in-out'`'s seam **is** `k = 0`, which
+is what makes it the natural spin-echo readout — put the seam at the spin echo.
+
+**`density` is data, and it is sampled FOV multipliers rather than polynomial coefficients.**
+`(1.0, 0.5)` halves the field of view at the edge of k-space; under `vds.m`'s convention the
+same tuple silently means a FOV that *grows* by half, an oversampled outer ring and a readout
+60 % longer, and nothing raises. Every number written is the thing it controls, and
+`edge_undersampling` is `1/density[-1]`.
+
+```python
+vds = sc.modules.Spiral2D(opts=opts, fov_mm=220.0, matrix=128, shots=4, dwell_s=2.5e-6,
+                          density=(1.0, 0.5))          # 70 % of the uniform readout
+assert vds.edge_undersampling == 2.0
+
+se = sc.modules.Spiral2D(opts=opts, fov_mm=220.0, matrix=128, shots=4, dwell_s=2.5e-6,
+                         variant='in-out', prephase=False)      # the spin-echo placement
+gx, gy = sc.modules._support.oblique_trapezoid(area_per_m=-se.k_start_per_m(0), opts=opts)
+```
+
+**Everything the readout plays is one arbitrary gradient per axis.** The prephaser, the
+fly-backs and the rewinder are triangles built *inside* it rather than trapezoids laid beside
+it, because an arbitrary gradient's samples sit at raster centres and a trapezoid's knots at
+raster edges — the compiler holds either lattice exactly and their sum on neither. With
+nothing to superpose there is no `resample` warning anywhere in the readout, and the only
+block boundaries are the ones the interpreter's ADC sample limit forces.
+
+That limit is the one hardware constraint a spiral meets that nothing else here does. A
+single-shot arm is 20 964 samples against a limit of 8192, so it needs **three** ADC events,
+and each seam costs one `adc_dead_time` of trajectory at either side. `adc_segments` is a
+*recovery* and `shots` is the answer: `adc_segments=1` refuses rather than splitting, and
+names the smallest `shots` that fits in one event.
+
+An **acquisition region is not an arm** — arms that join at `g = 0` are one continuous
+gradient, so one ADC spans both, and that is what puts an in-out readout's `k = 0` inside a
+sampling window instead of in the guard between two. Segments are filled to the limit with
+the short one last, which puts the seam as far as possible from the start of the region.
+
+The labels are `LIN` for the interleaf — for a spiral that *is* the k-space encoding index —
+`ECO` above one echo, `SEG` and `REF`/`IMA` when the caller gives them, and `SET` for which
+ADC event of a split acquisition this is. There is no `REV`: `k_per_m` says where every
+sample is and `t_adc_s` says when, so nothing has to be un-reversed and an emitted label with
+no reader is a promise about the file that nobody keeps.
+
+`examples/gre_spiral_2d/01` measures the slew-limited regime, four densities side by side and
+three wrong versions that all compile; `examples/se_spiral_2d/01` builds the in-out readout
+against a refocusing pulse, with the seam, the `k = 0` sample and the spin echo at one
+instant.
 
 ---
 
@@ -1535,6 +1625,7 @@ at import.
 | `ContractViolation` | `compiler.verification` | class |
 | `DefinitionConflict` | `compiler.errors` | exception |
 | `EPI2D` | `modules` | class |
+| `Spiral2D` | `modules` | class |
 | `EPS` | `design.timing` | constant |
 | `EXCLUSIVE_KINDS` | `compiler.model` | constant |
 | `Event` | `design.events` | type alias |
