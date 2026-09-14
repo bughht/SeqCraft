@@ -71,7 +71,7 @@ class GRE2D(Module):
 
     Parameters
     ----------
-    opts, fov_mm, matrix, thickness_mm, flip_deg, te_s, tr_s, bandwidth_hz_px,
+    opts, fov_mm, matrix, thickness_mm, flip_deg, rf_duration_s, te_s, tr_s, bandwidth_hz_px,
     partial_fourier, echoes, polarity, echo_spacing_s, spoil_cycles_per_voxel, spoil_axis
         Forwarded unchanged to :class:`~seqcraft.modules.GRE2DTR`, which is the one
         :class:`~seqcraft.Module` this constructs and holds.  `partial_fourier` stays an
@@ -156,6 +156,7 @@ class GRE2D(Module):
         matrix: tuple[int, int],
         thickness_mm: float,
         flip_deg: float = 15.0,
+        rf_duration_s: float | None = None,
         te_s: float | None = None,
         tr_s: float | None = None,
         bandwidth_hz_px: float = 200.0,
@@ -172,7 +173,8 @@ class GRE2D(Module):
         super().__init__(opts=opts, tag=tag)
         self.tr = GRE2DTR(
             opts=opts, fov_mm=fov_mm, matrix=matrix, thickness_mm=thickness_mm,
-            flip_deg=flip_deg, te_s=te_s, tr_s=tr_s, bandwidth_hz_px=bandwidth_hz_px,
+            flip_deg=flip_deg, rf_duration_s=rf_duration_s,
+            te_s=te_s, tr_s=tr_s, bandwidth_hz_px=bandwidth_hz_px,
             partial_fourier=partial_fourier, echoes=echoes, polarity=polarity,
             echo_spacing_s=echo_spacing_s, spoil_cycles_per_voxel=spoil_cycles_per_voxel,
             spoil_axis=spoil_axis,

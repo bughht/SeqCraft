@@ -1,32 +1,35 @@
 # SeqCraft
 
-**Composable, reusable MRI pulse sequence programming on top of [pypulseq](https://github.com/imr-framework/pypulseq).**
+**Write an MRI pulse sequence as a tree of overlapping blocks. Compile it to [pypulseq](https://github.com/imr-framework/pypulseq).**
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Built on](https://img.shields.io/badge/built%20on-pypulseq-orange)
 
 ## Pulseq is a list. SeqCraft makes it a tree.
 
-A pulseq sequence is a **flat, sequential list of blocks**, and each block may hold at most **one RF,
-one ADC, and one gradient per axis**. That is the right shape for hardware to execute, and the wrong
-shape to write in: the moment two things you think of as separate want to happen at the same time — a
-slice rephaser and a phase-encode blip, a preparation and the train it prepares, a diffusion lobe and
-the refocusing pulse it straddles — they collide in one block. So you split waveforms at boundaries
-by hand, keep the pieces in step yourself, and every component you write has to know what its
-neighbours are doing.
+A pulseq sequence is a **flat list of blocks**, and one block holds at most **one RF, one ADC and one
+gradient per axis**. Hardware needs that. You do not: the moment two things you think of separately
+have to happen together — a slice rephaser and a phase-encode blip, a diffusion lobe straddling its
+refocusing pulse — they collide in one block. So you cut waveforms at boundaries by hand and keep the
+pieces in step yourself.
 
-`sc.LogicBlock` takes that off your side of the work:
+`sc.LogicBlock` is a tree instead:
 
-- **Anything may overlap anything.** Two gradients on one axis, a gradient across an RF, an ADC while
-  three axes play. You write what you mean at the time you mean it; `sc.compile` derives the legal
-  pulseq blocks — splitting, summing and bounding — and validates them against the amplifier.
-- **Blocks nest, to any depth.** A block holds events *or other blocks*, each with a start time
-  relative to its parent. A scan holds shots, a shot holds an inversion and a train, a train holds
-  repetitions, a repetition holds an excitation and a readout — all one kind of object. The flat list
-  becomes a tree, which is the shape a pulse sequence diagram already has.
-- **So a component can be written once and reused.** This is the part that follows from the other
-  two: because nothing has to know where block boundaries will fall or what its neighbours are doing,
-  a piece of a sequence can be handed around, nested, and retimed. That is what makes `sc.Module`
-  possible — a piece of MR physics that takes parameters and returns a `LogicBlock`.
+- **Anything may overlap anything.** Write what you mean, when you mean it. `sc.compile` finds the
+  legal pulseq blocks — splitting, summing, checking them against the amplifier.
+- **Blocks nest, to any depth.** A block holds events *or other blocks*, each timed against its
+  parent. Scan, shot, repetition, readout: one kind of object all the way down.
+- **So a component is written once.** Nothing has to know its neighbours or where a boundary will
+  fall — which is what makes `sc.Module` possible: parameters in, one `LogicBlock` out.
+
+Here is one repetition of a spoiled 2D GRE, coloured and boxed by the **`LogicBlock` that wrote each
+waveform** rather than by event type:
+
+![One GRE repetition as a sequence diagram with lanes for RF, Gz, Gy, Gx, ADC and Label. Each module is a labelled box in its own colour: Excitation spans the RF and Gz lanes, PhaseEncode the Gy lane, CartesianLine the Gx and ADC lanes, and two spoilers the Gx and Gz lanes. Three boxes overlap across one short window on three axes. An outer dashed box marks the whole repetition, GRE2DTR, which emits the LIN label itself. Along the bottom are the four pulseq blocks the compiler derived, their boundaries drawn as dashed lines through everything above.](docs/figures/gre-tr.svg)
+
+Each box is a module. `Excitation` covers two lanes, because a slice-selective pulse is one idea.
+Three boxes overlap on three axes — that is the overlap rule in use, not described. The outer box is
+`GRE2DTR`, a module built from modules. The strip underneath is the only part nobody wrote:
+`sc.compile` put those boundaries there, straight through the boxes above.
 
 ```
    what you write              the model              the compiler            the output
@@ -37,7 +40,7 @@ neighbours are doing.
                           start times
 ```
 
-The three sections below are the whole tool: a tree by hand, a module, then a sequence of modules.
+Three sections follow, and they are the whole tool: a tree by hand, a module, a sequence of modules.
 Print any of it with `.describe()`, draw it with `sc.plot_block`, measure it with `sc.moments`.
 
 ---
@@ -96,10 +99,9 @@ seq = sc.compile(tr, opts)                           # a pypulseq.Sequence — 4
 seq.write('tr.seq')                                  # pypulseq's own writer
 ```
 
-`add` is the only method you need, and it has two shapes for one meaning. `add(t, *items)` — above —
-puts these items `t` seconds into this block and returns the block, so calls chain. `add(rows)` takes
-the whole schedule as a table of `[time, *items]` rows, which is what you want as soon as the times
-are *computed* rather than written out:
+`add` is the only method you need, in two shapes. `add(t, *items)` — above — puts items `t` seconds
+into the block and returns it, so calls chain. `add(rows)` takes the whole schedule as `[time,
+*items]` rows, which is what you want once the times are *computed* rather than typed:
 
 ```python
 >>> table = sc.LogicBlock('tr').add([
@@ -111,9 +113,8 @@ are *computed* rather than written out:
 True
 ```
 
-Rows go in in the order given and are never sorted, so `nodes` ends up identical either way. And
-`tr.duration` is *measured* from the children rather than declared — a block cannot claim a length it
-does not play.
+Rows are never sorted, so both spellings give the same `nodes`. And `tr.duration` is *measured* from
+the children rather than declared: a block cannot claim a length it does not play.
 
 Ask the tree what it looks like:
 
@@ -129,26 +130,24 @@ tr  7.25 ms
   +4010.0 us  adc
 ```
 
-Seven events, three `add` calls, and **no blocks anywhere** — that is the point. The slice rephaser,
-the phase blip and the readout prephaser all start at `+1260 µs`; the RF shares an instant with its
-slice-select gradient; the ADC runs inside the readout gradient. Written as pulseq, deciding which of
-those may share a block and where each waveform has to be cut is your problem. Here you named times,
-and `sc.compile` turned the seven events into four legal blocks. `sc.plot_block(tr, opts)` draws the
-same thing as a diagram.
+Seven events, three `add` calls, **no blocks anywhere**. The slice rephaser, the phase blip and the
+readout prephaser all start at `+1260 µs`; the RF shares an instant with its slice-select; the ADC
+runs inside the readout gradient. In pulseq, working out which of those may share a block — and
+where to cut each waveform — is your job. Here you named times, and `sc.compile` turned seven events
+into four legal blocks. `sc.plot_block(tr, opts)` draws it.
 
 ---
 
 ## 2. Wrap that TR in a module
 
-Section 1 is one repetition, for one phase-encode line. To get the other sixty-three — and to reuse
-the whole thing inside a bigger sequence — make it a component: subclass `sc.Module`, design in
-`__init__`, assemble in `build`, return one `LogicBlock`.
+Section 1 covers one phase-encode line. For the other sixty-three — and to reuse the whole thing
+inside a bigger sequence — make it a component: subclass `sc.Module`, design in `__init__`, assemble
+in `build`, return one `LogicBlock`.
 
-And do not write those events a second time. Three of the pieces are already modules —
-`Excitation`, `PhaseEncode` and `CartesianLine` — and each carries the arithmetic you would
-otherwise have to get right twice: the rephaser that follows a selective pulse, one blip designed
-once and scaled per line, a prephaser that exactly cancels the readout's ramp. Composing them is
-shorter than the events were:
+Don't write those events twice. Three of the pieces already ship as modules — `Excitation`,
+`PhaseEncode` and `CartesianLine` — each carrying arithmetic you would otherwise have to get right
+twice: the rephaser after a selective pulse, one blip designed once and scaled per line, a prephaser
+that exactly cancels the readout's ramp. Composing them is shorter than the raw events were:
 
 ```python
 class GRETR(sc.Module):
@@ -188,9 +187,9 @@ class GRETR(sc.Module):
         ])
 ```
 
-Two `add` calls, and no gradient areas, ramp times or dwell arithmetic anywhere: the leaves own
-that. Calling the module runs `build`, tags the block with the class name — and the block it returns
-is a **tree**, because each leaf contributed a block of its own:
+Two `add` calls, and no gradient areas, ramp times or dwell arithmetic anywhere: the leaves own that.
+Calling the module runs `build` and tags the block with the class name. What comes back is a
+**tree**, because each leaf contributed a block of its own:
 
 ```python
 >>> gre_tr = GRETR(opts=opts)
@@ -212,10 +211,10 @@ GRETR  7.23 ms
 0.0
 ```
 
-Three children where section 1 had seven events, and the phase blip and the readout prephaser still
-land on the same instant — `+3670 µs` — one on y and one on x. Ask for `te_s=3e-3` instead and the
-pair slides back to `+1670 µs`, alongside the slice rephaser still playing on z: three axes at once,
-five pulseq blocks becoming three, and nothing in the module changed to allow it.
+Three children where section 1 had seven events, and the blip and the prephaser still land on one
+instant — `+3670 µs`, one on y and one on x. Ask for `te_s=3e-3` and the pair slides back to
+`+1670 µs`, beside the slice rephaser still playing on z: three axes at once, five pulseq blocks
+becoming three, and nothing in the module changed to allow it.
 
 Three conventions make a module reusable, and all three are above:
 
@@ -323,10 +322,10 @@ portable: the shot does not know it is the second one, so moving it moves everyt
 [('ir_t1', 'shot', 'GRETR', 'CartesianLine'), ('ir_t1', 'shot', 'GRETR', 'Excitation'), ('ir_t1', 'shot', 'GRETR', 'PhaseEncode'), ('ir_t1', 'shot', 'IRPrep'), ('ir_t1', 'shot', 'IRPrep', 'spoiler')]
 ```
 
-Those paths are provenance, and nobody wrote them: they are the tags on the way down, and they are
-what every warning and error message names. The rest of the tree is plain Python — `scan.nodes` is a
-list, `sc.flatten` walks it, `lb.copy()` gives you a variant to retime, and adding one block object
-at sixty-four times shares it rather than copying it.
+Those paths are provenance, and nobody wrote them: they are the tags on the way down, and every
+warning and error message names one. The rest is plain Python — `scan.nodes` is a list, `sc.flatten`
+walks it, `lb.copy()` gives you a variant to retime, and one block added at sixty-four times is
+shared rather than copied.
 
 Nothing in here coordinates. `inv` does not know a train follows it, `gre_tr` does not know what
 preceded it, `shot` does not know it is one of four, and none of them knows where pulseq's block

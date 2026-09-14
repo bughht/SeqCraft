@@ -33,6 +33,41 @@ the cost of a revival was never the code: it is how a module gets called in MATL
 lifecycle, how the wire format is tested on every pull request, and who maintains it.
 [`salvage/matlab-frontend/README.md`](salvage/matlab-frontend/README.md) says where every path came
 from and what to restore in the build.
+## Unreleased — the front page shows a sequence diagram coloured by LogicBlock
+
+[`docs/figures/gre-tr.svg`](docs/figures/gre-tr.svg): one GRE repetition drawn the way a pulse
+sequence always is — RF, Gz, Gy, Gx, ADC, Label — and then coloured and boxed by **the module that
+wrote each waveform** rather than by event type. That one substitution is the argument, and it
+needs no sentences beside it:
+
+| | |
+|---|---|
+| `Excitation` is one box across **two lanes** | a slice-selective pulse is one idea, and the RF and the slice gradient are not two components |
+| three boxes **overlap** across one window on three axes | the slice rephaser, the phase-encode blip and the readout prephaser, written by three modules that know nothing of each other |
+| the outer box is `GRE2DTR` | a module made of modules, emitting the `LIN` label itself |
+| the strip along the bottom is the **only** part nobody wrote | `sc.compile` put those four boundaries there, straight through the boxes above |
+
+[`tools/draw_sequence_figure.py`](tools/draw_sequence_figure.py) draws it from the events the
+modules build and the blocks the compiler returns — the boxes are the tree's own nodes, so no
+clustering heuristic decides what belongs together — and
+[`tests/test_readme_figure.py`](tests/test_readme_figure.py) **regenerates it and compares bytes**.
+A stale figure fails in the commit that made it stale, with a message naming the command that fixes
+it. It is the argument `tools/check_api_reference.py` already makes for `docs/api_reference.md`,
+applied to the page everyone reads first.
+
+Every gradient lane is scaled to its own axis rather than to one shared maximum, because a spoiler
+is sixteen times a phase-encode blip and one scale draws the blip as a flat line. Lanes nothing
+writes to are not drawn at all, so a spoiled GRE gets no empty `Trigger` row — and a sequence that
+fires one gets the lane back without anybody editing a list.
+
+### Added — `rf_duration_s` on `GRE2DTR` and `GRE2D`
+
+Forwarded unchanged to `Excitation`, defaulting to `None`, which means **the leaf's own default**
+rather than a copy of it here. The kernel could set the flip angle and the slice but not the pulse
+length, and that is usually the largest term in `min_te_s`: a 3 ms pulse puts 1.5 ms into TE before
+a single gradient plays, which no readout can shorten. It adds no arithmetic — the winder and TE
+measure the excitation they were handed rather than predicting it, which is what made forwarding
+one argument the whole change.
 
 ## Unreleased — a Cartesian line, read more than once
 
