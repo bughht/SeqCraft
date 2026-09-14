@@ -560,3 +560,35 @@ def test_a_polarity_that_cannot_take_effect_is_refused_through_the_kernel(opts) 
         _tr(opts, polarity='bipolar')
     with pytest.raises(sc.ConfigurationError, match='polarity is required'):
         _tr(opts, echoes=4)
+
+
+def test_the_pulse_length_stays_excitations_own_until_it_is_asked_for(opts) -> None:
+    """``rf_duration_s=None`` copies no number: the default stays the leaf's, in one place."""
+    kernel = sc.modules.GRE2DTR(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0)
+    leaf = sc.modules.Excitation(opts=opts, flip_deg=15.0, thickness_mm=5.0)
+
+    assert kernel.exc.duration_s == leaf.duration_s
+
+
+def test_a_shorter_pulse_shortens_te_and_needs_no_other_argument(opts, component_checks) -> None:
+    """
+    The pulse is usually the largest term in ``min_te_s``, and this layer only forwards it.
+
+    Nothing else is told about it: the winder measures the excitation it was handed, so TE falls by
+    the half-pulse that went away rather than by an adjustment written here.
+    """
+    default = sc.modules.GRE2DTR(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0)
+    short = sc.modules.GRE2DTR(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
+                               rf_duration_s=1.5e-3)
+
+    assert short.exc.duration_s == 1.5e-3
+    assert short.min_te_s < default.min_te_s
+    component_checks.all(short, line=7)
+
+
+def test_the_scan_layer_forwards_the_pulse_too(opts) -> None:
+    """A scan that could not shorten its own pulse would send a caller to the kernel for one argument."""
+    gre = sc.modules.GRE2D(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
+                           rf_duration_s=1.5e-3)
+
+    assert gre.tr.exc.duration_s == 1.5e-3
