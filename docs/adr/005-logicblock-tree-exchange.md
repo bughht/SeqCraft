@@ -1,7 +1,12 @@
 # ADR-005: LBTX is a thin, one-way MATLAB-to-Python boundary
 
-- Status: Accepted
+- Status: Superseded by [ADR-006](006-the-matlab-frontend-is-withdrawn.md)
 - Date: 2026-08-24
+
+**This decision no longer holds.** The frontend it describes was removed on 2026-09-14; the
+document is kept because it records what was built and what it cost, which is the argument
+ADR-006 rests on. The implementation is parked whole in
+[`salvage/matlab-frontend/`](../../salvage/matlab-frontend/), frozen at `d27217d`.
 
 ## Context
 

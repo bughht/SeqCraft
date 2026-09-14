@@ -1,8 +1,9 @@
-# `salvage/` — physics lifted out of the deleted module library
+# `salvage/` — work lifted out of deleted code
 
 **This directory is not part of the `seqcraft` package.** It is not installed, not imported, not
 covered by CI, and nothing in `src/` refers to it. It exists so that a small amount of genuinely
-hard-won physics survived the deletion of `src/seqcraft/modules/`.
+hard-won physics survived the deletion of `src/seqcraft/modules/` — and, in `matlab-frontend/`, so
+that one withdrawn subsystem survives whole rather than only in the history.
 
 ## Why it exists
 
@@ -28,6 +29,17 @@ return numbers.
 | `ordering.py` | `seqcraft/ordering.py` | k-space ordering and RF-spoiling tables — moved whole, not lifted |
 | `geometry_pe.py` | `core/geometry.py` | The partial-Fourier / accelerated / multi-shot phase-encode table, and the residue nudge that keeps k = 0 sampled |
 | `geometry.py` | `core/geometry.py` + `core/validate.py` | `Geometry` — FOV, matrix, slice layout, the `[DEFINITIONS]` derived from them, and the unit-plausibility bands |
+
+## `matlab-frontend/`, which is a different kind of entry
+
+Everything above is physics **lifted out** of a class and rewritten as a plain function. The MATLAB
+frontend is a whole subsystem **parked intact** — MATLAB package, Python adapter, CLI, tests,
+fixtures and user documentation — because its value is in the wiring rather than in any one
+function, and a lifted fragment of it would be worth nothing. It was withdrawn by
+[ADR-006](../docs/adr/006-the-matlab-frontend-is-withdrawn.md), which is also the argument for why
+reviving it is cheap and answering its three open questions is not.
+[`matlab-frontend/README.md`](matlab-frontend/README.md) says where every path came from, what a
+revival has to decide first, and the two faults to fix on the way back in.
 
 `ordering.py` is here for a different reason from the rest. It was not buried inside a class and it
 still worked; it was removed because four of its six functions had **never had a caller**, and

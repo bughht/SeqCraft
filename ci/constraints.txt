@@ -1,7 +1,6 @@
 # Direct dependencies that materially affect CI behavior.  Transitive dependencies remain
 # resolver-managed unless they demonstrate a compatibility or reproducibility problem.
 numpy==2.4.6
-jsonschema==4.26.0
 pypulseq @ https://github.com/m-a-x-i-m-z/pypulseq-matlab-like/archive/22ef2db1f71ff38c8ce355c61913cfd8fceaac3b.zip
 
 # Test and static-analysis tools are pinned so new rules do not turn an unchanged commit red.
