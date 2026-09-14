@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased — the MATLAB frontend is withdrawn
+
+Out of the package and parked whole in [`salvage/matlab-frontend/`](salvage/matlab-frontend/):
+`matlab/`, `examples/matlab/`, `src/seqcraft/exchange/`, `src/seqcraft/cli.py`,
+`src/seqcraft/__main__.py`, `tests/exchange/`, `tests/fixtures/lbtx/` and
+`docs/matlab_interoperability.md`. Out of the build with them: the `jsonschema` dependency, the
+`seqcraft` console script, and the wheel's schema force-include. Full argument in
+[ADR-006](docs/adr/006-the-matlab-frontend-is-withdrawn.md); [ADR-005](docs/adr/005-logicblock-tree-exchange.md)
+is kept and marked superseded, because what it records is what the argument rests on.
+
+**`sc.compile` does not move.** The compiler never imported the exchange package, so the compile
+path, the `Module` contract, the warning policy and the return type are untouched, and every
+remaining test passes unedited. That is the one good consequence of the boundary having been thin.
+
+Three reasons, and the first is the one that matters:
+
+| | |
+|---|---|
+| **A module is a callable, and MATLAB cannot say that** | `readout(line=17)` is the interface; `__call__` is the single place the block is checked and named. MATLAB's only equivalent is overloading `subsref`, which breaks object arrays, so the port split one lifecycle into `build` and a protected `buildImplicit`. A second name for one idea, in the class whose entire purpose is to have one |
+| **Nothing MATLAB ran in CI, and nothing could** | The MATLAB tests are `crossval` -- public runners carry no licence. The only guard in the normal tier was a **handwritten** fixture, so it asserted what we believed MATLAB emits rather than what it emits. `writeLBTX` hardcoded `"pulseq": "1.5"` as well, so the compatibility version was a claim and never a measurement |
+| **The example did not demonstrate what it claimed** | `seqcraft_examples.GRE2DTR` was named after the Python kernel and documented as its counterpart, but designed every event inline instead of composing leaves, spoiled two cycles per voxel where Python defaults to four, had no `te_s`, and was compared only against its sibling script -- never against `sc.modules.GRE2DTR` |
+
+A MATLAB user reaches Pulseq as they did before: official MATLAB Pulseq, or a `.seq` written by
+Python and read with `mr.Sequence.read`. The `.seq` file is already the portable artefact between
+the two languages, and it is the one both toolchains validate.
+
+`docs/serialization.md` returns to saying nothing there is implemented, which is true again, and
+the deferred list -- Python writer, MATLAB reader, round-trip, semantic hash, provenance,
+diagnostics -- is void rather than pending. The implementation is parked rather than deleted because
+the cost of a revival was never the code: it is how a module gets called in MATLAB without a second
+lifecycle, how the wire format is tested on every pull request, and who maintains it.
+[`salvage/matlab-frontend/README.md`](salvage/matlab-frontend/README.md) says where every path came
+from and what to restore in the build.
+
 ## Unreleased — a Cartesian line, read more than once
 
 A multi-echo gradient echo, as **three arguments on one module and three helper promotions.**

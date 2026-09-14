@@ -40,7 +40,7 @@ ROOT = Path(seqcraft.__file__).parent
 ORDER = ['errors', 'design', 'compiler', 'analysis', 'display']
 
 #: Nothing under ``compiler/`` may import these *at runtime*: they are beside the compile path.
-OFF_THE_COMPILE_PATH = ['design.module', 'analysis', 'display', 'exchange', 'scanner']
+OFF_THE_COMPILE_PATH = ['design.module', 'analysis', 'display', 'scanner']
 
 # ``compiler`` is importable so the implementation has a stable home, but its stage modules and
 # IR types remain implementation details.  ``__all__`` is the boundary Python tooling can inspect

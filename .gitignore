@@ -40,10 +40,8 @@ Measperm*
 
 # Reviewed compiler snapshots are source-controlled regression inputs, not scan output.
 !tests/baselines/*.json
-
-# Versioned LBTX schemas and golden protocol documents are reviewed source fixtures.
-!src/seqcraft/exchange/*.schema.json
-!tests/fixtures/lbtx/*.lbtx.json
+# The parked MATLAB frontend's schema and its one handwritten fixture are source, not output.
+!salvage/matlab-frontend/**/*.json
 
 # Generated sequences and sidecars.  Regenerate by running the notebooks.
 *.seq
