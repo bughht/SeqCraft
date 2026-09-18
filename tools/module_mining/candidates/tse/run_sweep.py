@@ -60,12 +60,13 @@ def cases() -> list[tuple[str, dict]]:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     namespace = seqcraft_fse.notebook_namespace()
-    results: dict[str, dict] = {}
+    source = sys.argv[1] if len(sys.argv) > 1 else 'notebook'
+    results: dict[str, dict] = {'_source': source}
 
     header = '%-12s ' + ' '.join(['%-10s'] * len(WATCHED)) + ' %-9s %-8s'
     logging.info(header, 'case', *WATCHED, 'esp/ms', 'bound')
     for name, kwargs in cases():
-        reference = seqcraft_fse.build(namespace=namespace, **kwargs)
+        reference = seqcraft_fse.build(namespace=namespace, source=source, **kwargs)
         measured = fingerprint.measure(reference)
         rows = {row['invariant']: row for row in fingerprint.check_invariants(
             measured, expected_ky_per_m=seqcraft_fse.expected_ky(reference))}
@@ -81,11 +82,13 @@ def main() -> None:
                      name, *(rows[k]['worst'] for k in WATCHED),
                      reference.semantic['echo_spacing_s'] * 1e3, reference.semantic['bound'])
 
-    failed = [name for name, row in results.items() if not row['all_pass']]
-    logging.info('\n%d/%d cases pass every invariant%s', len(results) - len(failed), len(results),
+    failed = [name for name, row in results.items()
+              if isinstance(row, dict) and not row.get('all_pass', True)]
+    logging.info('\n%s: %d/%d cases pass every invariant%s', source,
+                 len(results) - 1 - len(failed), len(results) - 1,
                  '' if not failed else f'; failed: {failed}')
 
-    out = Path(__file__).with_name('sweep_result.json')
+    out = Path(__file__).with_name(f'sweep_result_{source}.json')
     out.write_text(json.dumps(results, indent=1, default=float))
     logging.info('-> %s', out)
 

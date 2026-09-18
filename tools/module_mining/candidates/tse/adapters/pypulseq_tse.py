@@ -11,8 +11,9 @@ duration of one call, and restores it afterwards.  That is a harness interventio
 source change -- the script still designs everything itself -- and it is what makes the ringdown
 experiment possible without forking the reference.
 
-Set ``MODULE_MINING_PYPULSEQ`` to the checkout to use; the default is the local fork recorded in
-``docs/plans/module-mining/tse/reference_inventory.md``, which is **not** ``pulseq/pypulseq``.
+Set ``MODULE_MINING_PYPULSEQ`` to the checkout to use.  The default is the official
+``imr-framework/pypulseq``, whose ``write_tse.py`` runs directly against the installed pypulseq;
+``sys.path`` is only extended when a checkout ships its own ``src/``, which is what a fork needs.
 """
 
 from __future__ import annotations
@@ -27,16 +28,15 @@ from typing import Any
 
 from ....reference import ReferenceSequence
 
-CHECKOUT = Path(os.environ.get(
-    'MODULE_MINING_PYPULSEQ', '/Users/yiyund/Code_mgh/pypulseq-matlab-like'))
+CHECKOUT = Path(os.environ.get('MODULE_MINING_PYPULSEQ', '/Users/yiyund/Code_mgh/pypulseq'))
 SCRIPT = CHECKOUT / 'examples' / 'scripts' / 'write_tse.py'
 
 PROVENANCE = {
-    'repo': 'm-a-x-i-m-z/pypulseq-matlab-like',
+    'repo': 'imr-framework/pypulseq',
+    'commit': 'f2c582b',
     'path': 'examples/scripts/write_tse.py',
     'license': 'MIT',
-    'role': 'supporting',
-    'caveat': 'a fork; the official pulseq/pypulseq example has not been diffed against it',
+    'role': 'authoritative-external',
 }
 
 

@@ -63,12 +63,17 @@ def interleaved(echoes: int, n_lines: int) -> list[list[int]]:
 
 def build(*, echoes: int = 16, segments: Sequence[Sequence[int]] | None = None,
           dummy_shots: int = 0, namespace: dict[str, Any] | None = None,
-          **overrides: Any) -> ReferenceSequence:
+          source: str = 'notebook', **overrides: Any) -> ReferenceSequence:
     """
     Build and compile one ``FSE2D`` at the notebook's protocol, with `overrides` applied.
 
     `overrides` reaches ``FSE2D.__init__``; pass ``opts=`` to change the scanner, which is what
     the ringdown experiment does.
+
+    `source` selects which implementation is measured: ``'notebook'`` is the one this fine scan
+    was built to evaluate, and ``'package'`` is the ``TSEShot`` + ``FSE2D`` pair extracted from
+    it.  Running the same measurements against both is how the extraction is checked against the
+    evidence that justified it, rather than only against the test suite.
     """
     ns = namespace if namespace is not None else notebook_namespace()
     opts = overrides.pop('opts', ns['opts'])
@@ -84,7 +89,8 @@ def build(*, echoes: int = 16, segments: Sequence[Sequence[int]] | None = None,
         'spoil_cycles_per_voxel': ns['SPOIL_CYCLES'], 'spoil_axis': ns['SPOIL_AXIS'],
         'echoes': echoes, **overrides,
     }
-    module = ns['FSE2D'](**protocol)
+    factory = ns['FSE2D'] if source == 'notebook' else sc.modules.FSE2D
+    module = factory(**protocol)
     table = [list(s) for s in (segments if segments is not None
                                else interleaved(echoes, ns['NY']))]
 
@@ -95,8 +101,11 @@ def build(*, echoes: int = 16, segments: Sequence[Sequence[int]] | None = None,
 
     lines = [line for shot in table for line in shot]
     dky = 1e3 / float(ns['FOV_MM'][1])
+    # The package splits what the notebook keeps in one class, so read the shot's numbers
+    # through it when that is where they now live.
+    physics = getattr(module, 'shot', module)
     return ReferenceSequence(
-        name='seqcraft_fse',
+        name=f'seqcraft_fse_{source}',
         sequence=sequence,
         tree=tree,
         parameters={k: v for k, v in protocol.items() if k != 'opts'} | {
@@ -107,13 +116,13 @@ def build(*, echoes: int = 16, segments: Sequence[Sequence[int]] | None = None,
         definitions=dict(getattr(sequence, 'definitions', {}) or {}),
         provenance=PROVENANCE,
         semantic={
-            'echo_spacing_s': float(module.echo_spacing_s),
-            'te_first_s': float(module.te_s()),
+            'echo_spacing_s': float(physics.echo_spacing_s),
+            'te_first_s': float(physics.te_s()),
             'te_eff_s': module.te_eff_s(table),
-            'bound': module.bound,
-            'crush_s': float(module.crush_s),
-            'shift_s': float(module.shift_s),
-            'sample_of_echo': int(module.ro.echo_sample(0)),
+            'bound': physics.bound,
+            'crush_s': float(physics.crush_s),
+            'shift_s': float(physics.shift_s),
+            'sample_of_echo': int(physics.ro.echo_sample(0)),
             'segments': table,
             'expected_ky_per_m': [float((line - module.center_line) * dky) for line in lines],
             'dky_per_m': dky,
