@@ -1,0 +1,175 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on
+# 2026-09-18, so that the pull request extracting TSEShot and FSE2D carries the evidence
+# that justified it.  See ../../README.md for which copy to edit.
+# Provisional research record -- NOT a schema, NOT runtime code.
+# Fields follow the coarse scan's revised template (coarse_scan_2026-09-18.md section 14).
+
+id: tse-fse-shot
+name: TSEShot            # working name only; the boundary decision may reject the class entirely
+
+capability:
+  summary: >
+    One excitation and its train of refocused Cartesian readouts: the crusher window shared by
+    three axes, the echo spacing it implies, and the placement that keeps every echo at the
+    midpoint between its two refocusing pulses.
+  family: kernel
+
+status: NEW_KERNEL + PROMOTE_NOTEBOOK   # decided by human review; boundary_decision.md
+traffic_light: GREEN
+# Superseded note (kept for the record): this read MORE_EVIDENCE_REQUIRED / YELLOW while
+# the boundary was open.  The physics was settled and the boundary was not.  Cross-implementation comparison, the parameter
+# sweep and the metamorphic tests have all run and all pass (comparison_report.md,
+# sweep_report.md), so nothing here is blocked on another measurement.  What is missing is an API
+# judgement -- see open_questions -- which the playbook reserves for human review.  Still not
+# NEW_KERNEL: no extraction has been attempted.
+
+target:
+  layer: kernel + imaging
+  paths:
+    - src/seqcraft/modules/kernel/tse_shot.py       # TSEShot
+    - src/seqcraft/modules/imaging/fse_2d.py        # FSE2D
+  extended:
+    - src/seqcraft/modules/readout/cartesian_line.py  # area_after_echo_per_m, echo_moment_imbalance_per_m
+  untouched:
+    - Refocusing          # deliberately: the readout-axis lobe pair is sized by the readout
+    - the compiler, LogicBlock, every other module
+
+existing_seqcraft:
+  reused:
+    - Excitation
+    - Refocusing
+    - PhaseEncode
+    - CartesianLine
+    - spoiler
+  overlaps_with:
+    - GRE2DTR        # same three-axis "winder coupling" pattern under a different name
+  replace_or_extend: null
+  notebook_local:
+    - examples/fse_2d/01_build.ipynb  # FSE2D, already CI-asserted by tests/modules/test_se_notebooks.py
+
+evidence:
+  - repo: bughht/SeqCraft
+    commit: 0260f8a
+    path: examples/fse_2d/01_build.ipynb
+    role: primary
+    license: MIT
+  - repo: imr-framework/pypulseq
+    commit: f2c582b
+    path: examples/scripts/write_tse.py
+    role: authoritative-external
+    license: MIT
+    note: >
+      The fork used earlier (m-a-x-i-m-z/pypulseq-matlab-like@afcd4bb) is byte-identical to this
+      file modulo the import name, so the earlier provenance caveat is closed and the earlier
+      measurements stand unchanged.
+  - repo: pulseq/pulseq
+    commit: 2fd6ab6
+    path: matlab/demoSeq/writeTSE.m
+    role: authoritative-external
+    license: MIT
+  - repo: pulseq/pulseq
+    path: matlab/demoSeq/writeHASTE.m
+    role: deferred
+
+physics:
+  invariants:            # full table with tolerances in invariant_table.md
+    - equal gradient area either side of every refocusing effective centre (CPMG conjugation)
+    - kx = 0 and ky = requested line at the echo sample
+    - refocusing centres uniformly spaced within a shot
+    - every echo at the midpoint between its two refocusing centres
+    - first interval = half the echo spacing, from the excitation's effective centre
+    - crusher balance about the RF effective centre, not the plateau midpoint
+    - effective TE is set by the echo carrying the centre line
+    - z quiet while any ADC is open
+  varying_parameters:
+    - echoes
+    - echo_spacing_s
+    - matrix / fov
+    - partial_fourier
+    - refocus flip and duration
+    - crusher cycles on slice and readout axes
+  caller_policy:
+    - the phase-encode table (segments)
+    - ordering: linear / interleaved / centric
+    - dummy shot count
+    - slice ordering
+    - TR
+
+architecture:
+  needs_review: false
+  note: >
+    No taxonomy problem so far.  The open question is ownership between the train and the
+    existing leaves (findings.md section 8), not where a new folder goes.
+
+disagreements:            # recorded, not resolved -- see findings.md section 6
+  - id: D1
+    what: slice rephasing folded into the refocusing crusher (R2/R3) vs a rephaser in Excitation (R1)
+  - id: D2
+    what: readout-axis crusher fspR = 1.0 (R2/R3) vs 0.0 (R1)
+  - id: D3
+    what: dummy shot plays phase area 0 (R2/R3) vs segment 0's real lines (R1)
+  - id: D4
+    what: labels -- none (R2) / autoLabel after the fact (R3) / LIN+SEG during build, no ECO (R1)
+  - id: D5
+    what: >
+      R2/R3's construction is exact only when rf_dead_time == rf_ringdown_time; R1 removes the
+      assumption.  R1's own protocol (ringdown 30 us) is a case where R2/R3 would be wrong.
+    measured: >
+      Confirmed by E1, with one correction: at ringdown 40 us the reference shows a 19.2 1/m
+      per-pulse slice-area imbalance and a 30 us echo displacement, but the kz residual is
+      CONSTANT (-9.6 1/m) rather than alternating.  At 30 us the reference cannot be built at all.
+  - id: D6
+    what: >
+      The PyPulseq reference has no DC sample -- its 64 samples straddle k = 0 by half a dwell --
+      while SeqCraft puts a sample there.  Found by the comparator, not by reading.
+  - id: D7
+    what: a 2 ms refocusing pulse warns at 116 % of max_b1 (R2) and is refused at 130 % (R1)
+  - id: D8
+    what: >
+      R2's derived crusher window is assumed raster-legal; off-raster settings fail at build time.
+      R1 derives the window and rounds it.
+
+validation:
+  tooling: tools/module_mining/   # branch feat/module-mining-tse
+  reference_executable:
+    R1: yes                 # notebook executed, not copied
+    R2: yes                 # official script, loaded by path and called
+    R3: not_attempted       # needs one MATLAB run; .seq carries rf `use` (format 1.5.0), verified
+  levels_run:
+    L0: pass                # duration, ADC, RF, excitation and refocusing counts all identical
+    L1: n/a                 # SeqCraft-to-SeqCraft only; tests/ already owns it
+    L2: pass                # waveform areas on exact knots, used for the balance checks
+    L3: pass                # TE agrees to 4.6e-14 s; k at echo to 4e-11 (x) and 1.3e-8 (z) 1/m
+    L4: pass                # every TSE invariant holds on both implementations
+  parameter_sweep: 8/8 cases pass        # sweep_report.md
+  metamorphic: 3/3 pass, 1 cited from CI # M1 is pinned by tests/modules/test_se_notebooks.py
+  extraction:
+    event_digest_vs_notebook: identical at echoes 1, 8, 16 and 72 (HASTE)
+    sweep_vs_notebook: 8/8, numbers identical
+    package_suite: 902 passed / 19 skipped (was 857); ruff, doctests, mypy subset, api reference,
+      9 notebooks -- all clean
+    compiler_changes: none
+  experiments:
+    E0: done    # the protocol reconciliation itself produced findings
+    E1: done    # ringdown; the sharpest result
+    E2: done
+    E3: done
+    E4: outstanding   # one MATLAB run
+  comparator_corrections:                # both found by measuring, see comparison_report.md s1
+    - the echo is the interpolated kx zero crossing, not the nearest sample
+    - the equal-area rule about a refocusing pulse does not apply to the phase axis
+
+priority:
+  coverage_unlocked:
+    - SE (echoes = 1)
+    - FSE / TSE
+    - HASTE (configuration, not a class)
+    - variable-flip TSE (later)
+  confidence: high-on-physics, undecided-on-boundary
+
+open_questions:
+  - Is the reusable unit the whole shot, including the excitation?
+  - Does the readout skew identity belong in CartesianLine?
+  - Does the three-axis crusher-window coupling have a home, given GRE2DTR does the same thing?
+  - Should Refocusing own the readout-axis lobe pair it currently declines?
+  - Is HASTE fully expressible as configuration, against writeHASTE.m?

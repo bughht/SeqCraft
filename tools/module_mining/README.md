@@ -5,13 +5,26 @@ Tooling for the AI-assisted module-mining project: it makes external sequence im
 source-code similarity.
 
 Nothing here is part of SeqCraft's public API, nothing in `src/seqcraft` imports it, and the
-layout, names and return shapes are free to change. The plan it serves lives in the workspace
-repository under `docs/plans/module-mining/`.
+layout, names and return shapes are free to change.
+
+## Which copy to edit
+
+[`plans/`](plans/) is a **mirror**, taken 2026-09-18, of the workspace planning repository's
+`docs/plans/module-mining/`. It is here so that the pull request extracting `TSEShot` and `FSE2D`
+carries the evidence that justified it, and so a reviewer does not need a second repository to
+read why the boundary was drawn where it is.
+
+The workspace copy remains the **working** one: that is where the plan is revised, where a new
+candidate's evidence is written, and what the workspace docs index links to. Treat this copy as a
+snapshot of the argument at the time of the PR, and re-mirror rather than edit in place — two
+copies of a living document diverge, and the one in the code repository is the one nobody
+remembers to update.
 
 ## Layout
 
 ```text
 module_mining/
+  plans/                          the plan and the evidence -- see "Which copy to edit" below
   reference.py                    one record per executed reference implementation
   fingerprint.py                  the comparator stack: L0 / L2 / L3 / L4
   candidates/tse/
