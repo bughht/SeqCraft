@@ -986,6 +986,8 @@ Re-exported **flat**, so no import path names a folder:
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
 | `GRE2D` | the complete scan |
+| `TSEShot` | one excitation and its train of refocused Cartesian readouts — the crusher window three axes share, and the moment balance around every refocusing pulse |
+| `FSE2D` | the complete turbo-spin-echo scan: shots, and which lines each one acquires |
 
 The folders behind that table are taxonomy, and each has a rule: `rf/` is `rf.use` in
 {excitation, refocusing}, `preparation/` is the rest of `rf.use` — everything played before the
@@ -1252,6 +1254,51 @@ for the same reason.
 self-calibration no real scan can have, and §8 decomposes a segmented EPI's replica at `Ny/shots`
 over the TR, the run-in and the spoiling schedule.
 
+
+## The spin-echo train, and which layer owns which number
+
+`TSEShot` is one excitation and `echoes` refocused readouts; `FSE2D` is a list of shots and the
+lines each one acquires. `echoes=1` is a conventional spin echo and one shot with a long train
+and `partial_fourier` below 1 is HASTE, so neither has a class.
+
+```python
+shot = sc.modules.TSEShot(opts=opts, fov_mm=256.0, matrix=(128, 128), thickness_mm=5.0,
+                          echoes=16)
+fse = sc.modules.FSE2D(opts=opts, fov_mm=256.0, matrix=(128, 128), thickness_mm=5.0,
+                       echoes=16, tr_s=2.0)
+segments = [[s + n * 8 for n in range(16)] for s in range(8)]   # interleaved: 8 shots of 16
+scan = fse(segments=segments, dummy_shots=1)
+```
+
+`segments` is **data**, and it carries the turbo factor, the ordering and the effective TE in one
+argument. `writeTSE.m`'s own reordering is commented *"TSE echo time magic"*, which is a protocol
+choice rather than arithmetic, so nothing here generates one.
+
+The division of labour is the same one `GRE2DTR`/`GRE2D` draw, and the test for it is **which
+layer has enough information to determine the value**:
+
+| | owns |
+|---|---|
+| `CartesianLine` | how asymmetric it is about its own echo — `area_to_echo_per_m`, `area_after_echo_per_m`, `echo_moment_imbalance_per_m` |
+| `Refocusing` | its crusher pair, balanced about its own effective centre, on the selection axis |
+| `TSEShot` | the crusher window three axes share, the echo spacing it implies, the readout-axis lobes that compensate the readout's imbalance, and the shift that keeps every echo at the midpoint between its two pulses |
+| `FSE2D` | how many shots, which lines each acquires, how many dummies, and therefore the effective TE |
+
+**The readout-axis lobe pair is the kernel's and not `Refocusing`'s**, and the reason is the rule
+above rather than taste: its size depends on the readout's geometry as well as the pulse's, and a
+refocusing pulse that knew about readouts would be wrong for SE-EPI, for a diffusion spin echo and
+for spectroscopy. `CartesianLine` states the geometry; the kernel decides the compensation.
+
+Three invariants a train has that a single echo does not, all measured in
+`tests/modules/test_tse_shot.py`: the refocusing pulses are uniformly spaced, every echo sits at
+the midpoint between its two pulses — primary and stimulated echoes coincide only there — and `ky`
+returns to zero at every pulse, which is why the blip goes *after* the refocusing pulse and the
+rewinder *before the next one*. A single-echo spin echo may legally put the blip first; a train
+that does makes every later pulse flip the encode.
+
+`FSE2D` warns rather than refuses when a table scatters one echo index across widely separated
+`ky`: adjacent k-space rows then carry T2 weightings many echoes apart, and the symptom is
+ghosting that reads as motion. It is also a legitimate experiment, so it is a warning.
 ---
 
 # 5. `display` — looking at a tree
@@ -1539,6 +1586,7 @@ at import.
 | `EXCLUSIVE_KINDS` | `compiler.model` | constant |
 | `Event` | `design.events` | type alias |
 | `Excitation` | `modules` | class |
+| `FSE2D` | `modules` | class |
 | `GAMMA_1H` | `design.units` | constant |
 | `GRADIENT_KINDS` | `design.events` | constant |
 | `GRE2D` | `modules` | class |
@@ -1562,6 +1610,7 @@ at import.
 | `Raster` | `design.timing` | class |
 | `RasterError` | `design.timing` | exception |
 | `Refocusing` | `modules` | class |
+| `TSEShot` | `modules` | class |
 | `SeqCraftError` | `errors` | exception |
 | `SeqCraftWarning` | `errors` | warning |
 | `TICKS_PER_SECOND` | `design.timing` | constant |

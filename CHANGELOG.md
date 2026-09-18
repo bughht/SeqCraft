@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased — a turbo spin echo, split where the information is
+
+`TSEShot` (`kernel/`) and `FSE2D` (`imaging/`), extracted from
+[`examples/fse_2d/01_build.ipynb`](examples/fse_2d/01_build.ipynb) with **every event held fixed**:
+`tests/modules/test_fse_notebook_matches_the_package.py` compares the two by absolute time and
+content hash at turbo 1, 8, 16 and at a 72-echo single-shot HASTE, and they are identical. The
+notebook still writes its own class, for the reason the GRE notebook does.
+
+`echoes=1` is a conventional spin echo and one long train with `partial_fourier` below 1 is HASTE.
+Neither gets a class, and the fine scan behind this change found no physics in either that the
+composition does not already express.
+
+**The split is by which layer has enough information to determine the value**, which is a sharper
+rule than "avoid duplication" and occasionally disagrees with it:
+
+| | owns |
+|---|---|
+| `CartesianLine` | how asymmetric it is about its own echo — new: `area_after_echo_per_m` and `echo_moment_imbalance_per_m` beside the existing `area_to_echo_per_m` |
+| `Refocusing` | its crusher pair, balanced about its own effective centre, on the selection axis. **Unchanged** |
+| `TSEShot` | the crusher window three axes share, the echo spacing it implies, the readout-axis lobes, and the shift that keeps every echo at the midpoint |
+| `FSE2D` | how many shots, which lines each acquires, how many dummies, and therefore the effective TE |
+
+The readout-axis lobe pair straddles a refocusing pulse, so it looks like `Refocusing`'s work. It
+is not: its size depends on the *readout's* geometry as well as the pulse's, and a refocusing pulse
+that knew about readouts would be wrong for SE-EPI, for a diffusion spin echo and for
+spectroscopy. The readout states the geometry, the kernel decides the compensation — and
+`(gx.area - 2*area_to_echo)/2`, written by hand in two notebooks, is now a property of the readout
+that wrote it.
+
+The window solve is two small pure functions rather than a shared abstraction. `GRE2DTR` performs
+the same coupling under the name "winder coupling", and two examples is not enough to define the
+contract for a third.
+
+**Three invariants a train has that a single refocused echo does not**, each a legal block
+structure when violated and each measured in `tests/modules/test_tse_shot.py`: the refocusing
+pulses are uniformly spaced, every echo sits at the midpoint between its two pulses — primary and
+stimulated echoes coincide only there — and `ky` returns to zero at every pulse, which is why the
+blip goes *after* the refocusing pulse and the rewinder *before the next one*. A single-echo spin
+echo may legally put the blip first; a train that does makes every later pulse flip the encode.
+
+The extraction was argued from measurements rather than from reading, against the official PyPulseq
+`write_tse.py` and the Pulseq MATLAB `writeTSE.m`. At a protocol both can express, this package and
+the PyPulseq demo are the same sequence — identical event inventory, echo times agreeing to 5e-14 s
+— in 185 pulseq blocks against 350. Two differences are worth knowing about rather than
+reconciling: the demo has **no DC sample**, its 64 samples straddling `k = 0` by half a dwell, and
+its construction is exact only while `rf_dead_time == rf_ringdown_time`, which it sets them to be.
+`Refocusing` has never assumed that, and the notebook this module came from runs at a 30 us
+ringdown, where the demo cannot be built at all.
+
 ## Unreleased — the MATLAB frontend is withdrawn
 
 Out of the package and parked whole in [`salvage/matlab-frontend/`](salvage/matlab-frontend/):

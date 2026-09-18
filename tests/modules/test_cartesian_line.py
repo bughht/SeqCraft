@@ -370,6 +370,35 @@ def test_area_to_echo_is_minus_the_prephaser(opts, partial_fourier) -> None:
     assert spin_echo.area_to_echo_per_m == pytest.approx(winding.area_to_echo_per_m, abs=1e-12)
     assert spin_echo.area_to_echo_per_m == pytest.approx(
         area_until(spin_echo.gx, spin_echo.time_to_echo()), abs=1e-12)
+@pytest.mark.parametrize('partial_fourier', [1.0, 0.75, 0.625])
+def test_the_two_halves_of_the_lobe_sum_to_it_and_their_difference_is_the_imbalance(
+    opts, partial_fourier,
+) -> None:
+    """
+    The geometry a spin-echo caller needs, stated by the readout rather than re-derived by each.
+
+    A refocusing pulse conjugates k, so a caller straddling this readout with a lobe either side
+    of the pulse needs the area before the echo to equal the area after it -- and the two lobes
+    therefore differ by exactly this imbalance.  What the readout cannot decide is how to split
+    that difference between them, because that depends on the crusher window and the pulse it
+    surrounds; ``TSEShot`` does.
+
+    Under ``partial_fourier`` the echo is nowhere near the middle of the lobe, which is the case
+    that separates this from "half the area".
+    """
+    line = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=128, bandwidth_hz_px=200.0,
+                                    partial_fourier=partial_fourier, prephase=False)
+
+    assert line.area_to_echo_per_m + line.area_after_echo_per_m == pytest.approx(
+        float(line.gx.area), abs=1e-12)
+    assert line.echo_moment_imbalance_per_m == pytest.approx(
+        line.area_after_echo_per_m - line.area_to_echo_per_m, abs=1e-12)
+    # Never zero: the flat top is rounded up onto the gradient raster with the slack after the
+    # last sample, and the echo sample sits half a dwell off the window's centre.
+    assert line.echo_moment_imbalance_per_m != 0.0
+    if partial_fourier < 1.0:
+        # A partial-Fourier readout starts closer to k = 0, so far more area follows the echo.
+        assert line.area_after_echo_per_m > line.area_to_echo_per_m
 
 
 def test_prephase_false_is_the_gradient_and_its_adc_and_nothing_else(opts) -> None:

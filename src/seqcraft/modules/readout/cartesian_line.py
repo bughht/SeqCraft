@@ -421,6 +421,46 @@ class CartesianLine(Module):
         return area_until(self.gx, self._echo_in_gx)
 
     @property
+    def area_after_echo_per_m(self) -> float:
+        """
+        What the **readout gradient** still has to play after the echo, 1/m.  Always available.
+
+        The other half of :attr:`area_to_echo_per_m`, and exposed for the same reason: it is an
+        intrinsic fact about this readout's own geometry, and a caller that needs it should not
+        have to re-derive it from ``gx.area`` and a sign convention.
+
+        The lobe's own area less what precedes the echo, so that the two sum to the lobe exactly
+        rather than to within a rounding: partial Fourier, the half-dwell sample offset and the
+        slack left after the last sample all come out of :attr:`area_to_echo_per_m`, and this is
+        the remainder.
+
+        In a train this describes the **first** lobe, exactly as :attr:`area_to_echo_per_m` does.
+        """
+        return float(self.gx.area) - self.area_to_echo_per_m
+
+    @property
+    def echo_moment_imbalance_per_m(self) -> float:
+        """
+        How asymmetric this readout is about its echo, 1/m: the area after minus the area before.
+
+        Zero would mean the echo sits exactly halfway through the gradient's area.  It never quite
+        does -- the flat top is rounded up onto the gradient raster with the slack left after the
+        last sample, the echo sample sits half a dwell off the window's centre, and under partial
+        Fourier it is nowhere near the middle -- so this is a small number that is not zero, and
+        its sign matters.
+
+        **What this module does not do is compensate for it.**  A spin-echo caller straddles the
+        readout with a lobe either side of a refocusing pulse and needs the area before the echo
+        to equal the area after it; the two lobes therefore differ by this imbalance.  But *how*
+        to split it between them depends on the crusher window, the refocusing geometry and the
+        echo spacing, none of which this module can see.  The geometry is owned here; the
+        compensation belongs to whatever holds both components --
+        :class:`~seqcraft.modules.TSEShot` takes half of this as the difference between its two
+        readout-axis lobes.
+        """
+        return self.area_after_echo_per_m - self.area_to_echo_per_m
+
+    @property
     def prephaser_duration_s(self) -> float:
         """Seconds the prephaser occupies -- its own minimum unless one was requested."""
         return float(pp.calc_duration(self._require_prephaser()))
