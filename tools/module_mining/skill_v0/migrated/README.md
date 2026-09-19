@@ -27,6 +27,23 @@ radial.yaml   ok
 tse.yaml      ok, 1 warning  (writeHASTE.m has no licence recorded -- see §4)
 ```
 
+## 0. These are calibration fixtures, and the set is curated
+
+The three files here are **not** a knowledge base and must not grow with every converted
+sequence. They exist to prove one thing: that the current schema can represent three
+qualitatively different accepted pilots.
+
+| fixture | the reasoning class it covers |
+|---|---|
+| `tse.yaml` | a **promotion**, judged by event identity, with a superseded YELLOW in its history |
+| `radial.yaml` | a **reimplementation**, judged by trajectory agreement, with a deliberately deferred Layer 3 |
+| `gre3d.yaml` | a reimplementation with **no executable reference for one of its modes**, and a declared mode set that fires rule B |
+
+A future candidate is added here **only if it exposes a reasoning class or failure mode this set
+does not already cover** — a new acceptance criterion, a stop outcome never exercised (all of them
+currently), or an evidence shape the `Evidence` record cannot carry. Conversion alone is not a
+reason. Ordinary candidates keep their evidence in `plans/<candidate>/`.
+
 ## 1. Provenance convention
 
 Every field the schema requires carries one of three markers:

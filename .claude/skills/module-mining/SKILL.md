@@ -154,6 +154,23 @@ survived as a key with **no** common sub-key — the evidence says family-specif
 stay free-form, so the schema requires that the section exist and does not prescribe its shape.
 Do not add required fields that fewer than all three pilots needed.
 
+## Coverage classification, at coarse-scan time
+
+Before any decision, a coarse scan says what already covers a family. **"SeqCraft can already
+build it" is not "SeqCraft already ships the right reusable abstraction"**, and the word
+"duplicate" hides the difference. Vocabulary, with criteria in `reference/outcomes.md`:
+
+```text
+DIRECT_SHIPPED_DUPLICATE            a public shipped abstraction already exists
+DEGENERATE_CASE_OF_EXISTING_MODULE  a parameter limit of a shipped abstraction
+COMPOSITION_COVERED                 modules express it; no equivalent public abstraction
+NOTEBOOK_ONLY_EXISTING              the abstraction lives only in an example notebook
+PRIMITIVE_COMPOSITION_COVERED       plain composition IS the intended API
+```
+
+`DEGENERATE_CASE_OF_EXISTING_MODULE` may carry `ARCHITECTURE_REVISIT_CANDIDATE`: the parameter
+limit works and the naming or layering may still be wrong.
+
 ## Outcomes, including the ones that stop
 
 Full criteria in `reference/outcomes.md`. The catalogue:
@@ -213,6 +230,37 @@ An image produced through an unreviewed reconstruction is two unvalidated things
 evidence about the sequence. **A missing `02_simulate_and_reconstruct.ipynb` is not automatically
 a task** — see `RadialReadout`, whose Layer 3 is deferred by decision until the non-Cartesian
 reconstruction path is independently reviewed with two real consumers.
+
+## What is part of the skill, and what is not
+
+The skill is small and stays small. Three tiers, and things do not drift between them:
+
+```text
+.claude/skills/module-mining/
+    SKILL.md                workflow, reasoning rules, stop rules -- stable
+    reference/, templates/  the candidate data contract
+
+tools/module_mining/skill_v0/migrated/
+    tse.yaml radial.yaml gre3d.yaml
+                            CALIBRATION FIXTURES ONLY
+
+tools/module_mining/plans/<candidate>/
+    ordinary evidence and decisions -- NOT promoted into the skill
+```
+
+The three fixtures earn their place by proving the schema can represent three **qualitatively
+different** accepted pilots: a promotion judged by event identity, a reimplementation judged by
+trajectory agreement, and a reimplementation with no executable reference for one of its modes.
+
+**A new candidate does not become a fixture because it was converted.** It becomes one only if it
+exposes a **reasoning class or failure mode the existing suite does not cover** — a new acceptance
+criterion, a stop outcome never exercised, a licence or independence shape that breaks the
+`Evidence` record. Otherwise its evidence lives in `plans/<candidate>/` like any other candidate's
+and the skill does not grow.
+
+Fixture growth is curated, not linear with Module count. A calibration suite that accumulates one
+entry per conversion stops being a calibration suite and becomes a second copy of the plans
+directory.
 
 ## Standing constraints
 

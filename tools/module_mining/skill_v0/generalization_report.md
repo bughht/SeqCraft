@@ -112,6 +112,10 @@ families, all Cartesian-or-radial, all GREEN, none of which exercised `NO_NEW_MO
 compiler-change claim. **Every stop outcome is currently untested.** The first genuinely new
 candidate is as much a test of the skill as of the candidate, and should be treated that way.
 
-Recommended first target is a candidate with a plausible chance of stopping. `SaturationPrep` is a
-good choice partly *because* it may well turn out to be `EXTEND_EXISTING` or `NO_NEW_MODULE`, and
-watching the workflow decline to produce a Module would be worth more than another GREEN.
+Recommended first target is a candidate whose outcome is genuinely unknown, chosen for
+information gain rather than for the chance of GREEN. After the MRzero coarse scan that is
+**stimulated echo / STEAM** — see `coarse_scan_mrzero.md` §8 for the argument, including why the
+safer candidate (bSSFP) is the weaker choice to go first precisely because its answer is already
+believed.
+
+Watching the workflow decline to produce a Module would be worth more than a fourth GREEN.

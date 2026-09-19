@@ -9,6 +9,41 @@ merges, and never resolves its own YELLOW.
 
 ---
 
+## Coverage classification — the coarse scan, before any decision
+
+A coarse scan asks a different question from a fine scan. Not *should this be a Module* but
+*what already covers it*, and the two claims below are not the same:
+
+```text
+"SeqCraft can already build it"
+"SeqCraft already ships the right reusable abstraction"
+```
+
+Collapsing them into the word "duplicate" hides the gap between them, which is where
+discoverability problems and missing abstractions live. Use:
+
+| classification | meaning |
+|---|---|
+| `DIRECT_SHIPPED_DUPLICATE` | an equivalent **public shipped** abstraction already exists |
+| `DEGENERATE_CASE_OF_EXISTING_MODULE` | the family is a parameter limit of a shipped abstraction |
+| `COMPOSITION_COVERED` | existing modules express the acquisition, but no equivalent public abstraction exists |
+| `NOTEBOOK_ONLY_EXISTING` | the abstraction exists only in an example or reference notebook |
+| `PRIMITIVE_COMPOSITION_COVERED` | the sequence is small enough that plain composition **is** the intended API |
+
+Two of these are not verdicts and must not be read as closing a family:
+
+- `DEGENERATE_CASE_OF_EXISTING_MODULE` may travel with `ARCHITECTURE_REVISIT_CANDIDATE` — the
+  parameter limit works, and the naming or the layering may still be wrong.
+- `NOTEBOOK_ONLY_EXISTING` says where the code is, not whether it should be promoted. A notebook
+  class that no other notebook needs is doing its job.
+
+`PRIMITIVE_COMPOSITION_COVERED` is the one that keeps a batch scan honest: **a sequence can be
+fundamental and common without deserving its own Module.** FID is the canonical instance —
+excitation, a delay, an ADC, and no cross-component solve for a class to own. A scan that turns
+every textbook sequence name into a class has stopped measuring anything.
+
+---
+
 ## GREEN
 
 All of:

@@ -74,6 +74,17 @@ _LAYER_STATES = frozenset({'GREEN', 'YELLOW', 'RED', 'DEFERRED', 'NOT_APPLICABLE
 
 _DEFERRED = frozenset({'DEFERRED', 'NOT_APPLICABLE'})
 
+#: Coarse-scan coverage, optional on a candidate record.  Separate from `status` because "what
+#: already covers this" and "what we decided to do" are different questions -- "SeqCraft can build
+#: it" is not "SeqCraft ships the right abstraction".  reference/outcomes.md.
+_COVERAGE_CLASSES = frozenset({
+    'DIRECT_SHIPPED_DUPLICATE', 'DEGENERATE_CASE_OF_EXISTING_MODULE', 'COMPOSITION_COVERED',
+    'NOTEBOOK_ONLY_EXISTING', 'PRIMITIVE_COMPOSITION_COVERED',
+})
+
+#: May travel alongside a coverage class; not a verdict.
+_COVERAGE_FLAGS = frozenset({'ARCHITECTURE_REVISIT_CANDIDATE'})
+
 _CONSUMER_CLASSES = frozenset({
     'NO_BEHAVIOR_CHANGE', 'NEW_EARLY_REFUSAL_FOR_PREVIOUSLY_INVALID_INPUT',
     'INTENTIONAL_BEHAVIOR_CHANGE', 'UNKNOWN / NEEDS_REVIEW',
@@ -268,6 +279,15 @@ def check(record: dict[str, Any]) -> tuple[list[str], list[str]]:
             errors.append(f'reason_code: {reason!r} not in the catalogue')
     elif light == 'GREEN' and reason:
         warnings.append(f'reason_code: {reason!r} set on a GREEN record')
+
+    coverage = record.get('coverage')
+    if coverage is not None:
+        parts = {c.strip() for c in str(coverage).split('+')}
+        unknown = parts - _COVERAGE_CLASSES - _COVERAGE_FLAGS
+        if unknown:
+            errors.append(f'coverage: {sorted(unknown)} not in {sorted(_COVERAGE_CLASSES)}')
+        elif not parts & _COVERAGE_CLASSES:
+            errors.append('coverage: a flag alone is not a classification')
 
     if record.get('open_questions') == []:
         warnings.append('open_questions: empty -- all three pilots kept some, even at GREEN')
