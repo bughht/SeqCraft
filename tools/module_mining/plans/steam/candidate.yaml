@@ -1,0 +1,152 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-19.
+# See ../../README.md for which copy to edit.
+# Provisional research record -- NOT a schema, NOT runtime code.
+# Prospective supervised run.  The terminal classification below was reached from the evidence;
+# it was not fixed before the scan.  Validate with:
+#   python tools/module_mining/schema.py <this file>
+
+id: stimulated-echo-steam
+name: UNDECIDED                 # StimulatedEcho / STEAMKernel / STEAMPrep all proposed; the
+                                # boundary analysis did not settle on one, which is part of the result
+
+capability:
+  summary: >
+    Magnetisation tipped into the transverse plane, dephased, stored along the longitudinal axis
+    for a mixing interval, then restored and read out -- the stimulated-echo pathway, as used for
+    diffusion preparation and for flip-angle mapping.
+  family: preparation
+
+target:
+  layer: preparation            # provisional; a kernel was also considered and is discussed in
+                                # findings.md section 3
+  path: null                    # nothing proposed
+  composes: []
+  extended: []                  # nothing changed; rule D does not fire
+  untouched:
+    - every module; no code was written, no file was modified
+  not_created:
+    - STEAMPrep, STEAMKernel, StimulatedEcho -- none proposed on this evidence
+
+reuse_rationale: >
+  Not established.  The three uses in the corpus share a coherence pathway, not a physical solve.
+  See findings.md section 2.
+
+evidence:
+  - repo: MRsources/MRzero-Core
+    commit: 5732d86
+    paths:
+      - documentation/playground_mr0/mr0_STE_3pulses_5echoes_seq.ipynb
+      - documentation/playground_mr0/mr0_diffusion_prep_STEAM_2D_seq.ipynb
+      - documentation/playground_mr0/mr0_DREAM_STE_seq.ipynb
+    license: AGPL-3.0 plus a separate EULA.txt
+    role: primary
+    executable: executed        # the repository's own CI runs them; not executed by us
+    covers: all three uses
+    independence: >
+      ONE witness, and not a design witness.  All three build with PyPulseq (the test workflow
+      pins 1.4.2post1) and simulate with MRzeroCore, from one group and one house style.
+      Agreement among them is one design agreeing with itself.  Copyleft plus a EULA, so usable
+      for physics and invariants only -- never as acceptance evidence.
+  - repo: imr-framework/pypulseq
+    commit: f2c582b
+    path: examples/scripts/
+    license: MIT
+    role: supporting
+    executable: documentary
+    covers: nothing -- searched and absent
+    independence: >
+      NEGATIVE EVIDENCE, recorded because its absence is the finding: a repository-wide search for
+      "steam" and "stimulated" returns no matches.  No permissively licensed Python witness exists.
+  - repo: pulseq/pulseq
+    commit: 2fd6ab6
+    path: matlab/demoSeq/
+    license: MIT
+    role: supporting
+    executable: documentary
+    covers: nothing -- searched and absent
+    independence: >
+      NEGATIVE EVIDENCE.  No match for "steam", "stimulated" or "dream" across matlab/.
+      writePRESS.m and writeSemiLaser.m use three or more pulses but are 90-180-180 double spin
+      echoes on three voxel-selective axes -- a different coherence pathway, not a substitute.
+  - repo: OpenMRF/openmrf-core-matlab
+    commit: fd03604
+    path: include_pulseq_toolbox/  # preparation library; T2-prep is the plausible witness
+    license: MIT for original OpenMRF work
+    role: deferred
+    executable: documentary
+    covers: possibly a 90-180-90 store-and-restore, via T2 preparation
+    independence: >
+      UNINSPECTED -- no local checkout.  Recorded as an open item, not as evidence.  Nothing in
+      this record depends on it.
+
+contract:
+  intrinsic: >
+    Not established.  What is shared across the three uses is that three RF pulses generate a
+    stimulated echo, which is spin physics rather than a value a module could own.
+  invariants: []                # none accepted; candidate invariants are listed in
+                                # acceptance_options.md section 1 option C as untested proposals
+  varying_parameters:
+    - flip angles of the preparation pulses
+    - tau (dephasing interval) and TM (mixing interval)
+    - the applied moment during tau, whose purpose differs per use
+  modes: []                     # no mode set proposed; rule A does not fire
+  excluded_caller_policy:
+    - the readout that follows the preparation
+    - phase-encode ordering, dummy count, TR
+  excluded_pulseq_artifacts:
+    - block splits and pulse family (block vs sinc), which differ across the three uses for
+      reasons that are not part of any shared contract
+
+acceptance:
+  claim: >
+    None available.  Four claim shapes were considered and all four are blocked; see
+    acceptance_options.md section 1.
+  criterion: invariant-only     # the only shape not excluded outright, and weaker here than in
+                                # any prior pilot because no executable reference exists at all
+  tolerance: not set -- no comparison is possible
+  defined_before_extraction: true   # vacuously: no extraction was attempted
+  establishes:
+    - that three qualitatively different uses of a stimulated-echo pathway exist in the corpus
+    - that they do not share a module contract (findings.md section 2)
+    - that no permissively licensed executable reference exists in PyPulseq or Pulseq MATLAB
+  does_not_establish:
+    - that no STEAM module could exist; the NARROW candidate (the 90/180/90 diffusion-prepared
+      store, alone) was never assessed
+    - anything about the correctness of the physics described; everything here is read from block
+      structure in one non-independent corpus, with no measurement and no simulation
+    - anything about DREAM's own contract beyond the observation that it appears to own one
+    - that OpenMRF lacks a usable witness; it was not inspected
+
+validation:
+  generic_measurements: []      # none run
+  family_checks: []
+  metamorphic: []
+  parameter_sweep: not run -- there is no candidate to sweep
+  emitted_inspection: []        # nothing emitted
+  layers:
+    layer_1: NOT_APPLICABLE
+    layer_2: NOT_APPLICABLE
+    layer_3: NOT_APPLICABLE
+    layer_3_reason: >
+      No implementation exists.  Simulation against MRzeroCore was considered and rejected as an
+      acceptance path: the references are built with PyPulseq and simulated with MRzeroCore, so
+      comparing through the same oracle tests one construction against another through one
+      instrument -- REFERENCE_NOT_INDEPENDENT and VALIDATION_ORACLE_UNTRUSTED together.
+  compiler_changes: none
+
+status: UNDECIDED
+traffic_light: YELLOW
+reason_code: REFERENCE_NOT_INDEPENDENT
+decided_by: human               # PROPOSED by the skill; awaiting review
+coverage: COMPOSITION_COVERED   # for the broad framing only: Excitation, Refocusing, spoiler and
+                                # a delay already express what remains once the application-
+                                # specific couplings are removed (findings.md section 4)
+
+open_questions:
+  - Is the NARROW candidate -- the 90/180/90 diffusion-prepared store alone -- a real contract?
+    It has one consumer, which is the single-consumer objection again.
+  - Does OpenMRF's T2-preparation provide a permissively licensed witness to part of this physics?
+  - DREAM appears to own an irreducible coupling (dephasing moment and readout waveform solved
+    together so two pathways land in one ADC window).  Is it reused across DREAM variants?
+  - Would a permissively licensed stimulated-echo implementation change this result?  The record
+    is evidence-blocked, not rejected, and should be re-run if one appears.

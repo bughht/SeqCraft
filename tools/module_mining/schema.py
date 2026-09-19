@@ -50,9 +50,13 @@ _REQUIRED = (
 
 _FAMILIES = frozenset({'readout', 'rf', 'preparation', 'encoding', 'kernel', 'imaging'})
 
+#: `UNDECIDED` exists because a YELLOW record still needs a status and every other value asserts
+#: an action nobody took.  The historical TSE record needed it and wrote `MORE_EVIDENCE_REQUIRED`
+#: by hand; a prospective run needed it again.  Pairing a provisional `NEW_LEAF` with a YELLOW
+#: puts a decision in the record that was never made.
 _STATUSES = frozenset({
     'NEW_LEAF', 'NEW_KERNEL', 'NEW_IMAGING', 'PROMOTE_NOTEBOOK', 'EXTEND_EXISTING',
-    'NO_NEW_MODULE',
+    'NO_NEW_MODULE', 'UNDECIDED',
 })
 
 _LIGHTS = frozenset({'GREEN', 'YELLOW', 'RED'})
@@ -279,6 +283,9 @@ def check(record: dict[str, Any]) -> tuple[list[str], list[str]]:
             errors.append(f'reason_code: {reason!r} not in the catalogue')
     elif light == 'GREEN' and reason:
         warnings.append(f'reason_code: {reason!r} set on a GREEN record')
+
+    if status == 'UNDECIDED' and light == 'GREEN':
+        errors.append('status: UNDECIDED cannot be GREEN -- GREEN is a decision')
 
     coverage = record.get('coverage')
     if coverage is not None:

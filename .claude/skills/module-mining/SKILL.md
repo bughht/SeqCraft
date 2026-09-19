@@ -307,6 +307,46 @@ whose coarse scan already expected it is a **regression control** — useful for
 workflow still stops, worthless as proof that it can. Only a stop reached on the run's own
 evidence, where the outcome was genuinely open beforehand, demonstrates refusal capability.
 
+## A candidate can be blocked by evidence rather than by physics
+
+The pipeline puts evidence before contract for a reason, and the reason is not only ordering: **a
+candidate can fail at the evidence stage while its physics remains entirely open.**
+
+Check early, before any contract analysis:
+
+```text
+is there an executable reference at all?
+is it permissively licensed, or copyleft / EULA-bound?
+if copyleft: it can establish that a family exists and what its physics is.
+             it cannot serve as acceptance evidence for an implementation you may not copy from
+             and whose construction shares the arithmetic you would be testing.
+are the executable references independent of each other, or one group's house style?
+would simulating against the same oracle the reference used prove anything?
+```
+
+When the answer is that no usable acceptance evidence exists, the outcome is
+`YELLOW - REFERENCE_NOT_INDEPENDENT` (or `VALIDATION_ORACLE_UNTRUSTED` where the instrument is the
+problem). Record it as **evidence-blocked, not rejected** — the physics question stays open and
+the candidate can be re-run if a permissive reference appears. Quietly dropping it loses the work;
+recording it as `NO_NEW_MODULE` claims evidence nobody has.
+
+`status: UNDECIDED` exists for exactly this record: a YELLOW still needs a status, and every other
+value asserts an action nobody took.
+
+## Beware a family defined by its waveform silhouette
+
+A grouping criterion of the form *"the same N pulses keep appearing"* is a **discovery heuristic,
+not a boundary.** Pulse counts and flip patterns are what a coarse scan can see cheaply, which is
+why families get grouped that way and why the grouping must be re-tested before it is trusted.
+
+The test: for each use, what value could somebody get wrong, and is it the *same* value? If the
+uses differ in what is stored, what the intervening gradients are for, or how the preparation
+couples to what follows, then what they share is a **coherence pathway or a pulse count**, and
+neither is something a module can own. A module owns a value; spin physics is not a value.
+
+Every boundary that has held so far was grouped by a shared **physical solve** — a crusher window
+satisfying three axes, a trajectory, a signed moment coupling — not by a waveform shape.
+
 ## Standing constraints
 
 - Package-level Module implementations are **Python-only**. MATLAB is reference and validation
