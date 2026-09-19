@@ -1,0 +1,162 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-19.
+# See ../../README.md for which copy to edit.
+# Provisional research record -- NOT a schema, NOT runtime code.
+
+id: gre-3d-tr
+name: GRE3DTR
+
+capability:
+  summary: >
+    One repetition of a 3D Cartesian gradient echo: readout, in-plane phase encoding and
+    partition encoding sharing one winder window, with either a non-selective or a slab-selective
+    excitation.
+  family: kernel
+
+status: NEW_KERNEL           # extracted and validated; extraction_report.md
+traffic_light: GREEN
+
+target:
+  layer: kernel
+  path: src/seqcraft/modules/kernel/gre_3d_tr.py
+  extended:
+    - src/seqcraft/modules/rf/excitation.py   # rephaser_area_per_m, build(rephase=...)
+  siblings_not_parents:
+    - GRE2DTR                # NOT contained, and not GRE2DTR = GRE3DTR(partition=0)
+  composes:
+    - Excitation             # slab_thickness_mm=None -> non-selective
+    - CartesianLine          # x readout and its prephaser
+    - PhaseEncode(axis='y')
+    - PhaseEncode(axis='z')  # semantics reused; the emitted event may not be
+    - spoiler
+  not_proposed:
+    - GRE3D                  # no consumer, no second arrangement to generalise from
+    - a shared winder helper # third instance now; still not extracted
+  untouched:
+    - GRE2DTR, PhaseEncode, the compiler, LogicBlock
+
+working_hypothesis:
+  x: Cartesian readout prephaser
+  y: phase encoding
+  z:
+    non_selective: partition encode only
+    slab_selective: >
+      A_z(p) = A_slab_rephase + A_partition(p), solved as ONE legal z winder.  Both terms are
+      SIGNED, so the limiting partition is a result of the coupling and not a property of the
+      index -- reversing the slab gradient's polarity moves the limit to the opposite kz edge.
+      Neither leaf has both facts; the kernel is the first layer that does.
+  solve_order:
+    - signed A_partition(p) from PhaseEncode semantics, never from array order
+    - A_z(p) = A_slab_rephase + A_partition(p), per partition
+    - t_z_min(p) = shortest legal duration for A_z(p) under this scanner's limits
+    - z_worst_s = max over ALL supported partitions (enumerated, not shortcut to the edges)
+    - shared_winder_s = max(x_prephaser_min, y_encode_worst, z_worst)
+    - every participating gradient designed to that one duration
+  timing:
+    implicit: te_s=None / tr_s=None -> shortest legal design; the window is lengthened as needed
+    explicit: a request below the achievable minimum RAISES, naming the limiting partition
+    invariant: one winder duration for every partition, so TE does not depend on kz
+    boundary: >
+      Choosing the shortest hardware-feasible waveform is kernel design.  Splitting, summing and
+      emitting an already-designed timeline is compiler legalization.  The compiler must not
+      rescue an infeasible module by stretching a gradient or moving a readout.
+  rf:
+    mode_selector: slab_thickness_mm          # None -> non-selective; a float -> slab-selective
+    slab_validation: slab_thickness_mm > 0    # and nothing more
+    slab_vs_fov_z: >
+      Independent quantities, neither bounding the other.  slab < fov_z (R4b's 0.7, calibration,
+      inner volume), slab ~ fov_z (simple full volume) and slab > fov_z (oversampling, transition
+      band, alias suppression) are all legitimate.  Do NOT enforce slab >= fov_z.
+    forwarded: [slab_thickness_mm, rf_duration_s, rf_time_bw_product]
+    rf_time_bw_product_default: null          # defer to the RF factory; do not restate 4.0
+    not_forwarded_yet: [pulse, pulse_opts]    # only if the fine scan finds a reference needing them
+  policy_above_the_kernel:
+    - partition and line ordering
+    - dummies, RF spoiling schedule
+    - the z polarity convention
+
+evidence:
+  - repo: pulseq/pulseq
+    commit: 2fd6ab6
+    path: matlab/demoSeq/writeGradientEcho3D.m
+    role: primary, non-selective
+    license: MIT
+    note: the repository also ships gre3d.seq, so it is measurable without MATLAB
+  - repo: imr-framework/pypulseq
+    commit: f2c582b
+    path: examples/scripts/write_3Dt1_mprage.py
+    role: supporting, non-selective, executable Python
+    license: MIT
+  - repo: pulseq/pulseq
+    commit: 2fd6ab6
+    paths: [matlab/demoSeq/writeMPRAGE.m, writeMPRAGE_grappa.m, writeMPRAGE_4ge.m]
+    role: architecture evidence, non-selective
+    license: MIT
+  - repo: fmrifrey/lps
+    commit: 552d87a
+    path: gre3d/gre3d_write_seq.m
+    role: primary, slab-selective -- the only witness to that path
+    license: MIT
+    note: >
+      Plays the slab rephaser and the partition encode in two sequential windows and its te_min
+      pays for both, which makes the combined solve a measurable claim rather than a preference.
+  - repo: OpenMRF/openmrf-core-matlab
+    commit: fd03604
+    path: include_pulseq_toolbox/src_readouts/GRE/
+    role: architecture evidence (2D)
+    license: MIT for original OpenMRF work
+
+independence:
+  note: >
+    R1 and the MPRAGE variants share a house style and identical encoding arithmetic, so they
+    count as one witness for the lattice.  fmrifrey/lps is independent of all of them.
+
+measured_so_far:                 # from gre3d.seq, read with pypulseq; no MATLAB run
+  dk_per_m: {x: 5.000, y: 5.000, z: 6.250}
+  ky_indices: -32 .. +31
+  kz_indices: -31 .. +32         # mirrored: the reference negates areaZ for a vendor recon
+  kz_through_readout: 200.00 -> 200.00 -> 200.00   # an encode, not a rephase
+  dc_sample_on_x: false          # +-2.500 1/m at samples 31/32, exactly +-dkx/2
+
+hazards:
+  - id: double-emission
+    what: >
+      If the kernel realises A_slab_rephase + A_partition on z, Excitation must not also emit its
+      standalone rephaser.  Precedent: CartesianLine(prephase=False) drops the event while
+      area_to_echo_per_m keeps stating the requirement.  Excitation has no equivalent property
+      today and its build always emits gzr when selective.  The mechanism is not settled.
+  - id: unsigned-worst-case
+    what: >
+      Assuming the last partition, or the largest |A_partition| before combining, is the limiting
+      one.  It is only limiting after the signed sum.
+
+validation:
+  non_selective: >
+    Against pulseq/pulseq's shipped gre3d.seq, no MATLAB run: dk agrees on all three axes
+    (5.000 / 5.000 / 6.250 1/m) and every probed line and partition lands on the index asked
+    for.  Compared on lattice and semantic centre, not sample position -- the reference has no
+    DC sample on x and CartesianLine does.
+  slab_selective: >
+    No executable reference by design of the criterion; carried by signed-moment arithmetic and
+    the three degenerate limits, which depend on no external implementation.
+  limits: L1, L2, L3 pass in both modes
+  polarity: P1-P5 pass; the limiting edge follows the sign of the slab term
+  timing: T1-T5 pass; a thin slab with 64 partitions grows the winder 260 -> 1110 us
+  double_emission: guarded structurally and by measurement
+  package_suite: 985 passed / 19 skipped; ruff, doctests, mypy subset, api reference, 10 notebooks
+  compiler_changes: none
+
+found_during_implementation:
+  - >
+    TE was short by exactly the winder -- CartesianLine.time_to_echo() already carries the
+    prephaser it was designed with.  Caught by comparing the compiled TE against the reported
+    one, which a design-against-itself test would have missed.
+  - >
+    Inheriting spoil_axis=('x','z') put a spoiler on the axis already carrying the partition
+    rewinder, and the two summed past the slew limit.  The default is now ('x',), which is what
+    writeGradientEcho3D.m does.
+
+open_questions:
+  - Is the three-axis window solve now worth a private helper?  Third instance.
+  - Does GRE3D (imaging) follow?  Not on this evidence.
+  - Is the three-axis window solve now worth a private helper?  Third instance.
+  - Does GRE3D (imaging) follow, and when?

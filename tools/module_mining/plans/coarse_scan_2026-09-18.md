@@ -1,9 +1,9 @@
 # SeqCraft Open-Source Sequence Coarse Scan
 
 > **Mirrored from the workspace planning repository** (`docs/plans/module-mining/`) on
-> 2026-09-18, so that the pull request extracting `TSEShot` and `FSE2D` carries the evidence
-> that justified it.  The two copies are identical today and there is nothing keeping them
-> that way; see [`../README.md`](../README.md) for which one to edit.
+> 2026-09-19, so that the pull request carries the evidence behind the modules it adds.
+> The two copies are identical today and there is nothing keeping them that way; see
+> [`../README.md`](../README.md) for which one to edit.
 
 **Date:** 2026-09-18  
 **Scope:** Official PyPulseq examples, official Pulseq MATLAB demos, selected research repositories, and the current SeqCraft module/example library.

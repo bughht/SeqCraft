@@ -1,0 +1,101 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-19.
+# See ../../README.md for which copy to edit.
+# Provisional research record -- NOT a schema, NOT runtime code.
+
+id: radial-readout
+name: RadialReadout
+
+capability:
+  summary: >
+    One radial spoke: prephaser, readout gradient and ADC, oriented in the x-y plane, with the
+    trajectory geometry a caller would otherwise reverse-engineer from the waveform.
+  family: readout
+
+status: NEW_LEAF          # decided by human review; boundary_decision.md
+traffic_light: GREEN
+
+target:
+  layer: readout
+  path: src/seqcraft/modules/readout/radial_readout.py
+  composes:
+    - CartesianLine       # a spoke is a line pointing somewhere other than along an axis
+  not_created:
+    - RadialGRETR         # radial GRE is composition today, not a shared cross-leaf solve
+    - seqcraft/trajectory/  # revisit only if Spiral needs the same numerical contract
+  untouched:
+    - Refocusing, the compiler, LogicBlock, every other module
+
+evidence:
+  - repo: imr-framework/pypulseq
+    commit: f2c582b
+    path: examples/scripts/write_radial_gre.py
+    role: primary
+    license: MIT
+  - repo: imr-framework/pypulseq
+    commit: f2c582b
+    path: examples/scripts/write_ute.py
+    role: decides full-spoke vs centre-out
+    license: MIT
+  - repo: pulseq/pulseq
+    commit: 2fd6ab6
+    path: matlab/demoSeq/writeRadialGradientEcho.m
+    role: authoritative-external
+    license: MIT
+    note: the same design as write_radial_gre.py, ported -- not independent evidence
+  - repo: pulseq/pulseq
+    commit: 2fd6ab6
+    path: matlab/demoSeq/writeFastRadialGradientEcho.m
+    role: independent-formulation
+    license: MIT
+  - repo: OpenMRF/openmrf-core-matlab
+    commit: fd03604
+    path: include_pulseq_toolbox/src_readouts/RAD/
+    role: independent-implementation
+    license: MIT for original OpenMRF work
+
+physics:
+  invariants:            # full table with tolerances in invariant_table.md
+    - a sample lands on k = 0, and the module says which one
+    - the samples lie on a straight line through the origin
+    - the sample spacing is uniform along the spoke, and equal across spokes
+    - the spoke points where it was asked to
+    - the spoke stays in plane
+    - the spoke at phi is the spoke at 0, rotated
+  varying_parameters:
+    - angle_rad (per call)
+    - partial_fourier, 0.5 (centre-out) .. 1.0 (full spoke)
+    - fov_mm, matrix, bandwidth_hz_px or dwell_s
+  caller_policy:
+    - which angles are acquired, and in what order
+    - golden-angle / equal-increment / randomised schedules
+    - number of spokes, dummies, view sharing
+    - excitation, spoiling, TR
+
+validation:
+  against_reference:
+    protocol: matched geometry, 260 mm, 64 samples, 20 us dwell, 8 spokes
+    max_k_error_per_m: 4.96e-12
+    note: not event-for-event -- two legitimate constructions share no events
+  sweep: 8/8 cases pass every invariant   # boundary_decision.md section 3
+  metamorphic:
+    rotation_equivariance: pass, ~1e-14 1/m
+    defined_before_the_candidate: true    # passed on the reference during archaeology
+  package_suite: 938 passed / 19 skipped (was 902); ruff, doctests, mypy subset, api reference,
+    9 notebooks -- all clean
+  compiler_changes: none
+
+resolved_during_review:
+  - >
+    An odd matrix produced an ADC sample count that is not a multiple of adc_samples_divisor and
+    failed at the compiler.  CartesianLine now refuses it at construction -- the layer that
+    computes the count validates the constraint on it -- and RadialReadout inherits that by
+    composing the line.  The rule is on the count, not the parity of the matrix, and nothing is
+    rounded.
+
+known_limitations:
+  - 3D radial, ramp sampling and rot3D are out of scope.
+  - No MATLAB .seq was generated for this candidate; under the Python-only constraint it is
+    evidence rather than a gate.
+
+open_questions:
+  - Does a radial kernel appear once UTE or radial bSSFP is attempted?
