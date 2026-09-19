@@ -60,7 +60,8 @@ Its tests use answers known independently of any candidate: an analytic gradient
 synthetic rotation, a seeded error of chosen size, and the three historical bugs as regression
 tests.
 
-The third is not blocking because it depends on external checkouts, their versions, adapter
+The third -- **external reference re-validation**: rerunning a candidate's references,
+adapters and comparator end to end -- is not blocking because it depends on external checkouts, their versions, adapter
 assumptions, large sweeps and candidate-specific tolerances. A red merge gate driven by a
 measurement we are less sure of than the code is how correct production code gets "fixed" to
 satisfy a broken instrument. If one comparison path proves stable across several candidates, it

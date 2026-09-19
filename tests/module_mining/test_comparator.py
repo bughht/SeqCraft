@@ -16,8 +16,9 @@ So the rule these tests enforce is: **validate the validator against an answer k
 of the candidate** -- an analytic value, a metamorphic identity, or a deliberately seeded error
 whose size is chosen rather than measured.
 
-The heavy external-reference replay is *not* here.  It depends on external checkouts, adapter
-assumptions and candidate-specific tolerances, and it stays a manual or scheduled run.  What runs
+**External reference re-validation** -- rerunning a candidate's references, adapters and
+comparator end to end -- is *not* here.  It depends on external checkouts, adapter assumptions and
+candidate-specific tolerances, and it stays a manual or scheduled run.  What runs
 on every pull request is whether the measuring instrument works.
 """
 

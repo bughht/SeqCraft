@@ -54,9 +54,9 @@ cannot drift silently.
 | [`fse_2d/01_build.ipynb`](fse_2d/01_build.ipynb) | `FSE2D`, turbo 1 → 16 → 72 on one instance, three orderings as data, the echo-band warning, and HASTE with `partial_fourier`. Four `.seq` files. **Needs nothing but `seqcraft`.** |
 | [`fse_2d/02_simulate_and_reconstruct.ipynb`](fse_2d/02_simulate_and_reconstruct.ipynb) | The echo envelope measured, the point-spread width per ordering, contrast and blurring as two separate knobs, and **the ghost a scattered table makes** — a periodic modulation of `ky`, which is a replica of the object rather than a blur. Then HASTE with POCS. **Everything is measured on one spin**: a ghost is a modulation of `ky`, and a point object's k-space *is* that modulation — 1.3 s per sequence instead of 173 s, and no reconstruction in between. **Needs `seqcraft[sim,recon]`**; runs in 16 s. |
 
-| [`fse_2d/03_package_api.ipynb`](fse_2d/03_package_api.ipynb) | **How to build an FSE today**: `sc.modules.TSEShot` for one shot, `sc.modules.FSE2D` for the scan, three orderings as data, and HASTE as a configuration. Start here if you want to write one rather than understand one. **Needs nothing but `seqcraft`.** |
+| [`fse_2d/03_module_api.ipynb`](fse_2d/03_module_api.ipynb) | **How to build an FSE today**: `sc.modules.TSEShot` for one shot, `sc.modules.FSE2D` for the scan, three orderings as data, and HASTE as a configuration. Start here if you want to write one rather than understand one. **Needs nothing but `seqcraft`.** |
 
-**`sc.modules.TSEShot` and `sc.modules.FSE2D` ship**, and `03_package_api.ipynb` is the
+**`sc.modules.TSEShot` and `sc.modules.FSE2D` ship**, and `03_module_api.ipynb` is the
 recommended way to use them. `SE2D` is still **defined in its notebook and does not ship**, for
 the reason `MPRAGE2D` and `MP2RAGE2D` do not: one consumer each.
 
