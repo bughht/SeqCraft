@@ -45,6 +45,17 @@ and a module with one consumer belongs where that consumer is.
 build notebooks and asserts against what they defined, so a tutorial that stays a tutorial still
 cannot drift silently.
 
+## `gre_3d/`
+
+| | |
+|---|---|
+| [`gre_3d/01_build.ipynb`](gre_3d/01_build.ipynb) | A complete 3D acquisition out of `sc.modules.GRE3DTR` and **two `for` loops** — non-selective and slab-selective, the signed `kz` coupling printed partition by partition, and TE measured constant across the volume. **Needs nothing but `seqcraft`.** |
+| [`gre_3d/02_simulate_and_reconstruct.ipynb`](gre_3d/02_simulate_and_reconstruct.ipynb) | The volume, reconstructed with a 3D FFT and shown in three planes — which is where a reversed `kz` or a `ky`/`kz` swap stops being a number. Also compares the kernel's **combined** z winder against a **sequential** slab-rephase-then-encode arrangement: same image to 0.0014 of the peak, 100 µs less TE per repetition. **Needs `seqcraft[sim]`**; runs in about a minute. |
+
+**There is deliberately no `GRE3D` imaging class**, and `01` is part of the argument: if a complete
+3D acquisition is a kernel plus the ordering you would have written anyway, an imaging module
+would wrap the ordering rather than own any physics.
+
 ## `se_2d/` and `fse_2d/`
 
 | | |

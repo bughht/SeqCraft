@@ -212,13 +212,60 @@ def test_t1_implicit_timing_gives_the_shortest_legal_design(scanner, selective) 
     assert selective.tr_s == pytest.approx(selective.min_tr_s)
 
 
-def test_t5_the_block_is_exactly_tr_and_the_compiled_te_matches(scanner, selective) -> None:
-    block = selective(line=3, partition=6)
-    k = sc.kspace(block, scanner)
+@pytest.mark.parametrize('case', ['non-selective', 'z-limited slab-selective'])
+def test_t5_the_reported_te_is_the_compiled_te(scanner, case) -> None:
+    """
+    The **independent** check, and the one that caught a real bug: the reported echo time against
+    the RF's effective centre and the k = 0 ADC sample of the sequence that was actually built.
 
-    assert block.duration == pytest.approx(selective.tr_s, abs=1e-12)
-    assert k['t_adc'][selective.ro.echo_sample(0)] - k['t_excitation'][0] == pytest.approx(
-        selective.te_s, abs=1e-6)
+    ``min_te_s`` once added the winder on top of ``ro.time_to_echo()``, which already carries the
+    prephaser it was designed with -- so the module was 260 us optimistic about its own timing
+    while every internal expression agreed with every other. A design-against-itself assertion
+    would have passed.
+
+    Two cases, because the second proves the bookkeeping survives the thing that makes this
+    kernel interesting. The z-limited protocol forces the shared winder well past what x and y
+    need, so the minimum TE genuinely increases -- which is correct design behaviour, and is a
+    different thing from the bug above, where the *sequence* was right and the *number* was
+    wrong.
+    """
+    if case == 'non-selective':
+        tr = _make(scanner)
+    else:
+        tr = sc.modules.GRE3DTR(opts=scanner, fov_mm=(200.0, 200.0, 40.0),
+                                matrix=(32, 16, 64), slab_thickness_mm=60.0)
+        assert tr.winder_s > 4 * _make(scanner).winder_s      # z really is limiting here
+
+    for partition in (0, tr.center_partition, tr.matrix[2] - 1):
+        block = tr(line=3, partition=partition)
+        k = sc.kspace(block, scanner)
+        measured = k['t_adc'][tr.ro.echo_sample(0)] - k['t_excitation'][0]
+
+        assert measured == pytest.approx(tr.te_s, abs=1e-9)
+        assert measured == pytest.approx(tr.min_te_s, abs=1e-9)   # te_s=None -> the minimum
+        assert block.duration == pytest.approx(tr.tr_s, abs=1e-12)
+
+
+def test_a_longer_winder_lengthens_te_rather_than_breaking_it(scanner) -> None:
+    """
+    The distinction worth keeping explicit.
+
+    A *bug* is the sequence unchanged and the reported number wrong.  This is the opposite and is
+    correct: the edge partition's combined moment needs more time, so the shared winder grows and
+    the minimum echo time genuinely grows with it -- and the reported number still matches the
+    compiled one.
+    """
+    easy = sc.modules.GRE3DTR(opts=scanner, fov_mm=(200.0, 200.0, 240.0), matrix=(32, 16, 4),
+                              slab_thickness_mm=260.0)
+    limited = sc.modules.GRE3DTR(opts=scanner, fov_mm=(200.0, 200.0, 40.0), matrix=(32, 16, 64),
+                                 slab_thickness_mm=60.0)
+
+    assert limited.winder_s > easy.winder_s
+    assert limited.min_te_s > easy.min_te_s
+    for tr in (easy, limited):
+        k = sc.kspace(tr(line=3, partition=tr.matrix[2] - 1), scanner)
+        assert (k['t_adc'][tr.ro.echo_sample(0)] - k['t_excitation'][0]) == pytest.approx(
+            tr.te_s, abs=1e-9)
 
 
 def test_t4_an_impossible_te_raises_and_names_what_is_limiting(scanner) -> None:

@@ -17,6 +17,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 _NOTEBOOKS = (
     Path('01_getting_started.ipynb'),
     Path('gre_2d/01_build.ipynb'),
+    Path('gre_3d/01_build.ipynb'),
     Path('mprage_2d/01_build.ipynb'),
     Path('mp2rage_2d/01_build.ipynb'),
     Path('se_2d/01_build.ipynb'),
