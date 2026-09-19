@@ -58,8 +58,8 @@ def main() -> None:
                      f"{row['k_min_per_m']:.1f}..{row['k_max_per_m']:.1f}",
                      row['dk_per_m'], row['kz_max_per_m'])
     for verdict in verdicts:
-        logging.info('  %-4s %-58s %-10.3g %s', verdict['invariant'], verdict['what'],
-                     verdict['worst'], 'pass' if verdict['pass'] else 'FAIL')
+        logging.info('  %-58s %-10.3g %-6s (%s)', verdict['what'], verdict['worst'],
+                     'pass' if verdict['pass'] else 'FAIL', verdict['invariant'])
     results['full_spoke'] = {'rows': rows, 'checks': verdicts}
 
     # --- rotation equivariance, measured against the reference itself ----------------
@@ -67,7 +67,7 @@ def main() -> None:
     equivariance = [checks.rotation_equivariance(k_adc[:, 0], k_adc[:, n], wanted[n])
                     for n in range(1, len(rows))]
     worst = max(equivariance, key=lambda row: row['worst'])
-    logging.info('  R7   %-58s %-10.3g %s', 'every spoke is spoke 0 rotated',
+    logging.info('  %-58s %-10.3g %-6s (R7)', 'every spoke is spoke 0 rotated',
                  worst['worst'], 'pass' if worst['pass'] else 'FAIL')
     results['rotation'] = equivariance
 

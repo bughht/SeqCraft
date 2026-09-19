@@ -87,8 +87,8 @@ event-for-event identity was **not** the criterion; the trajectory is.
 ### The invariant table, and the sweep
 
 `python tools/module_mining/candidates/radial/run_validation.py` — **8/8 cases pass every
-invariant** (R1 centre sample, R2 straightness, R3 uniform spacing, R4 consistency across spokes,
-R5 requested angle, R6 in-plane, R7 rotation equivariance):
+invariant** (a sample on the centre, straightness, uniform spacing, consistency across spokes, the
+requested angle, staying in plane, and rotation equivariance):
 
 | case | samples | centre | Δk 1/m | rotation error |
 |---|---|---|---|---|

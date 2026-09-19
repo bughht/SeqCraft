@@ -138,9 +138,13 @@ validation:
   slab_selective: >
     No executable reference by design of the criterion; carried by signed-moment arithmetic and
     the three degenerate limits, which depend on no external implementation.
-  limits: L1, L2, L3 pass in both modes
-  polarity: P1-P5 pass; the limiting edge follows the sign of the slab term
-  timing: T1-T5 pass; a thin slab with 64 partitions grows the winder 260 -> 1110 us
+  limits: non-selective, centre-partition and adjacent-partition all pass in both modes
+  polarity: the limiting edge follows the sign of the slab term, and switches with it
+  timing: >
+    implicit timing is the shortest legal design, the window lengthens automatically (a thin
+    slab with 64 partitions grows it 260 -> 1110 us), TE does not depend on kz, impossible
+    timing is refused with the limiting partition named, and the reported TE equals the
+    compiled RF-centre-to-k0 time
   double_emission: guarded structurally and by measurement
   package_suite: 985 passed / 19 skipped; ruff, doctests, mypy subset, api reference, 10 notebooks
   compiler_changes: none

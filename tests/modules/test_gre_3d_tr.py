@@ -85,7 +85,7 @@ def test_dkz_comes_from_the_encoded_extent_not_the_slab(scanner, selective) -> N
 
 
 # ------------------------------------------------------- the three degenerate limits
-def test_l1_non_selective_reduces_to_the_partition_encode(scanner, nonselective) -> None:
+def test_nonselective_reduces_to_partition_encoding(scanner, nonselective) -> None:
     """``A_slab = 0``, so the combined winder **is** the partition encode."""
     assert nonselective.slab_rephase_area_per_m == 0.0
     for partition in range(MATRIX[2]):
@@ -93,7 +93,7 @@ def test_l1_non_selective_reduces_to_the_partition_encode(scanner, nonselective)
             nonselective.pe_z.k_per_m(partition), abs=1e-12)
 
 
-def test_l2_the_centre_partition_is_the_pure_slab_rephaser(scanner, selective) -> None:
+def test_center_partition_reduces_to_slab_rephasing(scanner, selective) -> None:
     """``A_partition = 0`` there, so what is left is the rephasing -- and kz reaches zero."""
     assert selective.pe_z.k_per_m(selective.center_partition) == 0.0
     assert selective.combined_z_area_per_m(selective.center_partition) == pytest.approx(
@@ -104,12 +104,13 @@ def test_l2_the_centre_partition_is_the_pure_slab_rephaser(scanner, selective) -
 
 
 @pytest.mark.parametrize('slab', [None, 180.0])
-def test_l3_adjacent_partitions_differ_by_exactly_one_dkz(scanner, slab) -> None:
+def test_adjacent_partitions_differ_by_delta_kz(scanner, slab) -> None:
     """
     The slab term is constant and must cancel from the difference.
 
-    This is the one that catches a rephasing term wrong by a constant: L2 passes at the centre
-    and L1 never exercises it, while every other partition is shifted.
+    This is the one that catches a rephasing term wrong by a constant: the centre-partition check
+    passes at the centre and the non-selective one never exercises it, while every other partition
+    is shifted.
     """
     tr = _make(scanner, slab_thickness_mm=slab)
     steps = [tr.combined_z_area_per_m(p + 1) - tr.combined_z_area_per_m(p)
@@ -119,9 +120,10 @@ def test_l3_adjacent_partitions_differ_by_exactly_one_dkz(scanner, slab) -> None
 
 
 # --------------------------------------------------- signed coupling and the limiting edge
-def test_p1_p2_the_limiting_edge_follows_the_sign_of_the_slab_term(scanner) -> None:
+def test_limiting_edge_follows_the_sign_of_the_slab_term(scanner) -> None:
     """
-    The worked case from the design review, driven through the solver itself.
+    **Limiting-edge polarity.**  The worked case from the design review, driven through the
+    solver itself.
 
     A negative slab term makes the low edge limiting; a positive one of the same size makes the
     high edge limiting. Same partitions, same hardware, opposite answers.
@@ -134,9 +136,9 @@ def test_p1_p2_the_limiting_edge_follows_the_sign_of_the_slab_term(scanner) -> N
     assert (low, high) == (0, len(partitions) - 1)
 
 
-def test_p3_a_large_enough_offset_switches_the_limiting_edge(scanner) -> None:
+def test_a_large_enough_slab_offset_switches_the_limiting_edge(scanner) -> None:
     """
-    A "largest index wins" shortcut passes P1/P2 by luck and fails here.
+    A "largest index wins" shortcut passes the previous test by luck and fails here.
 
     Sweeping the offset from negative to positive must move the limit across, and at an offset
     that cancels the low edge the limit must already be on the high side.
@@ -150,7 +152,7 @@ def test_p3_a_large_enough_offset_switches_the_limiting_edge(scanner) -> None:
     assert limits == sorted(limits)                       # it moves monotonically, and it moves
 
 
-def test_p4_the_sign_comes_from_phase_encode_and_not_from_the_index(scanner, selective) -> None:
+def test_partition_sign_comes_from_phase_encode_not_index_order(scanner, selective) -> None:
     """Partition index -> signed physical moment is ``PhaseEncode``'s mapping, not array order."""
     below, above = selective.center_partition - 1, selective.center_partition + 1
 
@@ -159,7 +161,7 @@ def test_p4_the_sign_comes_from_phase_encode_and_not_from_the_index(scanner, sel
             == pytest.approx(2 * selective.dk_per_m('z'), abs=1e-12))
 
 
-def test_p5_the_reported_limiting_partition_is_the_one_that_needs_longest(scanner, selective):
+def test_reported_limiting_partition_needs_the_longest_gradient(scanner, selective):
     """Enumerated over every partition, and the module reports which one won."""
     import pypulseq as pp
 
@@ -174,7 +176,7 @@ def test_p5_the_reported_limiting_partition_is_the_one_that_needs_longest(scanne
 
 
 # --------------------------------------------------------------------- one shared window
-def test_t3_every_partition_has_the_same_te(scanner, selective) -> None:
+def test_every_partition_has_the_same_te(scanner, selective) -> None:
     """
     A per-partition winder would make TE a function of kz.
 
@@ -190,7 +192,7 @@ def test_t3_every_partition_has_the_same_te(scanner, selective) -> None:
     assert times[0] == pytest.approx(selective.te_s, abs=1e-6)
 
 
-def test_t2_the_window_lengthens_when_z_needs_it(scanner) -> None:
+def test_the_shared_window_lengthens_when_z_needs_it(scanner) -> None:
     """
     A protocol where z genuinely forces the window, rather than one where it merely fits.
 
@@ -207,16 +209,17 @@ def test_t2_the_window_lengthens_when_z_needs_it(scanner) -> None:
     assert wide.min_te_s > easy.min_te_s          # the longer window lands in the echo time
 
 
-def test_t1_implicit_timing_gives_the_shortest_legal_design(scanner, selective) -> None:
+def test_implicit_timing_gives_the_shortest_legal_design(scanner, selective) -> None:
     assert selective.te_s == pytest.approx(selective.min_te_s)
     assert selective.tr_s == pytest.approx(selective.min_tr_s)
 
 
 @pytest.mark.parametrize('case', ['non-selective', 'z-limited slab-selective'])
-def test_t5_the_reported_te_is_the_compiled_te(scanner, case) -> None:
+def test_reported_te_matches_rf_center_to_k0_time(scanner, case) -> None:
     """
-    The **independent** check, and the one that caught a real bug: the reported echo time against
-    the RF's effective centre and the k = 0 ADC sample of the sequence that was actually built.
+    **Compiled-TE agreement**, and the one check here that compares the module against something
+    other than itself: the reported echo time against the RF's effective centre and the ``k = 0``
+    ADC sample of the sequence that was actually built.
 
     ``min_te_s`` once added the winder on top of ``ro.time_to_echo()``, which already carries the
     prephaser it was designed with -- so the module was 260 us optimistic about its own timing
@@ -268,7 +271,7 @@ def test_a_longer_winder_lengthens_te_rather_than_breaking_it(scanner) -> None:
             tr.te_s, abs=1e-9)
 
 
-def test_t4_an_impossible_te_raises_and_names_what_is_limiting(scanner) -> None:
+def test_an_impossible_te_raises_and_names_what_is_limiting(scanner) -> None:
     with pytest.raises(sc.ConfigurationError) as raised:
         _make(scanner, slab_thickness_mm=180.0, te_s=1e-4)
 
@@ -286,7 +289,8 @@ def test_an_impossible_tr_raises(scanner) -> None:
 # ------------------------------------------------------- the slab term, applied exactly once
 def test_the_standalone_rephaser_is_not_emitted_beside_the_combined_winder(scanner, selective):
     """
-    S8/G19.  A doubled slab term is invisible to every k-space extent check.
+    **The slab term is realised once.**  A doubled one is invisible to every k-space extent
+    check.
 
     Counted structurally -- the excitation contributes one z gradient, not two -- and measured:
     the z moment from the RF's effective centre to the echo is the combined one, once.

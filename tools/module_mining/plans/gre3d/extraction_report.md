@@ -60,23 +60,23 @@ reference prephases with `-gx.area/2` and has no sample at the centre of k-space
 
 ### Both paths, in the package suite
 
-All of L1/L2/L3, P1–P5 and T1–T5 pass as written:
+Every limit, polarity and timing check passes as written:
 
 | | result |
 |---|---|
-| **L1** non-selective limit | `A_slab = 0`, and the combined winder equals the partition encode for every partition |
-| **L2** centre partition | combined moment is the pure rephasing; measured `kz` at the echo is zero |
-| **L3** adjacent partitions | differ by exactly `Δkz`, both modes, the slab term cancelling |
-| **P1/P2** | `A_slab = ∓120` moves the limiting index between the two ends — your worked example, reproduced through the solver |
-| **P3** | sweeping the offset moves the limit monotonically across; a "largest index wins" shortcut fails this and passes P1/P2 |
-| **P4** | the sign comes from `PhaseEncode.k_per_m`, not from array order |
-| **P5** | the reported limiting partition is the one whose duration is actually largest, enumerated |
-| **T1** | implicit timing returns the shortest legal design |
-| **T2** | a thin slab with many partitions grows the winder **260 → 1110 µs** and TE with it, without refusing |
-| **T3** | TE is identical at the centre and both edges, to < 1 ns |
-| **T4** | an impossible TE raises, naming the limiting partition and its combined moment |
-| **T5** | the block is exactly `tr_s`, and the compiled TE equals the reported one |
-| **S8/G19** | the excitation contributes one z gradient, not two, and `kz` at the echo is the partition's — a doubled slab term would shift it by 12.5 1/m here |
+| **Non-selective limit** | `A_slab = 0`, and the combined winder equals the partition encode for every partition |
+| **Centre-partition limit** | combined moment is the pure rephasing; measured `kz` at the echo is zero |
+| **Adjacent-partition step** | differ by exactly `Δkz`, both modes, the slab term cancelling |
+| **Limiting edge follows the slab sign** | `A_slab = ∓120` moves the limiting index between the two ends — your worked example, reproduced through the solver |
+| **The limiting edge switches** | sweeping the offset moves the limit monotonically across; a "largest index wins" shortcut fails this and passes the two fixed-polarity cases |
+| **Sign from semantics, not index order** | the sign comes from `PhaseEncode.k_per_m`, not from array order |
+| **Reported limiting partition is the real one** | the reported limiting partition is the one whose duration is actually largest, enumerated |
+| **Implicit timing is the shortest legal design** | implicit timing returns the shortest legal design |
+| **The window lengthens automatically** | a thin slab with many partitions grows the winder **260 → 1110 µs** and TE with it, without refusing |
+| **TE independent of kz** | TE is identical at the centre and both edges, to < 1 ns |
+| **Impossible timing refused with the reason** | an impossible TE raises, naming the limiting partition and its combined moment |
+| **Compiled-TE agreement** | the block is exactly `tr_s`, and the compiled TE equals the reported one |
+| **Slab rephasing realised once** | the excitation contributes one z gradient, not two, and `kz` at the echo is the partition's — a doubled slab term would shift it by 12.5 1/m here |
 
 ### Sweep
 
@@ -90,8 +90,8 @@ All of L1/L2/L3, P1–P5 and T1–T5 pass as written:
 | slab > `fov_z` (1.25×) | 260 µs | 3.863 ms | −10.03 |
 | sharper slab, TBW 8 | 260 µs | 3.863 ms | −25.08 |
 
-The third row is the one that matters: z genuinely forces the window there, so T2 is exercised
-rather than merely present. The last row shows the RF forwarding working — doubling the
+The third row is the one that matters: z genuinely forces the window there, so the automatic lengthening is
+exercised rather than merely present. The last row shows the RF forwarding working — doubling the
 time-bandwidth product doubles the rephasing moment.
 
 ### Repository gates, from the integrated tree
@@ -103,8 +103,8 @@ time-bandwidth product doubles the rephasing moment.
 ## 4. What the implementation found rather than assumed
 
 **4.1 TE was short by exactly the winder duration.** `min_te_s` added `winder_s` on top of
-`ro.time_to_echo()`, which already carries the prephaser it was designed with. Caught by T5
-comparing the *compiled* echo time against the reported one — a test that would have passed had
+`ro.time_to_echo()`, which already carries the prephaser it was designed with. Caught by the compiled-TE
+check, which compares the *compiled* echo time against the reported one — a test that would have passed had
 it only compared the design against itself.
 
 **4.2 The z spoiler collides with the partition rewinder.** Inheriting `GRE2DTR`'s
@@ -132,7 +132,8 @@ suite clean; no compiler change.
 The selective path still has **no executable reference** — `fmrifrey/lps` is MATLAB and ships no
 `.seq`. That is by design of the criterion rather than an outstanding gap: its claims are carried
 by signed-moment arithmetic and the three degenerate limits, which do not depend on any external
-implementation. One MATLAB run would corroborate G10/G11 and remains optional.
+implementation. One MATLAB run would corroborate the slab-rephasing and combined-moment rows of the
+invariant table, and remains optional.
 
 ## 6. The end-to-end layer
 
