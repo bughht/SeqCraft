@@ -9,7 +9,8 @@
 **Date:** 2026-09-18
 **Passes:** 8 — parameter sweep; 9 — metamorphic tests; 10 — status
 
-Raw output: `tools/module_mining/candidates/tse/{sweep,metamorphic}_result.json`.
+Raw output: `tools/module_mining/candidates/tse/{sweep,metamorphic}_result.json`, written by the
+scripts below and untracked, because `.gitignore` excludes scan output.
 
 ---
 
