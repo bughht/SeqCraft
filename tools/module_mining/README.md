@@ -45,6 +45,31 @@ module_mining/
 - **Preserve oddities as evidence.** A reference that warns, or that cannot be built at a given
   setting, is recorded as that outcome rather than worked around.
 
+## What runs in CI, and what does not
+
+Three different jobs, deliberately not conflated:
+
+| | where |
+|---|---|
+| **is the comparator correct?** | `tests/module_mining/`, in the ordinary blocking test job |
+| **does a promoted module still hold its accepted invariants?** | `tests/modules/`, beside every other module test |
+| **do the external references still agree?** | **here**, run by hand or on a schedule — non-blocking |
+
+The first is blocking because the comparator has been wrong three times and the candidates none.
+Its tests use answers known independently of any candidate: an analytic gradient moment, a
+synthetic rotation, a seeded error of chosen size, and the three historical bugs as regression
+tests.
+
+The third is not blocking because it depends on external checkouts, their versions, adapter
+assumptions, large sweeps and candidate-specific tolerances. A red merge gate driven by a
+measurement we are less sure of than the code is how correct production code gets "fixed" to
+satisfy a broken instrument. If one comparison path proves stable across several candidates, it
+can be promoted then.
+
+**No candidate gets its own CI workflow.** Tests grow; CI *types* should not. A promoted module's
+stable invariants become ordinary tests in `tests/modules/` — `test_radial_readout.py` carries the
+rotation-equivariance check that was discovered here, and nothing about radial needed a new job.
+
 ## Running
 
 Needs the `seqcraft-dev` environment, `nbformat`, and a PyPulseq checkout for R2

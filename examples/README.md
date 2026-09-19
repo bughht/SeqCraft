@@ -54,8 +54,19 @@ cannot drift silently.
 | [`fse_2d/01_build.ipynb`](fse_2d/01_build.ipynb) | `FSE2D`, turbo 1 → 16 → 72 on one instance, three orderings as data, the echo-band warning, and HASTE with `partial_fourier`. Four `.seq` files. **Needs nothing but `seqcraft`.** |
 | [`fse_2d/02_simulate_and_reconstruct.ipynb`](fse_2d/02_simulate_and_reconstruct.ipynb) | The echo envelope measured, the point-spread width per ordering, contrast and blurring as two separate knobs, and **the ghost a scattered table makes** — a periodic modulation of `ky`, which is a replica of the object rather than a blur. Then HASTE with POCS. **Everything is measured on one spin**: a ghost is a modulation of `ky`, and a point object's k-space *is* that modulation — 1.3 s per sequence instead of 173 s, and no reconstruction in between. **Needs `seqcraft[sim,recon]`**; runs in 16 s. |
 
-`SE2D` and `FSE2D` are **defined in those notebooks and do not ship**, for the same reason
-`MPRAGE2D` and `MP2RAGE2D` do not: one consumer each.
+| [`fse_2d/03_package_api.ipynb`](fse_2d/03_package_api.ipynb) | **How to build an FSE today**: `sc.modules.TSEShot` for one shot, `sc.modules.FSE2D` for the scan, three orderings as data, and HASTE as a configuration. Start here if you want to write one rather than understand one. **Needs nothing but `seqcraft`.** |
+
+**`sc.modules.TSEShot` and `sc.modules.FSE2D` ship**, and `03_package_api.ipynb` is the
+recommended way to use them. `SE2D` is still **defined in its notebook and does not ship**, for
+the reason `MPRAGE2D` and `MP2RAGE2D` do not: one consumer each.
+
+`fse_2d/01_build.ipynb` keeps its **own** `FSE2D` on purpose, and it should not be replaced with
+an import. It is the working implementation the package classes were extracted from, and
+[`tests/modules/test_fse_notebook_matches_the_package.py`](../tests/modules/test_fse_notebook_matches_the_package.py)
+compares the two event for event at turbo 1, 8, 16 and HASTE. A reference that is rewritten
+whenever the package changes cannot detect a regression in the package — so this one is
+deliberately **able to disagree**.
+
 [`tests/modules/test_se_notebooks.py`](../tests/modules/test_se_notebooks.py) runs both build
 notebooks, asserts k at every echo of every train length, and pins `FSE2D(echoes=1)` against what
 `se_2d/01` writes — event for event, which is what makes two example directories safe.
