@@ -134,9 +134,59 @@ The selective path still has **no executable reference** — `fmrifrey/lps` is M
 by signed-moment arithmetic and the three degenerate limits, which do not depend on any external
 implementation. One MATLAB run would corroborate G10/G11 and remains optional.
 
-## 6. `GRE3D` (imaging) is **not** proposed
+## 6. The end-to-end layer
 
-The same rule that produced this kernel withholds the layer above it. Partition and line
+The analytic and compiled-sequence checks above answer *does the design satisfy the contract* and
+*did the emitted sequence preserve it*. They do not answer *does the whole acquisition behave like
+the MRI experiment intended*, and the two bugs this extraction actually had — a reported TE short
+by one winder, and a z spoiler colliding with the partition rewinder — are a reminder that local
+agreement is not the same as a working scan.
+
+So the ladder is restored for this candidate:
+
+| layer | where | gate? |
+|---|---|---|
+| analytic invariants and regressions | `tests/modules/test_gre_3d_tr.py` | **blocking CI** |
+| the example executes | `examples/gre_3d/01_build.ipynb`, in the notebook smoke tier | **blocking CI** |
+| the reconstruction looks like an MRI experiment | `examples/gre_3d/02_simulate_and_reconstruct.ipynb` | review evidence, not a gate |
+
+`examples/gre_3d/01_build.ipynb` builds a complete acquisition from `GRE3DTR` and two `for` loops
+— which is itself the argument in §7 — and prints the signed coupling partition by partition.
+`02_simulate_and_reconstruct.ipynb` reconstructs the volume with a 3D FFT and shows it in three
+planes, which is where a reversed `kz` or a `ky`/`kz` swap stops being a number.
+
+**No rendered image is a correctness criterion.** The two assertions in that notebook are the
+reconstructed shape and that most of the energy lies inside the phantom; everything else is for a
+human to look at.
+
+### What the visual layer added, concretely
+
+Two things the analytic checks had not covered, both found while writing it:
+
+- **The sequential arrangement is inherently longer than the combined one**, so it cannot be
+  stacked at the kernel's own minimum TR. A first attempt did, every repetition overlapped the
+  next by exactly the 100 µs being measured, and the compiler's first-moment check refused it.
+  Both scans now run at one explicit TR.
+- **The comparison is only fair with the spoiler present.** Without it the steady state, not the
+  z realisation, was the difference — a first run reported a 63 % discrepancy that had nothing to
+  do with the thing under test.
+
+Neither is a defect in `GRE3DTR`. Both are exactly the class of mistake an end-to-end layer exists
+to surface.
+
+### The measured claim
+
+At one TR, one geometry and one phantom, the **combined** z winder and a **sequential**
+slab-rephase-then-encode arrangement reconstruct the same volume to **0.0014 of the peak**
+(0.0001 mean), while the combined one reaches the echo **100 µs earlier per repetition**.
+
+> SeqCraft changed how the required z moment is realised, not what acquisition is performed.
+
+## 7. `GRE3D` (imaging) is **not** proposed
+
+The same rule that produced this kernel withholds the layer above it, and
+`examples/gre_3d/01_build.ipynb` is the evidence: a complete 3D acquisition there is the kernel
+plus two ordinary `for` loops. Partition and line
 ordering, dummies and the RF-spoiling schedule are policy and would belong there — but there is
 no consumer yet, no second arrangement to generalise from, and no evidence that the ordering
 question is harder in 3D than `GRE2D` already answers. A kernel existing is not a reason for an

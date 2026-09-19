@@ -114,6 +114,28 @@ should be measuring claims, not making them.
 
 ---
 
+## 4a. Three layers, and what each one catches
+
+The comparator work made it easy to forget that waveform arithmetic is not the whole of
+validation. The ladder the hand-built modules were originally developed through is back, and the
+distinction is worth keeping explicit:
+
+| | question | status |
+|---|---|---|
+| **Layer 1** analytic invariants and regressions | does the design satisfy the stated contract? | **blocking CI** |
+| **Layer 2** the example compiles and executes | did the emitted sequence preserve it? | **blocking CI** (notebook smoke) |
+| **Layer 3** simulate and reconstruct | does the whole acquisition behave like the experiment intended? | review evidence, **not** a gate |
+
+Layer 3 is where axis swaps, sign reversals, orientation mistakes and coverage errors stop being
+numbers. It is also where three separate mistakes surfaced during the GRE3D work — a TR that could
+not hold a longer arrangement, a comparison missing a spoiler, and a phantom passed unbuilt — none
+of which any Layer 1 check would have asked about.
+
+**A rendered image is never the criterion.** `assert image == golden_png` would be a gate that
+fails for reasons nobody can read. A small number of numerical assertions is reasonable —
+reconstructed shape, energy inside the object, a sequential-versus-combined difference — and the
+rest is for a human to look at.
+
 ## 5. Category A — stable enough to formalise
 
 These survived two very different candidates unchanged, and should become the durable part:
