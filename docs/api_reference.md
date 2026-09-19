@@ -981,11 +981,13 @@ Re-exported **flat**, so no import path names a folder:
 | `Refocusing` | a 180 and its crusher pair, as one waveform symmetric about the pulse's effective centre in time *and* area |
 | `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
 | `CartesianLine` | prephaser, readout gradient and ADC as one design — `prephase=False` drops the prephaser, which is the spin-echo readout, and `echoes`/`polarity` read the same line more than once, which is a multi-echo gradient echo |
+| `RadialReadout` | one radial spoke: prephaser, readout gradient and ADC, already oriented, with the trajectory geometry a caller would otherwise reverse-engineer |
 | `EPI2D` | the whole echo-planar train: prephasers, alternating lobes, blips on the zero crossings, one ADC per echo, and the labels a reconstruction reads back |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
 | `GRE2D` | the complete scan |
+| `GRE3DTR` | one repetition of a 3D Cartesian gradient echo — a sibling of `GRE2DTR`, owning the z axis where a slab's rephasing and a partition's encoding become one gradient |
 | `TSEShot` | one excitation and its train of refocused Cartesian readouts — the crusher window three axes share, and the moment balance around every refocusing pulse |
 | `FSE2D` | the complete turbo-spin-echo scan: shots, and which lines each one acquires |
 
@@ -1254,6 +1256,121 @@ for the same reason.
 self-calibration no real scan can have, and §8 decomposes a segmented EPI's replica at `Ny/shots`
 over the TR, the run-in and the spoiling schedule.
 
+
+
+## A radial spoke, and where its geometry lives
+
+`RadialReadout` is one spoke: a prephaser, a readout gradient and an ADC, oriented in the x-y
+plane. A **leaf**, because it determines every event it emits from its own parameters.
+
+```python
+import math
+
+spoke = sc.modules.RadialReadout(opts=opts, fov_mm=260.0, matrix=64, dwell_s=20e-6)
+tr_s, golden = 20e-3, 2 * math.pi / (1 + 5**0.5)
+scan = sc.LogicBlock()
+for n in range(64):                               # the schedule is the caller's
+    scan.add(n * tr_s, spoke(angle_rad=n * golden))
+```
+
+**It is built out of `CartesianLine`**, because a spoke *is* a Cartesian line pointing somewhere
+other than along an axis: the prephaser, the dwell arithmetic, the ADC and — the hard one —
+which sample carries `k = 0` are the same problem, already solved. What this module adds is the
+rotation, the semantic trajectory geometry, and a contract stated in the vocabulary of a spoke.
+
+`partial_fourier` spans the family, reusing the existing parameter rather than adding
+`readout_asymmetry` beside it:
+
+| `partial_fourier` | samples at `matrix=64` | centre sample | |
+|---|---|---|---|
+| `1.0` | 64 | 32 | full spoke, `-32Δk … +31Δk` |
+| `0.75` | 48 | 16 | asymmetric |
+| `0.5` | 32 | 0 | centre-out |
+
+`Δk = 1/FOV` throughout. The range is closed at both ends and 0.5 is not degenerate: it is
+centre-out, a sequence family rather than an edge case. The official UTE example spans the same
+continuum with an argument running the other way and shrinks `Δk` instead of dropping samples;
+both hold the resolution the protocol asked for.
+
+**The centre sample is not the ADC midpoint**, and the difference is the point. A full spoke with
+an even matrix has its centre one sample past the middle — the same `matrix // 2` convention
+`PhaseEncode` uses — and a centre-out spoke has it at sample zero. `center_sample`,
+`time_to_center()`, `dk_per_m`, `k_first_per_m`, `k_last_per_m` and `k_max_per_m` are the module's
+answers, and they exist because the alternative is what OpenMRF's radial readout has to do:
+compile a probe sequence and read its trajectory back to find out where its own centre landed.
+
+**The block is already oriented.** A caller does not rotate what `build` returns, because the
+module's semantic properties describe the oriented spoke and a trajectory whose orientation lived
+somewhere else would have two owners. Internally one canonical spoke is designed along x and
+fresh rotated copies are derived per call — including the stored `area`, which both references
+that extend a readout's flat time warn is otherwise left wrong.
+
+What stays with the caller: how many spokes, which angles, in what order, golden-angle or
+equal-increment or randomised, and the excitation, spoiling and TR around them.
+`tests/modules/test_radial_readout.py` asserts the trajectory, and the rotation-equivariance test
+there is the same one that passed against the official PyPulseq reference before this module
+existed.
+
+
+## A 3D repetition, and the one axis that is not a 2D one
+
+`GRE3DTR` is a **sibling** of `GRE2DTR`, not a wrapper around it. A kernel that contained one
+would have to reach back inside decisions that kernel has already made — its winder timing, its
+TE, its rewinding — to change the z axis, which is the reverse nesting this library avoids. Nor
+is a slice-selective 2D acquisition the centre partition of a 3D slab.
+
+```python
+tr = sc.modules.GRE3DTR(opts=opts, fov_mm=(200.0, 200.0, 160.0), matrix=(64, 64, 64))
+scan = sc.LogicBlock()
+table = [(line, partition) for partition in range(0, 64, 16) for line in range(0, 64, 16)]
+for n, (line, partition) in enumerate(table):        # the ordering is the caller's
+    scan.add(n * tr.tr_s, tr(line=line, partition=partition))
+```
+
+On x and y this is a 2D repetition. On z there are two cases, and `slab_thickness_mm` chooses
+between them — a physical quantity rather than a `slab_selective=True` flag, mirroring
+`Excitation(thickness_mm=…)`:
+
+| | |
+|---|---|
+| `slab_thickness_mm=None` | non-selective, which is what every official Pulseq 3D reference does. The z axis carries a partition encode and nothing else |
+| `slab_thickness_mm=…` | slab-selective. The rephasing the slab implies and the partition encoding are two moments on **one axis in one window**, and the kernel solves `A_z(p) = A_slab + A_partition(p)` as a single gradient |
+
+**The mode chooses the pulse.** With no slab the default is a short hard `'block'` pulse, because
+a non-selective excitation with a shaped one spends a soft pulse's duration and selects nothing —
+every official Pulseq 3D reference uses a block pulse, and `writeGradientEcho3D.m`'s is 0.2 ms. A
+slab gets a shaped `'sinc'`. `rf_pulse=` overrides either, for a shaped but spatially
+non-selective excitation.
+
+`slab_thickness_mm` is **independent of `fov_mm[2]` in both directions** — the only requirement is
+that it is positive. A slab smaller than the encoded FOV is a calibration or inner-volume
+acquisition; a larger one buys transition band and alias protection without changing the
+reconstructed geometry, and a conventional full-volume protocol usually wants at least the FOV.
+
+**Both z terms are signed, so the limiting partition is a result rather than an index.**
+
+```text
+A_slab = -120   partitions -200 | 0 | +200   ->  A_z  -320 | -120 |  +80   low edge limits
+A_slab = +120                                ->  A_z   -80 | +120 | +320   high edge limits
+```
+
+Every partition is enumerated after the signed combination; `limiting_partition` reports which one
+won. One winder duration then serves them all, because a per-partition window would make TE a
+function of `kz` — a contrast gradient across the volume that no k-space check would show.
+
+When the worst partition needs longer than x and y do, **the window is lengthened**. That is
+design, not legalization: the kernel holds `opts`, so "this moment needs 420 µs rather than 300"
+is its question. With `te_s=None` the result is the shortest legal design; an explicit request
+below it raises, naming the partition responsible and its combined moment.
+
+**The slab rephaser is realised once.** `Excitation.rephaser_area_per_m` states the requirement
+and `exc(rephase=False)` declines to realise it, which is how the kernel takes it over — the same
+split `CartesianLine(prephase=False)` and `area_to_echo_per_m` already draw for a readout.
+`rephase=False` does **not** mean the pulse needs no rephasing.
+
+Spoiling defaults to `('x',)` here, where `GRE2DTR` uses `('x', 'z')`: in 3D the z axis already
+has the partition rewinder in the tail, and two gradients each designed at the full slew limit do
+not sum to a legal one. `writeGradientEcho3D.m` spoils on x for the same reason.
 
 ## The spin-echo train, and which layer owns which number
 
@@ -1591,6 +1708,7 @@ at import.
 | `GRADIENT_KINDS` | `design.events` | constant |
 | `GRE2D` | `modules` | class |
 | `GRE2DTR` | `modules` | class |
+| `GRE3DTR` | `modules` | class |
 | `IRPrep` | `modules` | class |
 | `HANDLED_KINDS` | `design.events` | constant |
 | `HardwareLimitError` | `compiler.errors` | exception |
@@ -1605,6 +1723,7 @@ at import.
 | `POINT_KINDS` | `design.events` | constant |
 | `PYPULSEQ_VERSION` | `_compat` | constant |
 | `PhaseEncode` | `modules` | class |
+| `RadialReadout` | `modules` | class |
 | `PlacedEvent` | `compiler.model` | class |
 | `PulseqReadyBlock` | `compiler.model` | class |
 | `Raster` | `design.timing` | class |

@@ -11,6 +11,7 @@
 | [`gre_epi_2d/`](gre_epi_2d/) | The whole of k-space in one shot: the centred sampling window, the blip on the zero crossing, ramp sampling and the operator that undoes it, off-resonance and the N/2 ghost, and GRAPPA. Where `EPI2D` came from. Defines `GREEPI2D` in its own notebook. |
 | [`se_epi_2d/`](se_epi_2d/) | The same readout after a refocusing pulse — and the measurement that a spin echo **does not** fix EPI distortion. Defines `SEEPI2D` in its own notebook. |
 | [`megre_2d/`](megre_2d/) | Eight echoes off one excitation, monopolar and bipolar, fitted for T2\* and ΔB0 against a phantom that carries the ground truth for both. **Defines no class**, which no other directory here can say. |
+| [`radial_gre/`](radial_gre/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. **Deliberately defines no class**, because the schedule is the only thing a `RadialGRE` would add. |
 
 ## `gre_2d/`
 
@@ -45,6 +46,29 @@ and a module with one consumer belongs where that consumer is.
 build notebooks and asserts against what they defined, so a tutorial that stays a tutorial still
 cannot drift silently.
 
+## `gre_3d/`
+
+| | |
+|---|---|
+| [`gre_3d/01_build.ipynb`](gre_3d/01_build.ipynb) | A complete 3D acquisition out of `sc.modules.GRE3DTR` and **two `for` loops** — non-selective and slab-selective, the signed `kz` coupling printed partition by partition, and TE measured constant across the volume. **Needs nothing but `seqcraft`.** |
+| [`gre_3d/02_simulate_and_reconstruct.ipynb`](gre_3d/02_simulate_and_reconstruct.ipynb) | The volume, reconstructed with a 3D FFT and shown in three planes — which is where a reversed `kz` or a `ky`/`kz` swap stops being a number. Also compares the kernel's **combined** z winder against a **sequential** slab-rephase-then-encode arrangement: same image to 0.0014 of the peak, 100 µs less TE per repetition. **Needs `seqcraft[sim]`**; runs in about a minute. |
+
+**There is deliberately no `GRE3D` imaging class**, and `01` is part of the argument: if a complete
+3D acquisition is a kernel plus the ordering you would have written anyway, an imaging module
+would wrap the ordering rather than own any physics.
+
+The four `.seq` files under `gre_3d/seq/` are **two pairs answering two questions**, not four
+sequence variants:
+
+| | question | files |
+|---|---|---|
+| `01` | which **excitation mode**? | `gre_3d_nonselective.seq`, `gre_3d_slab.seq` |
+| `02` | within the slab-selective mode, how is the **z moment realised**? | `gre_3d_slab_combined.seq`, `gre_3d_slab_sequential.seq` |
+
+Both files in the second pair are slab-selective, and `gre_3d_slab_combined.seq` is the same
+physics as `01`'s `gre_3d_slab.seq` — the production combined-z path. It is written separately
+only so the comparison has both halves at one common TR.
+
 ## `se_2d/` and `fse_2d/`
 
 | | |
@@ -52,10 +76,21 @@ cannot drift silently.
 | [`se_2d/01_build.ipynb`](se_2d/01_build.ipynb) | One interval placed by hand out of the shipped modules, then the whole shot, then `SE2D`. Every check is `sc.kspace` at the echo *sample*, signed, because `|k|` is symmetric and a k-space extent check passes on a mirrored image. **Needs nothing but `seqcraft`.** |
 | [`se_2d/02_simulate_and_reconstruct.ipynb`](se_2d/02_simulate_and_reconstruct.ipynb) | The one claim arithmetic cannot make: the spin echo recovers the phantom's **T2** and the same sweep without the 180 recovers **T2\***. Then the image, and which weighting the protocol landed on. **Needs `seqcraft[sim,recon]`.** |
 | [`fse_2d/01_build.ipynb`](fse_2d/01_build.ipynb) | `FSE2D`, turbo 1 → 16 → 72 on one instance, three orderings as data, the echo-band warning, and HASTE with `partial_fourier`. Four `.seq` files. **Needs nothing but `seqcraft`.** |
-| [`fse_2d/02_simulate_and_reconstruct.ipynb`](fse_2d/02_simulate_and_reconstruct.ipynb) | The echo envelope measured, the point-spread width per ordering, contrast and blurring as two separate knobs, and **the ghost a scattered table makes** — a periodic modulation of `ky`, which is a replica of the object rather than a blur. Then HASTE with POCS. **Everything is measured on one spin**: a ghost is a modulation of `ky`, and a point object's k-space *is* that modulation — 1.3 s per sequence instead of 173 s, and no reconstruction in between. **Needs `seqcraft[sim,recon]`**; runs in 16 s. |
+| [`fse_2d/02_simulate_and_reconstruct.ipynb`](fse_2d/02_simulate_and_reconstruct.ipynb) | The echo envelope measured, the point-spread width per ordering, contrast and blurring as two separate knobs, and **the ghost a scattered table makes** — a periodic modulation of `ky`, which is a replica of the object rather than a blur. Then HASTE with POCS. **Everything is measured on one spin**: a ghost is a modulation of `ky`, and a point object's k-space *is* that modulation — 1.3 s per sequence instead of 173 s, and no reconstruction in between. **Needs `seqcraft[sim,recon]`**; runs in 16 s. It closes with one representative image built from `sc.modules.FSE2D`, so the **package path** is shown to reach a valid end-to-end acquisition — the study itself is not repeated, because event identity against `01` is stronger evidence that the two agree. |
 
-`SE2D` and `FSE2D` are **defined in those notebooks and do not ship**, for the same reason
-`MPRAGE2D` and `MP2RAGE2D` do not: one consumer each.
+| [`fse_2d/03_module_api.ipynb`](fse_2d/03_module_api.ipynb) | **How to build an FSE today**: `sc.modules.TSEShot` for one shot, `sc.modules.FSE2D` for the scan, three orderings as data, and HASTE as a configuration. Start here if you want to write one rather than understand one. **Needs nothing but `seqcraft`.** |
+
+**`sc.modules.TSEShot` and `sc.modules.FSE2D` ship**, and `03_module_api.ipynb` is the
+recommended way to use them. `SE2D` is still **defined in its notebook and does not ship**, for
+the reason `MPRAGE2D` and `MP2RAGE2D` do not: one consumer each.
+
+`fse_2d/01_build.ipynb` keeps its **own** `FSE2D` on purpose, and it should not be replaced with
+an import. It is the working implementation the package classes were extracted from, and
+[`tests/modules/test_fse_notebook_matches_the_package.py`](../tests/modules/test_fse_notebook_matches_the_package.py)
+compares the two event for event at turbo 1, 8, 16 and HASTE. A reference that is rewritten
+whenever the package changes cannot detect a regression in the package — so this one is
+deliberately **able to disagree**.
+
 [`tests/modules/test_se_notebooks.py`](../tests/modules/test_se_notebooks.py) runs both build
 notebooks, asserts k at every echo of every train length, and pins `FSE2D(echoes=1)` against what
 `se_2d/01` writes — event for event, which is what makes two example directories safe.
@@ -109,6 +144,30 @@ one that matters most, because `02` fits against those numbers and a wrong echo 
 map with nothing to look wrong. `01` is in
 [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is not, for the reason the
 other simulation notebooks are not.
+
+## `radial_gre/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](radial_gre/01_build.ipynb) | `sc.modules.RadialReadout` is **one spoke**, already oriented, and an acquisition is that spoke plus a list of angles — so the repetition is assembled in the notebook out of `Excitation`, the spoke, a spoiler and TR fill rather than by a class. Equal increments and a golden angle from one readout instance, the trajectory drawn for both, the centre sample measured **exactly on `k = 0`** and the spoke angles measured against the ones asked for, then `partial_fourier` walked from a full spoke to centre-out. Two `.seq` files. **Needs nothing but `seqcraft`.** |
+
+**This directory defines no class, and that is the finding.** `MPRAGE2D`, `SE2D`, `FSE2D`,
+`GREEPI2D` and `SEEPI2D` each exist because their sequence is a composition the package does not
+otherwise have. A radial GRE is not: strip the angle list out of it and what remains is a spoiled
+gradient echo whose readout happens to be a spoke. A `RadialGRE` class would own the schedule —
+golden angle or equal increment, how many spokes, in what order — and a schedule is a sequence
+choice, which is exactly the thing `sc.modules` does not take from the caller. So the notebook
+writes the loop, and it is four lines.
+
+**There is no `02_simulate_and_reconstruct.ipynb`, on purpose.** A radial image needs a
+non-Cartesian reconstruction, and no other example here has one to reuse — the `02`s are all FFTs
+on a Cartesian grid. Writing a gridding or NUFFT pipeline to complete a pair would be new
+reconstruction infrastructure justified by a directory listing rather than by a question, and the
+one check a radial acquisition actually needs is whether the spokes go where they were asked to,
+which is the trajectory plot in `01` and is asserted numerically in
+[`tests/modules/test_radial_readout.py`](../tests/modules/test_radial_readout.py) on every commit.
+If a non-Cartesian reconstruction arrives here for some other reason, this is the notebook to pair
+with it. `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
 
 ## Requirements
 

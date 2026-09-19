@@ -274,3 +274,65 @@ def test_it_is_pure_and_compiles_alone(opts, component_checks) -> None:
     component_checks.all(
         sc.modules.Excitation(opts=opts, flip_deg=15.0, thickness_mm=5.0), phase_deg=117.0,
     )
+
+
+# ------------------------------------------- the requirement, and who realises it
+def test_the_rephasing_requirement_matches_the_rephaser_it_designs(opts) -> None:
+    """
+    Two independent routes to one number.
+
+    ``rephaser_area_per_m`` integrates the selection gradient from the RF's effective centre to
+    its end and negates it; ``gzr`` is what pypulseq's factory designed for the same job.  They
+    are not the same computation, so agreement is evidence rather than a tautology.
+    """
+    exc = sc.modules.Excitation(opts=opts, flip_deg=15.0, thickness_mm=5.0)
+
+    assert exc.rephaser_area_per_m == pytest.approx(float(exc.gzr.area), abs=1e-9)
+    assert exc.rephaser_area_per_m < 0.0
+
+
+def test_a_non_selective_pulse_requires_no_rephasing(opts) -> None:
+    assert sc.modules.Excitation(opts=opts, flip_deg=15.0,
+                                 thickness_mm=None).rephaser_area_per_m == 0.0
+
+
+def test_the_default_build_is_unchanged_by_the_new_option(opts) -> None:
+    """
+    Backward compatibility, stated as an assertion rather than as an intention.
+
+    ``rephase`` defaults to ``True``, so every existing caller gets the events it always got --
+    same times, same content, same order.
+    """
+    exc = sc.modules.Excitation(opts=opts, flip_deg=15.0, thickness_mm=5.0)
+
+    default = [(round(t, 12), sc.events.content_hash(e)) for t, e, _ in sc.flatten(exc())]
+    explicit = [(round(t, 12), sc.events.content_hash(e))
+                for t, e, _ in sc.flatten(exc(rephase=True))]
+
+    assert default == explicit
+    assert [getattr(e, 'type', '') for _, e, _ in sc.flatten(exc())] == ['rf', 'trap', 'trap']
+
+
+def test_rephase_false_drops_the_rephaser_and_nothing_else(opts) -> None:
+    """
+    And it does **not** mean the pulse needs no rephasing: the requirement is unchanged.
+
+    That distinction is the whole point of the option -- a caller takes over realising the
+    compensation, typically because it has another moment on the same axis to combine it with.
+    """
+    exc = sc.modules.Excitation(opts=opts, flip_deg=15.0, thickness_mm=5.0)
+
+    full = [(round(t, 12), sc.events.content_hash(e)) for t, e, _ in sc.flatten(exc())]
+    without = [(round(t, 12), sc.events.content_hash(e))
+               for t, e, _ in sc.flatten(exc(rephase=False))]
+
+    assert without == full[:-1]
+    assert exc.rephaser_area_per_m == pytest.approx(float(exc.gzr.area), abs=1e-9)
+    assert exc.rephaser_duration_s > 0.0
+
+
+def test_rephase_is_harmless_for_a_non_selective_pulse(opts) -> None:
+    exc = sc.modules.Excitation(opts=opts, flip_deg=15.0, thickness_mm=None)
+
+    assert [(round(t, 12), sc.events.content_hash(e)) for t, e, _ in sc.flatten(exc())] == [
+        (round(t, 12), sc.events.content_hash(e)) for t, e, _ in sc.flatten(exc(rephase=False))]

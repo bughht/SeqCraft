@@ -27,7 +27,9 @@ The folders, and what each one means
       encoding/    phase_encoding.py   PhaseEncode
       readout/     cartesian_line.py   CartesianLine
                    epi_2d.py           EPI2D
+                   radial_readout.py   RadialReadout
       kernel/      gre_2d_tr.py        GRE2DTR      composes leaves; one repeating unit
+                   gre_3d_tr.py        GRE3DTR
                    tse_shot.py         TSEShot
       imaging/     gre_2d.py           GRE2D        composes kernels; a complete scan
                    fse_2d.py           FSE2D
@@ -90,15 +92,18 @@ from .encoding.phase_encoding import PhaseEncode
 from .imaging.fse_2d import FSE2D
 from .imaging.gre_2d import GRE2D
 from .kernel.gre_2d_tr import GRE2DTR
+from .kernel.gre_3d_tr import GRE3DTR
 from .kernel.tse_shot import TSEShot
 from .preparation.ir_prep import IRPrep
 from .readout.cartesian_line import CartesianLine
 from .readout.epi_2d import EPI2D
+from .readout.radial_readout import RadialReadout
 from .rf.excitation import Excitation
 from .rf.refocusing import Refocusing
 from .spoiler import spoiler
 
 __all__ = [
-    'CartesianLine', 'EPI2D', 'Excitation', 'FSE2D', 'GRE2D', 'GRE2DTR', 'IRPrep', 'PhaseEncode',
-    'Refocusing', 'TSEShot', 'spoiler',
+    'CartesianLine', 'EPI2D', 'Excitation', 'FSE2D', 'GRE2D', 'GRE2DTR', 'GRE3DTR', 'IRPrep',
+    'PhaseEncode',
+    'RadialReadout', 'Refocusing', 'TSEShot', 'spoiler',
 ]

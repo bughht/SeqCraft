@@ -102,12 +102,26 @@ def _echo_instant(times: np.ndarray, kx: np.ndarray) -> tuple[float, int, bool]:
     return t_echo, nearest, True
 
 # ------------------------------------------------------------------------------- measurement
-def measure(ref: ReferenceSequence) -> dict[str, Any]:
+def measure(ref: ReferenceSequence, *, centre: str = 'kx-zero') -> dict[str, Any]:
     """
     Every deterministic measurement this comparator can take of one executed reference.
 
     Returns a nested dict rather than an object so that a report can be written out, diffed and
     read by a human without importing anything.
+
+    `centre` selects **how the semantic centre of a readout is located**, which is the one part of
+    this that a sequence family owns:
+
+    ``'kx-zero'``
+        the interpolated ``kx`` zero crossing -- a Cartesian line, where the phase axis is
+        deliberately somewhere else and only ``kx`` returns to zero.
+    ``'k-min'``
+        the sample of smallest ``|k|`` -- a radial spoke, whose ``kx`` need not cross zero at all
+        once the spoke is rotated, and where the centre of k-space is a *radius* rather than an
+        axis crossing.
+
+    Extending this enumeration is how a new family enters the comparator.  Adding a rule is
+    cheap; guessing the wrong one silently reports the wrong sample as the echo.
     """
     seq = ref.sequence
     k_adc, t_adc, _k, _t_k, t_exc, t_refoc = seq.calculate_kspacePP()[:6]
@@ -126,7 +140,11 @@ def measure(ref: ReferenceSequence) -> dict[str, Any]:
         span = slice(start, start + n)
         times, kx = t_adc[span], k_adc[0, span]
         dwell = float(np.median(np.diff(times))) if n > 1 else float('nan')
-        t_echo, nearest, crossed = _echo_instant(times, kx)
+        if centre == 'k-min':
+            nearest = int(np.argmin(np.linalg.norm(k_adc[:, span], axis=0)))
+            t_echo, crossed = float(times[nearest]), True
+        else:
+            t_echo, nearest, crossed = _echo_instant(times, kx)
         readouts.append({
             'index': index,
             'n_samples': n,
@@ -318,6 +336,21 @@ def _check_area_balance(m: dict[str, Any], k_tol_per_m: float) -> list[dict[str,
     return rows
 
 
+def _time_from_excitation(measurement: dict[str, Any], readout: dict[str, Any]) -> float:
+    """
+    Seconds from the readout's own excitation to its echo, or from the sequence start.
+
+    A leaf measured on its own has no excitation -- a ``CartesianLine`` or a ``RadialReadout``
+    compiled alone is a legitimate thing to compare, and it is how the radial candidate is
+    measured -- so there is nothing to subtract and the absolute time is the answer.  Indexing
+    ``shots`` unconditionally raised here instead, which is the kind of thing that is only ever
+    found by pointing the comparator at something whose answer is already known.
+    """
+    shot = readout['shot']
+    if 0 <= shot < len(measurement['shots']):
+        return float(readout['t_echo_s'] - measurement['shots'][shot]['t_excitation_s'])
+    return float(readout['t_echo_s'])
+
 # ------------------------------------------------------------------------------- comparison
 def compare(a: dict[str, Any], b: dict[str, Any], *, k_tol_per_m: float = 1e-3,
             time_tol_s: float = 1e-9) -> dict[str, Any]:
@@ -343,8 +376,7 @@ def compare(a: dict[str, Any], b: dict[str, Any], *, k_tol_per_m: float = 1e-3,
                                    'detail': 'different ADC count or sample count'}
         return report
 
-    t_err = max(abs(ra['t_echo_s'] - a['shots'][ra['shot']]['t_excitation_s']
-                    - (rb['t_echo_s'] - b['shots'][rb['shot']]['t_excitation_s']))
+    t_err = max(abs(_time_from_excitation(a, ra) - _time_from_excitation(b, rb))
                 for ra, rb in zip(a['readouts'], b['readouts']))
     # x and z are physics: both implementations must refocus them at the echo.  y is the
     # phase-encode **table**, which is caller policy and legitimately different between two
