@@ -1,0 +1,88 @@
+# Provisional research record -- NOT a schema for runtime code, NOT a Pydantic model.
+# Validate with:  python tools/module_mining/schema.py <this file>
+#
+# Extra keys are welcome.  The three pilots each grew their own -- `disagreements`, `hazards`,
+# `measured_so_far`, `known_limitations` -- and those are how the next required field gets found.
+# See .claude/skills/module-mining/reference/artifacts.md for what each field is for.
+#
+# As shipped this file FAILS validation, on purpose: every <placeholder> is rejected by the
+# closed vocabularies, so an unfilled template cannot be mistaken for a finished record.
+# `tools/module_mining/skill_v0/radial_migrated.yaml` is a filled example that passes.
+
+# ---------------------------------------------------------------- Candidate
+id: <kebab-case-id>
+name: <WorkingName>            # the boundary decision may still reject the class entirely
+
+capability:
+  summary: >
+    One paragraph of physics.  No API nouns -- describe what the thing does on a scanner, not
+    what the class would be called.
+  family: <readout|rf|preparation|encoding|kernel|imaging>
+
+target:
+  layer: <same vocabulary; a list if the candidate spans layers>
+  path: src/seqcraft/modules/<folder>/<file>.py
+  composes: []                 # existing modules reused
+  extended: []                 # existing files this candidate CHANGES -> triggers rule D
+  untouched:                   # REQUIRED -- what is deliberately not touched, and why it matters
+    - the compiler, LogicBlock, every other module
+  not_created: []              # classes considered and rejected
+
+reuse_rationale: >
+  Why this is one reusable contract rather than two, or none.
+
+# ---------------------------------------------------------------- Evidence
+evidence:
+  - repo: <org/repo>
+    commit: <sha>              # REQUIRED for an executable reference
+    path: <path/in/repo>
+    license: <SPDX or note>
+    role: <primary|authoritative-external|independent-formulation|independent-implementation|supporting|architecture-evidence|deferred>
+    executable: <executed|documentary>
+    covers: <mode or aspect>   # omit if it witnesses the whole candidate
+    independence: >            # REQUIRED when more than one reference is cited.
+      Relationship to the OTHER references -- a port or a shared house style is one witness,
+      not two.
+
+# ---------------------------------------------------------------- PhysicalContract
+contract:
+  intrinsic: >
+    What this candidate determines from its own parameters alone.
+  invariants: []               # measurable statements; tolerances live in invariant_table.md
+  varying_parameters: []
+  modes: []                    # only when the candidate has meaningful modes -- see rule A
+  excluded_caller_policy:      # REQUIRED -- what stays with the caller
+    - []
+  excluded_pulseq_artifacts:   # REQUIRED -- block splits, event counts, labels: representation
+    - []
+
+# ---------------------------------------------------------------- AcceptanceClaim
+acceptance:
+  claim: >
+    The equivalence or preservation actually asserted.
+  establishes: []              # rule C, first half
+  does_not_establish: []       # rule C, second half -- must not be empty
+  criterion: <event-identity|trajectory-agreement|lattice-and-semantics|invariant-only>
+  tolerance: >
+  defined_before_extraction: true
+
+# ---------------------------------------------------------------- ValidationPlan
+validation:                    # interior is deliberately free-form except `layers`
+  generic_measurements: []
+  family_checks: []
+  metamorphic: []
+  parameter_sweep: >
+  emitted_inspection: []       # rule B -- one entry per promoted physical mode
+  layers:
+    layer_1: <GREEN|YELLOW|RED|DEFERRED|NOT_APPLICABLE>
+    layer_2: <...>
+    layer_3: <...>
+    layer_3_reason: >          # REQUIRED when layer_3 is DEFERRED or NOT_APPLICABLE
+  compiler_changes: none
+
+# ---------------------------------------------------------------- Decision
+status: <NEW_LEAF|NEW_KERNEL|NEW_IMAGING|PROMOTE_NOTEBOOK|EXTEND_EXISTING|NO_NEW_MODULE>
+traffic_light: <GREEN|YELLOW|RED>
+reason_code: null              # REQUIRED unless GREEN -- see reference/outcomes.md
+decided_by: human              # always
+open_questions: []             # an empty list is suspicious
