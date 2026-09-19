@@ -1,18 +1,20 @@
-# RadialReadout, re-expressed in the Skill v0 artifact shape.
+# RadialReadout, normalized into the Skill v0 artifact shape.
 #
-# This is a MIGRATION EXERCISE, not a replacement.  The historical record at
-# plans/radial/candidate.yaml stays exactly as it was written -- rewriting it would destroy the
-# evidence that the schema was derived from the pilots rather than imposed on them.
+# The historical record is plans/radial/candidate.yaml and is UNCHANGED.  This is a second
+# representation of the same evidence, not a correction of it.
 #
-# It exists to answer one question: can the schema carry a real candidate without losing anything
-# the pilot actually knew?  Every value below is copied from the radial evidence set; nothing was
-# invented to make the record validate.  Three things had to be *moved* rather than copied, and
-# those are the migration's findings -- see conformance_report.md section 3.
+# Provenance convention, on every field the schema requires:
+#   [VERBATIM]      copied from the historical candidate.yaml
+#   [RECONSTRUCTED] assembled from prose in the radial/ evidence set; the source is named
+#   [NOT RECORDED]  the pilot did not capture this; stated as absent, never invented
 #
-#   python tools/module_mining/schema.py tools/module_mining/skill_v0/radial_migrated.yaml
+# Every value below comes from the radial evidence set.  Nothing was invented to make the record
+# validate.  Three things had to be MOVED rather than copied -- see migrated/README.md.
+#
+#   python tools/module_mining/schema.py tools/module_mining/skill_v0/migrated/radial.yaml
 
-id: radial-readout
-name: RadialReadout
+id: radial-readout                    # [VERBATIM]
+name: RadialReadout                   # [VERBATIM]
 
 capability:
   summary: >
@@ -26,9 +28,10 @@ target:
   composes:
     - CartesianLine         # a spoke is a line pointing somewhere other than along an axis
   extended:
-    # FINDING: the historical record did not declare this, though the work changed the file.
-    # It was recorded under `resolved_during_review` as a narrative instead, so rule D never
-    # fired.  Declaring it here is what produces the dependency_impact block below.
+    # [RECONSTRUCTED] from `resolved_during_review` prose.  THE KEY FINDING OF THIS MIGRATION:
+    # the historical record never declared target.extended even though the extraction changed
+    # CartesianLine's contract, so rule D could not fire mechanically.  Declaring it here is
+    # what produces the dependency_impact block below.
     - src/seqcraft/modules/readout/cartesian_line.py   # adc_samples_divisor refusal
   not_created:
     - RadialGRETR           # radial GRE is composition today, not a shared cross-leaf solve

@@ -114,6 +114,30 @@ What the three pilots accepted, none of which would have worked for the others:
 
 Your job is to help **choose and state** the claim, not to run every family through one comparator.
 
+## Where candidates come from
+
+`tools/module_mining/sources.yaml` is the scan-source registry: every corpus the workflow may
+scan, with the two judgements that must be made **before** mining anything from it.
+
+```text
+discovery       tells us a family exists and is worth looking at
+design-witness  an implementation whose construction can corroborate another's
+oracle          an independent measurement path, for validating rather than designing
+```
+
+A corpus is never automatically a design-witness because it contains working sequences.
+`MRsources/MRzero-Core` is registered `discovery` + `oracle` with `design-witness` **excluded**:
+its playground builds with PyPulseq and simulates with MRzeroCore, so agreeing with a PyPulseq
+example is one design agreeing with itself.
+
+The registry's `role` is a property of the corpus and does **not** set `evidence[].role` for a
+candidate. Re-ask, per candidate: independence relative to the *other* references cited here;
+claim scope; shared implementation assumptions with PyPulseq/Pulseq; discovery or acceptance
+evidence; and licence at the **file** level, not only the repository level.
+
+Copyleft sources (AGPL/GPL, and MRzero additionally carries a EULA) are **physics and invariants
+only** — no implementation text.
+
 ## Artifacts
 
 Six structured records, in `reference/artifacts.md`, with a template at

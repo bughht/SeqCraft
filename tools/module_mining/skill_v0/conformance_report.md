@@ -8,7 +8,7 @@ No production Module was modified and no reference was re-validated. Two things 
 
 ```bash
 python tools/module_mining/schema.py tools/module_mining/plans/{tse,radial,gre3d}/candidate.yaml
-python tools/module_mining/schema.py tools/module_mining/skill_v0/radial_migrated.yaml
+python tools/module_mining/schema.py tools/module_mining/skill_v0/migrated/*.yaml
 ```
 
 ---
@@ -85,7 +85,7 @@ Rule D fires whenever `target.extended` is non-empty. It is non-empty for all th
 Radial is the interesting one. Its `candidate.yaml` records the `CartesianLine` change under
 `resolved_during_review` as narrative and never declares `target.extended`, so nothing could have
 fired. The migrated record declares it, and the resulting map is in
-`skill_v0/radial_migrated.yaml`: four direct consumers, two transitive, one notebook class.
+`skill_v0/migrated/radial.yaml`: four direct consumers, two transitive, one notebook class.
 
 The map also reproduces the trap that rule D exists for. Searching for the *name* `CartesianLine`
 finds ten source files; searching for **construction** finds four. `epi_2d.py`, `excitation.py`,
@@ -134,9 +134,15 @@ correct outcome may be that it is never done.
 
 ## 3. What the migration exercise cost
 
-`skill_v0/radial_migrated.yaml` re-expresses the Radial pilot in the new shape. It validates
-clean, and **nothing the pilot knew was lost**. Three things had to move rather than copy, and each
-move is a finding:
+**All three pilots** are now re-expressed in the new shape, under `skill_v0/migrated/`, and all
+three validate — `tse.yaml` with one warning that is correct and should stay (`writeHASTE.m` has
+no licence recorded, and inventing one is exactly what the provenance convention forbids). The
+historical records are untouched.
+
+Every field carries a provenance marker: `[VERBATIM]`, `[RECONSTRUCTED]` with its source document
+named inline, or `[NOT RECORDED]`. The full field map and the six things that could not be carried
+without loss are in `migrated/README.md`. Three things had to move rather than copy, and each move
+is a finding:
 
 1. **`resolved_during_review` → `target.extended` + `dependency_impact`.** The narrative said what
    happened; the structured form says who is affected. Only the second can be checked.
@@ -149,6 +155,13 @@ move is a finding:
    design as write_radial_gre.py, ported — not independent evidence." GRE3D put it at record level.
    The judgement was always there; it was never checkable, and the number of witnesses is exactly
    the thing a reader will otherwise over-count.
+
+The migration also caught a mistake in its own first draft, which is worth recording because it is
+the failure mode the convention exists to prevent. `gre3d.yaml` initially listed `ir_prep.py` as an
+`Excitation` consumer and cited `examples/scripts/write_gre3d.py` as evidence. Neither is real:
+`IRPrep` builds its own inversion pulse and composes nothing from `Excitation`, and the historical
+record's Python reference is `write_3Dt1_mprage.py`. Both were plausible, both were invented, and
+both were caught by checking the source rather than by re-reading the draft.
 
 ## 4. Validator output on the historical records
 

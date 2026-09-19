@@ -1,0 +1,252 @@
+# TSEShot + FSE2D, normalized into the Skill v0 artifact shape.
+#
+# The historical record is plans/tse/candidate.yaml and is UNCHANGED.  This is a second
+# representation of the same evidence, not a correction of it.
+#
+# Provenance convention, on every field the schema requires:
+#   [VERBATIM]      copied from the historical candidate.yaml
+#   [RECONSTRUCTED] assembled from prose in the tse/ evidence set; the source is named
+#   [NOT RECORDED]  the pilot did not capture this; stated as absent, never invented
+#
+#   python tools/module_mining/schema.py tools/module_mining/skill_v0/migrated/tse.yaml
+
+id: tse-fse-shot                      # [VERBATIM]
+name: TSEShot                         # [VERBATIM] -- working name; FSE2D shipped alongside
+
+capability:
+  summary: >                          # [VERBATIM]
+    One excitation and its train of refocused Cartesian readouts: the crusher window shared by
+    three axes, the echo spacing it implies, and the placement that keeps every echo at the
+    midpoint between its two refocusing pulses.
+  family: kernel                      # [VERBATIM]
+
+target:
+  layer: kernel + imaging             # [VERBATIM]
+  paths:                              # [VERBATIM]
+    - src/seqcraft/modules/kernel/tse_shot.py
+    - src/seqcraft/modules/imaging/fse_2d.py
+  composes:                           # [VERBATIM] from existing_seqcraft.reused
+    - Excitation
+    - Refocusing
+    - PhaseEncode
+    - CartesianLine
+    - spoiler
+  extended:                           # [VERBATIM] from target.extended
+    - src/seqcraft/modules/readout/cartesian_line.py   # area_after_echo_per_m,
+                                                       # echo_moment_imbalance_per_m
+  untouched:                          # [VERBATIM]
+    - Refocusing          # deliberately: the readout-axis lobe pair is sized by the readout
+    - the compiler, LogicBlock, every other module
+  not_created:                        # [RECONSTRUCTED] boundary_decision.md; the historical
+                                      # record stated these as open_questions answered "no"
+    - SE2D / HASTE classes -- echoes=1 is a conventional spin echo and a long train with
+      partial_fourier below 1 is HASTE; the fine scan found no physics in either that the
+      composition does not already express
+
+reuse_rationale: >                    # [RECONSTRUCTED] boundary_decision.md section 2
+  The split is by which layer has enough information to determine the value.  The shot owns the
+  three-axis crusher window and the echo placement, because no leaf can see all three axes at
+  once; the scan owns the table, the ordering and the dummy count, because those are policy.
+
+evidence:
+  - repo: bughht/SeqCraft             # [VERBATIM]
+    commit: 0260f8a
+    path: examples/fse_2d/01_build.ipynb
+    license: MIT
+    role: primary
+    executable: executed              # [RECONSTRUCTED] validation.reference_executable R1: yes
+    # promoted, stated throughout boundary_decision.md section 3
+    independence: >                   # [RECONSTRUCTED] this is the implementation being
+      The implementation under promotion.  Not an external witness at all -- agreement with it is
+      the definition of the acceptance claim, not corroboration of it.
+  - repo: imr-framework/pypulseq      # [VERBATIM]
+    commit: f2c582b
+    path: examples/scripts/write_tse.py
+    license: MIT
+    role: authoritative-external
+    executable: executed              # [RECONSTRUCTED] validation.reference_executable R2: yes
+    note: >                           # [VERBATIM]
+      The fork used earlier (m-a-x-i-m-z/pypulseq-matlab-like@afcd4bb) is byte-identical to this
+      file modulo the import name, so the earlier provenance caveat is closed and the earlier
+      measurements stand unchanged.
+    # "second Python witness to the same design", and the
+    # protocol table shows R2 and R3 matching on every row that
+    # is not matrix size
+    independence: >                   # [RECONSTRUCTED] reference_inventory.md line 62 calls it a
+      Shares a design with R3: identical refocusing duration, crusher fractions, ramp time, dummy
+      construction and echo-spacing derivation.  One witness with R3, not two.
+  - repo: pulseq/pulseq               # [VERBATIM]
+    commit: 2fd6ab6
+    path: matlab/demoSeq/writeTSE.m
+    license: MIT
+    role: authoritative-external
+    executable: documentary           # [RECONSTRUCTED] validation.reference_executable
+                                      # R3: not_attempted; comparison_report.md section 5 records
+                                      # that no .seq was ever produced
+    independence: >                   # [RECONSTRUCTED] same source as R2's judgement above
+      The MATLAB original of R2's design.  Contributes source-level evidence only; agreement
+      between R2 and R3 is one design agreeing with itself.
+  - repo: pulseq/pulseq               # [VERBATIM]
+    path: matlab/demoSeq/writeHASTE.m
+    role: deferred
+    executable: documentary
+    license: null                     # [NOT RECORDED] the historical record left this blank;
+                                      # not filled in here, since the repo-level MIT signal is a
+                                      # repository fact and this field is a file-level one
+    # deferred before any comparison was attempted
+    independence: >                   # [NOT RECORDED] never assessed -- the reference was
+      Not assessed.  Deferred before use; open_question "Is HASTE fully expressible as
+      configuration, against writeHASTE.m?" is still open.
+
+contract:                             # [VERBATIM] historical key was `physics`
+  intrinsic: >                        # [RECONSTRUCTED] findings.md section 8, invariant_table.md
+    Within one shot: the crusher window that satisfies three axes at once, the echo spacing that
+    window implies, and the placement that puts every echo at the midpoint between its two
+    refocusing centres.  None of these is determinable by any single leaf.
+  invariants:                         # [VERBATIM]
+    - equal gradient area either side of every refocusing effective centre (CPMG conjugation)
+    - kx = 0 and ky = requested line at the echo sample
+    - refocusing centres uniformly spaced within a shot
+    - every echo at the midpoint between its two refocusing centres
+    - first interval = half the echo spacing, from the excitation's effective centre
+    - crusher balance about the RF effective centre, not the plateau midpoint
+    - effective TE is set by the echo carrying the centre line
+    - z quiet while any ADC is open
+  varying_parameters:                 # [VERBATIM]
+    - echoes
+    - echo_spacing_s
+    - matrix / fov
+    - partial_fourier
+    - refocus flip and duration
+    - crusher cycles on slice and readout axes
+  modes: []                           # [RECONSTRUCTED] no mode set: echoes and partial_fourier
+                                      # are continuous parameters, not named physical modes.
+                                      # Rule A does not fire.
+  excluded_caller_policy:             # [VERBATIM] historical `physics.caller_policy`
+    - the phase-encode table (segments)
+    - 'ordering: linear / interleaved / centric'
+    - dummy shot count
+    - slice ordering
+    - TR
+  excluded_pulseq_artifacts:          # [RECONSTRUCTED] comparison_report.md line 120 records
+                                      # 185 vs 350 blocks and marks it "diagnostic only"
+    - block count -- 185 against 350 for identical physics, explicitly not an equivalence
+      criterion
+    - nesting shape -- the package nests a kernel where the notebook nests a method
+    - label usage -- none (R2) / autoLabel after the fact (R3) / LIN+SEG during build (R1)
+
+acceptance:                           # [RECONSTRUCTED] boundary_decision.md section 3.
+                                      # The historical record had no `acceptance` block; the
+                                      # criterion lived in the playbook and in prose.
+  claim: >
+    The extraction preserves the notebook's behaviour event for event: absolute times and content
+    hashes of every leaf event agree, with nesting and tags ignored.
+  criterion: event-identity
+  tolerance: exact -- absolute times and content hashes, at four turbo factors
+  defined_before_extraction: true     # [RECONSTRUCTED] the playbook fixed event identity as the
+                                      # promotion criterion before this pilot began; see
+                                      # fine_scan_playbook.md section 11
+  establishes:
+    - the extracted TSEShot and FSE2D emit exactly the notebook's events at echoes 1, 8, 16 and
+      at a 72-echo HASTE with partial_fourier 0.625
+    - the fine-scan sweep re-run against the extracted modules gives numbers identical to the
+      notebook's, 8/8 cases
+    - both Python implementations satisfy every TSE invariant (comparator L4)
+  does_not_establish:
+    - that either implementation matches the MATLAB reference -- writeTSE.m was never run and no
+      .seq was produced (comparison_report.md section 5)
+    - that the two Python references agree on event structure; they do not, at 185 against 350
+      blocks, and the comparison deliberately does not judge that
+    - that the ky tables agree -- a table difference is reported and not judged
+    - that the dummy-shot difference D3 is resolved; it is recorded and unmeasured
+    - anything about variable-flip TSE, which is out of scope
+
+validation:
+  generic_measurements:               # [VERBATIM] validation.levels_run
+    - L0 duration, ADC, RF, excitation and refocusing counts
+    - L2 waveform areas on exact knots
+    - 'L3 acquisition semantics: TE and k at the echo'
+  family_checks:
+    - L4 every TSE invariant, on both implementations
+  metamorphic: >                      # [VERBATIM] validation.metamorphic
+    3/3 pass, 1 cited from CI -- M1 is pinned by tests/modules/test_se_notebooks.py
+  parameter_sweep: 8/8 cases pass     # [VERBATIM] validation.parameter_sweep
+  emitted_inspection: []              # [NOT RECORDED] rule B did not exist during this pilot.
+                                      # contract.modes is empty so the rule does not fire, and
+                                      # nothing is back-filled here.
+  layers:                             # [RECONSTRUCTED] the ladder was defined after this pilot;
+                                      # these are the layers the recorded evidence actually covers
+    layer_1: GREEN                    # comparator L0/L2/L3/L4 + sweep + metamorphic
+    layer_2: GREEN                    # examples/fse_2d/01 and 03 both build and execute in CI
+    layer_3: GREEN                    # examples/fse_2d/02 simulates and reconstructs
+    layer_3_reason: >
+      Not deferred.  fse_2d/02 measures the echo envelope, point-spread width per ordering and
+      the ghost a scattered table makes, and closes with one representative image built from the
+      package path.
+  extraction:                         # [VERBATIM]
+    event_digest_vs_notebook: identical at echoes 1, 8, 16 and 72 (HASTE)
+    sweep_vs_notebook: 8/8, numbers identical
+  package_suite: 902 passed / 19 skipped (was 857)   # [VERBATIM]
+  compiler_changes: none              # [VERBATIM]
+  comparator_corrections:             # [VERBATIM]
+    - the echo is the interpolated kx zero crossing, not the nearest sample
+    - the equal-area rule about a refocusing pulse does not apply to the phase axis
+
+dependency_impact:
+  # [RECONSTRUCTED] Rule D did not exist during this pilot and no map was made.  Consumers below
+  # are found by searching for CONSTRUCTION of CartesianLine in the tree as it stands on this
+  # branch, not for the class name: epi_2d.py, excitation.py, refocusing.py and _support.py
+  # mention it only in docstrings.
+  #
+  # NOTE ON SCOPE: this is the blast radius of the echo-geometry ADDITION
+  # (area_after_echo_per_m, echo_moment_imbalance_per_m), which added read-only properties and
+  # changed no existing behaviour.  That is why every classification below is NO_BEHAVIOR_CHANGE
+  # and why the historical pilot got away without the map.
+  - consumer: src/seqcraft/modules/kernel/gre_2d_tr.py
+    relation: direct
+    classification: NO_BEHAVIOR_CHANGE
+    note: new read-only properties; no existing call path altered
+  - consumer: src/seqcraft/modules/kernel/tse_shot.py
+    relation: direct
+    classification: INTENTIONAL_BEHAVIOR_CHANGE
+    note: the candidate itself, and the reason the properties were added
+  - consumer: src/seqcraft/modules/kernel/gre_3d_tr.py
+    relation: direct
+    classification: NO_BEHAVIOR_CHANGE
+    note: >
+      Did not exist at the time of this pilot.  Listed because the map is being drawn now, on
+      the current tree, and pretending otherwise would misrepresent what it covers.
+  - consumer: src/seqcraft/modules/readout/radial_readout.py
+    relation: direct
+    classification: NO_BEHAVIOR_CHANGE
+    note: did not exist at the time of this pilot; see above
+  - consumer: src/seqcraft/modules/imaging/gre_2d.py
+    relation: transitive via GRE2DTR
+    classification: NO_BEHAVIOR_CHANGE
+  - consumer: src/seqcraft/modules/imaging/fse_2d.py
+    relation: transitive via TSEShot
+    classification: INTENTIONAL_BEHAVIOR_CHANGE
+    note: shipped as part of this candidate
+  - consumer: examples/ -- every build notebook composing CartesianLine
+    relation: notebooks
+    classification: NO_BEHAVIOR_CHANGE
+    note: all nine build notebooks executed clean at the time (boundary_decision.md section 3)
+
+status: NEW_KERNEL + PROMOTE_NOTEBOOK   # [VERBATIM]
+traffic_light: GREEN                    # [VERBATIM]
+reason_code: null
+decided_by: human                       # [VERBATIM] "decided by human review"
+superseded_status:                      # [VERBATIM] the historical record's own note
+  - status: MORE_EVIDENCE_REQUIRED
+    traffic_light: YELLOW
+    reason_code: PHYSICAL_BOUNDARY_UNCLEAR   # [RECONSTRUCTED] the catalogue did not exist; the
+                                             # historical note says the physics was settled and
+                                             # the boundary was not, which is this code exactly
+    note: >
+      Kept deliberately.  It is the more instructive half of the record: it shows the physics was
+      complete long before the ownership question was.
+open_questions:                         # [VERBATIM]
+  - Is HASTE fully expressible as configuration, against writeHASTE.m?
+  - Does the three-axis crusher-window coupling have a home, given GRE2DTR does the same thing?
+  - E4, the MATLAB path -- writeTSE.m has never been run
+  - D3, the dummy-shot difference, is recorded and unmeasured

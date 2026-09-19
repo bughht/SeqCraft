@@ -23,11 +23,20 @@ the skill does not repeat it.
   reference/outcomes.md       GREEN, NO_NEW_MODULE, six YELLOWs, three REDs
   templates/candidate.yaml    fails validation as shipped, on purpose
 
+sources.yaml                  the scan-source registry: every corpus, its role, its licence
+
 skill_v0/
   conformance_report.md       the skill run backwards over the three pilots
   generalization_report.md    what generalised, what stayed family-specific, what needs a human
-  radial_migrated.yaml        one pilot re-expressed in the new shape; validates clean
+  coarse_scan_mrzero.md       the coarse pass with MRzero-Core added
+  migrated/README.md          historical field -> normalized field, and what could not be carried
+  migrated/{tse,radial,gre3d}.yaml
+                              all three pilots re-expressed in the current shape; all validate
 ```
+
+The historical records in `plans/*/candidate.yaml` stay **unchanged**, and the conformance errors
+they produce are not defects in any Module. Both representations are kept: the historical one is
+what the workflow captured at the time, the migrated one is how the same evidence reads now.
 
 `schema.py` checks a candidate record:
 
