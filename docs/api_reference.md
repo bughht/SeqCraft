@@ -987,6 +987,7 @@ Re-exported **flat**, so no import path names a folder:
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
 | `GRE2D` | the complete scan |
+| `GRE3DTR` | one repetition of a 3D Cartesian gradient echo — a sibling of `GRE2DTR`, owning the z axis where a slab's rephasing and a partition's encoding become one gradient |
 | `TSEShot` | one excitation and its train of refocused Cartesian readouts — the crusher window three axes share, and the moment balance around every refocusing pulse |
 | `FSE2D` | the complete turbo-spin-echo scan: shots, and which lines each one acquires |
 
@@ -1309,6 +1310,61 @@ equal-increment or randomised, and the excitation, spoiling and TR around them.
 `tests/modules/test_radial_readout.py` asserts the trajectory, and the rotation-equivariance test
 there is the same one that passed against the official PyPulseq reference before this module
 existed.
+
+
+## A 3D repetition, and the one axis that is not a 2D one
+
+`GRE3DTR` is a **sibling** of `GRE2DTR`, not a wrapper around it. A kernel that contained one
+would have to reach back inside decisions that kernel has already made — its winder timing, its
+TE, its rewinding — to change the z axis, which is the reverse nesting this library avoids. Nor
+is a slice-selective 2D acquisition the centre partition of a 3D slab.
+
+```python
+tr = sc.modules.GRE3DTR(opts=opts, fov_mm=(200.0, 200.0, 160.0), matrix=(64, 64, 64))
+scan = sc.LogicBlock()
+table = [(line, partition) for partition in range(0, 64, 16) for line in range(0, 64, 16)]
+for n, (line, partition) in enumerate(table):        # the ordering is the caller's
+    scan.add(n * tr.tr_s, tr(line=line, partition=partition))
+```
+
+On x and y this is a 2D repetition. On z there are two cases, and `slab_thickness_mm` chooses
+between them — a physical quantity rather than a `slab_selective=True` flag, mirroring
+`Excitation(thickness_mm=…)`:
+
+| | |
+|---|---|
+| `slab_thickness_mm=None` | non-selective, which is what every official Pulseq 3D reference does. The z axis carries a partition encode and nothing else |
+| `slab_thickness_mm=…` | slab-selective. The rephasing the slab implies and the partition encoding are two moments on **one axis in one window**, and the kernel solves `A_z(p) = A_slab + A_partition(p)` as a single gradient |
+
+`slab_thickness_mm` is **independent of `fov_mm[2]` in both directions** — the only requirement is
+that it is positive. A slab smaller than the encoded FOV is a calibration or inner-volume
+acquisition; a larger one buys transition band and alias protection without changing the
+reconstructed geometry, and a conventional full-volume protocol usually wants at least the FOV.
+
+**Both z terms are signed, so the limiting partition is a result rather than an index.**
+
+```text
+A_slab = -120   partitions -200 | 0 | +200   ->  A_z  -320 | -120 |  +80   low edge limits
+A_slab = +120                                ->  A_z   -80 | +120 | +320   high edge limits
+```
+
+Every partition is enumerated after the signed combination; `limiting_partition` reports which one
+won. One winder duration then serves them all, because a per-partition window would make TE a
+function of `kz` — a contrast gradient across the volume that no k-space check would show.
+
+When the worst partition needs longer than x and y do, **the window is lengthened**. That is
+design, not legalization: the kernel holds `opts`, so "this moment needs 420 µs rather than 300"
+is its question. With `te_s=None` the result is the shortest legal design; an explicit request
+below it raises, naming the partition responsible and its combined moment.
+
+**The slab rephaser is realised once.** `Excitation.rephaser_area_per_m` states the requirement
+and `exc(rephase=False)` declines to realise it, which is how the kernel takes it over — the same
+split `CartesianLine(prephase=False)` and `area_to_echo_per_m` already draw for a readout.
+`rephase=False` does **not** mean the pulse needs no rephasing.
+
+Spoiling defaults to `('x',)` here, where `GRE2DTR` uses `('x', 'z')`: in 3D the z axis already
+has the partition rewinder in the tail, and two gradients each designed at the full slew limit do
+not sum to a legal one. `writeGradientEcho3D.m` spoils on x for the same reason.
 
 ## The spin-echo train, and which layer owns which number
 
@@ -1646,6 +1702,7 @@ at import.
 | `GRADIENT_KINDS` | `design.events` | constant |
 | `GRE2D` | `modules` | class |
 | `GRE2DTR` | `modules` | class |
+| `GRE3DTR` | `modules` | class |
 | `IRPrep` | `modules` | class |
 | `HANDLED_KINDS` | `design.events` | constant |
 | `HardwareLimitError` | `compiler.errors` | exception |

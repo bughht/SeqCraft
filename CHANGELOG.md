@@ -1,5 +1,62 @@
 # Changelog
 
+## Unreleased — a 3D repetition, and the axis where two moments become one gradient
+
+`GRE3DTR` (`kernel/`), a **sibling** of `GRE2DTR` rather than a wrapper around it: a kernel that
+contained one would have to reach back inside decisions that kernel has already made — its winder,
+its TE, its rewinding — to change the z axis. Nor is a slice-selective 2D acquisition the centre
+partition of a 3D slab. Both compose the same leaves, independently.
+
+On x and y a 3D repetition is a 2D one. On z it is not, and `slab_thickness_mm` picks the case —
+a physical quantity rather than a `slab_selective=True` flag, mirroring `Excitation`:
+
+| | |
+|---|---|
+| `None` | non-selective, as every official Pulseq 3D reference is. The z axis carries a partition encode and nothing else |
+| a thickness | slab-selective. The rephasing the slab implies and the partition encoding are two moments on **one axis in one window**, solved as `A_z(p) = A_slab + A_partition(p)` and realised as a single gradient |
+
+Played in sequence those two cost two windows of echo time; `fmrifrey/lps` does exactly that and
+its own `te_min` pays for both. Played as one they cost one. The non-selective case is the same
+expression with `A_slab = 0`, not a second code path.
+
+**Both terms are signed, so the limiting partition is a result and never an index.** With
+`A_slab = -120` and partitions `-200 | 0 | +200` the low edge limits at `-320`; reverse the slab
+gradient and the high edge limits at `+320`. Every partition is enumerated *after* the signed
+combination — `_limiting_index` is a pure function so that a test can hand it a slab term of
+either sign — and nothing infers sign from array order, which the Pulseq 3D demo would punish
+anyway: it reverses its z lattice relative to y for a vendor reconstruction.
+
+**One winder duration serves every partition.** Letting each take its own shortest would make TE a
+function of `kz` — a contrast gradient across the volume that no k-space check shows and no
+reconstruction expects.
+
+**When the worst partition needs longer than x and y do, the window lengthens.** That is design,
+not legalization: the kernel holds `opts`, so how long a moment needs is its question, while the
+compiler may never rescue an infeasible module by stretching a gradient or moving a readout. With
+`te_s=None` the result is the shortest legal design; an explicit request below it raises, naming
+the partition responsible and its combined moment.
+
+### `Excitation` states its rephasing requirement, and can decline to realise it
+
+`rephaser_area_per_m` is the signed moment that compensates a selective pulse, integrated from the
+RF's effective centre — the same thing `CartesianLine.area_to_echo_per_m` is for a readout, and it
+agrees with the rephaser the factory designs to 6e-14. `build(rephase=False)` omits that gradient
+so a caller can take the realisation over; it does **not** mean the pulse needs no rephasing, and
+the docstring says so.
+
+Together they are what stops the slab term being applied twice. **Default behaviour is unchanged**
+— `rephase=True` — and a test pins the default events by content hash.
+
+Validated against `pulseq/pulseq`'s shipped `matlab/demoSeq/gre3d.seq`, which needs no MATLAB run:
+Δk agrees on all three axes at 5.000 / 5.000 / 6.250 1/m, and the encoded index of every probed
+line and partition lands where asked. Compared on lattice and semantic centre rather than sample
+position, because the reference prephases with `-gx.area/2` and has no sample at the centre of
+k-space where `CartesianLine` puts one.
+
+Spoiling defaults to `('x',)` where `GRE2DTR` uses `('x', 'z')`: the z axis already carries the
+partition rewinder in the tail, and two gradients each designed at the full slew limit do not sum
+to a legal one. `writeGradientEcho3D.m` spoils on x for the same reason.
+
 ## Unreleased — an ADC sample count the receiver can actually digitise
 
 `CartesianLine` now refuses a sampling geometry whose ADC sample count is not a multiple of
