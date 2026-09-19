@@ -1,0 +1,207 @@
+# RadialReadout, re-expressed in the Skill v0 artifact shape.
+#
+# This is a MIGRATION EXERCISE, not a replacement.  The historical record at
+# plans/radial/candidate.yaml stays exactly as it was written -- rewriting it would destroy the
+# evidence that the schema was derived from the pilots rather than imposed on them.
+#
+# It exists to answer one question: can the schema carry a real candidate without losing anything
+# the pilot actually knew?  Every value below is copied from the radial evidence set; nothing was
+# invented to make the record validate.  Three things had to be *moved* rather than copied, and
+# those are the migration's findings -- see conformance_report.md section 3.
+#
+#   python tools/module_mining/schema.py tools/module_mining/skill_v0/radial_migrated.yaml
+
+id: radial-readout
+name: RadialReadout
+
+capability:
+  summary: >
+    One radial spoke: prephaser, readout gradient and ADC, oriented in the x-y plane, with the
+    trajectory geometry a caller would otherwise reverse-engineer from the waveform.
+  family: readout
+
+target:
+  layer: readout
+  path: src/seqcraft/modules/readout/radial_readout.py
+  composes:
+    - CartesianLine         # a spoke is a line pointing somewhere other than along an axis
+  extended:
+    # FINDING: the historical record did not declare this, though the work changed the file.
+    # It was recorded under `resolved_during_review` as a narrative instead, so rule D never
+    # fired.  Declaring it here is what produces the dependency_impact block below.
+    - src/seqcraft/modules/readout/cartesian_line.py   # adc_samples_divisor refusal
+  not_created:
+    - RadialGRETR           # radial GRE is composition today, not a shared cross-leaf solve
+    - seqcraft/trajectory/  # revisit only if Spiral needs the same numerical contract
+  untouched:
+    - Refocusing, the compiler, LogicBlock, every other module
+
+reuse_rationale: >
+  The prephaser, the dwell arithmetic, the ADC and -- the hard one -- which sample carries k = 0
+  are the same problem CartesianLine already solves and already tests.  What is genuinely new is
+  the rotation, the trajectory geometry a caller needs, and a contract stated as a spoke.  So this
+  is one leaf composing another, not a second source of truth for one piece of arithmetic.
+
+evidence:
+  - repo: imr-framework/pypulseq
+    commit: f2c582b
+    path: examples/scripts/write_radial_gre.py
+    license: MIT
+    role: primary
+    executable: executed
+    independence: >
+      The reference the candidate is measured against.  Independent of OpenMRF; the MATLAB
+      writeRadialGradientEcho.m is a port of this design and does not corroborate it.
+  - repo: imr-framework/pypulseq
+    commit: f2c582b
+    path: examples/scripts/write_ute.py
+    license: MIT
+    role: supporting
+    executable: executed
+    covers: full-spoke vs centre-out
+    independence: >
+      Same repository and house style as the primary; one witness with it, not a second.
+  - repo: pulseq/pulseq
+    commit: 2fd6ab6
+    path: matlab/demoSeq/writeRadialGradientEcho.m
+    license: MIT
+    role: authoritative-external
+    executable: documentary
+    independence: >
+      The same design as write_radial_gre.py, ported.  NOT independent evidence -- agreement
+      between these two is one design agreeing with itself.
+  - repo: pulseq/pulseq
+    commit: 2fd6ab6
+    path: matlab/demoSeq/writeFastRadialGradientEcho.m
+    license: MIT
+    role: independent-formulation
+    executable: documentary
+    independence: >
+      A different construction of the same trajectory; genuinely a second witness to the
+      geometry, which is why the invariants were stated against geometry and not against events.
+  - repo: OpenMRF/openmrf-core-matlab
+    commit: fd03604
+    path: include_pulseq_toolbox/src_readouts/RAD/
+    license: MIT for original OpenMRF work
+    role: independent-implementation
+    executable: documentary
+    independence: >
+      Developed separately from both Pulseq lines.  Its readout compiles a probe sequence and
+      reads the trajectory back to find its own centre sample -- evidence that this geometry is
+      hard enough to be worth owning, from a source with no shared ancestry.
+
+contract:
+  intrinsic: >
+    Given field of view, matrix, dwell and angle, the module determines every event it emits.
+    Nothing above it is consulted, which is what makes it a leaf.
+  invariants:
+    - a sample lands on k = 0, and the module says which one
+    - the samples lie on a straight line through the origin
+    - the sample spacing is uniform along the spoke, and equal across spokes
+    - the spoke points where it was asked to
+    - the spoke stays in plane
+    - the spoke at phi is the spoke at 0, rotated
+  varying_parameters:
+    - angle_rad (per call)
+    - partial_fourier, 0.5 (centre-out) .. 1.0 (full spoke)
+    - fov_mm, matrix, bandwidth_hz_px or dwell_s
+  modes: []                 # partial_fourier is continuous, not a mode set; rule A does not fire
+  excluded_caller_policy:
+    - which angles are acquired, and in what order
+    - golden-angle / equal-increment / randomised schedules
+    - number of spokes, dummies, view sharing
+    - excitation, spoiling, TR
+  excluded_pulseq_artifacts:
+    - block count and block splits
+    - whether the prephaser is a separate block or merged
+    - label usage
+
+acceptance:
+  claim: >
+    At matched geometry the candidate's sampled trajectory agrees with the official reference's,
+    sample for sample, and the family invariants hold on both.
+  criterion: trajectory-agreement
+  tolerance: max |dk| < 1e-9 1/m; rotation equivariance < 1e-12 1/m
+  defined_before_extraction: true       # the rotation test passed on the reference first
+  establishes:
+    - the spoke leaf emits the correct waveform, ADC and trajectory semantics
+    - the trajectory matches the official reference at matched geometry to 4.96e-12 1/m
+    - the geometry is rotation-equivariant, shown on the reference before this module existed
+  does_not_establish:
+    - that any image has been reconstructed from a SeqCraft radial acquisition
+    - that a non-Cartesian reconstruction path exists or is trusted
+    - anything about 3D radial, ramp sampling or rot3D, all out of scope
+    - event-for-event identity with the reference -- two legitimate constructions share no events
+
+validation:
+  generic_measurements:
+    - k_adc trajectory from the compiled sequence
+    - gradient moment integration on exact knots
+  family_checks:
+    - the six invariants above, at the tolerances in invariant_table.md
+  metamorphic:
+    - rotation equivariance, ~1e-14 1/m, defined against the reference before the candidate
+  parameter_sweep: >
+    8/8 cases pass every invariant, spanning two matrices, two fields of view, three dwell times
+    and the full partial-Fourier range.
+  emitted_inspection: []      # no promoted mode set; rule B does not fire for this candidate
+  against_reference:
+    protocol: matched geometry, 260 mm, 64 samples, 20 us dwell, 8 spokes
+    max_k_error_per_m: 4.96e-12
+  layers:
+    layer_1: GREEN
+    layer_2: GREEN
+    layer_3: DEFERRED
+    layer_3_reason: >
+      The validation oracle has not been independently promoted.  A radial Layer 3 needs a
+      non-Cartesian reconstruction whose own conventions -- NUFFT coordinates, density
+      compensation, weighting, trajectory timing -- each need review before an image it produces
+      is evidence about anything.  PR #23 holds such infrastructure but it is an evidence corpus,
+      not accepted architecture.  Picked up during Spiral supervised calibration, where Radial
+      becomes the second consumer that makes "which of this is trajectory-agnostic" answerable.
+  package_suite: 938 passed / 19 skipped; ruff, doctests, mypy subset, api reference, notebooks
+  compiler_changes: none
+
+dependency_impact:
+  # What rule D would have produced had it existed.  Consumers found by searching for
+  # CONSTRUCTION, not for the class name: epi_2d.py, excitation.py, refocusing.py and
+  # _support.py all mention CartesianLine in docstrings and compose nothing from it.
+  - consumer: src/seqcraft/modules/kernel/gre_2d_tr.py
+    relation: direct
+    classification: NEW_EARLY_REFUSAL_FOR_PREVIOUSLY_INVALID_INPUT
+    note: >
+      A sample count that is not a multiple of adc_samples_divisor now fails at construction
+      instead of at the compiler.  No previously legal configuration changes behaviour.
+  - consumer: src/seqcraft/modules/kernel/tse_shot.py
+    relation: direct
+    classification: NEW_EARLY_REFUSAL_FOR_PREVIOUSLY_INVALID_INPUT
+    note: >
+      examples/fse_2d runs HASTE at partial_fourier 0.625 precisely because 0.6 of 128 is 77 --
+      a fact the notebook stated in prose and nothing enforced until now.
+  - consumer: src/seqcraft/modules/kernel/gre_3d_tr.py
+    relation: direct
+    classification: NEW_EARLY_REFUSAL_FOR_PREVIOUSLY_INVALID_INPUT
+  - consumer: src/seqcraft/modules/readout/radial_readout.py
+    relation: direct
+    classification: INTENTIONAL_BEHAVIOR_CHANGE
+    note: >
+      The candidate itself; it inherits the refusal by composing the line rather than repeating
+      the rule, which is the reason the check went into CartesianLine and not here.
+  - consumer: src/seqcraft/modules/imaging/gre_2d.py
+    relation: transitive via GRE2DTR
+    classification: NO_BEHAVIOR_CHANGE
+  - consumer: src/seqcraft/modules/imaging/fse_2d.py
+    relation: transitive via TSEShot
+    classification: NO_BEHAVIOR_CHANGE
+  - consumer: examples/ -- gre_2d, se_2d, fse_2d, mprage_2d, mp2rage_2d, megre_2d, epi notebooks
+    relation: notebooks
+    classification: NO_BEHAVIOR_CHANGE
+    note: every build notebook re-executes in the smoke suite; all pass.
+
+status: NEW_LEAF
+traffic_light: GREEN
+reason_code: null
+decided_by: human
+open_questions:
+  - Does a radial kernel appear once UTE or radial bSSFP is attempted?
+  - Does the trajectory geometry contract generalise once Spiral needs the same numbers?
