@@ -132,6 +132,15 @@ encoding this module's behaviour. It now passes against the package at ~1e-14 /m
 sweep cases spanning two matrices, two fields of view, three dwell times and the full
 partial-Fourier range.
 
+[`examples/radial_gre/01_build.ipynb`](examples/radial_gre/01_build.ipynb) shows it, and shows the
+paragraph above rather than asserting it: the repetition is assembled in the notebook out of
+`Excitation`, the spoke, a spoiler and TR fill, and equal-increment and golden-angle schedules are
+two list comprehensions over one readout instance. It is **build and trajectory visualisation
+only**. A radial image needs a non-Cartesian reconstruction and the example suite has none to
+reuse, so writing one to complete a `01`/`02` pair would be new reconstruction infrastructure
+justified by a directory listing; the geometric claims are measured on the compiled trajectory
+instead, and the agreement with the official reference above is the stronger evidence anyway.
+
 ## Unreleased — a turbo spin echo, split where the information is
 
 `TSEShot` (`kernel/`) and `FSE2D` (`imaging/`), extracted from
