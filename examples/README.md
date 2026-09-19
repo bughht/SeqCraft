@@ -56,6 +56,18 @@ cannot drift silently.
 3D acquisition is a kernel plus the ordering you would have written anyway, an imaging module
 would wrap the ordering rather than own any physics.
 
+The four `.seq` files under `gre_3d/seq/` are **two pairs answering two questions**, not four
+sequence variants:
+
+| | question | files |
+|---|---|---|
+| `01` | which **excitation mode**? | `gre_3d_nonselective.seq`, `gre_3d_slab.seq` |
+| `02` | within the slab-selective mode, how is the **z moment realised**? | `gre_3d_slab_combined.seq`, `gre_3d_slab_sequential.seq` |
+
+Both files in the second pair are slab-selective, and `gre_3d_slab_combined.seq` is the same
+physics as `01`'s `gre_3d_slab.seq` — the production combined-z path. It is written separately
+only so the comparison has both halves at one common TR.
+
 ## `se_2d/` and `fse_2d/`
 
 | | |
