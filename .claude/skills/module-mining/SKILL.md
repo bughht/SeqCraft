@@ -258,9 +258,54 @@ criterion, a stop outcome never exercised, a licence or independence shape that 
 `Evidence` record. Otherwise its evidence lives in `plans/<candidate>/` like any other candidate's
 and the skill does not grow.
 
-Fixture growth is curated, not linear with Module count. A calibration suite that accumulates one
-entry per conversion stops being a calibration suite and becomes a second copy of the plans
-directory.
+> **The skill grows by new reasoning classes and failure modes, not by the number of sequences
+> processed.**
+
+A calibration suite that accumulates one entry per conversion stops being a calibration suite and
+becomes a second copy of the plans directory.
+
+### What may and may not be written here
+
+This file holds **generic** workflow, evidence, ownership and stop conditions. Rules of this shape
+belong here:
+
+```text
+if no independent physical contract exists
+    -> NO_NEW_MODULE / RED - WRAPPER_ONLY may be appropriate
+if the physical boundary is unresolved
+    -> YELLOW, rather than a forced extraction
+if existing Modules already express the physics
+    -> distinguish composition coverage from a missing abstraction
+if evidence is non-independent or the oracle is untrusted
+    -> do not promote merely because outputs agree
+```
+
+Mappings of this shape do **not**, and must be removed on sight:
+
+```text
+<family> -> reject
+<family> -> defer
+<family> -> NEW_KERNEL
+```
+
+A settled pilot may be cited as a **worked example** of a reasoning class — that is what the
+fixtures are for. A family that has not yet had its fine scan may not have an expected verdict
+recorded anywhere the skill reads.
+
+### The prospective-run guardrail
+
+> **Candidate-specific expected outcomes from coarse scans must not be encoded into Skill decision
+> logic before a prospective run. The Skill may receive the evidence corpus and the open
+> questions, but not the expected terminal classification.**
+
+A coarse scan legitimately forms expectations; that is its job. Those expectations live in the
+coarse-scan report, and a prospective run must be able to contradict them. A run that begins
+knowing the answer is a rehearsal, and it demonstrates nothing about refusal.
+
+This also grades the evidential value of a result. A run that reaches `NO_NEW_MODULE` on a family
+whose coarse scan already expected it is a **regression control** — useful for checking the
+workflow still stops, worthless as proof that it can. Only a stop reached on the run's own
+evidence, where the outcome was genuinely open beforehand, demonstrates refusal capability.
 
 ## Standing constraints
 

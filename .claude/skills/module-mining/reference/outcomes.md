@@ -38,9 +38,12 @@ Two of these are not verdicts and must not be read as closing a family:
   class that no other notebook needs is doing its job.
 
 `PRIMITIVE_COMPOSITION_COVERED` is the one that keeps a batch scan honest: **a sequence can be
-fundamental and common without deserving its own Module.** FID is the canonical instance —
-excitation, a delay, an ADC, and no cross-component solve for a class to own. A scan that turns
-every textbook sequence name into a class has stopped measuring anything.
+fundamental and common without deserving its own Module.** The test is whether there is any
+cross-component solve for a class to own — an excitation, a delay and an ADC composed in order is
+not one. A scan that turns every textbook sequence name into a class has stopped measuring
+anything.
+
+Which families currently sit here is **not** recorded in this file. See the coarse scan.
 
 ---
 

@@ -5,8 +5,13 @@
 **Date:** 2026-09-19. **No extraction performed, no Module proposed for implementation.**
 
 This scan re-runs the coarse pass over the registry in `tools/module_mining/sources.yaml` with the
-new corpus included. It reports families, duplicates and likely stop cases. It does not decide
-anything.
+new corpus included. It reports families, coverage and candidates. It does not decide anything.
+
+> **The expectations in this file must not be copied into skill logic.** A coarse scan forms
+> expectations — that is its job — but a prospective fine scan has to be able to contradict them.
+> Everything here is a candidate-specific conclusion, and candidate-specific conclusions live in
+> candidate records, never in `SKILL.md` or its reference files. See the prospective-run guardrail
+> in `SKILL.md`.
 
 ---
 
@@ -99,8 +104,11 @@ classification, and the reason the classification exists: **a sequence can be fu
 common without deserving its own Module.** Without that category, a batch scan turns every
 textbook sequence name into a class.
 
-It is also a useful future calibration case — a prospective run on FID should reach
-`NO_NEW_MODULE` or `RED - WRAPPER_ONLY`, and neither of those outcomes has ever been exercised.
+It is also a useful calibration case, but of a **limited kind, and the limit matters**. Because
+this scan has already formed the expectation, a later run that returns `NO_NEW_MODULE` for FID is
+a **known-negative regression control**: it checks the workflow still stops. It does **not**
+demonstrate prospective refusal capability, because the answer was written down first. Only a stop
+reached on a family whose outcome was genuinely open beforehand does that.
 
 ### 4.2 SE / CPMG — a degenerate case, **not** a shipped duplicate
 

@@ -197,5 +197,7 @@ proposal to widen an m0 or m1 verification tolerance must characterise the numer
 something other than the candidate that wants the tolerance widened. Otherwise the instrument is
 being adjusted until it agrees with the thing it is supposed to be measuring.
 
-This will be live for Spiral: PR #23 proposes changes to m0/m1 verification tolerances. Treat that
-PR as an evidence corpus, not a specification, and run the escalation from the top.
+This becomes live whenever a candidate arrives alongside an existing branch or PR that already
+proposes compiler or tolerance changes. Treat such a branch as an **evidence corpus, not a
+specification**, and run the escalation from the top regardless of how complete the proposed fix
+looks. The roadmap records which candidates this is expected to apply to; this file does not.
