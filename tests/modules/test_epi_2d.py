@@ -742,3 +742,183 @@ def test_the_carrier_phase_moves_nothing_but_the_phase(epi_opts) -> None:
 
     assert spoiled['k_adc'] == pytest.approx(plain['k_adc'], abs=1e-9)
     assert spoiled['t_adc'] == pytest.approx(plain['t_adc'], abs=1e-12)
+
+
+# ------------------------------------------------------------ the interleave, and its one timing
+# `shots` is the only argument here that changes *when* a train plays rather than what it plays,
+# so it is measured the way the ghost would be seen: the acquisition time of every ky line of a
+# whole interleaved plan, assembled from the shots that carry them and then asked whether it is a
+# straight line.  SHOT_DWELL_S rather than DWELL_S because the reference 3.5 us dwell puts the
+# echo spacing on an odd number of gradient rasters, which no interleave above one can divide --
+# the refusal below is that protocol, and this one is its fix.
+SHOT_DWELL_S = 4.5e-6
+SHOTS = 4
+
+
+def _ky_times(epi: sc.modules.EPI2D, shots: int) -> np.ndarray:
+    """Seconds from each shot's excitation to the echo carrying `ky`, indexed by ``ky``."""
+    times = np.empty(MATRIX[1])
+    for segment in range(shots):
+        for echo, line in enumerate(range(segment, MATRIX[1], shots)):
+            times[line] = epi.time_to_echo(echo, segment=segment)
+    return times
+
+
+def test_identical_shot_timing_is_a_staircase_along_ky(epi_opts) -> None:
+    """
+    The artefact, before the fix: ``shots=1`` gives four ky lines one timestamp and then jumps.
+
+    This is the *old* behaviour and it stays reachable, because blocked segmentation has no
+    alternative to it.  What it costs is written here rather than implied: the acquisition time is
+    a function of the echo index alone, so it steps with period `shots` along ``ky`` -- and a
+    period-S modulation of ``ky`` is a replica of the object at ``Ny/S``.
+    """
+    epi = _build(epi_opts, dwell_s=SHOT_DWELL_S, blip_lines=SHOTS)
+    steps = np.diff(_ky_times(epi, SHOTS))
+
+    assert epi.shot_delay_s == 0.0
+    assert epi.shot_offset_s(3) == 0.0
+    # Within each group of `SHOTS` neighbouring ky lines the echoes are simultaneous, and every
+    # `SHOTS`-th step carries a whole echo spacing.
+    assert np.count_nonzero(np.abs(steps) < 1e-12) == len(steps) - (MATRIX[1] // SHOTS - 1)
+    assert steps.max() > 0.9 * epi.echo_spacing_s
+
+
+def test_the_shot_delay_makes_the_acquisition_time_linear_in_ky(epi_opts) -> None:
+    """
+    The fix, and the only thing it has to achieve: ``t(ky)`` affine, so off-resonance is a shift.
+
+    A phase linear in ``ky`` displaces the object along the blip axis and does nothing else, which
+    is the same distortion a single-shot train has at `shots` times the depth.  The tolerance is
+    one dwell because the residual is the odd/even echo position -- ``echo_sample`` differs by a
+    sample between the two polarities -- which is the N/2 term the navigators exist for and is
+    present in a single shot too.  It is not a function of the segment, which is what makes it a
+    different artefact from the one this test is about.
+    """
+    epi = _build(epi_opts, dwell_s=SHOT_DWELL_S, blip_lines=SHOTS, shots=SHOTS)
+    times = _ky_times(epi, SHOTS)
+    ky = np.arange(MATRIX[1])
+    residual = times - np.polyval(np.polyfit(ky, times, 1), ky)
+
+    assert epi.shot_delay_s == pytest.approx(epi.echo_spacing_s / SHOTS, abs=1e-15)
+    assert np.abs(residual).max() <= epi.dwell_s
+    # The slope is the echo spacing shared out over the interleave, which is the distortion the
+    # segmentation was bought for: S times shallower than the single-shot train's.
+    assert np.diff(times).mean() == pytest.approx(epi.echo_spacing_s / SHOTS, abs=epi.dwell_s)
+
+
+def test_the_shot_delay_lands_on_the_block_raster(epi_opts) -> None:
+    """Exactly, for every shot -- an offset the compiler had to snap would leave the staircase."""
+    epi = _build(epi_opts, dwell_s=SHOT_DWELL_S, blip_lines=SHOTS, shots=SHOTS)
+    raster_s = float(epi_opts.block_duration_raster)
+
+    for segment in range(SHOTS):
+        offset_s = epi.shot_offset_s(segment)
+        assert offset_s == pytest.approx(segment * epi.echo_spacing_s / SHOTS, abs=1e-15)
+        assert offset_s / raster_s == pytest.approx(round(offset_s / raster_s), abs=1e-9)
+
+
+def test_every_shot_of_an_interleave_occupies_the_same_span(epi_opts) -> None:
+    """
+    The delay moves the train inside the block; it does not move the block.
+
+    Which is what keeps `duration` a property of the table rather than of the segment, so that the
+    TR arithmetic of every composite above this one stays a constant.  The tail delay is the
+    complement of the head one, and the pair costs ``(shots - 1) / shots`` of an echo spacing.
+    """
+    epi = _build(epi_opts, dwell_s=SHOT_DWELL_S, blip_lines=SHOTS, shots=SHOTS)
+    plain = _build(epi_opts, dwell_s=SHOT_DWELL_S, blip_lines=SHOTS)
+    spans = {epi(lines=range(s, MATRIX[1], SHOTS), segment=s).duration for s in range(SHOTS)}
+
+    assert len(spans) == 1
+    grown_s = spans.pop() - plain(lines=range(0, MATRIX[1], SHOTS)).duration
+    assert grown_s == pytest.approx((SHOTS - 1) * epi.echo_spacing_s / SHOTS, abs=1e-12)
+
+
+def test_only_the_shot_carrying_the_centre_has_an_echo_time(epi_opts) -> None:
+    """
+    Why the delay does not disturb TE: three of the four shots never acquire ``center_line``.
+
+    So there is no spread of echo times across shots to preserve -- there is one echo time, it
+    belongs to the acquisition, and a composite places its requested TE against the segment that
+    carries the centre.  That segment's own offset is part of the answer, which is the whole
+    reason `time_to_center_line` takes one.
+    """
+    epi = _build(epi_opts, dwell_s=SHOT_DWELL_S, blip_lines=SHOTS, shots=SHOTS)
+    carrying = [s for s in range(SHOTS) if epi.center_line in range(s, MATRIX[1], SHOTS)]
+
+    assert len(carrying) == 1
+    segment = carrying[0]
+    table = range(segment, MATRIX[1], SHOTS)
+    assert epi.time_to_center_line(table, segment=segment) == pytest.approx(
+        epi.shot_offset_s(segment) + epi.time_to_center_line(table), abs=1e-15,
+    )
+    for other in (s for s in range(SHOTS) if s != segment):
+        with pytest.raises(sc.ConfigurationError, match='omits the centre'):
+            epi.time_to_center_line(range(other, MATRIX[1], SHOTS), segment=other)
+
+
+def test_shots_is_not_blip_lines_so_an_accelerated_single_shot_still_builds(epi_opts) -> None:
+    """
+    ``R = 3`` blips by three and has **one** shot, and nothing interleaves with it to be aligned.
+
+    Tying the delay to `blip_lines` would have delayed that train by two thirds of an echo spacing
+    for no reason and refused the protocols that cannot divide, which is why the interleave is its
+    own argument.
+    """
+    accelerated = _build(epi_opts, blip_lines=3)
+
+    assert accelerated.shot_delay_s == 0.0
+    assert accelerated.shot_offset_s(0) == 0.0
+    # The same table, with and without the argument, is the same block.
+    explicit = _build(epi_opts, blip_lines=3, shots=1)
+    assert list(sc.flatten(accelerated(lines=range(0, MATRIX[1], 3)))) == list(
+        sc.flatten(explicit(lines=range(0, MATRIX[1], 3))),
+    )
+    assert accelerated(lines=range(0, MATRIX[1], 3)).duration == pytest.approx(
+        explicit(lines=range(0, MATRIX[1], 3)).duration, abs=1e-15,
+    )
+
+
+def test_an_echo_spacing_the_interleave_cannot_divide_is_refused(epi_opts) -> None:
+    """
+    And it names the two spacings that do divide, because the caller can reach either.
+
+    Snapping the offset onto the raster instead would leave a residual staircase -- the same
+    artefact at a smaller amplitude, which is the kind that gets attributed to the scanner.  The
+    reference 3.5 us dwell is the protocol this catches: 550 us is an *odd* number of gradient
+    rasters, so no interleave above one divides it and the blip, which moves in two rasters at a
+    time, cannot reach one that does.  Hence the dwell is the remedy offered and the blip is not.
+    """
+    with pytest.raises(sc.ConfigurationError) as caught:
+        _build(epi_opts, blip_lines=SHOTS, shots=SHOTS)
+    message = str(caught.value)
+
+    assert 'does not divide into 4 interleaved shots' in message
+    assert '520.0 us and 560.0 us' in message           # the two it can reach, either way
+    assert 'blip_duration_s=' not in message            # unreachable here, so it is not offered
+    assert 'shots=1' in message                         # and keeping the staircase is a choice
+
+
+def test_the_blip_remedy_is_offered_when_it_works_and_then_it_does(epi_opts) -> None:
+    """The refusal's hints are executable, which is the standard the other refusals are held to."""
+    with pytest.raises(sc.ConfigurationError) as caught:
+        _build(epi_opts, dwell_s=SHOT_DWELL_S, blip_lines=3, shots=3)
+    offered = [line for line in str(caught.value).splitlines() if 'blip_duration_s=' in line]
+
+    assert len(offered) == 1
+    blip_s = float(offered[0].split('blip_duration_s=')[1].split()[0])
+    fixed = _build(epi_opts, dwell_s=SHOT_DWELL_S, blip_lines=3, shots=3, blip_duration_s=blip_s)
+    assert fixed.shot_delay_s == pytest.approx(fixed.echo_spacing_s / 3, abs=1e-15)
+
+
+def test_a_segment_outside_the_interleave_is_refused(epi_opts) -> None:
+    """Once `shots` is above one the segment is a position in time, not a free label."""
+    epi = _build(epi_opts, dwell_s=SHOT_DWELL_S, blip_lines=SHOTS, shots=SHOTS)
+
+    with pytest.raises(sc.ConfigurationError, match='not one of the 4 interleaved shots'):
+        epi(lines=range(0, MATRIX[1], SHOTS), segment=SHOTS)
+    # A dummy passes no segment at all, and has to keep playing shot zero's gradients.
+    assert epi.shot_offset_s(None) == 0.0
+    # At shots=1 it stays what it was: a label, and a blocked plan numbers its bands with it.
+    assert _build(epi_opts, dwell_s=SHOT_DWELL_S).shot_offset_s(7) == 0.0

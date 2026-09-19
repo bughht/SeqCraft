@@ -43,6 +43,17 @@ transmitter that is advancing its carrier, and the flip angle and the run-in tha
 at the same point of the steady state belong to whatever composite owns the schedule.
 ``examples/gre_epi_2d/02`` section 8 measures all three.
 
+**A shot's own timing is the fourth of those things, and the only one that is not about the
+magnetisation.**  Play every shot at the same instant after its own excitation and each of them
+repeats the *same* set of times for a *different* set of ``ky``, so the acquisition time is a
+staircase along ``ky`` rather than a ramp: `shots` consecutive lines share one timestamp and the
+next group jumps by a whole echo spacing.  Off-resonance turns that into a phase that steps with
+period `shots`, which ghosts at ``Ny/shots`` however perfectly the magnetisation is matched --
+the artefact survives every fix in the paragraph above because it was never about the signal.
+:attr:`shots` is what removes it, by delaying shot `s` by ``s * echo_spacing_s / shots`` so that
+the time is *affine* in ``ky`` and off-resonance is a shift instead; :meth:`shot_offset_s` is
+where that is worked through, including why a **blocked** table cannot have it.
+
 The one piece of arithmetic worth reading twice
 -----------------------------------------------
 **The sampling window has to be exactly centred in its lobe.**  Write ``T`` for the lobe duration,
@@ -187,6 +198,15 @@ class EPI2D(Module):
         off the table: an echo spacing that changed with the ordering would make every timing
         query below depend on the shot.  ``1`` is single-shot and blocked multi-shot; interleaved
         multi-shot steps by the number of shots.
+    shots
+        How many **interleaved** shots cover k-space, which is a statement about *timing* and not
+        about the table.  Above ``1`` every :meth:`build` delays its train by
+        ``segment * echo_spacing_s / shots`` and pads the tail by the complement, so that the
+        acquisition time is affine in ``ky`` across shot boundaries instead of a staircase of
+        period `shots`; see :meth:`shot_offset_s` for why that is the difference between a ghost
+        and a shift.  It is **not** `blip_lines`: an ``R = 3`` accelerated *single* shot blips by
+        three and has one shot, and giving it ``shots=3`` would delay a train that nothing
+        interleaves with.  Refuses an echo spacing `shots` cannot divide onto the block raster.
     blip_duration_s
         Lengthen the blip beyond its own minimum.  ``None`` is the minimum.  Lengthening it
         lengthens the guard, and so the echo spacing, by twice as much -- it is the knob for
@@ -319,6 +339,7 @@ class EPI2D(Module):
         oversampling: int = 2,
         ramp_sampling: bool = True,
         blip_lines: int = 1,
+        shots: int = 1,
         blip_duration_s: float | None = None,
         navigator_echoes: int = 0,
         prephase: bool = True,
@@ -340,6 +361,9 @@ class EPI2D(Module):
         self.oversampling = require_count(oversampling, 'oversampling', hint='1 turns it off')
         self.blip_lines = require_count(
             blip_lines, 'blip_lines', hint='1 is single-shot and blocked multi-shot',
+        )
+        self.shots = require_count(
+            shots, 'shots', hint='1 is single-shot, blocked, or accelerated single-shot',
         )
         self.navigator_echoes = require_count(
             navigator_echoes, 'navigator_echoes', low=0, hint='3 is the usual number',
@@ -367,6 +391,11 @@ class EPI2D(Module):
         self._gx_reverse = derive(pp.scale_grad(self.gx, -1.0))
         #: The lobe duration, which is the echo spacing: ``2*guard_s + num_samples*dwell_s``.
         self.echo_spacing_s = float(pp.calc_duration(self.gx))
+        self._check_shots()
+        #: What shot `s` waits before its train, per unit of `s`: ``echo_spacing_s / shots``.
+        #: Zero at ``shots=1``.  It is what makes the acquisition time affine in ``ky`` across
+        #: shot boundaries rather than a staircase; see :meth:`shot_offset_s`.
+        self.shot_delay_s = self.echo_spacing_s / self.shots if self.shots > 1 else 0.0
         self._echo_in_lobe_s = float(self.adc.delay) + (self.pre_echo_samples + 0.5) * self.dwell_s
         self.k_read_per_m = self._sampled_k()
 
@@ -457,7 +486,64 @@ class EPI2D(Module):
         return (self.pre_echo_samples if self.polarity(echo) > 0
                 else self.num_samples - 1 - self.pre_echo_samples)
 
-    def time_to_echo(self, echo: int = 0) -> float:
+    def shot_offset_s(self, segment: int | None) -> float:
+        """
+        Seconds shot `segment` waits before its train, so that ``ky`` runs linearly in time.
+
+        ``segment * echo_spacing_s / shots``, and zero at ``shots=1``.  ``None`` is zero, which is
+        what a dummy replaying shot zero's table wants.
+
+        Notes
+        -----
+        **This is the one thing segmentation needs that a single shot does not, and it is not the
+        magnetisation.**  An interleaved table gives shot `s` the lines ``s, s + S, s + 2S, ...``,
+        so echo `n` of shot `s` carries ``ky = s + n*S``.  With every shot played at the same time
+        after its own excitation, the acquisition time is ``t0 + n * esp`` -- a function of `n`
+        alone, so `S` consecutive ``ky`` lines share one timestamp and the next `S` jump by a
+        whole echo spacing.  Off-resonance turns that staircase into a phase that steps with
+        period `S` along ``ky``, and a period-`S` modulation of ``ky`` is a replica of the object
+        at ``Ny/S``: the interleaving ghost, sitting on top of the distortion the segmentation was
+        bought to reduce.
+
+        Delaying shot `s` by ``s * esp / S`` makes it ``t0 + (s + n*S) * esp/S``, which is affine
+        in ``ky`` with slope ``esp/S``.  A phase linear in ``ky`` is a **shift** of the object
+        along the blip axis and nothing else -- the same distortion a single-shot train has, `S`
+        times shallower, and no ghost.
+
+        **It does not disturb the echo time**, because only one shot acquires
+        :attr:`center_line` and only that shot has an echo time at all --
+        :meth:`time_to_center_line` refuses the others rather than inventing one.  What it does
+        change is that the T2\\* weighting across ``ky`` becomes the smooth ramp a single-shot
+        train has instead of a staircase, which is the filter a segmented acquisition was supposed
+        to have in the first place.
+
+        **Blocked segmentation cannot have this** and is why `shots` is a separate argument from
+        the table.  A blocked table gives shot `s` a contiguous band, so linearity in ``ky`` would
+        need a delay of a whole train per shot -- at which point the acquisition has a single
+        shot's readout duration and the segmentation has bought no distortion back at all.  The
+        discontinuity at a block boundary is what blocked EPI trades for that, and ``shots=1`` is
+        how this module says so.
+        """
+        if segment is None or self.shots == 1:
+            return 0.0
+        index = int(segment)
+        if not 0 <= index < self.shots:
+            msg = format_error(
+                f'segment = {index} is not one of the {self.shots} interleaved shots this '
+                f'readout was designed for.',
+                {'segment': index, 'shots': self.shots, 'shot_delay_s': self.shot_delay_s},
+                [
+                    f'segments are zero-based, so this instance takes 0 ... {self.shots - 1}',
+                    'segment sets the train delay as well as the SEG label once shots > 1, so a '
+                    'segment outside the plan would place a shot at a time no ky line wants',
+                    'pass shots=1 if the index is a label rather than an interleave position -- '
+                    'a blocked table numbers its bands without interleaving them',
+                ],
+            )
+            raise ConfigurationError(msg)
+        return index * self.shot_delay_s
+
+    def time_to_echo(self, echo: int = 0, *, segment: int | None = None) -> float:
         """
         Seconds from the start of this module's block to the ``k = 0`` sample of `echo`.
 
@@ -472,9 +558,10 @@ class EPI2D(Module):
         index = self._check_echo(echo)
         start_s = (self._train_start_s + index * self.echo_spacing_s if index >= 0 else
                    self._nav_start_s + (index + self.navigator_echoes) * self.echo_spacing_s)
-        return start_s + float(self.adc.delay) + (self.echo_sample(index) + 0.5) * self.dwell_s
+        return (self.shot_offset_s(segment) + start_s + float(self.adc.delay)
+                + (self.echo_sample(index) + 0.5) * self.dwell_s)
 
-    def time_to_center_line(self, lines: Iterable[int]) -> float:
+    def time_to_center_line(self, lines: Iterable[int], *, segment: int | None = None) -> float:
         """
         Seconds from the start of this block to the acquisition of ``k = 0`` in both directions.
 
@@ -484,6 +571,12 @@ class EPI2D(Module):
             **The same table** :meth:`build` takes, because the answer moves with it: the centre
             of k-space is acquired at whichever echo the table puts it at, and that is the whole
             difference between a linear ordering and a centric one.
+        segment
+            **The same index** :meth:`build` takes, because above ``shots=1`` the train waits
+            :meth:`shot_offset_s` before it starts.  Only one shot of an interleaved plan acquires
+            :attr:`center_line`, so this is the echo time of the acquisition rather than of a
+            shot -- and it is the segment carrying the centre that a composite has to place its
+            requested TE against.
 
         Raises
         ------
@@ -513,7 +606,7 @@ class EPI2D(Module):
                 ],
             )
             raise ConfigurationError(msg)
-        return self.time_to_echo(table.index(self.center_line))
+        return self.time_to_echo(table.index(self.center_line), segment=segment)
 
     # ----------------------------------------------------------------------- assembly
     def build(
@@ -556,17 +649,18 @@ class EPI2D(Module):
         """
         table = self._check(lines)
         adc = self._adc_for(float(phase_deg))
+        offset_s = self.shot_offset_s(segment)
         out = LogicBlock()
         if self.prephase:
-            out.add(0.0, self._prephaser)
+            out.add(offset_s, self._prephaser)
             # With navigators the blip-axis prephaser waits until they are finished, so that they
             # sample ky = 0 rather than the edge of k-space.  A navigator at the edge measures the
             # same odd/even phase difference multiplied by whatever signal is there, which on a
             # real object is close to none.
-            out.add(self._train_start_s - self.winder_s, self.pe(line=table[0]))
+            out.add(offset_s + self._train_start_s - self.winder_s, self.pe(line=table[0]))
 
         for n in range(self.navigator_echoes):
-            t0 = self._nav_start_s + n * self.echo_spacing_s
+            t0 = offset_s + self._nav_start_s + n * self.echo_spacing_s
             out.add(t0, self._lobe(n))
             if acquire:
                 out.add(t0, adc)
@@ -576,7 +670,7 @@ class EPI2D(Module):
             self._seam(out, t0 + self.echo_spacing_s, 0)
 
         for n, line in enumerate(table):
-            t0 = self._train_start_s + n * self.echo_spacing_s
+            t0 = offset_s + self._train_start_s + n * self.echo_spacing_s
             index = self.navigator_echoes + n
             out.add(t0, self._lobe(index))
             if acquire:
@@ -587,6 +681,14 @@ class EPI2D(Module):
                     self._shot_labels(out, t0, segment, reference)
             if n + 1 < len(table):
                 self._seam(out, t0 + self.echo_spacing_s, table[n + 1] - line)
+
+        # The complement of the head delay, so that every shot of an interleaved plan occupies the
+        # same span whatever its index: the train moves inside the block and the block does not
+        # move.  Without it `duration` would depend on `segment`, and the TR arithmetic of every
+        # composite above this one would have to learn about the interleave to stay a constant.
+        tail_s = (self.shots - 1) * self.shot_delay_s - offset_s
+        if tail_s > EPS:
+            out.add(out.duration, pp.make_delay(tail_s))
         return out
 
     def _adc_for(self, phase_deg: float) -> Event:
@@ -1095,6 +1197,67 @@ class EPI2D(Module):
             )
             raise ConfigurationError(msg)
         return index
+
+    def _check_shots(self) -> None:
+        """
+        Refuse an echo spacing that `shots` cannot divide onto the block raster.
+
+        The shot offset is ``echo_spacing_s / shots`` and it is played as a block duration, so it
+        has to land on the block raster exactly or the compiler snaps it.  Rounding it silently is
+        the one thing not worth doing here: a snapped offset leaves a residual staircase along
+        ``ky``, which is the *same artefact at a smaller amplitude* -- a ghost that survives the
+        fix meant to remove it, and one no image would attribute to a rounding rule. So the
+        protocol is refused with the two echo spacings that do divide, since the caller can reach
+        either one and this module cannot choose between them.
+        """
+        if self.shots == 1:
+            return
+        raster_s = float(self.opts.block_duration_raster)
+        step = self.shots * to_ticks(raster_s)
+        ticks = to_ticks(self.echo_spacing_s)
+        if ticks % step == 0:
+            return
+
+        below_s, above_s = from_ticks((ticks // step) * step), from_ticks(-(-ticks // step) * step)
+        hints = [
+            f'the nearest echo spacings that divide {self.shots} ways are '
+            f'{below_s * 1e6:.1f} us and {above_s * 1e6:.1f} us, against '
+            f'{self.echo_spacing_s * 1e6:.1f} us here',
+        ]
+        # The blip is the knob that lengthens the lobe without touching the sampling, but it moves
+        # the echo spacing in steps of two gradient rasters -- `_design_blip` rounds it onto an
+        # even count -- and only while it is the half that wins the guard.  So the reachable
+        # spacing is searched rather than divided out, and the hint is dropped when the receiver's
+        # dead time is what sets the guard and lengthening the blip would do nothing at all.
+        if self.blip_duration_s / 2 >= float(self.opts.adc_dead_time):
+            quantum = 2 * to_ticks(self.opts.grad_raster_time)
+            for k in range(1, 2 * self.shots + 1):
+                if (ticks + k * quantum) % step == 0:
+                    grown_s = self.blip_duration_s + from_ticks(k * quantum)
+                    hints.append(
+                        f'pass blip_duration_s={grown_s:.6g} to reach '
+                        f'{from_ticks(ticks + k * quantum) * 1e6:.1f} us -- the blip sets the '
+                        f'guard and the guard sets the lobe, so the echo spacing grows with it',
+                    )
+                    break
+        hints += [
+            'or move the sampling: a longer dwell_s (a lower bandwidth_hz_px) lengthens the lobe '
+            'directly, and partial_fourier and oversampling both change the sample count',
+            'or pass shots=1 to keep the old timing and accept the staircase -- every shot then '
+            'plays at the same time after its own excitation, which modulates ky with period '
+            f'{self.shots} and ghosts the object at Ny/{self.shots}',
+        ]
+        msg = format_error(
+            f'the {self.echo_spacing_s * 1e6:.1f} us echo spacing does not divide into '
+            f'{self.shots} interleaved shots on the {raster_s * 1e6:g} us block raster, so shot s '
+            f'cannot be delayed by exactly s * echo_spacing_s / shots.',
+            {'echo_spacing_s': self.echo_spacing_s, 'shots': self.shots,
+             'wanted_shot_delay_s': self.echo_spacing_s / self.shots,
+             'block_duration_raster': raster_s, 'dwell_s': self.dwell_s,
+             'blip_duration_s': self.blip_duration_s},
+            hints,
+        )
+        raise ConfigurationError(msg)
 
     def _check_axes(self) -> None:
         """Refuse a readout and a blip on one channel, which would sum rather than encode."""
