@@ -55,7 +55,8 @@ def spoke_geometry(measured: dict[str, Any], k_adc: np.ndarray) -> list[dict[str
             'dk_spread_per_m': float(np.ptp(steps)),
             # How far the samples stray from the straight line through them: a spoke that is not
             # straight is not a spoke, and nothing else here would notice.
-            'straightness_per_m': float(np.abs(np.cross(direction, k[:2].T)).max()),
+            'straightness_per_m': float(
+                np.abs(direction[0] * k[1] - direction[1] * k[0]).max()),
             'kz_max_per_m': float(np.abs(k[2]).max()),
         })
     return rows
