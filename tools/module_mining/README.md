@@ -7,6 +7,40 @@ source-code similarity.
 Nothing here is part of SeqCraft's public API, nothing in `src/seqcraft` imports it, and the
 layout, names and return shapes are free to change.
 
+## The skill
+
+`.claude/skills/module-mining/` is the operational layer over all of this: the pipeline, the four
+rules, the artifact shape and the stop outcomes, written to be loaded when a candidate is being
+worked rather than read end to end. `plans/fine_scan_playbook.md` remains the depth reference and
+the skill does not repeat it.
+
+```text
+.claude/skills/module-mining/
+  SKILL.md                    the workflow, the gates, the standing constraints
+  reference/artifacts.md      the six records, and which fields survived all three pilots
+  reference/rules.md          mode contract / emitted inspection / claim scope / dependency
+                              impact / compiler escalation -- each with the failure behind it
+  reference/outcomes.md       GREEN, NO_NEW_MODULE, six YELLOWs, three REDs
+  templates/candidate.yaml    fails validation as shipped, on purpose
+
+skill_v0/
+  conformance_report.md       the skill run backwards over the three pilots
+  generalization_report.md    what generalised, what stayed family-specific, what needs a human
+  radial_migrated.yaml        one pilot re-expressed in the new shape; validates clean
+```
+
+`schema.py` checks a candidate record:
+
+```bash
+python tools/module_mining/schema.py tools/module_mining/skill_v0/radial_migrated.yaml
+```
+
+It reports rather than constructs -- no classes, no coercion, extra keys welcome. Eleven required
+field paths come from intersecting the three pilots; four more (`acceptance.does_not_establish`,
+`validation.layers`, `evidence[].independence`, `reason_code`) are rules the pilots learned the
+hard way and did not have at the time. Run against the historical records it finds exactly those
+gaps, which is the point -- see `skill_v0/conformance_report.md`.
+
 ## Which copy to edit
 
 [`plans/`](plans/) is a **mirror**, taken 2026-09-19, of the workspace planning repository's
