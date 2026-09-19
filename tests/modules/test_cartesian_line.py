@@ -1128,3 +1128,76 @@ def test_acquire_false_drops_the_adc_and_both_labels(fast_opts, polarity) -> Non
 def test_the_train_is_pure_and_compiles_alone(fast_opts, polarity, component_checks) -> None:
     """Two calls, one train: the readout gradient is reused ``echoes`` times and never mutated."""
     component_checks.all(_line(fast_opts, bandwidth_hz_px=250.0, echoes=4, polarity=polarity))
+
+# ------------------------------------------------- the count the receiver can actually digitise
+def test_a_legal_sample_count_is_unchanged(opts) -> None:
+    """The ordinary cases, stated so the refusals below are not mistaken for a new restriction."""
+    for matrix, partial_fourier, expected in ((64, 1.0, 64), (128, 1.0, 128), (128, 0.625, 80)):
+        line = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=matrix,
+                                        bandwidth_hz_px=200.0, partial_fourier=partial_fourier)
+        assert line.num_samples == expected
+        assert line.num_samples % opts.adc_samples_divisor == 0
+
+
+def test_an_odd_matrix_raises_with_the_numbers_that_produced_it(opts) -> None:
+    """
+    65 samples on a scanner wanting multiples of four.
+
+    Refused **here** rather than by the compiler, because this is the layer that computes the
+    count: the compiler's version of this arrives after the caller has built a sequence and names
+    a block index instead of the two arguments responsible.
+    """
+    with pytest.raises(sc.ConfigurationError) as raised:
+        sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=65, bandwidth_hz_px=200.0)
+
+    message = str(raised.value)
+    assert '65 ADC samples' in message
+    assert 'divisible by 4' in message
+    assert 'matrix=68' in message                       # a fix, with the number that works
+
+
+def test_partial_fourier_can_produce_an_illegal_count_from_an_even_matrix(opts) -> None:
+    """
+    **Parity is not the rule.**  0.6 of 128 is 77, which is why ``examples/fse_2d`` runs HASTE at
+    0.625 -- a fact the notebook states in prose and nothing enforced until now.
+    """
+    with pytest.raises(sc.ConfigurationError, match='77 ADC samples'):
+        sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=128, bandwidth_hz_px=200.0,
+                                 partial_fourier=0.6)
+
+
+def test_every_suggested_fix_is_one_the_module_accepts(opts) -> None:
+    """A fix that walks the caller into the next refusal is worse than none."""
+    with pytest.raises(sc.ConfigurationError) as raised:
+        sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=128, bandwidth_hz_px=200.0,
+                                 partial_fourier=0.6)
+
+    suggested = [float(line.split('partial_fourier=')[1].split()[0])
+                 for line in str(raised.value).splitlines() if 'partial_fourier=' in line
+                 and 'gives' in line]
+    assert suggested
+    for value in suggested:
+        line = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=128,
+                                        bandwidth_hz_px=200.0, partial_fourier=value)
+        assert line.num_samples % opts.adc_samples_divisor == 0
+
+
+def test_nothing_is_rounded(opts) -> None:
+    """
+    Silently moving 77 to 76 would change the partial Fourier fraction, the k-space extent, the
+    centre sample and the sampling density -- four things this module exists to be exact about.
+    """
+    line = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=128, bandwidth_hz_px=200.0,
+                                    partial_fourier=0.625)
+    assert line.num_samples == 80                       # exactly 0.625 * 128, not rounded to 78
+    assert line.pre_echo_samples == 80 - 64
+
+
+def test_a_scanner_without_a_divisor_constrains_nothing(opts) -> None:
+    """The check is the scanner's rule, not a house style."""
+    from pypulseq.opts import Opts
+
+    relaxed = Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+                   adc_dead_time=10e-6, adc_samples_divisor=1)
+    assert sc.modules.CartesianLine(opts=relaxed, fov_mm=250.0, matrix=65,
+                                    bandwidth_hz_px=200.0).num_samples == 65

@@ -708,7 +708,47 @@ class CartesianLine(Module):
                 ['partial_fourier below ~0.55 has too little pre-echo data for a phase estimate'],
             )
             raise ConfigurationError(msg)
-        return count, pre_echo
+        return self._check_sample_count(count), pre_echo
+
+    def _check_sample_count(self, count: int) -> int:
+        """
+        Return `count`, refusing a sampling geometry the receiver cannot digitise.
+
+        A scanner accepts ADC sample counts in multiples of ``opts.adc_samples_divisor``, and the
+        requirement is on the **count**, not on the parity of the matrix: ``matrix=65`` at
+        ``partial_fourier=1.0`` gives 65 samples, and an even matrix gives an illegal count just
+        as easily -- 0.6 of 128 is 77, which is why ``examples/fse_2d`` runs HASTE at 0.625.
+
+        Checked here because this is the layer that **computes** the count.  The compiler still
+        refuses an illegal sequence, but it does so after the caller has built one, naming a block
+        index rather than the two arguments that produced it.
+
+        **Nothing is rounded.**  Moving 65 samples to 64 or 68 would quietly change the partial
+        Fourier fraction, the k-space extent, the semantic centre sample and the sampling density
+        -- four things this module exists to be exact about.
+        """
+        divisor = int(getattr(self.opts, 'adc_samples_divisor', 1) or 1)
+        if divisor <= 1 or count % divisor == 0:
+            return count
+
+        below, above = (count // divisor) * divisor, (count // divisor + 1) * divisor
+        # A suggestion has to be one this module would itself accept: at or below a full readout,
+        # and leaving the post-echo half intact.  Offering `partial_fourier=1.05` would send the
+        # caller into the next refusal.
+        floor = self.matrix - self.matrix // 2
+        fixes = [
+            f'partial_fourier={n / self.matrix:.6g} gives {n} samples at matrix={self.matrix}'
+            for n in (below, above) if floor <= n <= self.matrix
+        ]
+        fixes.append(f'matrix={above} at partial_fourier=1.0 gives {above} samples')
+        msg = format_error(
+            f'the requested geometry produces {count} ADC samples, but this scanner requires a '
+            f'count divisible by {divisor}.',
+            {'matrix': self.matrix, 'partial_fourier': self.partial_fourier,
+             'num_samples': count, 'adc_samples_divisor': divisor},
+            fixes,
+        )
+        raise ConfigurationError(msg)
 
     def _resolve_dwell(self, bandwidth_hz_px: float | None, dwell_s: float | None) -> float:
         """

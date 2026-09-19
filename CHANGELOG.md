@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — an ADC sample count the receiver can actually digitise
+
+`CartesianLine` now refuses a sampling geometry whose ADC sample count is not a multiple of
+`opts.adc_samples_divisor`, at construction, naming the two arguments that produced it and a
+combination that works.
+
+**The rule is on the count, not on the parity of the matrix.** `matrix=65` at
+`partial_fourier=1.0` gives 65 samples; an even matrix gives an illegal count just as easily, and
+0.6 of 128 is 77 — which is why `examples/fse_2d` runs HASTE at 0.625, a fact the notebook stated
+in prose and nothing enforced. Checked here because this is the layer that *computes* the count.
+The compiler still refuses an illegal sequence, but it does so after the caller has built one and
+names a block index rather than `matrix` and `partial_fourier`.
+
+**Nothing is rounded.** Moving 65 samples to 64 would quietly change the partial Fourier fraction,
+the k-space extent, the semantic centre sample and the sampling density.
+
+`RadialReadout` inherits the refusal by composing the line rather than repeating the rule.
+
 ## Unreleased — a radial spoke, built out of the line it already is
 
 `RadialReadout` (`readout/`): a prephaser, a readout gradient and an ADC, oriented in the x-y

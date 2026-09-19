@@ -187,3 +187,21 @@ def test_the_receiver_phase_reaches_the_adc(opts, spoke) -> None:
     adc = next(e for _, e, _ in sc.flatten(spoke(angle_rad=0.2, phase_deg=117.0))
                if getattr(e, 'type', '') == 'adc')
     assert float(adc.phase_offset) == pytest.approx(math.radians(117.0))
+
+
+def test_an_illegal_sample_count_is_refused_by_the_line_it_is_built_from(opts) -> None:
+    """
+    Inherited, not duplicated.
+
+    ``CartesianLine`` computes the sample count, so it is the layer that knows whether the
+    receiver can digitise it, and a second copy of the rule here would be a second place to keep
+    it right.  What this test pins is that composing the line really does carry the refusal --
+    the error names the count and the divisor, and arrives at construction rather than from the
+    compiler.
+    """
+    with pytest.raises(sc.ConfigurationError, match='divisible by 4'):
+        sc.modules.RadialReadout(opts=opts, fov_mm=FOV_MM, matrix=65, dwell_s=DWELL_S)
+
+    # ...and the same geometry is fine where the count works out.
+    assert sc.modules.RadialReadout(opts=opts, fov_mm=FOV_MM, matrix=68,
+                                    dwell_s=DWELL_S).num_samples == 68
