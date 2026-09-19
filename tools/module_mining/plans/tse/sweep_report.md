@@ -67,8 +67,14 @@ sequence and report the wrong TE for it, and only the report reaches the protoco
 
 ## 3. Status
 
+> **Superseded.** This section recorded the status *before* human ownership review. The four
+> questions in §3 were answered, the extraction was made and verified, and the pilot is now
+> **COMPLETE — GREEN**: see [`boundary_decision.md`](boundary_decision.md). What follows is kept
+> as evidence of what was known at the time, and of the fact that GREEN was withheld until a human
+> had drawn the boundary.
+
 ```text
-YELLOW
+YELLOW   (at the time of writing; see the note above)
 ```
 
 Not RED: nothing failed. Not GREEN: the playbook's GREEN requires that *the candidate boundary is
