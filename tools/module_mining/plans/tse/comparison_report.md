@@ -10,9 +10,9 @@
 **Passes:** 4 — reference adapters; 5 — numerical comparison; 6 — comparator checks driven by
 observed differences
 
-Tooling: `tools/module_mining/` on branch `feat/module-mining-tse`. Every number below is
-regenerable with the two scripts named, and the raw output is committed beside them as
-`ringdown_result.json` and `comparison_result.json`.
+Tooling: `tools/module_mining/`. Every number below is regenerable with the two scripts named,
+which write `ringdown_result.json` and `comparison_result.json` beside themselves -- untracked,
+because `.gitignore` excludes scan output.
 
 ---
 

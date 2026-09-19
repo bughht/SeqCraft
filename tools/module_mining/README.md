@@ -55,5 +55,6 @@ python tools/module_mining/candidates/tse/run_ringdown.py
 python tools/module_mining/candidates/tse/run_comparison.py
 ```
 
-Each writes a `*_result.json` beside itself. Those files are committed as evidence and are
-regenerable; they are not inputs to anything.
+Each writes a `*_result.json` beside itself. Those files are **not** tracked -- `.gitignore`
+excludes `*.json` repo-wide, and scan output is exactly what that rule is for. They are
+regenerable by re-running the script, and the reports quote the numbers that matter.
