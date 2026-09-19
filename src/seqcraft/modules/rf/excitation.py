@@ -40,7 +40,7 @@ from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
-from .._support import require_axis, require_positive, shift_slice
+from .._support import area_until, require_axis, require_positive, shift_slice
 
 if TYPE_CHECKING:
     from pypulseq.opts import Opts
@@ -213,6 +213,41 @@ class Excitation(Module):
         return float(pp.calc_duration(self.gz))
 
     @property
+    def rephaser_area_per_m(self) -> float:
+        """
+        The signed gradient moment that compensates this excitation, 1/m.  ``0.0`` when
+        non-selective.
+
+        **The requirement, not the event.**  A selective pulse winds phase across the slice while
+        its own selection gradient plays, and something has to unwind it before the echo.  This
+        says how much; :attr:`gzr` is how this module realises it by default, and a caller that
+        takes the realisation over -- see `rephase` on :meth:`build` -- still needs the number.
+
+        Measured by integrating the selection gradient from the RF's **effective centre** to its
+        end, and negated.  That is the same quantity
+        :attr:`~seqcraft.modules.CartesianLine.area_to_echo_per_m` is for a readout, derived the
+        same way and for the same reason: a composite that has to combine this with another axis's
+        requirement should read a physical moment rather than reach into a pypulseq event and
+        reinterpret it.
+
+        Examples
+        --------
+        >>> import pypulseq as pp
+        >>> from pypulseq.opts import Opts
+        >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+        ...          rf_dead_time=100e-6, rf_ringdown_time=30e-6)
+        >>> selective = Excitation(opts=o, flip_deg=15.0, thickness_mm=5.0)
+        >>> round(selective.rephaser_area_per_m, 6) == round(float(selective.gzr.area), 6)
+        True
+        >>> Excitation(opts=o, flip_deg=15.0, thickness_mm=None).rephaser_area_per_m
+        0.0
+        """
+        if not self.selective:
+            return 0.0
+        total = area_until(self.gz, float(pp.calc_duration(self.gz)))
+        return -(total - area_until(self.gz, self.time_to_center()))
+
+    @property
     def rephaser_duration_s(self) -> float:
         """
         Seconds the slice rephaser occupies, or ``0.0`` when the pulse is non-selective.
@@ -226,7 +261,8 @@ class Excitation(Module):
         return float(pp.calc_duration(self.gzr))
 
     # ----------------------------------------------------------------------- assembly
-    def build(self, *, phase_deg: float = 0.0, position_mm: float = 0.0) -> LogicBlock:
+    def build(self, *, phase_deg: float = 0.0, position_mm: float = 0.0,
+              rephase: bool = True) -> LogicBlock:
         """
         Return the pulse, and its gradient pair when selective.
 
@@ -237,6 +273,21 @@ class Excitation(Module):
             lands; the schedule itself belongs to whatever knows how many repetitions there are.
         position_mm
             Slice offset from isocentre along `axis`.  Requires a selective pulse.
+        rephase
+            ``False`` omits the rephaser from the block.  **It does not mean the excitation needs
+            no rephasing** -- :attr:`rephaser_area_per_m` is unchanged and the requirement is
+            still there; it means the caller has taken over *realising* it.
+
+            The case it exists for is a 3D slab, where the rephasing and the partition encoding
+            are two moments on one axis inside one window, and playing them separately costs a
+            window of echo time for nothing.  A composite that combines them must suppress the
+            standalone rephaser or the slab term is applied twice --
+            :class:`~seqcraft.modules.GRE3DTR` does exactly this.
+
+            A build-time argument rather than a constructor one because nothing about the
+            *design* changes: same pulse, same selection gradient, same effective centre, same
+            requirement.  Only who plays the compensating gradient changes, which is an assembly
+            decision.  Ignored, harmlessly, when the pulse is non-selective.
         """
         rf = self.rf
         phase_rad = float(np.deg2rad(phase_deg))
@@ -247,7 +298,9 @@ class Excitation(Module):
 
         out = LogicBlock().add(0.0, rf)
         if self.selective:
-            out.add(0.0, self.gz).add(float(pp.calc_duration(self.gz)), self.gzr)
+            out.add(0.0, self.gz)
+            if rephase:
+                out.add(float(pp.calc_duration(self.gz)), self.gzr)
         return out
 
     def _selection_gradient(self) -> Event:
