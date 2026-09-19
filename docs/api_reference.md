@@ -1336,6 +1336,12 @@ between them — a physical quantity rather than a `slab_selective=True` flag, m
 | `slab_thickness_mm=None` | non-selective, which is what every official Pulseq 3D reference does. The z axis carries a partition encode and nothing else |
 | `slab_thickness_mm=…` | slab-selective. The rephasing the slab implies and the partition encoding are two moments on **one axis in one window**, and the kernel solves `A_z(p) = A_slab + A_partition(p)` as a single gradient |
 
+**The mode chooses the pulse.** With no slab the default is a short hard `'block'` pulse, because
+a non-selective excitation with a shaped one spends a soft pulse's duration and selects nothing —
+every official Pulseq 3D reference uses a block pulse, and `writeGradientEcho3D.m`'s is 0.2 ms. A
+slab gets a shaped `'sinc'`. `rf_pulse=` overrides either, for a shaped but spatially
+non-selective excitation.
+
 `slab_thickness_mm` is **independent of `fov_mm[2]` in both directions** — the only requirement is
 that it is positive. A slab smaller than the encoded FOV is a calibration or inner-volume
 acquisition; a larger one buys transition band and alias protection without changing the

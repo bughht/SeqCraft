@@ -36,6 +36,19 @@ compiler may never rescue an infeasible module by stretching a gradient or movin
 `te_s=None` the result is the shortest legal design; an explicit request below it raises, naming
 the partition responsible and its combined moment.
 
+### The excitation mode chooses the pulse
+
+`slab_thickness_mm=None` now defaults to a **short hard block pulse**, 0.2 ms, rather than
+inheriting `Excitation`'s 3 ms shaped sinc. A non-selective excitation with a shaped pulse is the
+worst of both — it spends a soft pulse's duration and selects nothing — and it was putting 3 ms
+into every echo time for it. Measured at the reference geometry, the minimum TE drops from 4.377
+to **2.977 ms**. Every official Pulseq 3D reference uses a block pulse for the same reason.
+
+A slab still gets a shaped sinc, and `rf_pulse=` overrides either — a shaped but spatially
+non-selective excitation is a real thing to want. Asking for a time-bandwidth product without a
+shape is refused here, naming the fix, because this module chose the block pulse and the caller
+should not have to discover that from a message about a pulse they never asked for.
+
 ### `Excitation` states its rephasing requirement, and can decline to realise it
 
 `rephaser_area_per_m` is the signed moment that compensates a selective pulse, integrated from the

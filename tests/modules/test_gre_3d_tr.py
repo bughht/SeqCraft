@@ -361,3 +361,57 @@ def test_a_slab_smaller_than_the_fov_is_allowed(scanner) -> None:
 
     assert narrow.selective and wide.selective
     assert abs(narrow.slab_rephase_area_per_m) > abs(wide.slab_rephase_area_per_m)
+
+
+# --------------------------------------------------- the excitation the mode actually wants
+def test_no_slab_means_a_hard_pulse(scanner, nonselective) -> None:
+    """
+    A non-selective excitation with a shaped pulse is the worst of both: it spends a soft
+    pulse's duration and selects nothing.  Every official Pulseq 3D reference uses a block
+    pulse, and ``writeGradientEcho3D.m``'s is 0.2 ms.
+    """
+    assert nonselective.exc.pulse == 'block'
+    assert nonselective.exc.duration_s == pytest.approx(0.2e-3)
+    assert nonselective.exc.gz is None
+
+
+def test_a_slab_means_a_shaped_pulse(scanner, selective) -> None:
+    """A slab has a profile, and a profile needs a shape."""
+    assert selective.exc.pulse == 'sinc'
+    assert selective.exc.selective
+    assert selective.exc.gz is not None
+
+
+def test_the_hard_pulse_is_not_what_sets_te(scanner, nonselective, selective) -> None:
+    """The point of the shorter pulse, measured rather than asserted."""
+    assert nonselective.min_te_s < selective.min_te_s
+    assert nonselective.exc.duration_s < 0.1 * selective.exc.duration_s
+
+
+def test_a_shaped_non_selective_pulse_can_still_be_asked_for(scanner) -> None:
+    """Spectrally selective and spatially non-selective is a real thing to want."""
+    shaped = _make(scanner, rf_pulse='sinc')
+
+    assert shaped.exc.pulse == 'sinc'
+    assert not shaped.exc.selective
+    assert shaped.exc.duration_s == pytest.approx(3e-3)   # Excitation's default, not ours
+
+
+def test_a_time_bandwidth_product_without_a_shape_is_refused(scanner) -> None:
+    """
+    And refused *here*, naming the fix.
+
+    Left to ``Excitation`` the message would be about a block pulse the caller never asked for --
+    this module chose it.
+    """
+    with pytest.raises(sc.ConfigurationError, match='needs a shaped pulse'):
+        _make(scanner, rf_time_bw_product=4.0)
+
+    assert _make(scanner, rf_pulse='sinc', rf_time_bw_product=8.0).exc.pulse == 'sinc'
+
+
+def test_an_explicit_duration_is_respected_in_both_modes(scanner) -> None:
+    """The module's hard-pulse default applies only when nothing was asked for."""
+    assert _make(scanner, rf_duration_s=0.5e-3).exc.duration_s == pytest.approx(0.5e-3)
+    assert _make(scanner, slab_thickness_mm=180.0,
+                 rf_duration_s=2e-3).exc.duration_s == pytest.approx(2e-3)
