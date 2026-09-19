@@ -785,3 +785,139 @@ Start by:
 This order is important.
 
 The fine scan is first an evidence-building process, and only second a code-generation process.
+
+---
+
+# 19. Four rules the third candidate added
+
+These came out of `GRE3DTR`, and the first one came out of a real mistake. They apply to every
+candidate from here on, and they are the part of this playbook a batch process would most need.
+
+## 19.1 Derive every physical mode from its own contract
+
+The first `GRE3DTR` reasoned, in effect:
+
+```text
+slab-selective  = shaped RF + Gz
+non-selective   = the same thing with Gz removed
+```
+
+The result was spatially non-selective and it still played the slab path's **3 ms shaped sinc**.
+It satisfied every k-space and timing invariant, compiled legally, and put three milliseconds into
+every echo time for a pulse that selected nothing. Every official Pulseq 3D reference uses a short
+hard block pulse instead.
+
+> **Alternative physical modes must be re-derived from their own physical contract. Do not
+> implement one mode by subtracting events from another unless independent reference evidence
+> establishes that equivalence.**
+
+A mode *name* is not a contract. Before implementing, state what the scanner actually plays:
+
+```text
+RF family / shape
+RF duration, and where its default comes from
+selection gradient: present or absent
+intrinsic rephasing / moment requirement
+encoding gradients
+ADC / readout semantics
+spoiler / rewinder structure
+timing consequence
+the reference evidence for each of the above
+what is deliberately left overridable
+```
+
+### The mode contract table
+
+Any candidate with modes, variants or mode-dependent defaults gets this table **before** code:
+
+| | mode A | mode B |
+|---|---|---|
+| RF family / shape | | |
+| RF duration, default source | | |
+| selection gradient | | |
+| intrinsic rephasing requirement | | |
+| encoding role | | |
+| ADC / readout semantics | | |
+| timing consequence | | |
+| reference evidence | | |
+| intentionally user-overridable | | |
+
+and a differential contract beside it:
+
+```text
+mode A -> mode B
+    changes:            ...
+    must stay invariant: ...
+```
+
+The table is not an implementation plan. It is the physical contract the implementation has to be
+shown to realise, and writing it is what stops "mode B is mode A minus an event" becoming a design
+rule by accident.
+
+## 19.2 Inspect the emitted sequence, not only what was measured from it
+
+Correct k-space, a legal compile and a passing notebook do not prove the emitted experiment is the
+intended one — the RF mistake above had all three.
+
+For at least one representative protocol of **every promoted mode**, read the compiled `.seq`
+and ask:
+
+> If I inspected this file without reading the Python, would its RF, gradients, ADC and timing
+> tell the same physical story as the API name and the docstring?
+
+`tools/module_mining/inspect_emitted.py` prints what a file says about itself — pulse family,
+duration, which gradients accompany the RF, whether it is selective at all. It is a **review aid
+and prints rather than asserts**: it belongs beside the analytic tests, the comparator and the
+simulation, not inside any of them.
+
+## 19.3 A reference comparison proves what it measured, and no more
+
+"Validated against reference X" is not a statement until it says against *what*. Record the scope
+with the result:
+
+```text
+validated against the official GRE3D reference for:
+    k-space lattice, semantic centre, partition spacing, requested encoding
+
+not used to establish:
+    the slab-selective RF implementation
+    the waveform decomposition
+    equal signal when TE differs
+```
+
+The GRE3D lattice comparison was correct and it established the encoding geometry. It said nothing
+about the RF family, and for a while the RF family was wrong. A comparator result must not quietly
+grow into a stronger physical claim than the measurement supports.
+
+## 19.4 A shared-leaf change needs a dependency-impact map
+
+Two leaf changes in this phase, with opposite consequences:
+
+```text
+Excitation   + rephaser_area_per_m, + build(rephase=False)
+             additive, default unchanged -> no consumer changes unless it opts in
+
+CartesianLine  ADC sample-count legality tightened
+               a contract change -> every consumer inherits it
+```
+
+So before merging a shared-leaf change, map it and classify every consumer:
+
+```text
+changed leaf -> direct consumers -> transitive consumers -> examples and notebooks
+```
+
+```text
+NO_BEHAVIOR_CHANGE
+NEW_EARLY_REFUSAL_FOR_PREVIOUSLY_INVALID_INPUT
+INTENTIONAL_BEHAVIOR_CHANGE
+UNKNOWN / NEEDS_REVIEW
+```
+
+**Read the imports rather than the names.** `EPI2D` sounds like a readout that would compose
+`CartesianLine` and does not — it owns its own train and ADC geometry, so a `CartesianLine`
+contract change does not reach it. A map built from naming would have got that wrong in both
+directions.
+
+A green suite is necessary and is not this. The suite says nothing broke; the map says who could
+have.

@@ -118,6 +118,19 @@ class because that is the part worth testing on its own: a test hands it a slab 
 sign and watches the answer move between the ends of the list, which is precisely what a
 shortcut would get wrong.
 
+## 4a. The mode contract, and what the reference comparison did not prove
+
+Written up separately in [`mode_contract.md`](mode_contract.md), because it is the part of this
+candidate a future miner most needs: both excitation modes derived from their own physical
+contract, the differential between them, the emitted-sequence inspection of each, the claim scope
+of the reference comparison, and the dependency-impact map for the two shared-leaf changes this
+phase made.
+
+The short version is that the first implementation got the non-selective mode by *subtracting the
+selection gradient* from the selective one, and so emitted a 3 ms shaped sinc that selected
+nothing. The lattice comparison against the official reference was correct throughout and was
+never evidence about the RF. That is now a rule in the playbook rather than a story here.
+
 ## 5. Status
 
 ```text

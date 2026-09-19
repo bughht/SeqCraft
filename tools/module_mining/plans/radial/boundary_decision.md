@@ -170,6 +170,42 @@ the module — was resolved rather than recorded; see §4.3.
 Not done, and not gates under the Python-only constraint: no MATLAB `.seq` was generated for this
 candidate, and 3D radial, ramp sampling and `rot3D` are deliberately out of scope.
 
+## 5b. The example, added at v0 close-out
+
+The candidate shipped with tests but with no example, which was the one coverage gap the v0
+close-out found: every other module in `sc.modules` has a notebook where a reader can see what it
+does, and `RadialReadout` did not.
+
+`examples/radial_gre/01_build.ipynb` closes it, and it is a **build and trajectory-visualisation
+notebook only**. What it shows:
+
+| | |
+|---|---|
+| the repetition is assembled **in the notebook** | `Excitation` + the spoke + a spoiler + TR fill, four lines, no new class |
+| the angle schedule is **ordinary Python** | `equal_increment` and `golden_angle` are two list comprehensions over the same readout instance |
+| every spoke has a sample **exactly on `k = 0`** | `1.98e-08` 1/m measured off the compiled sequence, which is integration noise |
+| the spokes point where they were asked to | `1.99e-13` degrees maximum error across 64 spokes |
+| `partial_fourier` spans the family | `1.0` full spoke, `0.5` centre-out, `Δk` unchanged, `0.25` refused |
+
+This re-confirms §1's decision from the other direction. The notebook was written to see whether a
+`RadialGRE` would have earned its place, and the composition it would have wrapped is four lines
+of which three are shared with every other GRE — so what the class would actually own is the angle
+list, which is a sequence choice and belongs to the caller.
+
+### Why there is no `02_simulate_and_reconstruct.ipynb`
+
+Deferred, with the reason recorded rather than left implicit. A radial image needs a non-Cartesian
+reconstruction; the example suite has none — every existing `02` is an FFT on a Cartesian grid, and
+a search for NUFFT or gridding machinery across `examples/` found only the word in prose. Building
+a gridding or NUFFT pipeline here would be **new reconstruction infrastructure created to complete
+a pair**, which is the kind of scope the fine-scan playbook exists to refuse.
+
+What that costs is worth stating plainly: the geometric claims above are measured on the compiled
+trajectory, so **no image has been reconstructed from a SeqCraft radial acquisition.** The
+sample-for-sample agreement with the official reference in §3 is the stronger evidence and it
+stands on its own, but it is agreement with another sequence, not a picture. If a non-Cartesian
+reconstruction arrives for some other reason, this is the notebook to pair with it.
+
 ## 6. Before the next candidate
 
 The phase plan asks for the two pilots to be compared before anything is formalised. The short
