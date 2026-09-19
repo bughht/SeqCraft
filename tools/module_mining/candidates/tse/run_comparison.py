@@ -78,13 +78,15 @@ def main() -> None:
                       - m['shots'][m['readouts'][0]['shot']]['t_excitation_s']) * 1e3,
                      m['l0']['n_adc'], m['l0']['n_blocks'])
 
-    result['comparison'] = fingerprint.compare(measured['seqcraft_fse'], measured['pypulseq_tse'])
+    # Keyed off the references themselves: the SeqCraft adapter names itself after the
+    # implementation it measured -- notebook or package -- so a literal would go stale.
+    result['comparison'] = fingerprint.compare(measured[r1.name], measured[r2.name])
 
     logging.info('\n%-12s %-12s %-12s %s', 'invariant', 'seqcraft', 'pypulseq', 'unit')
-    keys = sorted(set(result['invariants']['seqcraft_fse']) & set(result['invariants']['pypulseq_tse']))
+    keys = sorted(set(result['invariants'][r1.name]) & set(result['invariants'][r2.name]))
     for key in keys:
-        a = result['invariants']['seqcraft_fse'][key]
-        b = result['invariants']['pypulseq_tse'][key]
+        a = result['invariants'][r1.name][key]
+        b = result['invariants'][r2.name][key]
         logging.info('%-12s %-12.4g %-12.4g %s', key, a['worst'], b['worst'], a['unit'])
 
     logging.info('\ncoverage: %s', json.dumps(
