@@ -21,6 +21,7 @@ _NOTEBOOKS = (
     Path('mp2rage_2d/01_build.ipynb'),
     Path('se_2d/01_build.ipynb'),
     Path('fse_2d/01_build.ipynb'),
+    Path('fse_2d/03_module_api.ipynb'),
     Path('gre_epi_2d/01_build.ipynb'),
     Path('se_epi_2d/01_build.ipynb'),
     Path('megre_2d/01_build.ipynb'),

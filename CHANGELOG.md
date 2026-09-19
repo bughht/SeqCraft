@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased — an ADC sample count the receiver can actually digitise
+
+`CartesianLine` now refuses a sampling geometry whose ADC sample count is not a multiple of
+`opts.adc_samples_divisor`, at construction, naming the two arguments that produced it and a
+combination that works.
+
+**The rule is on the count, not on the parity of the matrix.** `matrix=65` at
+`partial_fourier=1.0` gives 65 samples; an even matrix gives an illegal count just as easily, and
+0.6 of 128 is 77 — which is why `examples/fse_2d` runs HASTE at 0.625, a fact the notebook stated
+in prose and nothing enforced. Checked here because this is the layer that *computes* the count.
+The compiler still refuses an illegal sequence, but it does so after the caller has built one and
+names a block index rather than `matrix` and `partial_fourier`.
+
+**Nothing is rounded.** Moving 65 samples to 64 would quietly change the partial Fourier fraction,
+the k-space extent, the semantic centre sample and the sampling density.
+
+`RadialReadout` inherits the refusal by composing the line rather than repeating the rule.
+
+## Unreleased — a radial spoke, built out of the line it already is
+
+`RadialReadout` (`readout/`): a prephaser, a readout gradient and an ADC, oriented in the x-y
+plane. A leaf, because it determines every event it emits from its own parameters — given the
+field of view, the matrix, the dwell and the angle, nothing above it is consulted.
+
+**It is built out of `CartesianLine`.** A 2D spoke *is* a Cartesian line pointing somewhere other
+than along an axis, and the prephaser, the dwell arithmetic, the ADC and — the hard one — which
+sample carries `k = 0` are the same problem, already solved and already tested. Designing them
+again would be a second source of truth for one piece of arithmetic. What the new module adds is
+the rotation, the trajectory geometry a caller needs, and a contract stated as a spoke.
+
+**`partial_fourier` spans full spoke to centre-out**, reusing the existing parameter rather than
+adding `readout_asymmetry` beside it. At `matrix=64`: `1.0` gives 64 samples with the centre at
+32, `0.75` gives 48 with the centre at 16, `0.5` gives 32 with the centre at 0 — a centre-out
+spoke — and `Δk = 1/FOV` never moves. The range is closed at both ends, unlike `require_range`'s
+half-open convention, because 0.5 is not degenerate here: it is a sequence family.
+
+**The centre sample is not the ADC midpoint.** A full spoke with an even matrix has its centre one
+sample past the middle, `-32Δk … +31Δk`, which is `PhaseEncode`'s `matrix // 2` convention and the
+official reference's; a centre-out spoke has it at sample zero. `center_sample`,
+`time_to_center()`, `dk_per_m`, `k_first_per_m`, `k_last_per_m` and `k_max_per_m` are the module's
+answers. They exist because of what the alternative looks like: OpenMRF's radial readout compiles
+a probe sequence and reads its trajectory back to discover where its own centre sample landed.
+
+**The block `build` returns is already oriented**, so the module's semantic properties and its
+emitted events have one owner rather than two. One canonical spoke is designed along x and fresh
+rotated copies are derived per call — with the stored `area` scaled too, which both references
+that extend a readout's flat time warn in a comment is otherwise left wrong. A spoke along an axis
+emits one gradient, not one plus a 1e-11 Hz/m ghost.
+
+No kernel and no trajectory layer. A radial GRE is currently `Excitation` → `RadialReadout` →
+spoiler → delay, which is composition rather than a shared physical solve that no leaf can do
+alone — the thing `GRE2DTR` and `TSEShot` exist for. Angle schedules, spoke counts and ordering
+stay with the caller, as OpenMRF's own `phi_mode` does by building its angle list before any
+waveform exists.
+
+Extracted the same way as the last one: the references were measured first, and the
+rotation-equivariance test — that the spoke at φ is the spoke at 0 rotated — was written against
+the official PyPulseq reference and passed there **before this module existed**, so it cannot be
+encoding this module's behaviour. It now passes against the package at ~1e-14 /m, across eight
+sweep cases spanning two matrices, two fields of view, three dwell times and the full
+partial-Fourier range.
+
 ## Unreleased — a turbo spin echo, split where the information is
 
 `TSEShot` (`kernel/`) and `FSE2D` (`imaging/`), extracted from

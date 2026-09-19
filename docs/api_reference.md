@@ -981,6 +981,7 @@ Re-exported **flat**, so no import path names a folder:
 | `Refocusing` | a 180 and its crusher pair, as one waveform symmetric about the pulse's effective centre in time *and* area |
 | `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
 | `CartesianLine` | prephaser, readout gradient and ADC as one design — `prephase=False` drops the prephaser, which is the spin-echo readout, and `echoes`/`polarity` read the same line more than once, which is a multi-echo gradient echo |
+| `RadialReadout` | one radial spoke: prephaser, readout gradient and ADC, already oriented, with the trajectory geometry a caller would otherwise reverse-engineer |
 | `EPI2D` | the whole echo-planar train: prephasers, alternating lobes, blips on the zero crossings, one ADC per echo, and the labels a reconstruction reads back |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
@@ -1254,6 +1255,60 @@ for the same reason.
 self-calibration no real scan can have, and §8 decomposes a segmented EPI's replica at `Ny/shots`
 over the TR, the run-in and the spoiling schedule.
 
+
+
+## A radial spoke, and where its geometry lives
+
+`RadialReadout` is one spoke: a prephaser, a readout gradient and an ADC, oriented in the x-y
+plane. A **leaf**, because it determines every event it emits from its own parameters.
+
+```python
+import math
+
+spoke = sc.modules.RadialReadout(opts=opts, fov_mm=260.0, matrix=64, dwell_s=20e-6)
+tr_s, golden = 20e-3, 2 * math.pi / (1 + 5**0.5)
+scan = sc.LogicBlock()
+for n in range(64):                               # the schedule is the caller's
+    scan.add(n * tr_s, spoke(angle_rad=n * golden))
+```
+
+**It is built out of `CartesianLine`**, because a spoke *is* a Cartesian line pointing somewhere
+other than along an axis: the prephaser, the dwell arithmetic, the ADC and — the hard one —
+which sample carries `k = 0` are the same problem, already solved. What this module adds is the
+rotation, the semantic trajectory geometry, and a contract stated in the vocabulary of a spoke.
+
+`partial_fourier` spans the family, reusing the existing parameter rather than adding
+`readout_asymmetry` beside it:
+
+| `partial_fourier` | samples at `matrix=64` | centre sample | |
+|---|---|---|---|
+| `1.0` | 64 | 32 | full spoke, `-32Δk … +31Δk` |
+| `0.75` | 48 | 16 | asymmetric |
+| `0.5` | 32 | 0 | centre-out |
+
+`Δk = 1/FOV` throughout. The range is closed at both ends and 0.5 is not degenerate: it is
+centre-out, a sequence family rather than an edge case. The official UTE example spans the same
+continuum with an argument running the other way and shrinks `Δk` instead of dropping samples;
+both hold the resolution the protocol asked for.
+
+**The centre sample is not the ADC midpoint**, and the difference is the point. A full spoke with
+an even matrix has its centre one sample past the middle — the same `matrix // 2` convention
+`PhaseEncode` uses — and a centre-out spoke has it at sample zero. `center_sample`,
+`time_to_center()`, `dk_per_m`, `k_first_per_m`, `k_last_per_m` and `k_max_per_m` are the module's
+answers, and they exist because the alternative is what OpenMRF's radial readout has to do:
+compile a probe sequence and read its trajectory back to find out where its own centre landed.
+
+**The block is already oriented.** A caller does not rotate what `build` returns, because the
+module's semantic properties describe the oriented spoke and a trajectory whose orientation lived
+somewhere else would have two owners. Internally one canonical spoke is designed along x and
+fresh rotated copies are derived per call — including the stored `area`, which both references
+that extend a readout's flat time warn is otherwise left wrong.
+
+What stays with the caller: how many spokes, which angles, in what order, golden-angle or
+equal-increment or randomised, and the excitation, spoiling and TR around them.
+`tests/modules/test_radial_readout.py` asserts the trajectory, and the rotation-equivariance test
+there is the same one that passed against the official PyPulseq reference before this module
+existed.
 
 ## The spin-echo train, and which layer owns which number
 
@@ -1605,6 +1660,7 @@ at import.
 | `POINT_KINDS` | `design.events` | constant |
 | `PYPULSEQ_VERSION` | `_compat` | constant |
 | `PhaseEncode` | `modules` | class |
+| `RadialReadout` | `modules` | class |
 | `PlacedEvent` | `compiler.model` | class |
 | `PulseqReadyBlock` | `compiler.model` | class |
 | `Raster` | `design.timing` | class |

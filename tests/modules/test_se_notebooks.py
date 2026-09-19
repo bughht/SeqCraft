@@ -1,8 +1,10 @@
 """
 The two spin-echo composites that stay in their notebooks, asserted from outside them.
 
-``SE2D`` and ``FSE2D`` have one consumer each -- their own build notebook -- so neither ships and
-neither can be imported here.  What CI can still do is **run the notebook and assert against what
+``SE2D`` has one consumer -- its own build notebook -- so it does not ship and cannot be imported
+here.  ``FSE2D`` **now ships**, but the notebook keeps its own copy deliberately, as the reference
+the package was extracted from; ``test_fse_notebook_matches_the_package.py`` compares the two, and
+what this file asserts is the notebook's own physics.  What CI can still do is **run the notebook and assert against what
 it defined**, which is the bargain ``test_mprage_notebooks.py`` already strikes: the tutorial stays
 a tutorial, and it cannot drift without something noticing.
 
