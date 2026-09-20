@@ -104,6 +104,16 @@ The physics is settled but ownership is not: two layers could each plausibly own
 while the physics was complete — the open question was whether the reusable unit included the
 excitation.
 
+### MODE_CONTRACT_INCOMPLETE
+The boundary is settled and the physics is understood, but a candidate with named modes has not
+published the table rule A requires. Distinct from `PHYSICAL_BOUNDARY_UNCLEAR`: nothing is
+*unknown*, something is **unwritten**, and the two need different work — one needs analysis, the
+other needs a document. Using the boundary code for a missing contract overstates the uncertainty
+and hides that the remaining task is bounded.
+
+The table is what proves named modes are modes of one thing rather than several implementations
+behind a string flag, so it is owed **before** implementation and not after.
+
 ### REFERENCES_DISAGREE
 Two references produce materially different sequences for the same nominal protocol, and it is not
 yet known whether the difference is representational, historical, or a genuine physical

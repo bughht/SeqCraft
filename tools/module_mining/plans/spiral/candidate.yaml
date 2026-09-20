@@ -70,8 +70,15 @@ evidence:
 contract:
   intrinsic: >
     Given field of view, matrix, shots, density and dwell, the module determines the path, its
-    traversal under this scanner's limits, every emitted sample, where k = 0 falls among them,
-    and the ADC segmentation the sample limit forces.
+    traversal under this scanner's limits, every emitted sample, every instant at which the path
+    crosses the origin, and the ADC segmentation the sample limit forces.  One arm, designed once
+    at rest at both ends; the variant chooses how many and in which order.
+  endpoint_policy: >
+    DURABLE: every arm begins and ends at g = 0, in every mode including `out`.  writeSpiral.m
+    ends its spiral-out at full gradient and ramps down inside the spoiler, which is coherent for
+    a family of one and incompatible with reversibility -- an arm ending at full gradient
+    time-reverses into one starting there.  So SeqCraft's `out` differs from the reference at its
+    tail deliberately, and no event-level similarity is claimed near the end.
   invariants:                   # PROPOSED; none measured in this phase
     - the reported trajectory equals the compiled one within a characterised floor (failure C)
     - the assembled waveform's end-of-block k is the origin (failure E)
@@ -80,20 +87,47 @@ contract:
     - measured turn spacing matches 1/density everywhere
     - the spoke at angle phi is the spoke at 0, rotated -- as RadialReadout already asserts
   varying_parameters: [fov_mm, matrix, shots, density, dwell_s, angle_rad, variant, echoes]
-  modes:                        # RESOLVED: variant is a mode set, so rule A fires.  The table
-                                # itself is required BEFORE implementation and is not written yet.
+  modes:                        # Full table in mode_contract.md; summarised here.
+                                # STAGE SCOPE IS ALL FOUR.  Starting from `out` is an
+                                # implementation sequence, not an out-only abstraction.
     - name: out
-      k_zero: the first sample
-      reference_evidence: writeSpiral.m -- spiral-out only, k=0 advanced to the first sample
+      path_order: 0 -> k_max
+      k_zero_instants: 1, the first sample
+      endpoints: g = 0 at both ends
+      prephase: not required
+      rewind: required
+      join: none
+      multi_echo_transition: flyback k_max -> 0
+      reference_evidence: writeSpiral.m -- path, extent, traversal, ADC segmentation
     - name: in
-      k_zero: the last sample
-      reference_evidence: NONE -- analytic only
+      path_order: k_max -> 0
+      k_zero_instants: 1, the last sample
+      endpoints: g = 0 at both ends
+      prephase: required
+      rewind: not required
+      join: none
+      multi_echo_transition: flyback 0 -> k_max
+      reference_evidence: NONE -- analytic and metamorphic only
     - name: in-out
-      k_zero: the seam, which must fall INSIDE a sampling window and not in an ADC guard
-      reference_evidence: NONE -- analytic only
+      path_order: k_max -> 0 -> k_max
+      k_zero_instants: 1, the seam, which must fall INSIDE a sampling window
+      endpoints: g = 0 at both ends
+      prephase: required
+      rewind: required
+      join: at k = 0, continuous because both arms are at rest there
+      multi_echo_transition: none -- consecutive units share an endpoint
+      reference_evidence: NONE -- analytic and metamorphic only
     - name: out-in
-      k_zero: the seam
-      reference_evidence: NONE -- analytic only
+      path_order: 0 -> k_max -> 0
+      k_zero_instants: >
+        TWO, at both ends.  The one asymmetry in the family, and the reason the reported echo
+        instants must be a SEQUENCE from the first implementation.
+      endpoints: g = 0 at both ends
+      prephase: not required
+      rewind: not required
+      join: at k_max
+      multi_echo_transition: none
+      reference_evidence: NONE -- analytic and metamorphic only
   excluded_caller_policy:
     - the angle schedule and the order arms are played in
     - the excitation, the refocusing, TR, and whether this is a GRE or a SE
@@ -123,6 +157,13 @@ acceptance:
     - >
       `echoes` and `variant` both belong to the readout -- they change gradient continuity, ADC
       regions and where k = 0 falls, which are its correctness conditions
+    - >
+      all four variants fit ONE SpiralReadout: one path/traversal model, one hardware solve, one
+      trajectory representation, one ADC ownership model, one invariant set, and no unrelated
+      parameter becomes conditional on the mode (mode_contract.md section 7)
+    - >
+      `out-in` crosses the origin TWICE, so the durable contract requires the reported echo
+      instants to be a sequence from the first implementation -- free now, expensive later
     - none of the three PR23 helpers has a second consumer on current main, including after PR #27
     - PR23's reconstruction placement decision (examples/, not src/) is correct
     - the reconstruction's trajectory container is trajectory-AGNOSTIC; a radial acquisition fits
@@ -153,10 +194,17 @@ validation:
   compiler_changes: none made
 
 evidence_state:
-  human_review: NEEDED          # boundary approved in review; the mode contract is still owed
+  human_review: NEEDED          # boundary approved; the mode contract is written and awaits review
   experiment_design_review: NOT_NEEDED
   scanner_validation: FUTURE
   deferred:
+    - what: >
+        Simulation and reconstruction of any spiral acquisition -- Layer 3.
+      why: >
+        Needs the non-Cartesian reconstruction whose promotion is itself deferred.  The trajectory
+        claims are carried more directly by emitted-trajectory measurement than an image would
+        carry them.
+      revisit_trigger: The reconstruction contract question is settled either way.
     - what: >
         An independent witness for the in / in-out / out-in variants and for multi-echo.
       why: >
@@ -187,16 +235,17 @@ evidence_state:
 
 status: UNDECIDED
 traffic_light: YELLOW
-reason_code: PHYSICAL_BOUNDARY_UNCLEAR
+reason_code: MODE_CONTRACT_INCOMPLETE
 decided_by: human               # PROPOSED by the skill; awaiting review
 
 open_questions:
   - >
-    The mode-contract table for `variant` is REQUIRED before implementation and is not written.
-    "in is out reversed" is structurally the reasoning that produced the GRE3D RF defect.
+    The mode contract is WRITTEN (mode_contract.md, echoes_contract.md).  What remains before
+    implementation is human review of it -- specifically of the endpoint policy, which departs
+    from the independent reference on purpose.
   - Is the join correction (D13/D14) a module concern, or evidence of a representation mismatch
     between raster-centre and raster-edge lattices that belongs lower down?
   - >
-    Should a first extraction ship spiral-out only, where the reference can carry the claim, and
-    add the reversible variants once their analytic contract is written?  Smaller, and it keeps
-    the two evidence tiers from being conflated in one release.
+    WITHDRAWN: an out-only abstraction was proposed and is wrong.  Reference coverage sets the
+    evidence tier of a claim, not the abstraction boundary.  Stage scope is the four-variant
+    family; `out` first is an implementation order.
