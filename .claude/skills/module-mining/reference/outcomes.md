@@ -140,6 +140,18 @@ and hides that the remaining task is bounded.
 The table is what proves named modes are modes of one thing rather than several implementations
 behind a string flag, so it is owed **before** implementation and not after.
 
+### IMPLEMENTATION_DEFECT_UNRESOLVED
+The physical boundary is known, the mode contract is written, the implementation exists, and a
+**reproducible correctness failure remains** whose cause has not been found.
+
+Distinct from the two codes above, and the distinction is about what work is owed:
+`PHYSICAL_BOUNDARY_UNCLEAR` needs analysis, `MODE_CONTRACT_INCOMPLETE` needs a document, and this
+needs debugging. Using either of the others here would say the design is in question when it is
+not.
+
+While it stands, prefer a loud failure to a guessed limit: a refusal encoding a boundary nobody
+has established is a false contract that outlives the defect.
+
 ### REFERENCES_DISAGREE
 Two references produce materially different sequences for the same nominal protocol, and it is not
 yet known whether the difference is representational, historical, or a genuine physical

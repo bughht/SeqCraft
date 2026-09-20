@@ -239,23 +239,53 @@ arbitrary gradient across ADC-driven block boundaries is exact to **1e-13**, acr
 Recorded because the near-miss is the point: the same evidence that would have "confirmed" PR23's
 m0 claim was available, and the reproducer is what stopped it being claimed.
 
-## 8.3 Known limitation, unresolved
+## 8.3 The defect, minimized and fixed
 
-Protocols around `matrix=128` still fail the m0 contract when segmentation splits the arm.
-36 of 48 swept protocols compile; every failure is `matrix=128`, and `matrix=96` with two segments
-passes — so it is not simply "multi-segment".
-
-Pinned by **strict** `xfail` tests, one per variant, so a fix announces itself by turning the suite
-red until the limitation is removed from the record too.
+**Minimal failing case:** `matrix=112, shots=1, variant='out'`, one protocol wide.
 
 ```text
-established     the four-variant family, the durable shapes, the trajectory measured off
-                emitted events (~1e-12 1/m against sc.kspace), both hardware limits, the
-                endpoint policy, zero residual after rewind
-not established the longest arms compile; multi-echo; any image
-deferred        the defect above, and Layer 3
-revisit trigger the defect blocks a protocol somebody wants, or a fix lands
+m111  seg 2  n 12476  dur 49950 us  acq_end 49950 us   ok
+m112  seg 2  n 13112  dur 52490 us  acq_end 52500 us   FAIL  m0 off by -0.0446 1/m
+m113  seg 2  n 13284  dur 53190 us  acq_end 53190 us   ok
 ```
+
+Both neighbours pass. Segment count is not the discriminator -- `m96` and `m104` pass with two
+segments. **The discriminator is `acq_end > dur`**, and `m112` was the only case in the range
+where the acquisition ran past its gradient.
+
+**Where m0 first diverges**, traced through the pipeline:
+
+| stage | m0 |
+|---|---|
+| designed path / traversal | correct |
+| emitted gradient knots | `254.47896` 1/m against a design end of `254.54545` -- the expected representation difference, already absorbed by the rewinder |
+| ADC segmentation / acquisition sizing | **the fault is introduced here, and is invisible in m0** |
+| assembled `LogicBlock` | **exactly `0.0`** on both axes |
+| compiled Pulseq blocks | **`-0.0446`** |
+
+So the tree is right and the compile is wrong -- but not because the compiler is wrong. Block
+durations are `26250 + 26250 + 400` us against a gradient of `52490` us: the two ADC blocks total
+**10 us more** than the arm, the compiler holds the last block open, and the waveform is padded
+with area nobody designed.
+
+**Root cause.** Each ADC event spends a lead delay and a trailing dead time **and** its span is
+rounded up to the gradient raster. So the overhead per segment is up to `lead + trail + raster`,
+while the sample budget subtracted only `lead + trail`. One raster of under-estimate per segment
+is enough.
+
+**The fix**, and the smallest one that is actually justified: size the budget **against the
+placement** rather than against an estimate of it. `budget()` now computes where the events would
+land and shrinks the sample count by one divisor at a time until the last one finishes inside the
+gradient. No contract changed, no refusal added, no compiler touched.
+
+**Result:** 96 protocols -- four matrices by three shot counts by four variants -- all compile,
+with `acquisition_end_s <= duration_s` in every one. The strict xfails are gone, replaced by a
+regression test that asserts the invariant the defect violated.
+
+**Why it hid.** The under-estimate is silent unless the rounding happens to push past the
+gradient, which needs the sample count, the dwell, the dead times and the raster to line up
+against a duration that is itself an output of the traversal. `m112` was that alignment; `m111`
+and `m113` were not.
 
 ## 8.4 What PR23 got right, confirmed by re-deriving it
 

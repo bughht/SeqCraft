@@ -142,6 +142,16 @@ _ORIGIN_FRACTION = 0.5
 _AT_ORIGIN = 1e-3
 
 
+def _split(total: int, segments: int, divisor: int) -> tuple[int, ...]:
+    """Divide `total` samples into `segments` events, each a whole multiple of `divisor`."""
+    per = total // segments
+    per -= per % divisor
+    spare = total - per * segments
+    counts = [per] * segments
+    counts[-1] += spare - spare % divisor
+    return tuple(counts)
+
+
 class SpiralReadout(Module):
     """
     A variable-density spiral arm, traversed one of four ways.
@@ -406,14 +416,33 @@ class SpiralReadout(Module):
         """
         divisor = int(getattr(self.opts, 'adc_samples_divisor', 1) or 1)
         limit = int(getattr(self.opts, 'adc_samples_limit', 0) or 0)
-        dead = float(self.opts.adc_dead_time)
         raster = float(self.opts.grad_raster_time)
 
+        probe = pp.make_adc(num_samples=divisor, dwell=self.dwell_s, system=self.opts)
+        lead, trail = float(probe.delay), float(probe.dead_time)
+
+        def placed_end(split: tuple[int, ...]) -> float:
+            """Where the last ADC event finishes once every span is on the gradient raster."""
+            return float(sum(ceil_raster(lead + count * self.dwell_s + trail, raster)
+                             for count in split))
+
         def budget(count: int) -> int:
-            """Samples that fit inside the gradient when split into `count` events."""
-            overhead = count * float(ceil_raster(2.0 * dead, raster))
-            samples = int((self.duration_s - overhead) / self.dwell_s)
-            return samples - samples % divisor
+            """
+            Samples that fit **inside** the gradient when split into `count` events.
+
+            Sized against the placement, not against an estimate of it.  Each event spends a lead
+            delay and a trailing dead time *and* is rounded up to the gradient raster, so the
+            overhead per segment is up to ``lead + trail + raster`` rather than the ``lead +
+            trail`` a subtraction would guess.  Under-estimating it by one raster is enough: the
+            acquisition then outlasts the gradient, the compiler holds the last block open, and
+            the waveform is padded with area nobody designed -- which is exactly the m0 the
+            contract check refuses.
+            """
+            samples = int((self.duration_s - count * (lead + trail + raster)) / self.dwell_s)
+            samples -= samples % divisor
+            while samples > 0 and placed_end(_split(samples, count, divisor)) > self.duration_s:
+                samples -= divisor
+            return samples
 
         segments = 1 if forced is None else require_count(forced, 'adc_segments', low=1)
         if forced is None and limit > 0:
@@ -443,19 +472,15 @@ class SpiralReadout(Module):
             )
             raise ConfigurationError(msg)
 
-        per = total // segments
-        per -= per % divisor
-        if per <= 0:
+        split = _split(total, segments, divisor)
+        if min(split) <= 0:
             msg = format_error(
                 f'{segments} ADC events cannot each hold a multiple of {divisor} samples.',
                 {'samples': total, 'adc_segments': segments, 'adc_samples_divisor': divisor},
                 ['lower adc_segments', 'or adjust dwell_s so the total divides evenly'],
             )
             raise ConfigurationError(msg)
-        split = [per] * segments
-        spare = total - per * segments
-        split[-1] += spare - spare % divisor
-        return sum(split), tuple(split)
+        return sum(split), split
 
     # ------------------------------------------------------------------ what it knows
     def _crossings(self) -> tuple[tuple[int, ...], tuple[float, ...]]:

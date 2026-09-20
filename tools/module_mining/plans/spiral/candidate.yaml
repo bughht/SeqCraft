@@ -191,14 +191,29 @@ validation:
   generic_measurements:
     - compiler m0/m1 round-trip on raw sign-changing arbitrary gradients, swept over knots
       and amplitude (tools/module_mining/candidates/spiral/run_compiler_claims.py)
-  family_checks: []             # none run -- archaeology phase
-  metamorphic: []
-  parameter_sweep: not run
-  emitted_inspection: []
+  family_checks:
+    - every arm begins and ends at rest, on the emitted knots
+    - '`in` is `out` reversed; the two-arm variants are the same arm twice'
+    - origin crossings: one for out / in / in-out, TWO for out-in, all within half a step
+    - the rewinder returns k to the origin, sized against the EMITTED end
+    - the acquisition finishes inside its gradient
+  metamorphic:
+    - reversal: in is out reversed
+    - rotation equivariance, as RadialReadout asserts
+  parameter_sweep: >
+    96 protocols -- four matrices by three shot counts by four variants -- all compile, with the
+    acquisition inside the gradient in every one.
+  emitted_inspection:
+    - mode: all four variants
+      file: measured in tests/modules/test_spiral_readout.py rather than written to disk
+      reads_as: >
+        reported trajectory agrees with sc.kspace -- which shares no code with the module -- to
+        ~1e-12 1/m; both hardware limits measured on the emitted knots; acquisition finishes
+        inside its gradient on all 96 swept protocols
   layers:
-    layer_1: NOT_APPLICABLE
-    layer_2: NOT_APPLICABLE
-    layer_3: NOT_APPLICABLE
+    layer_1: GREEN            # 89 tests; family relationships, crossings, limits, segmentation
+    layer_2: GREEN            # compiles to legal Pulseq across a 96-protocol sweep
+    layer_3: DEFERRED
     layer_3_reason: >
       Nothing implemented.  Layer 3 for a spiral additionally needs the non-Cartesian
       reconstruction whose promotion is itself deferred -- see radial/evidence_state.yaml.
@@ -209,14 +224,6 @@ evidence_state:
   experiment_design_review: NOT_NEEDED
   scanner_validation: FUTURE
   deferred:
-    - what: >
-        Protocols around matrix=128 fail the compiler m0 contract when ADC segmentation splits
-        the arm, by 0.02-0.08 1/m.  36 of 48 swept protocols compile.
-      why: >
-        Isolated to this module -- splitting a bare arbitrary gradient across ADC-driven block
-        boundaries is exact to 1e-13 -- and unresolved when implementation time ran out.  Pinned
-        by strict xfail tests so a fix announces itself.
-      revisit_trigger: The defect blocks a protocol somebody wants, or before this is merged.
     - what: >
         Simulation and reconstruction of any spiral acquisition -- Layer 3.
       why: >
@@ -253,10 +260,8 @@ evidence_state:
         appears that a correct design trajectory cannot explain.
 
 status: NEW_LEAF
-traffic_light: YELLOW
-reason_code: PHYSICAL_BOUNDARY_UNCLEAR   # NOT the boundary -- see the note below.  The vocabulary
-                                         # has no code for "implemented, one protocol class still
-                                         # fails", which is itself a finding.
+traffic_light: GREEN
+reason_code: null
 decided_by: human               # boundary, variant/echo ownership and endpoint policy all
                                 # settled in review; the endpoint cost is now measured.
                                 # NOT GREEN: GREEN means the checks passed, and nothing is built

@@ -32,10 +32,13 @@ Three things the implementation found, each a silent failure:
 | limits measured on raster-spaced differences | the emitted first and last intervals are **half** a raster, so the real slew is twice what that reports |
 | the acquisition outlasting its gradient | the compiler holds the last block open and pads the waveform with area nobody designed |
 
-**Known limitation:** protocols around `matrix=128` fail the compiler's m0 contract when ADC
-segmentation splits the arm, by 0.02–0.08 1/m. Isolated to this module — splitting a bare
-arbitrary gradient across ADC-driven block boundaries is exact to 1e-13 — and **not** the compiler.
-Pinned by strict `xfail` tests so a fix announces itself.
+A fourth, found by minimizing to a single failing protocol: each ADC event is rounded up to the
+gradient raster **as well as** spending a lead delay and a trailing dead time, so sizing the sample
+budget by subtracting only the dead times under-estimates the overhead by one raster per segment.
+The acquisition then outlasts its gradient by 10 µs, the compiler holds the last block open, and
+the waveform is padded with 0.045 1/m nobody designed. The budget is now sized against the
+placement rather than an estimate of it. 96 protocols — four matrices by three shot counts by four
+variants — all compile.
 
 `echoes > 1` refuses, naming the contract; `out-in` already exercises the plural machinery at
 `echoes=1`. No 3D, no anisotropic FOV, no density presets, no `GRESpiral2D`/`SESpiral2D`, and the

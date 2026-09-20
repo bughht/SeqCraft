@@ -335,7 +335,7 @@ def test_the_rewinder_returns_k_to_the_origin(opts: pp.Opts, variant: str) -> No
 
 
 # ------------------------------------------------------------------ ADC segmentation
-@pytest.mark.parametrize('matrix', [48, 64, 96])
+@pytest.mark.parametrize('matrix', [48, 64, 96, 112, 128])
 def test_segmentation_respects_the_sample_limit(opts: pp.Opts, matrix: int) -> None:
     """Every ADC event fits, and the segments account for every sample."""
     module = spiral(opts, matrix=matrix, shots=4, variant='in-out')
@@ -352,7 +352,7 @@ def test_crossing_stays_correct_across_a_segmentation_boundary(opts: pp.Opts) ->
     including on a crossing.  The contract requires only that the crossing be a real sample.
     """
     seen = set()
-    for matrix in range(56, 104, 8):
+    for matrix in range(56, 136, 8):
         module = spiral(opts, matrix=matrix, shots=2, variant='in-out')
         seen.add(len(module._segments))
         block = module()
@@ -366,25 +366,29 @@ def test_crossing_stays_correct_across_a_segmentation_boundary(opts: pp.Opts) ->
 def test_a_refusal_names_the_way_out(opts: pp.Opts) -> None:
     """``adc_segments=1`` refuses rather than silently splitting, and says what would fit."""
     with pytest.raises(sc.ConfigurationError, match='will not fit'):
-        spiral(opts, matrix=96, shots=1, variant='in-out', adc_segments=1)
+        spiral(opts, matrix=128, shots=1, variant='in-out', adc_segments=1)
 
 
 @pytest.mark.parametrize('variant', VARIANTS)
-@pytest.mark.xfail(reason='known defect: long arms lose ~0.02-0.08 1/m of m0 when the ADC '
-                          'segmentation splits them, and the compiler refuses the result. '
-                          'Isolated to this module -- splitting a bare arbitrary gradient across '
-                          'ADC-driven block boundaries is exact to 1e-13, so it is not the '
-                          'compiler. Unresolved; see plans/spiral/findings.md.',
-                   strict=True)
-def test_the_longest_arms_still_fail_to_compile(opts: pp.Opts, variant: str) -> None:
+@pytest.mark.parametrize(('matrix', 'shots'), [(96, 1), (112, 1), (128, 2), (128, 4)])
+def test_the_acquisition_finishes_inside_its_gradient(opts: pp.Opts, variant: str, matrix: int,
+                                                      shots: int) -> None:
     """
-    The known defect, pinned so it cannot be forgotten and so a fix announces itself.
+    The regression for the defect that took the longest to find.
 
-    ``strict=True``: when this starts passing, the suite fails until the limitation is removed
-    from the record too.
+    Each ADC event spends a lead delay and a trailing dead time **and** is rounded up to the
+    gradient raster, so the overhead per segment is up to ``lead + trail + raster``.  Sizing the
+    sample budget by subtracting ``lead + trail`` under-estimates it by one raster, the
+    acquisition outlasts the gradient, the compiler holds the last block open, and the waveform
+    is padded with area nobody designed -- 0.045 1/m on ``matrix=112``, refused by the m0
+    contract check.
+
+    ``matrix=112, shots=1`` was the minimal failing case: its neighbours at 111 and 113 both
+    passed, and it was the only one in the range whose acquisition ran past its gradient.
     """
-    module = spiral(opts, matrix=128, shots=2, variant=variant)
-    sc.compile(module(), opts, name='long')
+    module = spiral(opts, matrix=matrix, shots=shots, variant=variant)
+    assert module.acquisition_end_s <= module.duration_s
+    sc.compile(module(), opts, name='inside')
 
 
 # ----------------------------------------------------------------------- it compiles
