@@ -216,12 +216,17 @@ unresolved claims, not by duplicating test results.
 
 ```yaml
 status: NEW_KERNEL            # NEW_LEAF | NEW_KERNEL | NEW_IMAGING | PROMOTE_NOTEBOOK |
-                              # EXTEND_EXISTING | NO_NEW_MODULE
-traffic_light: GREEN          # GREEN | YELLOW | RED  (+ reason code -- reference/outcomes.md)
+                              # EXTEND_EXISTING | NO_NEW_MODULE | UNDECIDED
+traffic_light: GREEN          # GREEN | APPROVED_FOR_IMPLEMENTATION | YELLOW | RED
+                              # (+ reason code -- reference/outcomes.md)
 reason_code: null             # required unless GREEN
 decided_by: human             # ALWAYS human; the skill recommends
 open_questions: [...]         # survived all three pilots; an empty list is suspicious
 ```
+
+**`UNDECIDED` is a real status, not a placeholder.** A YELLOW record still needs one, and every
+other value asserts an action nobody took -- pairing a provisional `NEW_LEAF` with a YELLOW puts a
+decision in the record that was never made.
 
 `status` and `traffic_light` are separate because they answered different questions: TSE was
 `NEW_KERNEL + PROMOTE_NOTEBOOK` / `GREEN`, and earlier in its life `MORE_EVIDENCE_REQUIRED` /

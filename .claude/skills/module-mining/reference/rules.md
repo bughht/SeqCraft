@@ -155,6 +155,44 @@ changed — and it is only safe to write down after looking.
 
 ---
 
+## E. Measure the module on the lattice it emits
+
+> **A module that checks its output on a more convenient representation than the one it emits
+> will certify something it cannot build.**
+
+Derived quantities computed from a module's *internal* arrays are not the module's output. The
+output is the event the factory accepts and the compiler plays, and its representation may differ
+in ways that are invisible until something refuses it: sample positions, endpoint conventions,
+interval widths at the edges, quantisation.
+
+The check is mechanical: whatever property a module asserts about itself -- a limit respected, an
+area delivered, a position reached -- compute it from the **emitted event's own knots**, and
+prefer an independent measurement of the compiled sequence where one exists.
+
+This is why `limits()`-style accessors are measurements rather than restatements of a solver's
+constraints, and why a reported trajectory is integrated from emitted knots rather than carried
+over from a design pass.
+
+---
+
+## F. Validate temporal occupancy after events are placed together
+
+> **Individually correct events can become physically wrong once placed: one event can extend the
+> compiled block past another waveform's designed support.**
+
+Every event may satisfy its own contract and the assembly still be wrong, because occupancy is a
+property of the *arrangement*. An event that reserves more time than its nominal content -- a
+guard, a dead time, a raster round-up -- can push a block boundary past where another waveform was
+designed to end, and the compiler then holds that block open and pads what is inside it.
+
+The padding is not a compiler error. It is the correct response to a tree that asked for it.
+
+So: after placement, check that every waveform's designed support **contains** the block it lands
+in, not merely that each event is individually legal. Budgets computed by subtracting nominal
+overheads are the usual way this is got wrong, because the true overhead includes the rounding.
+
+---
+
 ## Compiler-change escalation
 
 The compiler owns Pulseq legality and knows nothing about any candidate. A candidate that will not

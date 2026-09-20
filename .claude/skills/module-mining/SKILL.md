@@ -63,7 +63,7 @@ Two corollaries that have each been needed: **reuse of semantics does not oblige
 emitted event**, and a composite that merely sequences leaves in a fixed order is composition, not
 a kernel.
 
-## The four rules a candidate must satisfy before promotion
+## The rules a candidate must satisfy before promotion
 
 Each came from a real failure. `reference/rules.md` has the full form, the failure behind it, and
 the template; load it when a candidate reaches that stage.
@@ -89,6 +89,15 @@ this comparison does NOT establish: ...
 ```
 
 "Validated against X" may never mean more than what was measured.
+
+**E. Measure on the emitted lattice.** Whatever a module asserts about itself, compute it from
+the emitted event's own knots -- a module that checks a more convenient representation will
+certify something it cannot build.
+
+**F. Validate occupancy after placement.** Individually correct events can become wrong together:
+one can extend a compiled block past another waveform's designed support, and the padding that
+follows is the compiler obeying the tree. Budgets computed by subtracting nominal overheads miss
+the rounding.
 
 **D. Shared-leaf dependency impact.** A candidate that changes an existing leaf maps
 `changed leaf -> direct consumers -> transitive consumers -> examples/notebooks`, and classifies
