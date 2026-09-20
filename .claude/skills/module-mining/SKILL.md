@@ -330,22 +330,63 @@ problem). Record it as **evidence-blocked, not rejected** — the physics questi
 the candidate can be re-run if a permissive reference appears. Quietly dropping it loses the work;
 recording it as `NO_NEW_MODULE` claims evidence nobody has.
 
+### Four different uses of a source, which a licence constrains differently
+
+Do not collapse these. A restrictive licence or terms of use does **not** make the underlying
+published physics unusable as evidence.
+
+| use | what a restrictive licence typically constrains |
+|---|---|
+| scientific / reference evidence — what the physics is, what invariants hold | usually not constrained; published physics is not owned |
+| implementation / code reuse — copying or adapting source | constrained, often prohibitively |
+| redistribution — shipping the source or a derivative | constrained |
+| executable-oracle use — running it to produce numbers we validate against | depends on terms; also raises independence questions separately |
+
+So the rule is about **admissibility and independence together**, not about the licence alone:
+
+> Check source licence, terms, provenance and independence before using code or an executable
+> reference as a design witness or oracle. If the remaining admissible and sufficiently
+> independent evidence cannot support the intended acceptance claim, stop at `YELLOW` rather than
+> weakening the claim.
+
 `status: UNDECIDED` exists for exactly this record: a YELLOW still needs a status, and every other
 value asserts an action nobody took.
 
 ## Beware a family defined by its waveform silhouette
 
 A grouping criterion of the form *"the same N pulses keep appearing"* is a **discovery heuristic,
-not a boundary.** Pulse counts and flip patterns are what a coarse scan can see cheaply, which is
-why families get grouped that way and why the grouping must be re-tested before it is trusted.
+not boundary evidence.** Pulse counts and flip patterns are what a coarse scan can see cheaply,
+which is why families get grouped that way and why the grouping must be re-tested before it is
+trusted.
+
+> **Waveform and event-shape similarity is a discovery heuristic; promotion requires a shared
+> physical solve.**
 
 The test: for each use, what value could somebody get wrong, and is it the *same* value? If the
 uses differ in what is stored, what the intervening gradients are for, or how the preparation
-couples to what follows, then what they share is a **coherence pathway or a pulse count**, and
-neither is something a module can own. A module owns a value; spin physics is not a value.
+couples to what follows, the waveform grouping has not established a boundary.
 
-Every boundary that has held so far was grouped by a shared **physical solve** — a crusher window
-satisfying three axes, a trajectory, a signed moment coupling — not by a waveform shape.
+**What that does not settle.** Rejecting a waveform-defined grouping says nothing about whether
+the underlying *physics* can be expressed as a reusable abstraction with a clear correctness
+contract. Those are different questions and the second stays open. The follow-up is:
+
+```text
+can the physics be parameterised -- the requested pathway or state, the intervals,
+the semantic echo time, the required signed moment relationships, the RF-centre
+timing, the suppression of what is not wanted -- while retaining clear correctness
+conditions?
+
+or does the general case require the caller to specify nearly the whole
+RF / gradient / timing program?
+```
+
+If the first, a kernel or module may be justified. If the second, the abstraction has become **a
+second sequence DSL**, and the physics is better served by lower-level semantics and helpers plus
+family-specific kernels.
+
+Every boundary that has held so far was grouped by a shared physical solve — a crusher window
+satisfying three axes, a trajectory, a signed moment coupling — not by a waveform shape. That is
+evidence about how boundaries have been found, not a rule about what can be owned.
 
 ## Standing constraints
 

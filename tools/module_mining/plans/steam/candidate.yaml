@@ -137,12 +137,23 @@ validation:
 status: UNDECIDED
 traffic_light: YELLOW
 reason_code: REFERENCE_NOT_INDEPENDENT
-decided_by: human               # PROPOSED by the skill; awaiting review
+decided_by: human               # CLOSED 2026-09-19; the proposed classification was accepted
 coverage: COMPOSITION_COVERED   # for the broad framing only: Excitation, Refocusing, spoiler and
                                 # a delay already express what remains once the application-
                                 # specific couplings are removed (findings.md section 4)
 
 open_questions:
+  - >
+      THE OPEN ARCHITECTURAL QUESTION, deliberately not resolved in this phase. Can
+      stimulated-echo / coherence-pathway physics be expressed as a reusable abstraction with a
+      clear physical correctness contract?  Candidate semantics it might own -- requested
+      coherence pathway; storage / mixing interval; semantic stimulated-echo time; required
+      signed gradient-moment relationships; RF-centre timing relationships; suppression of
+      unwanted pathways.  The test is whether those parameterise while keeping clear correctness
+      conditions, or whether the general case makes the caller specify nearly the whole
+      RF/gradient/timing program -- in which case it is a second sequence DSL and should stay as
+      lower-level semantics plus family-specific kernels.  What this run rejected is the BROAD,
+      WAVEFORM-DEFINED candidate, not this one.
   - Is the NARROW candidate -- the 90/180/90 diffusion-prepared store alone -- a real contract?
     It has one consumer, which is the single-consumer objection again.
   - Does OpenMRF's T2-preparation provide a permissively licensed witness to part of this physics?

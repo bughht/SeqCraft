@@ -80,7 +80,7 @@ three different couplings to what follows. What they share is *Bloch/EPG behavio
 RF pulses generate a stimulated echo — which is a fact about spin physics, not a contract a module
 can own.
 
-> **The shared thing is a coherence pathway. A coherence pathway is not a module boundary.**
+> **The waveform grouping does not establish a boundary.**
 >
 > A module owns a value somebody could get wrong. Here the values that could be got wrong are
 > different in each case: a diffusion moment balanced across a refocusing pulse; a dephasing
@@ -90,8 +90,32 @@ can own.
 This is the reasoning class this run exposes, and it generalises beyond this candidate: **a family
 identified by its waveform pattern is not thereby a candidate.** The coarse scan's grouping
 criterion — "the same three pulses keep appearing" — is a discovery heuristic, and discovery
-heuristics are not boundaries. Every prior pilot was grouped by a *physical solve* (a shared
-crusher window, a trajectory, a signed moment coupling), not by a waveform silhouette.
+heuristics are not boundary evidence. Every prior pilot was grouped by a *physical solve* (a
+shared crusher window, a trajectory, a signed moment coupling), not by a waveform silhouette.
+
+### What this does **not** settle
+
+It rejects the **broad, waveform-defined** candidate. It says nothing about whether
+stimulated-echo physics can be expressed as a reusable abstraction with a clear correctness
+contract, and that question stays open:
+
+```text
+broad waveform-defined STEAM abstraction      -> unsupported by this evidence
+physics-defined StimulatedEcho / STEAM        -> STILL UNRESOLVED
+```
+
+A future abstraction could plausibly own semantics such as the requested coherence pathway, the
+storage and mixing intervals, a semantic stimulated-echo time, the required signed gradient-moment
+relationships, RF-centre timing relationships, and the suppression of unwanted pathways. Whether
+those can be parameterised **while retaining clear correctness conditions** is the real question.
+
+If supporting the general case instead requires the caller to specify nearly the whole
+RF / gradient / timing / coherence program, the abstraction has become a **second sequence DSL**,
+and the physics is better served by lower-level semantics and helpers plus family-specific
+kernels. That is the test a later scan should apply.
+
+**This phase does not resolve it**, and nothing here should be read as "stimulated echo should not
+be a Module".
 
 ## 3. Applying the ownership test
 
@@ -129,12 +153,16 @@ any class that could be extracted without also owning the readout coupling.
   one. A narrower candidate — the 90/180/90 diffusion-prepared store of 1.2 alone — may well be a
   real contract. It has **one consumer**, which is the same objection recorded for a
   single-consumer reconstruction contract: one consumer's implementation under a more general name.
-- **Anything about DREAM's own contract.** §1.3 found the opposite of what the coarse scan
-  guessed: DREAM *does* own an irreducible cross-component constraint — the dephasing moment and
-  the readout waveform must be solved together so two pathways land in one window at known
-  positions. Whether that is reused across DREAM variants (`STE` and `STID` differ in which
-  pathway is read) is unexamined. **DREAM's `YELLOW / DEFER` stands, and this run strengthens
-  rather than weakens the case for looking again.**
+- **Anything about DREAM's own contract.** §1.3 observed a cross-component coupling — the
+  dephasing moment and the readout waveform appear to be solved together so that two pathways land
+  in one window at known positions. **That is candidate evidence, not a verdict.** It was read off
+  one notebook's block structure; whether the same solve is reused across DREAM variants (`STE`
+  and `STID` differ in which pathway is read) is unexamined, and nothing here establishes that the
+  coupling survives once shared stimulated-echo semantics are understood.
+
+  So it strengthens `DREAM -> DEFER / revisit later`. It does **not** justify
+  `DREAM -> NEW_KERNEL`. A later DREAM fine scan asks what remains after the shared semantics are
+  known.
 - **That the physics is correctly described.** Everything above is read from block structure and
   gradient areas in one non-independent corpus. No measurement was performed, no reference was
   executed by us, and no simulation was run.
