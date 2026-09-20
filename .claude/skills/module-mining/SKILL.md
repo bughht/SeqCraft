@@ -177,6 +177,7 @@ Full criteria in `reference/outcomes.md`. The catalogue:
 
 ```text
 GREEN                                           may enter PR review
+APPROVED_FOR_IMPLEMENTATION                     design settled, module not written yet
 NO_NEW_MODULE                                   the corpus has no reusable contract
 YELLOW - PHYSICAL_BOUNDARY_UNCLEAR
 YELLOW - REFERENCES_DISAGREE

@@ -10,13 +10,29 @@ them as one table would produce a four-by-N Cartesian product describing one rul
 
 ---
 
-## 1. What one echo is
+## 1. What an echo is **at this layer**
 
-> **One echo is one traversal of the path that crosses the origin.** The echo instant is the
-> crossing.
+> **A readout echo is represented by a semantic k-space-origin crossing of the acquisition
+> trajectory.** `echoes` counts those crossings.
 
-That definition is what makes `echoes` countable across variants that do not look alike. It also
-explains the asymmetry the variant table found: `out`, `in` and `in-out` cross the origin once per
+Deliberately not "one echo is one traversal that crosses the origin", which reads as a general
+definition of an MR echo and is not this module's to give. `SpiralReadout` owns **where and when
+the trajectory crosses the origin** and nothing about magnetisation.
+
+```text
+SpiralReadout        owns: the origin-crossing samples and their times
+GRE / SE kernel      owns: the relation between the RF and refocusing history
+                           and those crossings
+```
+
+The distinction matters most for spin echo. The readout can say where `k = 0` occurs; only the
+kernel can establish that the **physical** spin echo is aligned with the intended crossing, and
+misaligning them is PR23's failure **F** — a legal sequence whose TE is wrong by about one arm.
+A readout that claimed to own TE would make that failure invisible at the layer that could catch
+it.
+
+The crossing-based statement is what makes `echoes` countable across variants that do not look
+alike. It also explains the asymmetry the variant table found: `out`, `in` and `in-out` cross the origin once per
 unit, `out-in` crosses it twice — so a single `out-in` unit **is** two echoes by this definition,
 and reporting it as one would be the module lying about its own trajectory.
 

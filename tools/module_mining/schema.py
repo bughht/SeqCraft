@@ -65,7 +65,11 @@ _STATUSES = frozenset({
     'NO_NEW_MODULE', 'UNDECIDED',
 })
 
-_LIGHTS = frozenset({'GREEN', 'YELLOW', 'RED'})
+#: `APPROVED_FOR_IMPLEMENTATION` is the state between a settled design and a built module: the
+#: boundary, the ownership and any mode contract have been reviewed and accepted, and nothing
+#: exists yet.  GREEN cannot express it -- GREEN means the checks passed, and there is nothing to
+#: check -- and YELLOW would say "stop and ask a human" when the human has already answered.
+_LIGHTS = frozenset({'GREEN', 'APPROVED_FOR_IMPLEMENTATION', 'YELLOW', 'RED'})
 
 #: reference/outcomes.md.  A YELLOW or RED outside this set cannot be triaged.
 _REASON_CODES = frozenset({
@@ -231,6 +235,9 @@ def _check_validation(record: dict[str, Any], errors: list[str], warnings: list[
             'record why the oracle is not yet trusted, not merely that it is missing'
         )
 
+    # Rule B binds a *promoted* module.  A design that has been approved but not written has
+    # nothing to emit, and demanding an inspection of it would be asking for evidence that cannot
+    # exist yet.
     if record.get('traffic_light') == 'GREEN' and not validation.get('emitted_inspection'):
         modes = _walk(record, 'contract.modes')
         if modes:
@@ -365,8 +372,16 @@ def check(record: dict[str, Any]) -> tuple[list[str], list[str]]:
     elif light == 'GREEN' and reason:
         warnings.append(f'reason_code: {reason!r} set on a GREEN record')
 
-    if status == 'UNDECIDED' and light == 'GREEN':
-        errors.append('status: UNDECIDED cannot be GREEN -- GREEN is a decision')
+    if status == 'UNDECIDED' and light in {'GREEN', 'APPROVED_FOR_IMPLEMENTATION'}:
+        errors.append(f'status: UNDECIDED cannot be {light} -- both are decisions')
+    if light == 'APPROVED_FOR_IMPLEMENTATION':
+        layers = _walk(record, 'validation.layers') or {}
+        built = [k for k, v in layers.items() if k.startswith('layer_') and v == 'GREEN']
+        if built:
+            warnings.append(
+                f'traffic_light: APPROVED_FOR_IMPLEMENTATION with {sorted(built)} already GREEN '
+                '-- if the module exists and its layers pass, this is GREEN'
+            )
 
     coverage = record.get('coverage')
     if coverage is not None:

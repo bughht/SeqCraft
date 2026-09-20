@@ -75,6 +75,32 @@ be summarised as one.
 
 ---
 
+## APPROVED_FOR_IMPLEMENTATION
+
+The design is settled and the module does not exist yet.
+
+The boundary, the ownership of every parameter, any mode contract rule A requires, and any policy
+that departs from a reference have all been reviewed and accepted. What remains is writing it.
+
+```text
+-> implementation may begin, against the contract as recorded
+```
+
+**GREEN cannot express this**, and the distinction is not bureaucratic. GREEN means the checks
+passed; here there is nothing to check, and a record claiming it would have to either fake an
+emitted-sequence inspection or leave rule B unsatisfied. **YELLOW cannot express it either** —
+YELLOW says stop and ask a human, and the human has already answered.
+
+Two things this state must carry, or it is premature:
+
+- every parameter's ownership decided, with any mode contract **written**, not planned;
+- any **durable shape** the first implementation must respect from its first line, so that
+  implementing a subset does not later change the meaning of what was built.
+
+That second point is what the state is for. A design approved in the abstract and implemented
+incrementally will encode the first increment's assumptions unless the full contract is on paper
+before anyone starts.
+
 ## NO_NEW_MODULE
 
 The corpus was searched and no reusable physical contract was found — the similarity is at the

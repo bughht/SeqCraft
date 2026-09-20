@@ -74,11 +74,14 @@ contract:
     crosses the origin, and the ADC segmentation the sample limit forces.  One arm, designed once
     at rest at both ends; the variant chooses how many and in which order.
   endpoint_policy: >
-    DURABLE: every arm begins and ends at g = 0, in every mode including `out`.  writeSpiral.m
-    ends its spiral-out at full gradient and ramps down inside the spoiler, which is coherent for
-    a family of one and incompatible with reversibility -- an arm ending at full gradient
-    time-reverses into one starting there.  So SeqCraft's `out` differs from the reference at its
-    tail deliberately, and no event-level similarity is claimed near the end.
+    DURABLE and now MEASURED: every arm begins and ends at g = 0, in every mode including `out`.
+    writeSpiral.m ends its spiral-out at full gradient and ramps down inside the spoiler, which is
+    coherent for a family of one and incompatible with reversibility.  Cost, over seven protocols
+    spanning two hardware regimes: 0.097-0.137 ms, which is 0.20-0.78 % of readout duration.  The
+    penalty is FIXED in absolute terms -- a braking distance -- so it shrinks as readouts lengthen
+    and its worst case is the shortest readout.  Peak gradient is unchanged or lower, k-space
+    extent is identical, and the whole penalty lands in the outer tenth of k-space where
+    oversampling is cheapest.  See endpoint_cost.md.
   invariants:                   # PROPOSED; none measured in this phase
     - the reported trajectory equals the compiled one within a characterised floor (failure C)
     - the assembled waveform's end-of-block k is the origin (failure E)
@@ -164,12 +167,20 @@ acceptance:
     - >
       `out-in` crosses the origin TWICE, so the durable contract requires the reported echo
       instants to be a sequence from the first implementation -- free now, expensive later
+    - >
+      the endpoint policy costs 0.20-0.78 % of readout duration, fixed in absolute terms, with no
+      pathology in any regime tried; peak gradient unchanged or lower, k-space extent identical
     - none of the three PR23 helpers has a second consumer on current main, including after PR #27
     - PR23's reconstruction placement decision (examples/, not src/) is correct
     - the reconstruction's trajectory container is trajectory-AGNOSTIC; a radial acquisition fits
       it unchanged, and only the analytic-density DCF method is spiral-specific
   does_not_establish:
     - that the in / in-out / out-in variants agree with any external implementation; none exists
+    - event identity, terminal-gradient identity or whole-waveform identity with writeSpiral.m --
+      the endpoint policy differs on purpose, and the divergence is stated rather than hidden
+      behind a loose tolerance
+    - the physical TE.  This readout owns WHERE THE TRAJECTORY CROSSES THE ORIGIN; the relation
+      between RF / refocusing history and those crossings belongs to the kernel above it
     - that `density` is the right convention; writeSpiral.m has no density parameter at all, so
       sampled-FOV-multipliers has ONE witness (PR23) and its lineage is a third source (vds.m)
     - that PR23's m0 claim is a defect -- it did not reproduce
@@ -194,7 +205,7 @@ validation:
   compiler_changes: none made
 
 evidence_state:
-  human_review: NEEDED          # boundary approved; the mode contract is written and awaits review
+  human_review: DONE            # boundary, ownership, mode contract and endpoint policy reviewed
   experiment_design_review: NOT_NEEDED
   scanner_validation: FUTURE
   deferred:
@@ -233,10 +244,14 @@ evidence_state:
         A claim is made about measured trajectory fidelity on a real system, or an image artefact
         appears that a correct design trajectory cannot explain.
 
-status: UNDECIDED
-traffic_light: YELLOW
-reason_code: MODE_CONTRACT_INCOMPLETE
-decided_by: human               # PROPOSED by the skill; awaiting review
+status: NEW_LEAF
+traffic_light: APPROVED_FOR_IMPLEMENTATION
+reason_code: null
+decided_by: human               # boundary, variant/echo ownership and endpoint policy all
+                                # settled in review; the endpoint cost is now measured.
+                                # NOT GREEN: GREEN means the checks passed, and nothing is built
+                                # yet, so there is nothing to check.  This state says the design
+                                # is settled and implementation may begin.
 
 open_questions:
   - >
