@@ -176,6 +176,11 @@ acceptance:
     - >
       claim-scoped comparison against writeSpiral.m for SPIRAL-OUT only -- path geometry, turn
       spacing, k-space extent, the path/traversal separation, hardware-limited traversal
+    - >
+      a complete GRE spiral acquisition compiles, and its echo lands where the composition placed
+      it: TE identical across eight interleaves to 0.000 ns and matching the reported value, with
+      both the excitation instants and the sample times read off the compiled sequence by
+      sc.kspace rather than restated from the arithmetic that placed the readout
     # --- what the archaeology established, which is separate from the module
     - the m1 compiler defect is real, reproduced with no Spiral module present (merged as PR #30)
     - >
@@ -192,9 +197,11 @@ acceptance:
       echoes > 1.  An explicit deferred extension of this leaf, not a gap in it: the transition
       rules exist in echoes_contract.md and nothing exercises them yet.
     - >
-      full GRE or SE physical TE validation beyond the stated placement claims.  This readout owns
-      WHERE THE TRAJECTORY CROSSES THE ORIGIN; the relation between RF and refocusing history and
-      those crossings belongs to the kernel above it.
+      full GRE or SE physical TE validation beyond the stated placement claims.  The GRE example
+      shows the alignment is consistent and matches what the composition asked for; it does not
+      establish that the resulting contrast is what a protocol intends.  This readout owns WHERE
+      THE TRAJECTORY CROSSES THE ORIGIN; the relation between RF and refocusing history and those
+      crossings belongs to the layer above it, and no SE spiral composition exists yet.
     - image-level non-Cartesian reconstruction
     - scanner or phantom performance
     # --- claim-scope limits that will not change
@@ -236,7 +243,12 @@ validation:
         inside its gradient on all 96 swept protocols
   layers:
     layer_1: GREEN            # 89 tests; family relationships, crossings, limits, segmentation
-    layer_2: GREEN            # compiles to legal Pulseq across a 96-protocol sweep
+    layer_2: GREEN            # BOTH: examples/gre_spiral_2d/01_build.ipynb is the complete
+                              # acquisition build the ladder asks for -- Excitation + one arm +
+                              # eight interleaves + spoiling and TR fill, compiled to legal
+                              # Pulseq -- AND the 96-protocol SpiralReadout compile sweep, which
+                              # is leaf coverage rather than an acquisition.  The sweep alone was
+                              # the stronger-sounding claim and the wrong one for this layer.
     layer_3: DEFERRED
     layer_3_reason: >
       Layer 3 for a spiral needs the non-Cartesian reconstruction whose promotion is itself

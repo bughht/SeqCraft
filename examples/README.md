@@ -13,6 +13,7 @@
 | [`megre_2d/`](megre_2d/) | Eight echoes off one excitation, monopolar and bipolar, fitted for T2\* and ΔB0 against a phantom that carries the ground truth for both. **Defines no class**, which no other directory here can say. |
 | [`radial_gre/`](radial_gre/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. **Deliberately defines no class**, because the schedule is the only thing a `RadialGRE` would add. |
 | [`fat_sat/`](fat_sat/) | A spectrally selective saturation and the spoiler that destroys what it made — the chemical-shift sign traced from ppm to the emitted `freq_offset`, and the same protocol across four field strengths. Where `SaturationPrep` came from. |
+| [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. **Defines no class.** |
 
 ## `gre_2d/`
 
@@ -195,6 +196,35 @@ CEST saturation trains, spatial saturation slabs and water excitation are delibe
 Each would need its own evidence that it shares a physical solve with this one, and "prepare, then
 spoil" is a waveform silhouette rather than a shared solve. `01` is in
 [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
+
+## `gre_spiral_2d/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](gre_spiral_2d/01_build.ipynb) | `sc.modules.SpiralReadout` in a complete acquisition: `Excitation` + one arm + an angle schedule + spoiling and TR fill, assembled in the notebook. Eight interleaves from one readout instance, the trajectory measured off the compiled file, and the alignment check the notebook exists for. One `.seq`. **Needs nothing but `seqcraft`.** |
+
+**The join is the point.** `SpiralReadout` says where the trajectory crosses the origin; it does
+not say where the *echo* is, and it must not — a readout that claimed to own TE would hide the
+failure where a legal sequence has its echo time wrong by about one arm. So this layer computes
+
+```text
+TE = readout start  +  crossing offset  -  RF effective centre
+```
+
+from two numbers each module reports about itself, and then checks the result against the
+**compiled** sequence: `t_excitation` and `t_adc` both come from `sc.kspace`, which shares no code
+with either module. TE comes out identical across all eight interleaves **to 0.000 ns**, and
+matches the reported value exactly.
+
+**Defines no class.** Strip the angle list out of a spiral GRE and what remains is a spoiled
+gradient echo whose readout happens to be a spiral — so a `GRESpiral2D` would own the schedule and
+no physics, which is the same argument that declined `RadialGRETR` and `GRE3D`.
+
+There is **no `02_simulate_and_reconstruct.ipynb`**. A spiral image needs a non-Cartesian
+reconstruction and every existing `02` here is a Cartesian FFT. Reviewing that path is a separate
+task — and it now has **two** real consumers, `RadialReadout` and `SpiralReadout`, which is the
+condition for asking whether a shared contract exists. Promotion into the package is not a
+predetermined outcome. `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
 
 ## Requirements
 

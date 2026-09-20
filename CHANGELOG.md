@@ -40,6 +40,11 @@ the waveform is padded with 0.045 1/m nobody designed. The budget is now sized a
 placement rather than an estimate of it. 96 protocols — four matrices by three shot counts by four
 variants — all compile.
 
+`examples/gre_spiral_2d/01_build.ipynb` is the complete acquisition: Excitation, one arm, eight
+interleaves and spoiling, assembled in the notebook rather than by a class. It exists for the
+join — **TE is owned there, not by the readout** — and checks it against the compiled sequence,
+where it comes out identical across all eight interleaves to 0.000 ns.
+
 `echoes > 1` refuses, naming the contract; `out-in` already exercises the plural machinery at
 `echoes=1`. No 3D, no anisotropic FOV, no density presets, no `GRESpiral2D`/`SESpiral2D`, and the
 three PR23 helpers stay private: one consumer each.
