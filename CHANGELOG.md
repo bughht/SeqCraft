@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased — the m1 tolerance gets a floor, because the relative term sat in the noise
+
+`verify_against_tree`'s first-moment check refused legal sequences, and which ones was not
+predictable from the physics. An arbitrary gradient the compiler has to split and rebuild does not
+round-trip exactly, and **the residual is proportional to peak `|g|` and to nothing else** — not
+to knot count, not to duration, not to `max_grad`. The relative term scales as traversed area
+times the horizon, which grows faster, so the two cross.
+
+Measured on raw `make_arbitrary_grad` waveforms with no module involved: **six of ten legal
+sign-changing gradients were refused**. `n=2000` at 90 % passed with a residual of 7e-15;
+`n=4000` at 90 % failed with 1.2e-7. Same physics, opposite verdicts.
+
+The tolerance is now `max(1e-9 · traversed · horizon, 1e-11 · peak)`. Both bounds are properties
+of the representation and of the failure being caught, not of any one module:
+
+| | |
+|---|---|
+| measured residual | `8.4e-14 · peak`, constant to 5 % across 2000–8000 knots, 20–90 % amplitude, two `max_grad` |
+| the floor | clears it by **~120×** |
+| one raster of displacement — what m1 exists to catch | `traversed · raster`, **500–50 000×** above the floor |
+
+`tests/compiler/test_m1_floor.py` asserts the measurement the tolerance is derived from, both
+margins, and that a trapezoid moved by one raster is still refused.
+
+**m0 is deliberately unchanged.** Its `magnitude` accumulates `|∫g|` under a comment describing
+`∫|g|`, and those differ by six orders of magnitude for one sign-changing event — but no
+configuration made the check actually fail, so the mismatch is recorded and not patched. A
+correctness alignment needs its own reproducer.
+
 ## Unreleased — a 3D repetition, and the axis where two moments become one gradient
 
 `GRE3DTR` (`kernel/`), a **sibling** of `GRE2DTR` rather than a wrapper around it: a kernel that
