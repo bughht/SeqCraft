@@ -21,11 +21,16 @@ way, and they are enforced because the pilot that needed each one did not have i
     validation.layers                 a Layer-1 GREEN read as an end-to-end claim
     evidence[].independence           three references agreeing may be one witness copied twice
     reason_code                       a YELLOW nobody can triage or close
+    evidence_state                    deferred work that survived only in prose, with no trigger
+
+`evidence_state` is required only where something is actually owed -- a deferred layer, or a
+non-GREEN light.  A candidate that owes nothing does not carry an empty block for symmetry.
 
 `validation`'s interior is otherwise unconstrained on purpose: not one of its sub-keys appeared in
 all three pilots, because three acceptance claims needed three different shapes of evidence.
 
     python tools/module_mining/schema.py path/to/candidate.yaml [more.yaml ...]
+    python tools/module_mining/schema.py --inventory <records...>   # the validation-debt table
 
 Exits non-zero if any file has an error.  Warnings never fail the run.
 """
@@ -33,6 +38,7 @@ Exits non-zero if any file has an error.  Warnings never fail the run.
 from __future__ import annotations
 
 import logging
+import pathlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -88,6 +94,18 @@ _COVERAGE_CLASSES = frozenset({
 
 #: May travel alongside a coverage class; not a verdict.
 _COVERAGE_FLAGS = frozenset({'ARCHITECTURE_REVISIT_CANDIDATE'})
+
+#: Three kinds of evidence a human supplies, deliberately not one `manual` bucket.  They differ in
+#: who can do them and what they cost: the first is a workstation afternoon, the second is a
+#: design decision, the third needs a magnet.
+_HUMAN_STATES = frozenset({'DONE', 'NEEDED', 'NOT_NEEDED'})
+
+#: Scanner work is claim-driven.  There is deliberately no rule that every GREEN module is
+#: eventually scanner-tested -- for many leaves an independent reference comparison is more direct
+#: evidence than an image, and the question is whether hardware is needed for *this* claim.
+_SCANNER_STATES = frozenset({
+    'NOT_REQUIRED_FOR_CLAIM', 'RECOMMENDED', 'REQUIRED', 'FUTURE', 'DONE',
+})
 
 _CONSUMER_CLASSES = frozenset({
     'NO_BEHAVIOR_CHANGE', 'NEW_EARLY_REFUSAL_FOR_PREVIOUSLY_INVALID_INPUT',
@@ -221,6 +239,56 @@ def _check_validation(record: dict[str, Any], errors: list[str], warnings: list[
             )
 
 
+def _check_evidence_state(record: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
+    """
+    The reviewer-facing block: what is owed, and what would make it actionable.
+
+    `established` and `not_established` are NOT duplicated here -- they already live in
+    `acceptance.establishes` and `acceptance.does_not_establish`, and a second copy would drift.
+    What this adds is the part no field carried: each deferral's trigger, and the three kinds of
+    human evidence kept apart from each other.
+    """
+    state = record.get('evidence_state')
+    if state is None:
+        light = record.get('traffic_light')
+        layers = _walk(record, 'validation.layers') or {}
+        owes = any(v in _DEFERRED for k, v in layers.items() if k.startswith('layer_'))
+        if owes or light in {'YELLOW', 'RED'}:
+            errors.append(
+                'evidence_state: required -- this record defers a layer or is not GREEN, so a '
+                'reviewer needs to know what evidence is owed and what would make it actionable'
+            )
+        return
+    if not isinstance(state, dict):
+        errors.append('evidence_state: must be a mapping')
+        return
+
+    for field, allowed in (('human_review', _HUMAN_STATES),
+                           ('experiment_design_review', _HUMAN_STATES),
+                           ('scanner_validation', _SCANNER_STATES)):
+        value = state.get(field)
+        if value is None:
+            errors.append(f'evidence_state.{field}: required, one of {sorted(allowed)}')
+        elif value not in allowed:
+            errors.append(f'evidence_state.{field}: {value!r} not in {sorted(allowed)}')
+
+    deferred = state.get('deferred')
+    if deferred is None:
+        errors.append('evidence_state.deferred: required; use [] when nothing is owed')
+        return
+    for index, item in enumerate(deferred if isinstance(deferred, list) else []):
+        where = f'evidence_state.deferred[{index}]'
+        if not isinstance(item, dict):
+            errors.append(f'{where}: must be a mapping')
+            continue
+        for field in ('what', 'why', 'revisit_trigger'):
+            if not item.get(field):
+                errors.append(
+                    f'{where}.{field}: required -- a deferral without a trigger is an omission '
+                    'with better prose'
+                )
+
+
 def _check_dependency_impact(record: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
     """Rule D fires only when the candidate changes an existing leaf."""
     extended = _walk(record, 'target.extended')
@@ -248,9 +316,21 @@ def _check_dependency_impact(record: dict[str, Any], errors: list[str], warnings
 
 
 def check(record: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """Return ``(errors, warnings)`` for one parsed candidate record."""
+    """
+    Return ``(errors, warnings)`` for one parsed candidate record.
+
+    A file carrying `evidence_state` and no `capability` is an **addendum**: the evidence state
+    for a candidate whose own record is closed.  Only the addendum's block is checked, because
+    the rest of the record lives -- unchanged, on purpose -- in the file it points at.
+    """
     errors: list[str] = []
     warnings: list[str] = []
+
+    if 'evidence_state' in record and 'capability' not in record:
+        if not record.get('applies_to'):
+            errors.append('applies_to: required on an addendum -- name the record it belongs to')
+        _check_evidence_state(record, errors, warnings)
+        return errors, warnings
 
     for dotted in _REQUIRED:
         if _walk(record, dotted) is None:
@@ -308,8 +388,74 @@ def check(record: dict[str, Any]) -> tuple[list[str], list[str]]:
     _check_evidence(record, errors, warnings)
     _check_acceptance(record, errors, warnings)
     _check_validation(record, errors, warnings)
+    _check_evidence_state(record, errors, warnings)
     _check_dependency_impact(record, errors, warnings)
     return errors, warnings
+
+
+def _inventory(paths: list[Path]) -> None:
+    """
+    Print the cross-candidate validation-debt table, read from the records.
+
+    Generated rather than maintained: a hand-written inventory beside the records is a second
+    copy of the same facts, and the copy is the one that goes stale.
+    """
+    rows: list[tuple[str, str, str, str, int]] = []
+    addenda: dict[str, dict[str, Any]] = {}
+    records: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        try:
+            record = yaml.safe_load(path.read_text())
+        except (OSError, yaml.YAMLError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        if 'evidence_state' in record and 'capability' not in record:
+            addenda[str(record.get('applies_to', ''))] = record
+        else:
+            records[str(path)] = record
+
+    for path, record in sorted(records.items()):
+        state = record.get('evidence_state')
+        for target, addendum in addenda.items():
+            if target and pathlib.Path(target).name == pathlib.Path(path).name \
+                    and pathlib.Path(target).parent.name == pathlib.Path(path).parent.name:
+                state = addendum['evidence_state']
+        state = state or {}
+        deferred = state.get('deferred') or []
+        name = str(record.get('name') or '')
+        # A candidate whose working name is still open says so in `name`; the id is the label.
+        if name in {'', 'UNDECIDED'}:
+            name = str(record.get('id', '?'))
+        rows.append((
+            name,
+            f"{record.get('status', '?')} / {record.get('traffic_light', '?')}",
+            str(state.get('scanner_validation', '--')),
+            str(state.get('human_review', '--')),
+            len(deferred),
+        ))
+
+    width = max((len(r[0]) for r in rows), default=4)
+    logging.info('')
+    logging.info('%-*s  %-28s  %-24s  %-10s  %s', width, 'candidate', 'status / light',
+                 'scanner', 'human', 'owed')
+    for name, status, scanner, human, owed in rows:
+        logging.info('%-*s  %-28s  %-24s  %-10s  %d', width, name, status, scanner, human, owed)
+    logging.info('')
+    for path, record in sorted(records.items()):
+        state = record.get('evidence_state') or {}
+        for target, addendum in addenda.items():
+            if target and pathlib.Path(target).name == pathlib.Path(path).name \
+                    and pathlib.Path(target).parent.name == pathlib.Path(path).parent.name:
+                state = addendum['evidence_state']
+        label = str(record.get('name') or '')
+        if label in {'', 'UNDECIDED'}:
+            label = str(record.get('id', '?'))
+        for item in state.get('deferred') or []:
+            logging.info('%s owes: %s', label,
+                         ' '.join(str(item.get('what', '')).split())[:96])
+            logging.info('   trigger: %s',
+                         ' '.join(str(item.get('revisit_trigger', '')).split())[:96])
 
 
 def main(argv: list[str]) -> int:
@@ -318,6 +464,10 @@ def main(argv: list[str]) -> int:
     if not argv:
         logging.info('%s', __doc__)
         return 2
+
+    if argv and argv[0] == '--inventory':
+        _inventory([Path(name) for name in argv[1:]])
+        return 0
 
     worst = 0
     for name in argv:

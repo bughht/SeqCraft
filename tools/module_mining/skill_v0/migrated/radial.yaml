@@ -201,6 +201,21 @@ dependency_impact:
     classification: NO_BEHAVIOR_CHANGE
     note: every build notebook re-executes in the smoke suite; all pass.
 
+evidence_state:
+  # [RECONSTRUCTED] from boundary_decision.md section 5b and the roadmap.  The canonical copy is
+  # plans/radial/evidence_state.yaml, beside the record this fixture is a migration of.
+  human_review: DONE
+  experiment_design_review: NOT_NEEDED
+  scanner_validation: NOT_REQUIRED_FOR_CLAIM
+  deferred:
+    - what: Simulate + non-Cartesian reconstruction -- Layer 3.
+      why: >
+        The validation oracle has not been independently promoted; an image through an unreviewed
+        reconstruction is two unvalidated things agreeing.
+      revisit_trigger: >
+        The non-Cartesian reconstruction path is independently reviewed, or Radial and Spiral
+        together justify a shared reconstruction contract.
+
 status: NEW_LEAF
 traffic_light: GREEN
 reason_code: null

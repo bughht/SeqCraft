@@ -1,0 +1,43 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-19.
+# See ../../README.md for which copy to edit.
+# RadialReadout -- evidence state.  An ADDENDUM, not a replacement.
+#
+# `candidate.yaml` in this folder is the record the pilot actually wrote, and it stays unchanged:
+# the Skill v0 field set was derived by intersecting it with tse/ and gre3d/, and editing it would
+# destroy the evidence for the thing it justifies.  It predates `validation.layers`,
+# `acceptance.does_not_establish` and this block, so a reviewer opening it cannot see what is owed.
+#
+# This file answers that, beside it, without rewriting it.  The fully normalized form of the same
+# evidence is tools/module_mining/skill_v0/migrated/radial.yaml, which is a calibration fixture
+# rather than the candidate record -- which is why it is not the right place for this.
+#
+#   python tools/module_mining/schema.py <this file>
+
+id: radial-readout-evidence-state
+applies_to: tools/module_mining/plans/radial/candidate.yaml
+
+evidence_state:
+  human_review: DONE                    # boundary decision, plus the trajectory plots in
+                                        # examples/radial_gre/01, which is the visual check a
+                                        # radial acquisition actually needs
+  experiment_design_review: NOT_NEEDED  # for the leaf claim; see the first deferral
+  scanner_validation: NOT_REQUIRED_FOR_CLAIM
+  deferred:
+    - what: >
+        Simulate + non-Cartesian reconstruction -- Layer 3.  No image has been reconstructed from
+        a SeqCraft radial acquisition.
+      why: >
+        The validation oracle has not been independently promoted.  A radial Layer 3 needs a
+        non-Cartesian reconstruction whose own conventions -- NUFFT coordinates, density
+        compensation, weighting, trajectory timing -- each need review before an image it produces
+        is evidence about anything; otherwise it is two unvalidated things agreeing.  The example
+        suite has no such stack: every existing 02 is a Cartesian FFT.  PR #23 holds usable
+        infrastructure but it is an evidence corpus, not accepted architecture.
+      revisit_trigger: >
+        The non-Cartesian reconstruction path is independently reviewed and promoted, OR Radial
+        and Spiral together justify a shared reconstruction contract -- which is the point: a
+        contract with one consumer is that consumer's implementation under a more general name.
+        Picked up in v0_closeout_and_roadmap.md sections 2.7.2 and 6.1.
+    - what: 3D radial, ramp sampling, and rot3D.
+      why: Out of scope for this leaf by decision, not by omission.
+      revisit_trigger: A candidate needs one of them; each is its own scan.

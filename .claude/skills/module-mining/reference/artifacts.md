@@ -150,6 +150,68 @@ validation:                   # interior deliberately unconstrained -- see above
 `layers` is the only part of `validation` the schema requires, because a per-layer status is what
 stops a Layer-1 GREEN being read as an end-to-end claim.
 
+## 5b. EvidenceState — what is owed, and what would make it actionable
+
+Required only where something is actually owed: a deferred layer, or a non-GREEN light. A
+candidate that owes nothing does not carry an empty block for symmetry.
+
+```yaml
+evidence_state:
+  human_review: DONE | NEEDED | NOT_NEEDED
+  experiment_design_review: DONE | NEEDED | NOT_NEEDED
+  scanner_validation: NOT_REQUIRED_FOR_CLAIM | RECOMMENDED | REQUIRED | FUTURE | DONE
+  deferred:
+    - what: ...
+      why: ...
+      revisit_trigger: ...        # all three required
+```
+
+**`established` and `not_established` are deliberately absent** — they are
+`acceptance.establishes` and `acceptance.does_not_establish`, and a second copy would drift. What
+this block adds is the part no field carried: **each deferral's trigger**.
+
+> A deferral without a trigger is an omission with better prose.
+
+### Three kinds of human evidence, not one bucket
+
+They differ in who can do them and what they cost, so they are separate fields:
+
+| | |
+|---|---|
+| `human_review` | inspect emitted events, timing, trajectory, a reconstructed image — a workstation afternoon |
+| `experiment_design_review` | decide what phantom, protocol and observable would actually test the claim |
+| `scanner_validation` | run the `.seq` on hardware and inspect the physical outcome |
+
+### Scanner work is claim-driven
+
+**There is no rule that every GREEN module is eventually scanner-tested**, and one must not be
+added. The question is whether hardware is needed for *this* claim. For many leaves an
+independent reference comparison is more direct evidence than an image — a sample-for-sample
+trajectory match, or a carrier offset read off the compiled file, beats a picture that would
+confirm the same thing indirectly through a phantom.
+
+Hardware becomes valuable when the uncertainty is eddy currents, gradient delay, RF hardware
+behaviour, B0/B1 imperfection, SAR or duty cycle, receiver behaviour, actual spoiling efficiency
+or a contrast outcome — or when no sufficiently independent reference exists, or simulation cannot
+observe the failure, or a legal sequence can still produce the wrong physical signal.
+
+### Where it lives when the record is closed
+
+A candidate whose own record is immutable takes an **addendum**: a file with `id`, `applies_to`
+and `evidence_state`, beside the record it points at. The validator recognises it by the absence
+of `capability` and checks only that block.
+
+### The cross-candidate view is generated
+
+```bash
+python tools/module_mining/schema.py --inventory tools/module_mining/plans/*/candidate.yaml \
+    tools/module_mining/plans/*/evidence_state.yaml
+```
+
+Read from the records, never maintained beside them — a hand-written inventory is a second copy
+of the same facts, and the copy is the one that goes stale. Validation records grow by meaningful
+unresolved claims, not by duplicating test results.
+
 ## 6. Decision
 
 ```yaml

@@ -227,3 +227,29 @@ def test_every_offered_shape_builds_and_keeps_the_contract(opts: pp.Opts, shape:
     assert rf.use == 'saturation'
     assert rf.freq_offset < 0.0
     assert seq.get_block(1).gz is None
+
+
+# ------------------------------------------------------- where B0 comes from, and its trap
+def test_b0_is_read_from_opts_and_reported(opts: pp.Opts) -> None:
+    """The middle term of the chain is a fact the caller can read back, not an implication."""
+    module = prep(opts)
+    assert module.b0_t == opts.B0
+    assert module.offset_hz == pytest.approx(module.shift_ppm * 1e-6 * module.b0_t * opts.gamma)
+
+
+def test_an_opts_without_b0_silently_means_1_5_tesla() -> None:
+    """
+    pypulseq's ``Opts`` defaults ``B0`` to 1.5 T and says nothing, so this module cannot tell an
+    omitted field strength from a deliberate one.
+
+    Pinned rather than worked around: the failure it causes -- a 2.89 T protocol whose author
+    forgot ``B0=2.89``, putting fat at -220 Hz instead of -424 -- is legal, plausible and
+    invisible downstream, and the defence is that ``b0_t`` is reported and this behaviour is a
+    documented fact rather than a discovery.
+    """
+    silent = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+                     rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
+    assert silent.B0 == 1.5
+    module = prep(silent, bandwidth_hz=200.0)
+    assert module.b0_t == 1.5
+    assert module.offset_hz == pytest.approx(-220.3, abs=0.1)

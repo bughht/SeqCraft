@@ -220,6 +220,13 @@ Layer 3  simulate + reconstruct                   review evidence
 State status **per layer**. A GREEN that covers Layers 1 and 2 does not license an end-to-end
 claim, and the difference must be written where a reader will hit it.
 
+**The ladder describes software-validation depth and nothing else.** It does not describe
+reference comparison, emitted-sequence inspection, human expert review or scanner work, and those
+are not a linear Layer 4 and 5 — a strong reference comparison can be *more* direct evidence for a
+claim than an image would be. Where a candidate owes evidence, that goes in `evidence_state`
+(`reference/artifacts.md` §5b), which keeps the three kinds of human evidence apart and requires a
+`revisit_trigger` for every deferral.
+
 Layer 3 may be recorded as:
 
 ```text

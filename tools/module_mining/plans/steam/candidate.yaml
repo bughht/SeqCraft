@@ -142,6 +142,30 @@ coverage: COMPOSITION_COVERED   # for the broad framing only: Excitation, Refocu
                                 # a delay already express what remains once the application-
                                 # specific couplings are removed (findings.md section 4)
 
+evidence_state:
+  # `established` / `not_established` are NOT repeated here -- they are acceptance.establishes and
+  # acceptance.does_not_establish above.  This block carries what those cannot: the trigger.
+  human_review: DONE                    # the boundary analysis in findings.md is the review
+  experiment_design_review: NOT_NEEDED  # nothing to design an experiment for until a contract exists
+  scanner_validation: NOT_REQUIRED_FOR_CLAIM
+  deferred:
+    - what: >
+        Whether a physics-defined StimulatedEcho / STEAM abstraction exists -- as opposed to the
+        broad waveform-defined grouping, which this run found unsupported.
+      why: >
+        No permissively licensed executable reference exists.  PyPulseq has no stimulated-echo
+        demo and Pulseq MATLAB has none; the only executable references are AGPL plus a EULA,
+        non-independent, and from one group.  Simulating against MRzeroCore does not help, because
+        the references are built with PyPulseq and simulated with MRzeroCore -- one construction
+        against another through one instrument.
+      revisit_trigger: >
+        A permissively licensed stimulated-echo or STEAM implementation appears, OR OpenMRF's
+        T2-preparation is inspected and turns out to witness the same physics.  Then re-run the
+        scan on the NARROW candidate only.
+    - what: Whether DREAM retains an irreducible contract of its own.
+      why: Cannot be answered before the shared stimulated-echo semantics are understood.
+      revisit_trigger: The STEAM boundary above is resolved either way.
+
 open_questions:
   - >
       THE OPEN ARCHITECTURAL QUESTION, deliberately not resolved in this phase. Can

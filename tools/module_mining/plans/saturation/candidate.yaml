@@ -167,7 +167,7 @@ validation:
       offset -- is checked directly on the compiled sequence, which is stronger evidence than an
       image would be: a simulation showing suppression would confirm the sign only indirectly,
       through a phantom's fat compartment.  Available via MRzeroCore if a later review wants it.
-  package_suite: 1033 passed / 6 skipped
+  package_suite: 1044 passed / 6 skipped (rebased onto main with PR #27)
   compiler_changes: none
 
 status: NEW_LEAF
@@ -176,6 +176,31 @@ reason_code: null
 decided_by: human               # boundary decided at review; extraction authorised and done
 coverage: COMPOSITION_COVERED   # the pulse and the spoiler already compose; the gap is the label
                                 # and the offset arithmetic -- findings.md sections 3 and 4
+
+evidence_state:
+  human_review: DONE                    # boundary review, then the extraction review that accepted it
+  experiment_design_review: NEEDED      # only if the scanner question below is ever taken up
+  scanner_validation: NOT_REQUIRED_FOR_CLAIM
+  deferred:
+    - what: Simulation of fat suppression, and a reconstructed image showing it.
+      why: >
+        It would test a contrast outcome rather than the contract.  The load-bearing claim -- the
+        sign and magnitude of the carrier offset -- is checked directly on the compiled sequence,
+        which is MORE direct than an image: a suppression image confirms the sign only indirectly,
+        through a phantom's fat compartment and whatever else the protocol does.
+      revisit_trigger: >
+        A claim is made that depends on suppression EFFICIENCY rather than on carrier placement --
+        for example comparing flip angles or pulse durations for residual fat signal.
+    - what: >
+        In-scanner suppression efficiency, and B1 / B0 robustness in a production protocol.
+      why: >
+        Outside the leaf's claim.  The module asserts where the carrier sits and what follows it,
+        not how completely fat is nulled on a given system -- which depends on transmit
+        inhomogeneity, shim quality and the recovery time before the readout, none of which this
+        module owns.
+      revisit_trigger: >
+        SaturationPrep is used in a protocol whose result depends on suppression quality, or a
+        user reports incomplete suppression that is not explained by the reported band margin.
 
 open_questions:
   - >

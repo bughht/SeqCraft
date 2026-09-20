@@ -37,6 +37,19 @@ two conventions would saturate water and leave fat alone.
 end to end, and ``tests/modules/test_saturation_prep.py`` traces it as far as the compiled
 sequence rather than stopping at the constructor.
 
+**Where :math:`B_0` comes from, and the trap in it.**  From ``opts.B0``, and nowhere else --
+there is no field strength written into this module.  The chain is
+``shift_ppm`` (portable, scanner-independent) → ``opts.B0`` (explicit, the scanner's) →
+``freq_offset`` in hertz (what the scanner is told), and :attr:`SaturationPrep.b0_t` reports the
+middle term so it is visible rather than implied.
+
+That matters because **pypulseq's ``Opts`` defaults ``B0`` to 1.5 T when it is not given**, and
+says nothing.  An ``Opts`` built for a 2.89 T system without passing ``B0=2.89`` puts fat at
+-220 Hz instead of -424 Hz -- a legal sequence, a plausible number, and the wrong one.  This
+module cannot tell an omitted ``B0`` from a deliberate 1.5 T one, so it reports what it used and
+``tests/modules/test_saturation_prep.py`` pins the behaviour rather than leaving it to be
+discovered.
+
 **``freq_ppm`` was considered and rejected for the emitted event.**  pypulseq can carry a ppm
 offset and let the interpreter resolve it against the scanner's own :math:`B_0`, which is in
 principle more portable.  It also moves the conversion off the file, so the sign this module is
@@ -143,6 +156,9 @@ class SaturationPrep(Module):
         The pulse, with ``use='saturation'`` and ``freq_offset`` in hertz.
     spoiler : LogicBlock
     offset_hz : float
+    b0_t : float
+        The field strength used for the conversion, read from `opts`.  Reported because
+        ``pp.Opts`` defaults it to 1.5 T in silence, and a wrong one is invisible downstream.
     """
 
     def __init__(
@@ -168,7 +184,10 @@ class SaturationPrep(Module):
         self.bandwidth_hz = require_positive(bandwidth_hz, 'bandwidth_hz')
 
         # The one conversion, done once, in one place.  Everything downstream reads `offset_hz`.
-        self.offset_hz = float(self.shift_ppm) * 1e-6 * float(opts.B0) * float(opts.gamma)
+        # `b0_t` is kept rather than inlined so the field strength the conversion used is a fact
+        # the caller can read back -- see the module docstring on Opts' silent 1.5 T default.
+        self.b0_t = float(opts.B0)
+        self.offset_hz = float(self.shift_ppm) * 1e-6 * self.b0_t * float(opts.gamma)
         self._check_clears_water()
 
         kwargs: dict[str, Any] = {
@@ -292,7 +311,7 @@ class SaturationPrep(Module):
             'meant to preserve.',
             {
                 'shift_ppm': self.shift_ppm,
-                'B0': float(self.opts.B0),
+                'b0_t': self.b0_t,
                 'offset_hz': round(self.offset_hz, 2),
                 'bandwidth_hz': self.bandwidth_hz,
                 'band_edge_hz': round(self.band_edge_hz, 2),
