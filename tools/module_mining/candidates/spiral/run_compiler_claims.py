@@ -6,12 +6,17 @@ compiler change is considered at all.  This is that reproducer.  The structural 
 claims depend on is not "spiral" -- it is one arbitrary gradient whose amplitude changes sign
 inside itself, and a spiral is merely the first module in this library that has one.
 
-Findings, at the time of writing, on current ``main``:
+Findings, as first measured:
 
-    m1  CONFIRMED.  The tolerance straddles the representation floor, and six of ten legal
-        waveforms are refused unpredictably -- ``n=2000`` at 90 % passes with an error of 7e-15
-        while ``n=4000`` at 90 % fails with 1.2e-7.
+    m1  CONFIRMED.  The tolerance straddled the representation floor, and six of ten legal
+        waveforms were refused unpredictably -- ``n=2000`` at 90 % passed with an error of 7e-15
+        while ``n=4000`` at 90 % failed with 1.2e-7.
     m0  NOT REPRODUCED.  The comment/code mismatch is real, the failure is not.
+
+**The m1 defect is FIXED on main** (PR #30): the tolerance gained a floor proportional to peak
+``|g|``, because the residual tracks peak and the relative term does not.  This script is kept as
+the standing reproducer -- it reports what the tolerance was *before* the fix alongside what it is
+now, so the regression stays visible and a re-run proves the fix still holds.
 
     python tools/module_mining/candidates/spiral/run_compiler_claims.py
 """
@@ -88,7 +93,9 @@ def measure(n: int, fraction: float, *, splits: int, opts: pp.Opts) -> dict | No
         'm1_error': abs(_sequence_moments(seq, 1)['x'] - tree_m1),
         'm0_tol_current': 1e-6 * scale_net,
         'm0_tol_traversed': 1e-6 * scale_total,
-        'm1_tol_current': 1e-9 * max(scale_net * horizon, 1.0),
+        'm1_tol_before_fix': 1e-9 * max(scale_net * horizon, 1.0),
+        'm1_tol_now': max(1e-9 * max(scale_net * horizon, 1.0),
+                          1e-11 * float(np.max(np.abs(knots[1])))),
         'm1_tol_traversed_1e9': 1e-9 * max(scale_total * horizon, 1.0),
         'm1_tol_traversed_1e7': 1e-7 * max(scale_total * horizon, 1.0),
         'm1_one_raster_signal': total * opts.grad_raster_time,
@@ -104,20 +111,23 @@ def main() -> None:
     rows = [row for n in (1000, 2000, 4000, 8000, 16000) for fraction in (0.3, 0.9)
             if (row := measure(n, fraction, splits=2, opts=opts)) is not None]
 
-    logging.info('%6s %5s %12s %14s %13s %13s %12s', 'knots', 'amp', 'm1 error',
-                 'current tol', '1e-9 x trav', '1e-7 x trav', 'one raster')
-    refused = 0
+    logging.info('%6s %5s %12s %14s %13s %12s  %s', 'knots', 'amp', 'm1 error',
+                 'tol BEFORE fix', 'tol NOW', 'one raster', 'before -> now')
+    was_refused = still_refused = 0
     for row in rows:
-        bad = row['m1_error'] > row['m1_tol_current']
-        refused += bad
-        logging.info('%6d %4.0f%% %12.4g %14.4g %13.4g %13.4g %12.4g  %s',
+        before = row['m1_error'] > row['m1_tol_before_fix']
+        now = row['m1_error'] > row['m1_tol_now']
+        was_refused += before
+        still_refused += now
+        logging.info('%6d %4.0f%% %12.4g %14.4g %13.4g %12.4g  %s -> %s',
                      row['knots'], row['amp_fraction'] * 100, row['m1_error'],
-                     row['m1_tol_current'], row['m1_tol_traversed_1e9'],
-                     row['m1_tol_traversed_1e7'], row['m1_one_raster_signal'],
-                     'REFUSED' if bad else 'accepted')
+                     row['m1_tol_before_fix'], row['m1_tol_now'],
+                     row['m1_one_raster_signal'],
+                     'REFUSED ' if before else 'accepted',
+                     'REFUSED' if now else 'accepted')
     logging.info('')
-    logging.info('m1: %d of %d legal waveforms refused by the current tolerance', refused,
-                 len(rows))
+    logging.info('m1: %d of %d legal waveforms were refused before the fix; %d are refused now',
+                 was_refused, len(rows), still_refused)
     logging.info('m0: max error %.4g against a minimum tolerance of %.4g -- no failure observed',
                  max(r['m0_error'] for r in rows), min(r['m0_tol_current'] for r in rows))
 
