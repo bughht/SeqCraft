@@ -1,7 +1,7 @@
 # Spiral — ownership map, boundary, helpers and reconstruction
 
 > **Mirrored from the workspace planning repository** (`docs/plans/module-mining/`) on
-> 2026-09-19, so that the pull request carries the evidence behind the modules it adds.
+> 2026-09-20, so that the pull request carries the evidence behind the modules it adds.
 > The two copies are identical today and there is nothing keeping them that way; see
 > [`../../README.md`](../../README.md) for which one to edit.
 
@@ -113,3 +113,95 @@ should not be folded into the readout boundary, because reconstruction needs mus
 Module API.
 
 **A valid outcome remains that the utility stays example-only.**
+
+---
+
+# 6. `variant` and `echoes` — settled by ownership, not by combination count
+
+Applying the test the brief sets: does the parameter change the physical solve the readout owns?
+
+## `echoes` — **belongs to the readout**
+
+Not "another echo repeats a completed readout". Under an arm that begins and ends at rest, a
+second echo either **flies back** (one-arm variants) or **reverses** (two-arm variants), and
+either way it changes:
+
+```text
+gradient continuity across the join       ADC regions -- one ADC may span joined arms
+where k = 0 falls in each echo            echo spacing feasibility under the slew limit
+total waveform duration
+```
+
+Every one of those is a correctness condition of the emitted waveform. The precedent agrees:
+`CartesianLine.echoes` owns exactly this, and its monopolar/bipolar trade is the same trade at a
+Cartesian scale. **Readout, not acquisition policy.**
+
+## `variant` — **belongs to the readout, as a declared mode set**
+
+All four share one arm, one traversal and one set of joins; the variant selects direction and
+count, not a different machine. But it is not free either — each variant moves k = 0:
+
+```text
+out      k = 0 is the FIRST sample
+in       k = 0 is the LAST sample
+in-out   k = 0 is the SEAM, and must fall INSIDE a sampling window, not in an ADC guard
+```
+
+That last line is a correctness condition that differs per variant, which is what makes this a
+**mode set** rather than a parameter — so **rule A fires** and a mode-contract table is required
+before implementation, with the differential stated explicitly.
+
+**The trap rule A exists for is live here.** "in is out reversed" is structurally the same
+reasoning as "mode B is mode A minus Gz", which is what produced the GRE3D RF defect. And
+`reference_review.md` §3 shows there is **no reference evidence** for in, in-out or out-in — the
+independent witness ends at full gradient and is spiral-out only.
+
+**That does not block them.** GRE3D set the precedent: its slab-selective path had no executable
+reference either and was carried by signed-moment arithmetic that depends on no implementation.
+The same applies — reversing a piecewise-linear waveform and integrating it is checkable
+analytically. But the claim scope must say so:
+
+```text
+spiral-out            reference-supported, comparable against writeSpiral.m
+in / in-out / out-in  ANALYTIC ONLY -- no independent witness exists
+```
+
+## Conclusion
+
+One public module, `SpiralReadout`, owning `variant` and `echoes`, with a mode contract for
+`variant` and a **two-tier acceptance claim**. A split is not justified: the variants are not
+different physical machines with unrelated conditional behaviour, they are one arm traversed
+differently — which is exactly what `v = 0` at both ends was chosen to buy.
+
+# 7. Reconstruction audit — `examples/noncartesian_recon.py`
+
+470 lines, read on the PR branch. Its `SpiralReadout` is a **data container**, and this is the
+finding:
+
+```python
+k_per_m: (shots, 2, samples)     t_adc_s: (samples,)
+fov_m: float                     matrix: int          te_s: tuple[float, ...]
+```
+
+Nothing in that shape is spiral-specific. **A radial acquisition fits it unchanged** — spokes are
+shots, and `te_s` is where k = 0 falls.
+
+| concern | trajectory-agnostic? |
+|---|---|
+| the trajectory + timing container | **yes** — only its *name* is spiral |
+| `encoding_operator` (sigpy NUFFT), `_coord` normalisation | **yes** — takes coordinates |
+| `dcf(method='pipe')` — Pipe–Menon | **yes**, and it needs no analytic density |
+| `dcf(method='radial')`, weights by `\|k\|` | **yes**, and it is literally named for the other consumer |
+| CG solve, row-sum preconditioner, spectral norm | **yes** |
+| coil sensitivities | **yes** |
+| off-resonance time segmentation (`segments_for`, `echo_relative_times`) | **yes** — needs `t_adc_s` and `te_s`, which any trajectory has |
+| `delayed()` gradient-delay model | **partly** — shifting sample times is generic; "on a spiral this is a rotation *and* a radial shift" is the spiral reading of it |
+| `dcf` analytic Jacobian `\|dk/dt\| / FOV(\|k\|)` | **no** — needs `density`; genuinely spiral-specific |
+
+**So a shared contract plausibly exists and it is small**: the container, plus operators that take
+coordinates. One method of one function is spiral-specific.
+
+**This is an inspection result, not a promotion.** The Radial trigger says *inspect whether a
+minimal shared contract exists*, and the answer is "yes, and it is smaller than the file". What to
+do about it is a separate decision, and **keeping the utility example-only remains valid** — the
+placement argument (an ESPIRiT dependency must not reach the compile path) is untouched by this.

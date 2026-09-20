@@ -1,7 +1,7 @@
 # PR23 archaeology — design decisions and failures, classified
 
 > **Mirrored from the workspace planning repository** (`docs/plans/module-mining/`) on
-> 2026-09-19, so that the pull request carries the evidence behind the modules it adds.
+> 2026-09-20, so that the pull request carries the evidence behind the modules it adds.
 > The two copies are identical today and there is nothing keeping them that way; see
 > [`../../README.md`](../../README.md) for which one to edit.
 

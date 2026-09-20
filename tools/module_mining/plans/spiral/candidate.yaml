@@ -1,4 +1,4 @@
-# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-19.
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-20.
 # See ../../README.md for which copy to edit.
 # Provisional research record -- NOT a schema, NOT runtime code.
 # Prospective supervised run, archaeology / fine-scan phase.  NOTHING IMPLEMENTED.
@@ -50,11 +50,14 @@ evidence:
     path: matlab/demoSeq/writeSpiral.m
     license: MIT
     role: authoritative-external
-    executable: documentary
-    covers: spiral path and traversal
+    executable: documentary       # ships no .seq; read for physics, as R4b was for GRE3D
+    covers: >
+      Archimedean path, slew/amplitude-limited traversal, ADC segmentation, spiral-OUT only.
+      NOT variable density, NOT a rewinder, NOT in / in-out / out-in, NOT multi-echo.
     independence: >
-      Independent of PR23.  NOT YET INSPECTED in this scan -- listed as the acceptance evidence
-      any extraction would need, and its absence is why no acceptance claim is proposed here.
+      Independent of PR23 and independently arrives at the path/traversal separation.  It ENDS AT
+      FULL GRADIENT and is spiral-out only -- which is the same fact twice, and confirms PR23's
+      failure A by exhibiting it.  See reference_review.md.
   - repo: usc-mrel/rtspiral_pypulseq
     license: GPL-3.0
     role: architecture-evidence
@@ -77,7 +80,20 @@ contract:
     - measured turn spacing matches 1/density everywhere
     - the spoke at angle phi is the spoke at 0, rotated -- as RadialReadout already asserts
   varying_parameters: [fov_mm, matrix, shots, density, dwell_s, angle_rad, variant, echoes]
-  modes: []                     # `variant` may be a mode set -- UNRESOLVED, see findings.md
+  modes:                        # RESOLVED: variant is a mode set, so rule A fires.  The table
+                                # itself is required BEFORE implementation and is not written yet.
+    - name: out
+      k_zero: the first sample
+      reference_evidence: writeSpiral.m -- spiral-out only, k=0 advanced to the first sample
+    - name: in
+      k_zero: the last sample
+      reference_evidence: NONE -- analytic only
+    - name: in-out
+      k_zero: the seam, which must fall INSIDE a sampling window and not in an ADC guard
+      reference_evidence: NONE -- analytic only
+    - name: out-in
+      k_zero: the seam
+      reference_evidence: NONE -- analytic only
   excluded_caller_policy:
     - the angle schedule and the order arms are played in
     - the excitation, the refocusing, TR, and whether this is a GRE or a SE
@@ -88,9 +104,12 @@ contract:
 
 acceptance:
   claim: >
-    NONE PROPOSED.  The one external witness that could carry it -- pulseq/pulseq writeSpiral.m --
-    has not been inspected in this phase.
-  criterion: trajectory-agreement     # the shape it would take, by analogy with Radial
+    TWO-TIER, and the tiers must not be summarised as one.  (a) For spiral-out: the emitted
+    trajectory agrees with writeSpiral.m's at matched geometry, and the ADC segmentation respects
+    the same sample limit.  (b) For in / in-out / out-in and for multi-echo: ANALYTIC ONLY -- the
+    reversed arm's integrated trajectory is the forward arm's reversed, and k = 0 falls inside a
+    sampling window -- because no independent witness for those exists.
+  criterion: trajectory-agreement     # tier (a); tier (b) is invariant-only
   tolerance: >
     MUST be characterised on the representation floor, not inherited from PR23's number.  My own
     measurement puts the compiler round-trip at ~6e-6 1/m (m0) for a split arbitrary gradient;
@@ -99,11 +118,19 @@ acceptance:
   defined_before_extraction: true     # vacuously: nothing extracted
   establishes:
     - the m1 compiler defect is real, reproduced with no Spiral module present
-    - the path/traversal coupling is one-way, so it is an internal boundary and not a public one
+    - the path/traversal coupling is one-way, so it is an internal boundary and not a public one,
+      and writeSpiral.m arrives at the same separation independently
+    - >
+      `echoes` and `variant` both belong to the readout -- they change gradient continuity, ADC
+      regions and where k = 0 falls, which are its correctness conditions
     - none of the three PR23 helpers has a second consumer on current main, including after PR #27
     - PR23's reconstruction placement decision (examples/, not src/) is correct
+    - the reconstruction's trajectory container is trajectory-AGNOSTIC; a radial acquisition fits
+      it unchanged, and only the analytic-density DCF method is spiral-specific
   does_not_establish:
-    - that SpiralReadout is the right boundary; `variant` and `echoes` ownership is unresolved
+    - that the in / in-out / out-in variants agree with any external implementation; none exists
+    - that `density` is the right convention; writeSpiral.m has no density parameter at all, so
+      sampled-FOV-multipliers has ONE witness (PR23) and its lineage is a third source (vds.m)
     - that PR23's m0 claim is a defect -- it did not reproduce
     - anything measured about spiral physics; no reference was executed in this phase
     - which parts of the reconstruction are trajectory-agnostic; the file was listed, not read
@@ -126,21 +153,29 @@ validation:
   compiler_changes: none made
 
 evidence_state:
-  human_review: NEEDED          # this document is the archaeology; the boundary call is the user's
+  human_review: NEEDED          # boundary approved in review; the mode contract is still owed
   experiment_design_review: NOT_NEEDED
   scanner_validation: FUTURE
   deferred:
-    - what: Inspect pulseq/pulseq writeSpiral.m as an independent design witness.
+    - what: >
+        An independent witness for the in / in-out / out-in variants and for multi-echo.
       why: >
-        Archaeology phase was scoped to PR23 and to the compiler claims.  Without it there is no
-        acceptance evidence that is independent of our own prior attempt.
-      revisit_trigger: The boundary is approved and extraction is authorised.
-    - what: Audit examples/noncartesian_recon.py for what is genuinely trajectory-agnostic.
+        writeSpiral.m ends at full gradient and is spiral-out only, so it cannot witness them.
+        They are admissible on analytic evidence -- the GRE3D slab-selective precedent -- but the
+        claim must say which tier it is in, and tier (b) has no external corroboration.
+      revisit_trigger: >
+        A permissively licensed reversible-arm spiral appears, or a claim is made about those
+        variants that analytic evidence cannot carry.
+    - what: A second witness for the `density` convention.
       why: >
-        Reconstruction needs must not dictate the readout API, so it is a separate assessment.
-        Radial + Spiral is the second-consumer condition recorded in radial/evidence_state.yaml,
-        and that trigger says INSPECT, not promote.
-      revisit_trigger: This scan proceeds past the boundary decision.
+        writeSpiral.m has no density parameter.  Sampled-FOV-multipliers has one witness, and
+        PR23's own failure B shows the convention is exactly where silent errors live.
+      revisit_trigger: Variable density is proposed for implementation.
+    - what: A decision on whether the reconstruction's shared contract is promoted anywhere.
+      why: >
+        The audit found one exists and is small, which is what the Radial trigger asked.  What to
+        do about it is separate, and example-only remains valid.
+      revisit_trigger: A second non-Cartesian readout ships, making the two consumers real.
     - what: Hardware evidence -- gradient delay, eddy currents, trajectory fidelity.
       why: >
         A spiral is more sensitive to all three than any Cartesian readout, but none of them is
@@ -156,8 +191,12 @@ reason_code: PHYSICAL_BOUNDARY_UNCLEAR
 decided_by: human               # PROPOSED by the skill; awaiting review
 
 open_questions:
-  - Do `variant` and `echoes` belong to the readout or to acquisition policy?  Four variants
-    times echoes is where a flag explosion starts if it starts anywhere.
-  - Is the join correction (D13/D14) a module concern or evidence of a representation mismatch
+  - >
+    The mode-contract table for `variant` is REQUIRED before implementation and is not written.
+    "in is out reversed" is structurally the reasoning that produced the GRE3D RF defect.
+  - Is the join correction (D13/D14) a module concern, or evidence of a representation mismatch
     between raster-centre and raster-edge lattices that belongs lower down?
-  - Does writeSpiral.m agree with PR23's path convention, or is `density` a third convention?
+  - >
+    Should a first extraction ship spiral-out only, where the reference can carry the claim, and
+    add the reversible variants once their analytic contract is written?  Smaller, and it keeps
+    the two evidence tiers from being conflated in one release.
