@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased — one reversible spiral arm, and the four ways to traverse it
+
+`SpiralReadout` (`readout/`): the Nyquist path, its slew- and amplitude-limited traversal, the
+raster waveform, the segmented ADC the interpreter's sample limit forces, and the trajectory
+measured off what is emitted.
+
+**One module, not four.** Everything rests on one decision — an arm begins and ends at rest, so it
+can be played backwards and two arms join with no connector. `out`, `in`, `in-out` and `out-in`
+are then a choice of how many arms and in which order. The independent reference,
+`pulseq/pulseq`'s `writeSpiral.m`, ends its spiral-out at **full gradient** and has no spiral-in:
+those are the same fact.
+
+That policy costs **0.20–0.78 %** of readout duration, measured over seven protocols. It is a
+braking distance, so it is fixed in absolute terms and shrinks as readouts lengthen; k-space extent
+is identical and peak gradient is unchanged or lower.
+
+**`out-in` crosses the origin twice.** So `origin_crossing_samples` is a sequence from the first
+line of code — a scalar would work for three variants and change meaning on the fourth. An origin
+crossing is a fact about the trajectory; whether the physical echo lands there belongs to the
+kernel above.
+
+**The reported trajectory is integrated from the emitted knots**, not the design pass. It agrees
+with `sc.kspace`, which shares no code with it, to **~1e-12 1/m**.
+
+Three things the implementation found, each a silent failure:
+
+| | |
+|---|---|
+| the rewinder sized against the *design* end-point | left **0.015 `dk`** behind; sized against the *emitted* end it leaves zero |
+| limits measured on raster-spaced differences | the emitted first and last intervals are **half** a raster, so the real slew is twice what that reports |
+| the acquisition outlasting its gradient | the compiler holds the last block open and pads the waveform with area nobody designed |
+
+**Known limitation:** protocols around `matrix=128` fail the compiler's m0 contract when ADC
+segmentation splits the arm, by 0.02–0.08 1/m. Isolated to this module — splitting a bare
+arbitrary gradient across ADC-driven block boundaries is exact to 1e-13 — and **not** the compiler.
+Pinned by strict `xfail` tests so a fix announces itself.
+
+`echoes > 1` refuses, naming the contract; `out-in` already exercises the plural machinery at
+`echoes=1`. No 3D, no anisotropic FOV, no density presets, no `GRESpiral2D`/`SESpiral2D`, and the
+three PR23 helpers stay private: one consumer each.
+
 ## Unreleased — a pulse whose purpose is to destroy what it makes
 
 `SaturationPrep` (`preparation/`): a spectrally selective pulse, offset from water by a chemical

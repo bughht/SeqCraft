@@ -205,3 +205,62 @@ coordinates. One method of one function is spiral-specific.
 minimal shared contract exists*, and the answer is "yes, and it is smaller than the file". What to
 do about it is a separate decision, and **keeping the utility example-only remains valid** — the
 placement argument (an ESPIRiT dependency must not reach the compile path) is untouched by this.
+
+---
+
+# 8. Implementation findings
+
+Written during the extraction, from what went wrong rather than from the plan.
+
+## 8.1 Three silent failures the implementation hit
+
+Each compiled, looked right, and was wrong. Two of them are PR23's failures arriving on schedule.
+
+| | what looked reasonable | what it cost | how it was found |
+|---|---|---|---|
+| **rewinder sized against the design end-point** | the design says the arm ends at `k_max`, so rewind `-k_max` | **0.015 `dk`** left behind every TR — PR23's failure **E**, which it measured at 0.024 `dk` | total m0 of the assembled block |
+| **limits measured on raster-spaced differences** | the waveform is on the raster, so difference it by the raster | the emitted first and last intervals are **half** a raster, so real slew is **twice** what that reports; the design passed its own check and `make_arbitrary_grad` refused it | the factory refusing a waveform the module had certified |
+| **acquisition outlasting its gradient** | size the ADC by duration over dwell | each segment spends two dead times, so the ADC ran 8 µs past the arm; the compiler holds the block open and pads the waveform with area nobody designed | compiler m0 contract |
+
+The second is the sharpest, and it generalises past spirals: **a module that measures its own
+output on a more convenient lattice than the one it emits will certify something it cannot build.**
+`limits()` now reads the emitted knots, which is what §9 of the acceptance plan asked for and is
+why it is a measurement rather than a restatement.
+
+## 8.2 A compiler defect that was not one
+
+A multi-segment readout lost 0.02–0.08 1/m of m0, with the same signature as PR23's m0 claim —
+tree sum ≈ 0, compiled visibly different, "a split or a merge lost area".
+
+**The escalation rule caught it.** Removing the module and splitting a bare sign-changing
+arbitrary gradient across ADC-driven block boundaries is exact to **1e-13**, across 1, 2, 4, 8 and
+16 events. So the compiler splits correctly and the loss is this module's.
+
+Recorded because the near-miss is the point: the same evidence that would have "confirmed" PR23's
+m0 claim was available, and the reproducer is what stopped it being claimed.
+
+## 8.3 Known limitation, unresolved
+
+Protocols around `matrix=128` still fail the m0 contract when segmentation splits the arm.
+36 of 48 swept protocols compile; every failure is `matrix=128`, and `matrix=96` with two segments
+passes — so it is not simply "multi-segment".
+
+Pinned by **strict** `xfail` tests, one per variant, so a fix announces itself by turning the suite
+red until the limitation is removed from the record too.
+
+```text
+established     the four-variant family, the durable shapes, the trajectory measured off
+                emitted events (~1e-12 1/m against sc.kspace), both hardware limits, the
+                endpoint policy, zero residual after rewind
+not established the longest arms compile; multi-echo; any image
+deferred        the defect above, and Layer 3
+revisit trigger the defect blocks a protocol somebody wants, or a fix lands
+```
+
+## 8.4 What PR23 got right, confirmed by re-deriving it
+
+The path/traversal split, `v = 0` at both ends, measuring `k` off built events, correcting the
+join on the assembled waveform, and keeping reconstruction out of `src/` — all five were reached
+independently here, and three of them only after the implementation failed the way PR23 said it
+would. **That is the calibration result**: the ideas survive independent re-derivation, and the
+parts that did not survive are the m0 compiler change and the helper promotions.

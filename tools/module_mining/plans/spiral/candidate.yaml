@@ -210,6 +210,14 @@ evidence_state:
   scanner_validation: FUTURE
   deferred:
     - what: >
+        Protocols around matrix=128 fail the compiler m0 contract when ADC segmentation splits
+        the arm, by 0.02-0.08 1/m.  36 of 48 swept protocols compile.
+      why: >
+        Isolated to this module -- splitting a bare arbitrary gradient across ADC-driven block
+        boundaries is exact to 1e-13 -- and unresolved when implementation time ran out.  Pinned
+        by strict xfail tests so a fix announces itself.
+      revisit_trigger: The defect blocks a protocol somebody wants, or before this is merged.
+    - what: >
         Simulation and reconstruction of any spiral acquisition -- Layer 3.
       why: >
         Needs the non-Cartesian reconstruction whose promotion is itself deferred.  The trajectory
@@ -245,8 +253,10 @@ evidence_state:
         appears that a correct design trajectory cannot explain.
 
 status: NEW_LEAF
-traffic_light: APPROVED_FOR_IMPLEMENTATION
-reason_code: null
+traffic_light: YELLOW
+reason_code: PHYSICAL_BOUNDARY_UNCLEAR   # NOT the boundary -- see the note below.  The vocabulary
+                                         # has no code for "implemented, one protocol class still
+                                         # fails", which is itself a finding.
 decided_by: human               # boundary, variant/echo ownership and endpoint policy all
                                 # settled in review; the endpoint cost is now measured.
                                 # NOT GREEN: GREEN means the checks passed, and nothing is built

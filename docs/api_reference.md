@@ -982,6 +982,7 @@ Re-exported **flat**, so no import path names a folder:
 | `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
 | `CartesianLine` | prephaser, readout gradient and ADC as one design — `prephase=False` drops the prephaser, which is the spin-echo readout, and `echoes`/`polarity` read the same line more than once, which is a multi-echo gradient echo |
 | `RadialReadout` | one radial spoke: prephaser, readout gradient and ADC, already oriented, with the trajectory geometry a caller would otherwise reverse-engineer |
+| `SpiralReadout` | one reversible spiral arm and the four ways to traverse it — `out`, `in`, `in-out`, `out-in`. The arm is at rest at both ends, which is what makes them one family |
 | `EPI2D` | the whole echo-planar train: prephasers, alternating lobes, blips on the zero crossings, one ADC per echo, and the labels a reconstruction reads back |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
@@ -1032,6 +1033,10 @@ the questions a tree of events cannot:
 | `EPI2D.polarity(echo)` | `+1` or `-1`, counted across the whole train. `echo` is an **offset from the first imaging echo**, so `-navigator_echoes … -1` are the navigators and `range(-navigator_echoes, len(lines))` walks the file's readouts in order |
 | `EPI2D.k_read_per_m` | where a forward lobe's samples land in k, per sample. With ramp sampling that is not `dk` times an index, and nothing outside the module can derive it |
 | `EPI2D.time_to_center_line(lines)` | to the acquisition of `center_line`, which the ordering decides. **This is TE**, and it is not the first echo |
+| `SpiralReadout.origin_crossing_samples` / `origin_crossing_times` | where the trajectory passes through `k = 0`, as a **sequence** — `out-in` crosses twice and the others once, so a scalar would change meaning when it arrived |
+| `SpiralReadout.k_per_m(angle_rad=…)` | the sample positions, integrated from the **emitted** knots rather than from the design pass. A NUFFT is told where the samples are, so a trajectory one raster out is a blur and a wrong field map |
+| `SpiralReadout.limits()` | the peak gradient and slew this readout actually emits, measured rather than inferred from the traversal's constraints |
+| `SpiralReadout.echo_spacing_s` | derived from the realised trajectory, `None` when there is one crossing |
 | `IRPrep.time_to_center()` | to the inversion's effective centre — 5.1 ms into a 10 ms hyperbolic secant, and what an inversion time is measured from |
 | `SaturationPrep.time_to_center()` | the same question, the same origin, so a timeline can add them |
 | `SaturationPrep.offset_hz` | the chemical shift converted once: `shift_ppm × 1e-6 × B0 × γ`. Negative is below water. A test traces it as far as the compiled sequence, because a sign error here is legal Pulseq that saturates the wrong tissue |
@@ -1735,6 +1740,7 @@ at import.
 | `RasterError` | `design.timing` | exception |
 | `Refocusing` | `modules` | class |
 | `SaturationPrep` | `modules` | class |
+| `SpiralReadout` | `modules` | class |
 | `TSEShot` | `modules` | class |
 | `SeqCraftError` | `errors` | exception |
 | `SeqCraftWarning` | `errors` | warning |
