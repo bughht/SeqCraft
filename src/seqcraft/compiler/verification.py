@@ -440,6 +440,8 @@ def verify_against_tree(
     # that float summation over thousands of pieces cannot deliver -- while a tolerance on the
     # total still catches a whole lost lobe, which is what this is for.
     magnitude: dict[str, float] = {}
+    # Peak |g| per axis.  m1's floor tracks this and nothing else -- see the m1 check below.
+    peak: dict[str, float] = {}
     # m1 referenced to the start of the sequence, computed **exactly** on both sides.
     #
     # Both are sums of per-piece moments, which is legitimate because a moment is linear in
@@ -454,6 +456,7 @@ def verify_against_tree(
             area = pwl_moment(*knots, 0)
             want[channel] = want.get(channel, 0.0) + area
             magnitude[channel] = magnitude.get(channel, 0.0) + abs(area)
+            peak[channel] = max(peak.get(channel, 0.0), float(np.max(np.abs(knots[1]))))
             want_m1[channel] = want_m1.get(channel, 0.0) + pwl_moment(*knots, 1)
 
     if want:
@@ -474,8 +477,24 @@ def verify_against_tree(
             # is scaled by area traversed: a readout and its prephaser nearly cancel, so a
             # tolerance on the net would demand more than float64 can carry.  A lobe displaced
             # by one raster changes m1 by area * 10 us, comfortably above this.
+            #
+            # **Plus a floor proportional to peak |g|**, because the relative term alone sits
+            # inside the noise for a whole class of legal input.  An arbitrary gradient that the
+            # compiler has to split and rebuild does not round-trip exactly, and the residual is
+            # ``~8.4e-14 * peak`` -- measured constant across knot count, amplitude and
+            # ``max_grad``, in ``tests/compiler/test_m1_floor.py``.  The relative term scales as
+            # traversed x horizon, which grows faster than that, so the two cross: short or weak
+            # waveforms were refused while long strong ones passed, *for the same physics*.  Six
+            # of ten legal sign-changing gradients were refused before this floor existed, and
+            # which six was not predictable from the sequence.
+            #
+            # 1e-11 clears the measured floor by ~120 and stays three to four orders of magnitude
+            # below the signal: one raster of displacement moves m1 by ``traversed * raster``,
+            # which is 1e-2 .. 1e0 s/m on the same waveforms.  Both bounds are properties of the
+            # representation and of the failure being caught, not of any one module.
             m1_scale = max(scale * max(tree_duration_s, 1e-3), 1.0)
-            if abs(actual_m1.get(axis, 0.0) - want_m1.get(axis, 0.0)) > 1e-9 * m1_scale:
+            m1_tolerance = max(1e-9 * m1_scale, 1e-11 * peak.get(axis, 0.0))
+            if abs(actual_m1.get(axis, 0.0) - want_m1.get(axis, 0.0)) > m1_tolerance:
                 violations.append(
                     ContractViolation(
                         f'axis {axis} m1',
