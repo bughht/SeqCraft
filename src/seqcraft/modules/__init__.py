@@ -24,10 +24,12 @@ The folders, and what each one means
       rf/          excitation.py       Excitation
                    refocusing.py       Refocusing
       preparation/ ir_prep.py          IRPrep
+                   saturation_prep.py  SaturationPrep
       encoding/    phase_encoding.py   PhaseEncode
       readout/     cartesian_line.py   CartesianLine
                    epi_2d.py           EPI2D
                    radial_readout.py   RadialReadout
+                   spiral_readout.py   SpiralReadout
       kernel/      gre_2d_tr.py        GRE2DTR      composes leaves; one repeating unit
                    gre_3d_tr.py        GRE3DTR
                    tse_shot.py         TSEShot
@@ -95,9 +97,11 @@ from .kernel.gre_2d_tr import GRE2DTR
 from .kernel.gre_3d_tr import GRE3DTR
 from .kernel.tse_shot import TSEShot
 from .preparation.ir_prep import IRPrep
+from .preparation.saturation_prep import SaturationPrep
 from .readout.cartesian_line import CartesianLine
 from .readout.epi_2d import EPI2D
 from .readout.radial_readout import RadialReadout
+from .readout.spiral_readout import SpiralReadout
 from .rf.excitation import Excitation
 from .rf.refocusing import Refocusing
 from .spoiler import spoiler
@@ -105,5 +109,5 @@ from .spoiler import spoiler
 __all__ = [
     'CartesianLine', 'EPI2D', 'Excitation', 'FSE2D', 'GRE2D', 'GRE2DTR', 'GRE3DTR', 'IRPrep',
     'PhaseEncode',
-    'RadialReadout', 'Refocusing', 'TSEShot', 'spoiler',
+    'RadialReadout', 'Refocusing', 'SaturationPrep', 'SpiralReadout', 'TSEShot', 'spoiler',
 ]

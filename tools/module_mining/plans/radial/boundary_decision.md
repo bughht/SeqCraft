@@ -194,7 +194,37 @@ list, which is a sequence choice and belongs to the caller.
 
 ### Why there is no `02_simulate_and_reconstruct.ipynb`
 
-Deferred, with the reason recorded rather than left implicit. A radial image needs a non-Cartesian
+**The status is layered, and §5's `GREEN` belongs to the first two layers only:**
+
+```text
+Layer 1 -- physical/reference validation      GREEN
+Layer 2 -- complete acquisition build         GREEN
+Layer 3 -- simulate + reconstruct             DEFERRED
+```
+
+So the claim this document establishes is exactly:
+
+> the radial spoke leaf emits the correct waveform / ADC / trajectory semantics, independently
+> validated against the official reference.
+
+and it is **not**:
+
+> SeqCraft has an independently validated end-to-end radial imaging + non-Cartesian reconstruction
+> pipeline.
+
+The deferral is a decision, not an unfinished v0 task, and it should not be closed for symmetry
+with FSE and GRE3D. A radial Layer 3 needs a non-Cartesian reconstruction path whose own
+conventions -- NUFFT coordinates, density compensation, weighting, trajectory timing -- each need
+independent review first; an image produced through an unreviewed reconstruction is two unvalidated
+things agreeing, not evidence about the sequence. PR #23 holds usable non-Cartesian reconstruction
+infrastructure, but under the roadmap it is **evidence for the Spiral supervised-calibration phase,
+not accepted architecture**, and nothing in `examples/` may depend on it until that review happens.
+It is picked up in `v0_closeout_and_roadmap.md` §2.7.2 and §6.1, where the notebook is a
+**conditional** on that review rather than a scheduled deliverable: if no genuinely shared
+reconstruction utility survives, the radial `02` is never written and this module stays Layer-2
+GREEN with the claim above.
+
+Deferred, then, with the reason recorded rather than left implicit. A radial image needs a non-Cartesian
 reconstruction; the example suite has none — every existing `02` is an FFT on a Cartesian grid, and
 a search for NUFFT or gridding machinery across `examples/` found only the word in prose. Building
 a gridding or NUFFT pipeline here would be **new reconstruction infrastructure created to complete

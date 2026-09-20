@@ -62,6 +62,12 @@ def describe(path: Path) -> dict[str, Any]:
         'gradients_with_the_rf': sorted(axis for axis, present in on_axis.items() if present),
         'spatially_selective': any(on_axis.values()),
         'rf_block': index,
+        # `use` and the carrier offset are the whole physical story for a preparation pulse, and
+        # neither is visible in the shape.  A saturation labelled 'excitation', or one offset to
+        # the wrong side of water, reads as a perfectly ordinary pulse until these are printed.
+        'rf_use': getattr(rf, 'use', None) or 'undefined',
+        'rf_freq_offset_hz': float(getattr(rf, 'freq_offset', 0.0) or 0.0),
+        'rf_freq_ppm': float(getattr(rf, 'freq_ppm', 0.0) or 0.0),
         'adc_events': adc_blocks,
         'blocks': len(seq.block_events),
         'duration_s': float(seq.duration()[0]),
@@ -78,6 +84,11 @@ def main(paths: list[str]) -> None:
         logging.info('   with the RF     gradients on %s -> %s',
                      row['gradients_with_the_rf'] or 'no axis',
                      'spatially selective' if row['spatially_selective'] else 'NON-selective')
+        offset = row['rf_freq_offset_hz']
+        side = 'on resonance' if offset == 0.0 else (
+            f'{abs(offset):.1f} Hz {"BELOW" if offset < 0 else "ABOVE"} the carrier')
+        logging.info('   declared use    **%s**, %s%s', row['rf_use'], side,
+                     f", freq_ppm {row['rf_freq_ppm']:+.3f}" if row['rf_freq_ppm'] else '')
         logging.info('   acquisition     %d ADC events over %d blocks, %.2f s',
                      row['adc_events'], row['blocks'], row['duration_s'])
         logging.info('')

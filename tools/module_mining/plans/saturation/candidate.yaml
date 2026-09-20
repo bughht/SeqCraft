@@ -1,0 +1,218 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-19.
+# See ../../README.md for which copy to edit.
+# Provisional research record -- NOT a schema, NOT runtime code.
+# Prospective supervised run, evidence phase.  Nothing implemented.
+#   python tools/module_mining/schema.py <this file>
+
+id: saturation-prep
+name: SaturationPrep            # working name; EXTEND_EXISTING on Excitation is a live alternative
+
+capability:
+  summary: >
+    A spectrally selective RF pulse played with no gradient, offset from water by a chemical
+    shift, followed by a spoiler and no rephasing -- the magnetisation it creates is unwanted and
+    is destroyed on purpose.
+  family: preparation
+
+target:
+  layer: preparation
+  path: src/seqcraft/modules/preparation/saturation_prep.py
+  composes:
+    - Excitation      # provisionally; the pulse itself is already expressible
+    - spoiler
+  extended: []        # NONE.  No existing module, leaf or shared helper was modified; the
+                      # EXTEND_EXISTING alternative on Excitation was rejected by review.
+                      # Non-physical files touched are mapped in findings.md section 8.
+  untouched:
+    - IRPrep, the compiler, LogicBlock, every other module
+  not_created:
+    - a CEST saturation train -- different physics; see findings.md section 7
+    - a regional/spatial saturation slab -- plays a gradient; the shared part is "prepare then
+      spoil", which is the waveform-silhouette trap
+  siblings_not_parents:
+    - IRPrep -- same structural shape, different rf.use; neither contains the other
+
+reuse_rationale: >
+  The pulse and the spoiler are already expressible.  What is not is the chemical-shift offset
+  with its sign convention, the bandwidth-does-not-touch-water relation, and rf.use='saturation'.
+  Whether that is enough for a Module or should instead be an extension to Excitation is the
+  question this record puts to review.
+
+evidence:
+  - repo: imr-framework/pypulseq
+    commit: f2c582b
+    path: examples/scripts/write_epi_se_rs.py
+    license: MIT
+    role: primary
+    executable: executed
+    covers: spectral fat saturation
+    independence: >
+      One witness with R2 (pulseq/pulseq writeEpiSpinEchoRS.m) -- same design, one ported from the
+      other, identical flip, duration, bandwidth rule and spoil scale.  Independent of R3.
+  - repo: pulseq/pulseq
+    commit: 2fd6ab6
+    path: matlab/demoSeq/writeEpiSpinEchoRS.m
+    license: MIT
+    role: authoritative-external
+    executable: documentary
+    covers: spectral fat saturation
+    independence: >
+      One witness with R1.  Differs from it in ONE line: it compensates the offset-induced phase
+      at the RF centre and R1 does not.  A within-design disagreement, recorded not resolved.
+  - repo: fmrifrey/lps
+    commit: 552d87a
+    path: gre3d/gre3d_write_seq.m
+    license: MIT
+    role: independent-formulation
+    executable: documentary
+    covers: spectral fat saturation
+    independence: >
+      Independent of the Pulseq house style -- the same judgement recorded during the GRE3D pilot.
+      Genuinely a second design: 90 degrees not 110, 12 ms not 8, a fixed 200 Hz bandwidth rather
+      than one derived from the offset, and the sign applied at the point of use.
+  - repo: OpenMRF/openmrf-core-matlab
+    commit: fd03604
+    path: include_pulseq_toolbox/   # FAT / SAT preparation library
+    license: MIT for original OpenMRF work
+    role: deferred
+    executable: documentary
+    covers: possibly a third independent design
+    independence: >
+      UNINSPECTED -- no local checkout.  Recorded as an open item; nothing here depends on it.
+
+contract:
+  intrinsic: >
+    Given a species' chemical shift in ppm and the scanner's B0, the module determines the pulse's
+    centre-frequency offset and its sign, checks that the excited band does not reach water, emits
+    the pulse with rf.use='saturation' and no gradient, and follows it with a spoiler and no
+    rephasing.
+  invariants:                # PROPOSED, none yet measured -- acceptance_options.md section 1C
+    - the centre frequency equals ppm * 1e-6 * B0 * gamma, with the sign convention stated
+    - the excited band does not overlap water
+    - no gradient is played during the pulse
+    - no rephasing gradient follows it
+    - the spoiler dephases at least N cycles across the stated spatial scale
+    - rf.use is 'saturation' in the emitted file
+  varying_parameters:
+    - species chemical shift in ppm
+    - flip angle, duration, bandwidth, apodization   # protocol; the references disagree
+    - spoiler cycles and spatial scale
+  modes: []                  # no mode set proposed; rule A does not fire
+  excluded_caller_policy:
+    - when the preparation is played, and how often
+    - what imaging train follows it
+    - the protocol parameters above
+  excluded_pulseq_artifacts:
+    - whether the spoiler is a separate block or delayed inside the pulse's block
+    - the pulse factory used, given an equivalent envelope
+
+acceptance:
+  claim: >
+    The module realises the spectral-saturation contract: the emitted pulse is labelled a
+    saturation, carries the chemical shift converted once from ppm through the scanner's B0, plays
+    no gradient and no rephaser, and is followed by a spoiler of the moment asked for.  Checked on
+    the COMPILED sequence, not on the constructor.
+  criterion: invariant-only     # plus waveform agreement against R1; see acceptance_options.md
+  tolerance: not yet set -- to be fixed against a measured floor before extraction
+  defined_before_extraction: true
+  establishes:
+    - that two independent designs agree on structure, purpose and the spoil-do-not-rephase rule
+    - that the pulse and spoiler are already expressible in SeqCraft today
+    - that rf.use cannot currently be set, so a saturation pulse is emitted labelled 'excitation'
+  does_not_establish:
+    - that 110 deg / 8 ms is correct in any absolute sense; the independent design disagrees
+    - that fat is suppressed in an image; no simulation or reconstruction was run
+    - whether the offset-phase compensation matters; the references disagree and neither explains
+    - anything about CEST saturation, regional saturation slabs or water excitation
+
+validation:
+  generic_measurements:
+    - the emitted rf.freq_offset, read off the compiled sequence
+    - gradient moment integration for the spoiler
+    - RF effective centre from the emitted waveform
+  family_checks:
+    - >
+      the sign chain end to end: shift_ppm -> offset_hz -> emitted rf.freq_offset, with a negative
+      shift giving a negative offset and a positive shift a positive one
+    - rf.use is 'saturation' on the compiled sequence
+    - no gradient is played during the pulse
+    - exactly one gradient exists in the block, and it is the spoiler, after the pulse
+    - the spoiler moment equals cycles / voxel_m
+    - the excited band clears water, and a band that does not is refused
+    - time_to_center matches the emitted waveform and uses IRPrep's origin
+  metamorphic:
+    - >
+      doubling B0 doubles offset_hz and moves nothing else -- same envelope, same effective centre.
+      Definable against the references before the module existed.
+    - doubling shift_ppm doubles offset_hz and moves nothing else
+  parameter_sweep: >
+    All three offered pulse shapes build and keep the contract: label, negative offset, no
+    selection gradient.  Four field strengths exercised in the example, 1.5 to 7 T.
+  emitted_inspection:
+    - mode: spectral fat saturation, the only mode
+      file: examples/fat_sat/seq/fat_sat_2d.seq
+      reads_as: >
+        8000 samples, shaped / soft, 7.999 ms; gradients on no axis -> NON-selective;
+        declared use **saturation**, 424.5 Hz BELOW the carrier
+    - mode: the same GRE without the preparation, as a control
+      file: examples/fat_sat/seq/plain_2d.seq
+      reads_as: declared use **excitation**, on resonance
+  layers:
+    layer_1: GREEN            # 27 tests in tests/modules/test_saturation_prep.py
+    layer_2: GREEN            # examples/fat_sat/01_build.ipynb, in the notebook smoke suite
+    layer_3: DEFERRED
+    layer_3_reason: >
+      Simulating fat suppression would test a contrast outcome rather than the contract, and the
+      contract is what this candidate asserts.  The load-bearing claim -- the sign of the carrier
+      offset -- is checked directly on the compiled sequence, which is stronger evidence than an
+      image would be: a simulation showing suppression would confirm the sign only indirectly,
+      through a phantom's fat compartment.  Available via MRzeroCore if a later review wants it.
+  package_suite: 1044 passed / 6 skipped (rebased onto main with PR #27)
+  compiler_changes: none
+
+status: NEW_LEAF
+traffic_light: GREEN
+reason_code: null
+decided_by: human               # boundary decided at review; extraction authorised and done
+coverage: COMPOSITION_COVERED   # the pulse and the spoiler already compose; the gap is the label
+                                # and the offset arithmetic -- findings.md sections 3 and 4
+
+evidence_state:
+  human_review: DONE                    # boundary review, then the extraction review that accepted it
+  experiment_design_review: NEEDED      # only if the scanner question below is ever taken up
+  scanner_validation: NOT_REQUIRED_FOR_CLAIM
+  deferred:
+    - what: Simulation of fat suppression, and a reconstructed image showing it.
+      why: >
+        It would test a contrast outcome rather than the contract.  The load-bearing claim -- the
+        sign and magnitude of the carrier offset -- is checked directly on the compiled sequence,
+        which is MORE direct than an image: a suppression image confirms the sign only indirectly,
+        through a phantom's fat compartment and whatever else the protocol does.
+      revisit_trigger: >
+        A claim is made that depends on suppression EFFICIENCY rather than on carrier placement --
+        for example comparing flip angles or pulse durations for residual fat signal.
+    - what: >
+        In-scanner suppression efficiency, and B1 / B0 robustness in a production protocol.
+      why: >
+        Outside the leaf's claim.  The module asserts where the carrier sits and what follows it,
+        not how completely fat is nulled on a given system -- which depends on transmit
+        inhomogeneity, shim quality and the recovery time before the readout, none of which this
+        module owns.
+      revisit_trigger: >
+        SaturationPrep is used in a protocol whose result depends on suppression quality, or a
+        user reports incomplete suppression that is not explained by the reported band margin.
+
+open_questions:
+  - >
+    THE YELLOW, narrowly: are flip angle, duration and bandwidth caller parameters rather than
+    module-owned values?  Two independent designs disagree on all three, which is what a protocol
+    parameter looks like -- but if bandwidth were derived from the offset instead, the module
+    would own a value one reference treats as free.
+  - >
+    May the offset-induced phase compensation be omitted?  R2 applies it, R1 does not, neither
+    explains, and behind a strong spoiler it is arguably irrelevant.  Judgement, not measurement.
+  - >
+    NEW_LEAF or EXTEND_EXISTING?  Letting Excitation state what its pulse is for would close the
+    labelling gap with no new class and would fix it for every spectrally selective use, at the
+    cost of leaving the caller to assemble pulse, offset arithmetic and spoiler each time.
+  - Does OpenMRF's FAT/SAT library provide a third independent design?  Uninspected.

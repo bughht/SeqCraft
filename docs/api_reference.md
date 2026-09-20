@@ -982,9 +982,11 @@ Re-exported **flat**, so no import path names a folder:
 | `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
 | `CartesianLine` | prephaser, readout gradient and ADC as one design — `prephase=False` drops the prephaser, which is the spin-echo readout, and `echoes`/`polarity` read the same line more than once, which is a multi-echo gradient echo |
 | `RadialReadout` | one radial spoke: prephaser, readout gradient and ADC, already oriented, with the trajectory geometry a caller would otherwise reverse-engineer |
+| `SpiralReadout` | one reversible spiral arm and the four ways to traverse it — `out`, `in`, `in-out`, `out-in`. The arm is at rest at both ends, which is what makes them one family |
 | `EPI2D` | the whole echo-planar train: prephasers, alternating lobes, blips on the zero crossings, one ADC per echo, and the labels a reconstruction reads back |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
+| `SaturationPrep` | a spectrally selective pulse and the spoiler that destroys what it made — the chemical-shift offset is the contract, and its sign is the failure that looks fine |
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
 | `GRE2D` | the complete scan |
 | `GRE3DTR` | one repetition of a 3D Cartesian gradient echo — a sibling of `GRE2DTR`, owning the z axis where a slab's rephasing and a partition's encoding become one gradient |
@@ -998,7 +1000,8 @@ composes more than one leaf folder, `imaging/` composes kernels, and the top lev
 not an `sc.Module` subclass. `tests/modules/test_layout.py` asserts all of it, including that
 nothing in `preparation/` emits an excitation or a refocusing.
 
-Classes in `preparation/` end in `Prep` — `IRPrep`, and after it `T2Prep`, `MTPrep`, `CESTPrep`.
+Classes in `preparation/` end in `Prep` — `IRPrep`, `SaturationPrep`, and after them `T2Prep`,
+`MTPrep`, `CESTPrep`.
 The rule is that a class is named after its role: for `rf/` the `use` value *is* the role, while
 several distinct physics share one `use` here, so the name carries both parts. It also resolves a
 real collision — a diffusion *preparation* and a diffusion *encoding* are different modules in
@@ -1030,7 +1033,14 @@ the questions a tree of events cannot:
 | `EPI2D.polarity(echo)` | `+1` or `-1`, counted across the whole train. `echo` is an **offset from the first imaging echo**, so `-navigator_echoes … -1` are the navigators and `range(-navigator_echoes, len(lines))` walks the file's readouts in order |
 | `EPI2D.k_read_per_m` | where a forward lobe's samples land in k, per sample. With ramp sampling that is not `dk` times an index, and nothing outside the module can derive it |
 | `EPI2D.time_to_center_line(lines)` | to the acquisition of `center_line`, which the ordering decides. **This is TE**, and it is not the first echo |
+| `SpiralReadout.origin_crossing_samples` / `origin_crossing_times` | where the trajectory passes through `k = 0`, as a **sequence** — `out-in` crosses twice and the others once, so a scalar would change meaning when it arrived |
+| `SpiralReadout.k_per_m(angle_rad=…)` | the sample positions, integrated from the **emitted** knots rather than from the design pass. A NUFFT is told where the samples are, so a trajectory one raster out is a blur and a wrong field map |
+| `SpiralReadout.limits()` | the peak gradient and slew this readout actually emits, measured rather than inferred from the traversal's constraints |
+| `SpiralReadout.echo_spacing_s` | derived from the realised trajectory, `None` when there is one crossing |
 | `IRPrep.time_to_center()` | to the inversion's effective centre — 5.1 ms into a 10 ms hyperbolic secant, and what an inversion time is measured from |
+| `SaturationPrep.time_to_center()` | the same question, the same origin, so a timeline can add them |
+| `SaturationPrep.offset_hz` | the chemical shift converted once: `shift_ppm × 1e-6 × B0 × γ`. Negative is below water. A test traces it as far as the compiled sequence, because a sign error here is legal Pulseq that saturates the wrong tissue |
+| `SaturationPrep.band_edge_hz` | hertz from water to the near edge of the excited band; the module refuses a pulse whose band reaches water, and this is the margin |
 | `GRE2D.time_to_center_line(lines=…, dummies=…)` | to the readout of `center_line`, which depends on the ordering and on the dummy count, so it takes the same arguments `build` does |
 | `GRE2DTR.min_te_s` / `min_tr_s` | feasibility, known at design time; a shorter request raises |
 
@@ -1729,6 +1739,8 @@ at import.
 | `Raster` | `design.timing` | class |
 | `RasterError` | `design.timing` | exception |
 | `Refocusing` | `modules` | class |
+| `SaturationPrep` | `modules` | class |
+| `SpiralReadout` | `modules` | class |
 | `TSEShot` | `modules` | class |
 | `SeqCraftError` | `errors` | exception |
 | `SeqCraftWarning` | `errors` | warning |

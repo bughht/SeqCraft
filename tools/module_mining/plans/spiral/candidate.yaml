@@ -1,0 +1,335 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-20.
+# See ../../README.md for which copy to edit.
+# Provisional research record -- NOT a schema, NOT runtime code.
+# Prospective supervised run: archaeology, fine scan, then extraction.  IMPLEMENTED and
+# validated -- see findings.md section 8 for what the implementation itself found.
+#   python tools/module_mining/schema.py <this file>
+
+id: spiral-readout
+name: SpiralReadout             # PR23 called it Spiral2D; the name is not the finding
+
+capability:
+  summary: >
+    A variable-density spiral arm: the Nyquist path, its slew- and amplitude-limited traversal,
+    the arbitrary gradients that realise it, the segmented ADC the interpreter's sample limit
+    forces, and the trajectory measured off what is actually emitted.
+  family: readout
+
+target:
+  layer: readout
+  path: src/seqcraft/modules/readout/spiral_readout.py
+  composes: [spoiler]
+  extended: []                  # none proposed.  The compiler change is NOT part of this.
+  untouched:
+    - the compiler and LogicBlock -- the m1 defect is real and belongs in its own PR
+    - CartesianLine, EPI2D, RadialReadout, Excitation, Refocusing, PhaseEncode, IRPrep
+  not_created:
+    - SpiralPath, SpiralTraversal -- an internal lowering boundary, not two public modules
+    - SpiralInterleaf -- an interleaf is a call, as RadialReadout settled
+    - GRESpiral2D, SESpiral2D -- composition until a second consumer appears
+    - any promotion of the three PR23 helpers -- one consumer each
+
+reuse_rationale: >
+  The path and its traversal are one contract with a one-way coupling: a path is meaningful
+  without a scanner, no traversal is meaningful without its path, and nothing wants to swap
+  traversal policies on a fixed path.  Rotation, ordering and the surrounding sequence are not.
+
+evidence:
+  - repo: bughht/SeqCraft
+    commit: feat/spiral-2d
+    path: src/seqcraft/modules/readout/spiral_2d.py
+    license: MIT
+    role: primary
+    executable: executed        # by its author; NOT re-executed here -- it is 36 commits behind main
+    covers: the whole candidate, plus nine documented failure modes
+    independence: >
+      NOT an independent witness.  It is this project's own prior attempt, so agreement with it
+      would be agreement with ourselves.  Its value is as an evidence corpus -- especially its
+      FAILURES, which are the part no external reference records.
+  - repo: pulseq/pulseq
+    commit: 2fd6ab6
+    path: matlab/demoSeq/writeSpiral.m
+    license: MIT
+    role: authoritative-external
+    executable: documentary       # ships no .seq; read for physics, as R4b was for GRE3D
+    covers: >
+      Archimedean path, slew/amplitude-limited traversal, ADC segmentation, spiral-OUT only.
+      NOT variable density, NOT a rewinder, NOT in / in-out / out-in, NOT multi-echo.
+    independence: >
+      Independent of PR23 and independently arrives at the path/traversal separation.  It ENDS AT
+      FULL GRADIENT and is spiral-out only -- which is the same fact twice, and confirms PR23's
+      failure A by exhibiting it.  See reference_review.md.
+  - repo: usc-mrel/rtspiral_pypulseq
+    license: GPL-3.0
+    role: architecture-evidence
+    executable: documentary
+    covers: trajectory design separated from rewinders and assembly
+    independence: >
+      Independent of both.  COPYLEFT -- physics and invariants only, never implementation text,
+      and it cannot be acceptance evidence for an MIT module.
+
+contract:
+  intrinsic: >
+    Given field of view, matrix, shots, density and dwell, the module determines the path, its
+    traversal under this scanner's limits, every emitted sample, every instant at which the path
+    crosses the origin, and the ADC segmentation the sample limit forces.  One arm, designed once
+    at rest at both ends; the variant chooses how many and in which order.
+  endpoint_policy: >
+    DURABLE and now MEASURED: every arm begins and ends at g = 0, in every mode including `out`.
+    writeSpiral.m ends its spiral-out at full gradient and ramps down inside the spoiler, which is
+    coherent for a family of one and incompatible with reversibility.  Cost, over seven protocols
+    spanning two hardware regimes: 0.097-0.137 ms, which is 0.20-0.78 % of readout duration.  The
+    penalty is FIXED in absolute terms -- a braking distance -- so it shrinks as readouts lengthen
+    and its worst case is the shortest readout.  Peak gradient is unchanged or lower, k-space
+    extent is identical, and the whole penalty lands in the outer tenth of k-space where
+    oversampling is cheapest.  See endpoint_cost.md.
+  invariants:                   # PROPOSED; none measured in this phase
+    - the reported trajectory equals the compiled one within a characterised floor (failure C)
+    - the assembled waveform's end-of-block k is the origin (failure E)
+    - k = 0 falls inside a sampling window, not in an ADC guard (failure D)
+    - every arm begins and ends at zero gradient, so any variant joins continuously
+    - measured turn spacing matches 1/density everywhere
+    - the spoke at angle phi is the spoke at 0, rotated -- as RadialReadout already asserts
+  varying_parameters: [fov_mm, matrix, shots, density, dwell_s, angle_rad, variant, echoes]
+  modes:                        # Full table in mode_contract.md; summarised here.
+                                # STAGE SCOPE IS ALL FOUR.  Starting from `out` is an
+                                # implementation sequence, not an out-only abstraction.
+    - name: out
+      path_order: 0 -> k_max
+      k_zero_instants: 1, the first sample
+      endpoints: g = 0 at both ends
+      prephase: not required
+      rewind: required
+      join: none
+      multi_echo_transition: flyback k_max -> 0
+      reference_evidence: writeSpiral.m -- path, extent, traversal, ADC segmentation
+    - name: in
+      path_order: k_max -> 0
+      k_zero_instants: 1, the last sample
+      endpoints: g = 0 at both ends
+      prephase: required
+      rewind: not required
+      join: none
+      multi_echo_transition: flyback 0 -> k_max
+      reference_evidence: NONE -- analytic and metamorphic only
+    - name: in-out
+      path_order: k_max -> 0 -> k_max
+      k_zero_instants: 1, the seam, which must fall INSIDE a sampling window
+      endpoints: g = 0 at both ends
+      prephase: required
+      rewind: required
+      join: at k = 0, continuous because both arms are at rest there
+      multi_echo_transition: none -- consecutive units share an endpoint
+      reference_evidence: NONE -- analytic and metamorphic only
+    - name: out-in
+      path_order: 0 -> k_max -> 0
+      k_zero_instants: >
+        TWO, at both ends.  The one asymmetry in the family, and the reason the reported echo
+        instants must be a SEQUENCE from the first implementation.
+      endpoints: g = 0 at both ends
+      prephase: not required
+      rewind: not required
+      join: at k_max
+      multi_echo_transition: none
+      reference_evidence: NONE -- analytic and metamorphic only
+  excluded_caller_policy:
+    - the angle schedule and the order arms are played in
+    - the excitation, the refocusing, TR, and whether this is a GRE or a SE
+    - the reconstruction
+  excluded_pulseq_artifacts:
+    - block splits, and which ADC event a sample belongs to
+    - whether joins are triangles inside the arm or separate events
+
+acceptance:
+  claim: >
+    TWO-TIER, and the tiers must not be summarised as one.  (a) For spiral-out: the emitted
+    trajectory agrees with writeSpiral.m's at matched geometry, and the ADC segmentation respects
+    the same sample limit.  (b) For in / in-out / out-in and for multi-echo: ANALYTIC ONLY -- the
+    reversed arm's integrated trajectory is the forward arm's reversed, and k = 0 falls inside a
+    sampling window -- because no independent witness for those exists.
+  criterion: trajectory-agreement     # tier (a); tier (b) is invariant-only
+  tolerance: >
+    MUST be characterised on the representation floor, not inherited from PR23's number.  My own
+    measurement puts the compiler round-trip at ~6e-6 1/m (m0) for a split arbitrary gradient;
+    PR23 reports 1.3-4.7e-5 1/m between its k_per_m and sc.kspace.  Same order, different
+    measurements, and neither is yet a justified tolerance.
+  defined_before_extraction: true     # vacuously: nothing extracted
+  establishes:
+    # --- what SpiralReadout GREEN means, frozen at v0 close-out
+    - one public SpiralReadout leaf owning all four variants -- out, in, in-out, out-in
+    - >
+      the reversible endpoint family: every arm begins and ends at g = 0, so an arm can be played
+      backwards and two arms join with no connector.  Cost measured at 0.20-0.78 % of readout
+      duration, fixed in absolute terms, peak gradient unchanged or lower.
+    - >
+      the plural semantic origin-crossing representation: out-in crosses TWICE and the others
+      once, and the reported instants are a sequence from the first line of code
+    - the trajectory is derived from the EMITTED knots, never from the design pass
+    - >
+      it agrees with sc.kspace -- an independent measurement that shares no code with the module
+      -- to ~1e-12 1/m
+    - max_grad and max_slew legality, MEASURED on the emitted representation rather than inferred
+      from the traversal's constraints
+    - >
+      ADC segmentation legality across the validated sweep: 96 protocols, four matrices by three
+      shot counts by four variants, all compiling with the acquisition inside its gradient
+    - >
+      claim-scoped comparison against writeSpiral.m for SPIRAL-OUT only -- path geometry, turn
+      spacing, k-space extent, the path/traversal separation, hardware-limited traversal
+    - >
+      a complete GRE spiral acquisition compiles, and its echo lands where the composition placed
+      it: TE identical across eight interleaves to 0.000 ns and matching the reported value, with
+      both the excitation instants and the sample times read off the compiled sequence by
+      sc.kspace rather than restated from the arithmetic that placed the readout
+    # --- what the archaeology established, which is separate from the module
+    - the m1 compiler defect is real, reproduced with no Spiral module present (merged as PR #30)
+    - >
+      the path/traversal coupling is one-way, so it is an internal lowering boundary and not a
+      public one -- and writeSpiral.m arrives at the same separation independently
+    - none of the three PR23 helpers has a second consumer on current main, including after PR #27
+    - PR23's reconstruction placement decision (examples/, not src/) is correct
+    - >
+      the reconstruction's trajectory container is trajectory-AGNOSTIC -- a radial acquisition
+      fits it unchanged, and only the analytic-density DCF method is spiral-specific
+  does_not_establish:
+    # --- deferred extensions of the SAME leaf, which do not keep v0 open
+    - >
+      echoes > 1.  An explicit deferred extension of this leaf, not a gap in it: the transition
+      rules exist in echoes_contract.md and nothing exercises them yet.
+    - >
+      full GRE or SE physical TE validation beyond the stated placement claims.  The GRE example
+      shows the alignment is consistent and matches what the composition asked for; it does not
+      establish that the resulting contrast is what a protocol intends.  This readout owns WHERE
+      THE TRAJECTORY CROSSES THE ORIGIN; the relation between RF and refocusing history and those
+      crossings belongs to the layer above it, and no SE spiral composition exists yet.
+    - image-level non-Cartesian reconstruction
+    - scanner or phantom performance
+    # --- claim-scope limits that will not change
+    - >
+      that the in / in-out / out-in variants agree with any external implementation.  None exists:
+      writeSpiral.m ends at full gradient and is spiral-out only.  They rest on analytic and
+      metamorphic evidence, which is the tier GRE3DTR's slab-selective path used.
+    - >
+      event identity, terminal-gradient identity or whole-waveform identity with writeSpiral.m --
+      the endpoint policy differs deliberately, and the divergence is stated rather than hidden
+      behind a loose tolerance
+    - >
+      that `density` is the right convention.  writeSpiral.m has no density parameter at all, so
+      sampled-FOV-multipliers has one witness and its lineage is a third source.
+    - that PR23's m0 claim is a defect -- it did not reproduce, and was therefore not ported
+
+validation:
+  generic_measurements:
+    - compiler m0/m1 round-trip on raw sign-changing arbitrary gradients, swept over knots
+      and amplitude (tools/module_mining/candidates/spiral/run_compiler_claims.py)
+  family_checks:
+    - every arm begins and ends at rest, on the emitted knots
+    - '`in` is `out` reversed; the two-arm variants are the same arm twice'
+    - origin crossings: one for out / in / in-out, TWO for out-in, all within half a step
+    - the rewinder returns k to the origin, sized against the EMITTED end
+    - the acquisition finishes inside its gradient
+  metamorphic:
+    - reversal: in is out reversed
+    - rotation equivariance, as RadialReadout asserts
+  parameter_sweep: >
+    96 protocols -- four matrices by three shot counts by four variants -- all compile, with the
+    acquisition inside the gradient in every one.
+  emitted_inspection:
+    - mode: all four variants
+      file: measured in tests/modules/test_spiral_readout.py rather than written to disk
+      reads_as: >
+        reported trajectory agrees with sc.kspace -- which shares no code with the module -- to
+        ~1e-12 1/m; both hardware limits measured on the emitted knots; acquisition finishes
+        inside its gradient on all 96 swept protocols
+  layers:
+    layer_1: GREEN            # 89 tests; family relationships, crossings, limits, segmentation
+    layer_2: GREEN            # BOTH: examples/gre_spiral_2d/01_build.ipynb is the complete
+                              # acquisition build the ladder asks for -- Excitation + one arm +
+                              # eight interleaves + spoiling and TR fill, compiled to legal
+                              # Pulseq -- AND the 96-protocol SpiralReadout compile sweep, which
+                              # is leaf coverage rather than an acquisition.  The sweep alone was
+                              # the stronger-sounding claim and the wrong one for this layer.
+    layer_3: DEFERRED
+    layer_3_reason: >
+      Layer 3 for a spiral needs the non-Cartesian reconstruction whose promotion is itself
+      deferred -- see radial/evidence_state.yaml.  The trajectory claims are carried more
+      directly by the emitted-trajectory measurement (~1e-12 1/m against an independent
+      measurement) than an image could carry them.
+      REVISIT TRIGGER: the non-Cartesian reconstruction path is independently reviewed and
+      promoted, or a claim is made that depends on image quality rather than on trajectory
+      correctness.
+  compiler_changes: none made
+
+evidence_state:
+  human_review: DONE            # boundary, ownership, mode contract and endpoint policy reviewed
+  experiment_design_review: NOT_NEEDED
+  scanner_validation: FUTURE
+  deferred:
+    - what: >
+        echoes > 1.  An explicit deferred EXTENSION of this leaf, not a gap in it.
+      why: >
+        The transition rules are written -- a fly-back for one-arm variants, continuous traversal
+        for two-arm ones -- and nothing exercises them.  The durable shapes it needs are already
+        in place: origin crossings are a sequence and echo_spacing_s is derived, so adding it is
+        an addition rather than a change of meaning.  out-in already produces two crossings and a
+        derived spacing at echoes=1, so the plural machinery is exercised rather than declared.
+      revisit_trigger: >
+        A protocol needs more than one echo per excitation.  This does NOT keep v0 open.
+    - what: >
+        Simulation and reconstruction of any spiral acquisition -- Layer 3.
+      why: >
+        Needs the non-Cartesian reconstruction whose promotion is itself deferred.  The trajectory
+        claims are carried more directly by emitted-trajectory measurement than an image would
+        carry them.
+      revisit_trigger: The reconstruction contract question is settled either way.
+    - what: >
+        An independent witness for the in / in-out / out-in variants and for multi-echo.
+      why: >
+        writeSpiral.m ends at full gradient and is spiral-out only, so it cannot witness them.
+        They are admissible on analytic evidence -- the GRE3D slab-selective precedent -- but the
+        claim must say which tier it is in, and tier (b) has no external corroboration.
+      revisit_trigger: >
+        A permissively licensed reversible-arm spiral appears, or a claim is made about those
+        variants that analytic evidence cannot carry.
+    - what: A second witness for the `density` convention.
+      why: >
+        writeSpiral.m has no density parameter.  Sampled-FOV-multipliers has one witness, and
+        PR23's own failure B shows the convention is exactly where silent errors live.
+      revisit_trigger: >
+        A claim is made that this convention matches another implementation's, or measured turn
+        spacing is questioned.  `density` itself is implemented and its meaning is asserted by
+        test; what is missing is a second witness that the CONVENTION is the conventional one.
+    - what: A decision on whether the reconstruction's shared contract is promoted anywhere.
+      why: >
+        The audit found one exists and is small, which is what the Radial trigger asked.  What to
+        do about it is separate, and example-only remains valid.
+      revisit_trigger: A second non-Cartesian readout ships, making the two consumers real.
+    - what: Hardware evidence -- gradient delay, eddy currents, trajectory fidelity.
+      why: >
+        A spiral is more sensitive to all three than any Cartesian readout, but none of them is
+        needed to establish a software trajectory claim that an independent reference comparison
+        covers more directly.
+      revisit_trigger: >
+        A claim is made about measured trajectory fidelity on a real system, or an image artefact
+        appears that a correct design trajectory cannot explain.
+
+status: NEW_LEAF
+traffic_light: GREEN
+reason_code: null
+decided_by: human               # boundary, variant/echo ownership and endpoint policy all
+                                # settled in review; the endpoint cost is now measured.
+                                # NOT GREEN: GREEN means the checks passed, and nothing is built
+                                # yet, so there is nothing to check.  This state says the design
+                                # is settled and implementation may begin.
+
+open_questions:
+  - >
+    The mode contract is WRITTEN (mode_contract.md, echoes_contract.md).  What remains before
+    implementation is human review of it -- specifically of the endpoint policy, which departs
+    from the independent reference on purpose.
+  - Is the join correction (D13/D14) a module concern, or evidence of a representation mismatch
+    between raster-centre and raster-edge lattices that belongs lower down?
+  - >
+    WITHDRAWN: an out-only abstraction was proposed and is wrong.  Reference coverage sets the
+    evidence tier of a claim, not the abstraction boundary.  Stage scope is the four-variant
+    family; `out` first is an implementation order.

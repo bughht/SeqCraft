@@ -1,5 +1,95 @@
 # Changelog
 
+## Unreleased — one reversible spiral arm, and the four ways to traverse it
+
+`SpiralReadout` (`readout/`): the Nyquist path, its slew- and amplitude-limited traversal, the
+raster waveform, the segmented ADC the interpreter's sample limit forces, and the trajectory
+measured off what is emitted.
+
+**One module, not four.** Everything rests on one decision — an arm begins and ends at rest, so it
+can be played backwards and two arms join with no connector. `out`, `in`, `in-out` and `out-in`
+are then a choice of how many arms and in which order. The independent reference,
+`pulseq/pulseq`'s `writeSpiral.m`, ends its spiral-out at **full gradient** and has no spiral-in:
+those are the same fact.
+
+That policy costs **0.20–0.78 %** of readout duration, measured over seven protocols. It is a
+braking distance, so it is fixed in absolute terms and shrinks as readouts lengthen; k-space extent
+is identical and peak gradient is unchanged or lower.
+
+**`out-in` crosses the origin twice.** So `origin_crossing_samples` is a sequence from the first
+line of code — a scalar would work for three variants and change meaning on the fourth. An origin
+crossing is a fact about the trajectory; whether the physical echo lands there belongs to the
+kernel above.
+
+**The reported trajectory is integrated from the emitted knots**, not the design pass. It agrees
+with `sc.kspace`, which shares no code with it, to **~1e-12 1/m**.
+
+Three things the implementation found, each a silent failure:
+
+| | |
+|---|---|
+| the rewinder sized against the *design* end-point | left **0.015 `dk`** behind; sized against the *emitted* end it leaves zero |
+| limits measured on raster-spaced differences | the emitted first and last intervals are **half** a raster, so the real slew is twice what that reports |
+| the acquisition outlasting its gradient | the compiler holds the last block open and pads the waveform with area nobody designed |
+
+A fourth, found by minimizing to a single failing protocol: each ADC event is rounded up to the
+gradient raster **as well as** spending a lead delay and a trailing dead time, so sizing the sample
+budget by subtracting only the dead times under-estimates the overhead by one raster per segment.
+The acquisition then outlasts its gradient by 10 µs, the compiler holds the last block open, and
+the waveform is padded with 0.045 1/m nobody designed. The budget is now sized against the
+placement rather than an estimate of it. 96 protocols — four matrices by three shot counts by four
+variants — all compile.
+
+`examples/gre_spiral_2d/01_build.ipynb` is the complete acquisition: Excitation, one arm, eight
+interleaves and spoiling, assembled in the notebook rather than by a class. It exists for the
+join — **TE is owned there, not by the readout** — and checks it against the compiled sequence,
+where it comes out identical across all eight interleaves to 0.000 ns.
+
+`echoes > 1` refuses, naming the contract; `out-in` already exercises the plural machinery at
+`echoes=1`. No 3D, no anisotropic FOV, no density presets, no `GRESpiral2D`/`SESpiral2D`, and the
+three PR23 helpers stay private: one consumer each.
+
+## Unreleased — a pulse whose purpose is to destroy what it makes
+
+`SaturationPrep` (`preparation/`): a spectrally selective pulse, offset from water by a chemical
+shift, followed by a spoiler and no rephasing. The sibling `IRPrep` was always going to have —
+`modules/__init__.py` defines the folder as `rf.use in {inversion, saturation, preparation}` and
+only the first seat was taken.
+
+**It is not `Excitation` with a different label.** The two operations are opposites: an excitation
+makes transverse magnetisation to be read and its selective form owns rephasing so the signal
+survives to the echo; a saturation makes it to be thrown away. `Excitation(use='saturation')` was
+considered and rejected — a semantic-purpose flag turns a module with one physical contract into a
+generic RF pulse whose label carries the meaning. Reuse of waveform-design machinery is not reuse
+of the public physical abstraction.
+
+**The chemical-shift sign is the failure that looks fine.** `shift_ppm` is signed and relative to
+water; fat is below it. Get the sign wrong and you get legal Pulseq, legal timing, legal gradients,
+a correct-looking waveform — and water saturated instead of fat, with nothing downstream noticing.
+The two published references reach the same number by different routes, one carrying the sign in
+the ppm constant and the other applying it at the point of use, so an implementation that mixed
+the conventions would be exactly this wrong. The module converts once, reports `offset_hz`, and
+the tests trace `shift_ppm -> offset_hz -> emitted rf.freq_offset` as far as the **compiled
+sequence**.
+
+`freq_ppm` was considered for the emitted event and rejected: letting the interpreter resolve ppm
+against its own B0 is more portable and moves the one number we are most likely to get wrong off
+the file we can inspect.
+
+**`flip_deg`, `duration_s` and `bandwidth_hz` have no defaults.** Two independent references
+disagree on all three — 110° against 90°, 8 ms against 12, a bandwidth derived from the offset
+against a fixed 200 Hz — and both work. That is what a protocol parameter looks like; picking one
+lab's number would encode a protocol as physics. What the module does own is the relationship: it
+refuses a pulse whose excited band reaches water, and reports `band_edge_hz` so the margin is
+visible. At 1.5 T that margin is 8 Hz, against 816 Hz at 7 T.
+
+No selection gradient, therefore no rephaser and no `thickness_mm`. Spatial saturation slabs and
+CEST trains are deliberately not folded in: what they share with this is "prepare, then spoil",
+which is a waveform silhouette rather than a physical solve.
+
+`examples/fat_sat/01_build.ipynb` shows it in composition with `GRE2DTR`, against the same GRE
+without it, and reads `use` and `freq_offset` off both compiled files.
+
 ## Unreleased — the m1 tolerance gets a floor, because the relative term sat in the noise
 
 `verify_against_tree`'s first-moment check refused legal sequences, and which ones was not

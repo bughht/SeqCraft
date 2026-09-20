@@ -1,0 +1,168 @@
+# The scan-source registry.
+#
+# Every corpus the mining workflow is allowed to scan, with the two judgements that must be made
+# BEFORE anything is mined from it: what kind of source it is, and what its licence permits.
+#
+# The registry exists because those two judgements kept being made per-candidate, in prose, and
+# re-made from scratch each time.  `role` here is a property of the CORPUS.  It does not decide
+# `evidence[].role` for any individual candidate -- see `per_candidate_questions` at the end.
+#
+#   discovery       tells us a family exists and is worth looking at
+#   design-witness  an implementation whose construction can corroborate another's
+#   oracle          an independent measurement path, for validating rather than designing
+#
+# A corpus may be more than one.  It is never automatically a design-witness just because it
+# contains working sequences.
+
+registry_version: 1
+updated: 2026-09-19
+
+sources:
+
+  # ---------------------------------------------------------------- official Pulseq lines
+  - id: pypulseq
+    repo: imr-framework/pypulseq
+    commit_scanned: f2c582b
+    license: MIT
+    compatible_with_seqcraft_mit: true
+    roles: [discovery, design-witness]
+    language: python
+    executable: yes
+    covers: >
+      GRE, multi-echo GRE, GRE-EPI, SE-EPI, TSE/FSE/HASTE, MPRAGE, radial GRE, UTE, 3D MPRAGE.
+    independence_note: >
+      The reference line most SeqCraft modules are measured against.  Many of its examples are
+      ports of the MATLAB demoSeq originals -- treat agreement between the two as ONE witness
+      unless the specific files are shown to be independently derived.
+
+  - id: pulseq-matlab
+    repo: pulseq/pulseq
+    commit_scanned: 2fd6ab6
+    license: MIT
+    compatible_with_seqcraft_mit: true
+    roles: [discovery, design-witness]
+    language: matlab
+    executable: documentary
+    ships_seq_files: true
+    covers: >
+      The demoSeq corpus: GRE, TSE, HASTE, EPI, MPRAGE, radial, UTE, spiral, bSSFP, ZTE/PETRA,
+      PRESS, diffusion, fat saturation, cine and label demos.  Several ship .seq files, which
+      makes them measurable under the Python-only constraint without a MATLAB run.
+    independence_note: >
+      Original of many pypulseq examples.  See above.
+
+  # ---------------------------------------------------------------- research repositories
+  - id: openmrf
+    repo: OpenMRF/openmrf-core-matlab
+    commit_scanned: fd03604
+    license: MIT for original OpenMRF work, third-party components covered separately
+    compatible_with_seqcraft_mit: true
+    roles: [discovery, design-witness]
+    language: matlab
+    executable: documentary
+    covers: >
+      Modular preparation library (FAT, SAT, inversion, T2, spin-lock, CEST); bSSFP, EPI, GRE,
+      radial, spiral, TSE, UTE, PRESS readouts; trajectory design separated from assembly.
+    independence_note: >
+      Developed separately from the Pulseq lines; a genuine second witness where it overlaps.
+
+  - id: fmrifrey-lps
+    repo: fmrifrey/lps
+    commit_scanned: 552d87a
+    license: MIT
+    compatible_with_seqcraft_mit: true
+    roles: [design-witness]
+    language: matlab
+    executable: documentary
+    covers: 3D Cartesian GRE with slab-selective excitation.
+    independence_note: >
+      Independent of the Pulseq house style.  Was the only witness to GRE3DTR's slab-selective
+      path.
+
+  - id: pulseq-cest
+    repo: kherz/pulseq-cest
+    license: MIT
+    compatible_with_seqcraft_mit: true
+    roles: [discovery]
+    language: matlab
+    covers: CEST preparation protocols, reusable saturation-period concepts.
+
+  - id: pulseq-diffusion
+    repo: ritagnunes/PulseqDiffusion
+    license: AGPL-3.0
+    compatible_with_seqcraft_mit: false
+    roles: [discovery]
+    language: python
+    covers: single- and twice-refocused DWI, b-value and direction handling.
+    constraint: >
+      COPYLEFT.  Extract physics and invariants only.  No implementation text may be copied or
+      adapted into SeqCraft.
+
+  - id: rtspiral
+    repo: usc-mrel/rtspiral_pypulseq
+    license: GPL-3.0
+    compatible_with_seqcraft_mit: false
+    roles: [discovery]
+    language: python
+    covers: 2D/3D real-time spiral; trajectory design separated from rewinders and assembly.
+    constraint: COPYLEFT.  Extract physics and invariants only.
+
+  - id: open4dflow
+    repo: BAMMri/Open4DFlow
+    license: GPL-3.0
+    compatible_with_seqcraft_mit: false
+    roles: [discovery]
+    language: python
+    covers: velocity encoding, first-moment gradient design, cardiac triggering, 4D flow.
+    constraint: COPYLEFT.  Extract physics and invariants only.
+
+  # ---------------------------------------------------------------- added 2026-09-19
+  - id: mrzero-core
+    repo: MRsources/MRzero-Core
+    commit_scanned: 5732d86
+    path: documentation/playground_mr0/
+    license: AGPL-3.0
+    additional_terms: EULA.txt, a separate end-user licence agreement covering the MRtwin code
+    compatible_with_seqcraft_mit: false
+    roles: [discovery, oracle]
+    explicitly_not: design-witness
+    language: python
+    executable: yes
+    maintained: true
+    covers: >
+      FID; SE/CPMG; STE (3 pulses, 5 echoes); FLASH/GRE and GRE-to-FLASH; EPI; DWI SE-EPI;
+      diffusion-prep STEAM; RARE and RARE multi-shot; TSE 2D multi-shot; bSSFP; DREAM (STE and
+      STID); plus pTx, RF shimming and optimisation notebooks.
+    maintenance_signal: >
+      26 notebooks in documentation/playground_mr0/.  A defined subset of 12 is exercised twice:
+      by .github/workflows/playground_test.yml, which executes each notebook end to end in a
+      matrix, and by tests/simulation_test/, which compares simulated signal against stored
+      reference files at MAG_NRMSE and PHASE_NRMSE tolerances of 0.01.  The subset is:
+      FID, SE_CPMG, STE_3pulses_5echoes, FLASH_2D, EPI_2D, DWI_SE_EPI, diffusion_prep_STEAM_2D,
+      RARE_2D, TSE_2D_multi_shot, GRE_to_FLASH, bSSFP_2D, DREAM_STE.
+    independence_note: >
+      **NOT independent of PyPulseq for sequence construction.**  21 of the 26 playground
+      notebooks import pypulseq, and the test workflow pins `pypulseq==1.4.2post1`.  The
+      sequences are BUILT with PyPulseq and SIMULATED with MRzeroCore, so a playground notebook
+      agreeing with a PyPulseq example is one design agreeing with itself.
+
+      Where MRzero IS independent is the other direction: the Bloch simulation is a measurement
+      path developed separately from Pulseq, which is why `oracle` is in its roles and
+      `design-witness` is explicitly excluded.
+    constraint: >
+      COPYLEFT, and an additional EULA beyond the AGPL.  Extract physics, invariants and the
+      existence of families only.  No implementation text, and provenance must be re-checked
+      before any use beyond discovery.  The AGPL/EULA combination is more restrictive than the
+      GPL sources above; treat any proposal to depend on it as a licensing question first.
+
+# ---------------------------------------------------------------------------------------------
+# Per-candidate questions.  A corpus's registry entry does NOT answer these; they are re-asked
+# for every candidate mined from it, because the answer can differ file by file.
+per_candidate_questions:
+  - reference independence -- relative to the OTHER references cited for THIS candidate
+  - physical claim scope -- what a comparison against this source would and would not establish
+  - shared implementation assumptions with PyPulseq/Pulseq -- the same arithmetic, the same
+    house style, or a port?
+  - discovery evidence or acceptance evidence -- does it tell us the family exists, or is it
+    something the candidate is measured against?
+  - licence and provenance constraints at the FILE level, not only the repository level
