@@ -1,0 +1,163 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-19.
+# See ../../README.md for which copy to edit.
+# Provisional research record -- NOT a schema, NOT runtime code.
+# Prospective supervised run, archaeology / fine-scan phase.  NOTHING IMPLEMENTED.
+#   python tools/module_mining/schema.py <this file>
+
+id: spiral-readout
+name: SpiralReadout             # PR23 called it Spiral2D; the name is not the finding
+
+capability:
+  summary: >
+    A variable-density spiral arm: the Nyquist path, its slew- and amplitude-limited traversal,
+    the arbitrary gradients that realise it, the segmented ADC the interpreter's sample limit
+    forces, and the trajectory measured off what is actually emitted.
+  family: readout
+
+target:
+  layer: readout
+  path: src/seqcraft/modules/readout/spiral_readout.py   # PROPOSED; not written
+  composes: [spoiler]
+  extended: []                  # none proposed.  The compiler change is NOT part of this.
+  untouched:
+    - the compiler and LogicBlock -- the m1 defect is real and belongs in its own PR
+    - CartesianLine, EPI2D, RadialReadout, Excitation, Refocusing, PhaseEncode, IRPrep
+  not_created:
+    - SpiralPath, SpiralTraversal -- an internal lowering boundary, not two public modules
+    - SpiralInterleaf -- an interleaf is a call, as RadialReadout settled
+    - GRESpiral2D, SESpiral2D -- composition until a second consumer appears
+    - any promotion of the three PR23 helpers -- one consumer each
+
+reuse_rationale: >
+  The path and its traversal are one contract with a one-way coupling: a path is meaningful
+  without a scanner, no traversal is meaningful without its path, and nothing wants to swap
+  traversal policies on a fixed path.  Rotation, ordering and the surrounding sequence are not.
+
+evidence:
+  - repo: bughht/SeqCraft
+    commit: feat/spiral-2d
+    path: src/seqcraft/modules/readout/spiral_2d.py
+    license: MIT
+    role: primary
+    executable: executed        # by its author; NOT re-executed here -- it is 36 commits behind main
+    covers: the whole candidate, plus nine documented failure modes
+    independence: >
+      NOT an independent witness.  It is this project's own prior attempt, so agreement with it
+      would be agreement with ourselves.  Its value is as an evidence corpus -- especially its
+      FAILURES, which are the part no external reference records.
+  - repo: pulseq/pulseq
+    commit: 2fd6ab6
+    path: matlab/demoSeq/writeSpiral.m
+    license: MIT
+    role: authoritative-external
+    executable: documentary
+    covers: spiral path and traversal
+    independence: >
+      Independent of PR23.  NOT YET INSPECTED in this scan -- listed as the acceptance evidence
+      any extraction would need, and its absence is why no acceptance claim is proposed here.
+  - repo: usc-mrel/rtspiral_pypulseq
+    license: GPL-3.0
+    role: architecture-evidence
+    executable: documentary
+    covers: trajectory design separated from rewinders and assembly
+    independence: >
+      Independent of both.  COPYLEFT -- physics and invariants only, never implementation text,
+      and it cannot be acceptance evidence for an MIT module.
+
+contract:
+  intrinsic: >
+    Given field of view, matrix, shots, density and dwell, the module determines the path, its
+    traversal under this scanner's limits, every emitted sample, where k = 0 falls among them,
+    and the ADC segmentation the sample limit forces.
+  invariants:                   # PROPOSED; none measured in this phase
+    - the reported trajectory equals the compiled one within a characterised floor (failure C)
+    - the assembled waveform's end-of-block k is the origin (failure E)
+    - k = 0 falls inside a sampling window, not in an ADC guard (failure D)
+    - every arm begins and ends at zero gradient, so any variant joins continuously
+    - measured turn spacing matches 1/density everywhere
+    - the spoke at angle phi is the spoke at 0, rotated -- as RadialReadout already asserts
+  varying_parameters: [fov_mm, matrix, shots, density, dwell_s, angle_rad, variant, echoes]
+  modes: []                     # `variant` may be a mode set -- UNRESOLVED, see findings.md
+  excluded_caller_policy:
+    - the angle schedule and the order arms are played in
+    - the excitation, the refocusing, TR, and whether this is a GRE or a SE
+    - the reconstruction
+  excluded_pulseq_artifacts:
+    - block splits, and which ADC event a sample belongs to
+    - whether joins are triangles inside the arm or separate events
+
+acceptance:
+  claim: >
+    NONE PROPOSED.  The one external witness that could carry it -- pulseq/pulseq writeSpiral.m --
+    has not been inspected in this phase.
+  criterion: trajectory-agreement     # the shape it would take, by analogy with Radial
+  tolerance: >
+    MUST be characterised on the representation floor, not inherited from PR23's number.  My own
+    measurement puts the compiler round-trip at ~6e-6 1/m (m0) for a split arbitrary gradient;
+    PR23 reports 1.3-4.7e-5 1/m between its k_per_m and sc.kspace.  Same order, different
+    measurements, and neither is yet a justified tolerance.
+  defined_before_extraction: true     # vacuously: nothing extracted
+  establishes:
+    - the m1 compiler defect is real, reproduced with no Spiral module present
+    - the path/traversal coupling is one-way, so it is an internal boundary and not a public one
+    - none of the three PR23 helpers has a second consumer on current main, including after PR #27
+    - PR23's reconstruction placement decision (examples/, not src/) is correct
+  does_not_establish:
+    - that SpiralReadout is the right boundary; `variant` and `echoes` ownership is unresolved
+    - that PR23's m0 claim is a defect -- it did not reproduce
+    - anything measured about spiral physics; no reference was executed in this phase
+    - which parts of the reconstruction are trajectory-agnostic; the file was listed, not read
+
+validation:
+  generic_measurements:
+    - compiler m0/m1 round-trip on raw sign-changing arbitrary gradients, swept over knots
+      and amplitude (tools/module_mining/candidates/spiral/run_compiler_claims.py)
+  family_checks: []             # none run -- archaeology phase
+  metamorphic: []
+  parameter_sweep: not run
+  emitted_inspection: []
+  layers:
+    layer_1: NOT_APPLICABLE
+    layer_2: NOT_APPLICABLE
+    layer_3: NOT_APPLICABLE
+    layer_3_reason: >
+      Nothing implemented.  Layer 3 for a spiral additionally needs the non-Cartesian
+      reconstruction whose promotion is itself deferred -- see radial/evidence_state.yaml.
+  compiler_changes: none made
+
+evidence_state:
+  human_review: NEEDED          # this document is the archaeology; the boundary call is the user's
+  experiment_design_review: NOT_NEEDED
+  scanner_validation: FUTURE
+  deferred:
+    - what: Inspect pulseq/pulseq writeSpiral.m as an independent design witness.
+      why: >
+        Archaeology phase was scoped to PR23 and to the compiler claims.  Without it there is no
+        acceptance evidence that is independent of our own prior attempt.
+      revisit_trigger: The boundary is approved and extraction is authorised.
+    - what: Audit examples/noncartesian_recon.py for what is genuinely trajectory-agnostic.
+      why: >
+        Reconstruction needs must not dictate the readout API, so it is a separate assessment.
+        Radial + Spiral is the second-consumer condition recorded in radial/evidence_state.yaml,
+        and that trigger says INSPECT, not promote.
+      revisit_trigger: This scan proceeds past the boundary decision.
+    - what: Hardware evidence -- gradient delay, eddy currents, trajectory fidelity.
+      why: >
+        A spiral is more sensitive to all three than any Cartesian readout, but none of them is
+        needed to establish a software trajectory claim that an independent reference comparison
+        covers more directly.
+      revisit_trigger: >
+        A claim is made about measured trajectory fidelity on a real system, or an image artefact
+        appears that a correct design trajectory cannot explain.
+
+status: UNDECIDED
+traffic_light: YELLOW
+reason_code: PHYSICAL_BOUNDARY_UNCLEAR
+decided_by: human               # PROPOSED by the skill; awaiting review
+
+open_questions:
+  - Do `variant` and `echoes` belong to the readout or to acquisition policy?  Four variants
+    times echoes is where a flag explosion starts if it starts anywhere.
+  - Is the join correction (D13/D14) a module concern or evidence of a representation mismatch
+    between raster-centre and raster-edge lattices that belongs lower down?
+  - Does writeSpiral.m agree with PR23's path convention, or is `density` a third convention?
