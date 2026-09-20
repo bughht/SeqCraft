@@ -12,6 +12,7 @@
 | [`se_epi_2d/`](se_epi_2d/) | The same readout after a refocusing pulse — and the measurement that a spin echo **does not** fix EPI distortion. Defines `SEEPI2D` in its own notebook. |
 | [`megre_2d/`](megre_2d/) | Eight echoes off one excitation, monopolar and bipolar, fitted for T2\* and ΔB0 against a phantom that carries the ground truth for both. **Defines no class**, which no other directory here can say. |
 | [`radial_gre/`](radial_gre/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. **Deliberately defines no class**, because the schedule is the only thing a `RadialGRE` would add. |
+| [`fat_sat/`](fat_sat/) | A spectrally selective saturation and the spoiler that destroys what it made — the chemical-shift sign traced from ppm to the emitted `freq_offset`, and the same protocol across four field strengths. Where `SaturationPrep` came from. |
 
 ## `gre_2d/`
 
@@ -168,6 +169,32 @@ which is the trajectory plot in `01` and is asserted numerically in
 [`tests/modules/test_radial_readout.py`](../tests/modules/test_radial_readout.py) on every commit.
 If a non-Cartesian reconstruction arrives here for some other reason, this is the notebook to pair
 with it. `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
+
+## `fat_sat/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](fat_sat/01_build.ipynb) | `sc.modules.SaturationPrep`: the chemical shift is **signed and relative to water**, converted once, and the notebook traces it from `shift_ppm` through `offset_hz` to the `freq_offset` on the compiled file. The band-to-water margin printed across 1.5 / 2.89 / 3 / 7 T — 8 Hz of clearance at 1.5 T against 816 Hz at 7 T — and the refusal when a band would reach water. Then the preparation in composition with `GRE2DTR`, and the same GRE without it, at one protocol. Two `.seq` files. **Needs nothing but `seqcraft`.** |
+
+**The check the notebook exists to make is one line of output:**
+
+```text
+fat_sat  block 1 rf: use='saturation'   freq_offset=   -424.5 Hz
+plain    block 1 rf: use='excitation'   freq_offset=     +0.0 Hz
+```
+
+A sign error in the chemical shift produces legal Pulseq, legal timing, legal gradients and a
+perfectly ordinary waveform, and saturates **water**. Nothing downstream notices — the sequence
+compiles, every k-space check passes, and the image comes back with the wrong tissue suppressed.
+The two published references reach the same number by different routes, one carrying the sign in
+the ppm constant and the other applying it at the point of use, so an implementation that mixed
+the conventions would be exactly this wrong. That is why the module owns the conversion and why
+the notebook reads the answer off the *compiled sequence* rather than off the constructor.
+
+CEST saturation trains, spatial saturation slabs and water excitation are deliberately absent.
+Each would need its own evidence that it shares a physical solve with this one, and "prepare, then
+spoil" is a waveform silhouette rather than a shared solve. `01` is in
+[`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
 
 ## Requirements
 

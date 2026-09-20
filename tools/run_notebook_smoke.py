@@ -27,6 +27,7 @@ _NOTEBOOKS = (
     Path('se_epi_2d/01_build.ipynb'),
     Path('megre_2d/01_build.ipynb'),
     Path('radial_gre/01_build.ipynb'),
+    Path('fat_sat/01_build.ipynb'),
 )
 
 

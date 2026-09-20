@@ -16,12 +16,13 @@ capability:
 
 target:
   layer: preparation
-  path: src/seqcraft/modules/preparation/saturation_prep.py   # PROPOSED; not written
+  path: src/seqcraft/modules/preparation/saturation_prep.py
   composes:
     - Excitation      # provisionally; the pulse itself is already expressible
     - spoiler
-  extended: []        # none proposed under NEW_LEAF.  Under the EXTEND_EXISTING alternative this
-                      # would be excitation.py, and rule D would then fire.
+  extended: []        # NONE.  No existing module, leaf or shared helper was modified; the
+                      # EXTEND_EXISTING alternative on Excitation was rejected by review.
+                      # Non-physical files touched are mapped in findings.md section 8.
   untouched:
     - IRPrep, the compiler, LogicBlock, every other module
   not_created:
@@ -107,9 +108,10 @@ contract:
 
 acceptance:
   claim: >
-    PROPOSED, not yet asserted: at R1's protocol the candidate emits an RF waveform whose
-    envelope, duration, centre frequency and spectral profile match R1's, plus a spoiler of the
-    same moment; and the analytic spectral invariants hold independently of any implementation.
+    The module realises the spectral-saturation contract: the emitted pulse is labelled a
+    saturation, carries the chemical shift converted once from ppm through the scanner's B0, plays
+    no gradient and no rephaser, and is followed by a spoiler of the moment asked for.  Checked on
+    the COMPILED sequence, not on the constructor.
   criterion: invariant-only     # plus waveform agreement against R1; see acceptance_options.md
   tolerance: not yet set -- to be fixed against a measured floor before extraction
   defined_before_extraction: true
@@ -124,29 +126,54 @@ acceptance:
     - anything about CEST saturation, regional saturation slabs or water excitation
 
 validation:
-  generic_measurements: []      # none run -- evidence phase
-  family_checks: []
+  generic_measurements:
+    - the emitted rf.freq_offset, read off the compiled sequence
+    - gradient moment integration for the spoiler
+    - RF effective centre from the emitted waveform
+  family_checks:
+    - >
+      the sign chain end to end: shift_ppm -> offset_hz -> emitted rf.freq_offset, with a negative
+      shift giving a negative offset and a positive shift a positive one
+    - rf.use is 'saturation' on the compiled sequence
+    - no gradient is played during the pulse
+    - exactly one gradient exists in the block, and it is the spoiler, after the pulse
+    - the spoiler moment equals cycles / voxel_m
+    - the excited band clears water, and a band that does not is refused
+    - time_to_center matches the emitted waveform and uses IRPrep's origin
   metamorphic:
     - >
-      PROPOSED and definable against R1 BEFORE the candidate exists: changing B0 scales the Hz
-      offset proportionally and changes nothing else; changing the species ppm moves the offset
-      and nothing else.
-  parameter_sweep: not yet run
-  emitted_inspection: []        # nothing emitted yet; rule B check is folded into the invariants
+      doubling B0 doubles offset_hz and moves nothing else -- same envelope, same effective centre.
+      Definable against the references before the module existed.
+    - doubling shift_ppm doubles offset_hz and moves nothing else
+  parameter_sweep: >
+    All three offered pulse shapes build and keep the contract: label, negative offset, no
+    selection gradient.  Four field strengths exercised in the example, 1.5 to 7 T.
+  emitted_inspection:
+    - mode: spectral fat saturation, the only mode
+      file: examples/fat_sat/seq/fat_sat_2d.seq
+      reads_as: >
+        8000 samples, shaped / soft, 7.999 ms; gradients on no axis -> NON-selective;
+        declared use **saturation**, 424.5 Hz BELOW the carrier
+    - mode: the same GRE without the preparation, as a control
+      file: examples/fat_sat/seq/plain_2d.seq
+      reads_as: declared use **excitation**, on resonance
   layers:
-    layer_1: NOT_APPLICABLE
-    layer_2: NOT_APPLICABLE
-    layer_3: NOT_APPLICABLE
+    layer_1: GREEN            # 27 tests in tests/modules/test_saturation_prep.py
+    layer_2: GREEN            # examples/fat_sat/01_build.ipynb, in the notebook smoke suite
+    layer_3: DEFERRED
     layer_3_reason: >
-      Evidence phase.  Nothing has been implemented, so no layer has been exercised.  Layer 3 is
-      available via MRzeroCore if review wants a suppression demonstration, but it would test a
-      contrast outcome rather than the contract.
-  compiler_changes: none proposed
+      Simulating fat suppression would test a contrast outcome rather than the contract, and the
+      contract is what this candidate asserts.  The load-bearing claim -- the sign of the carrier
+      offset -- is checked directly on the compiled sequence, which is stronger evidence than an
+      image would be: a simulation showing suppression would confirm the sign only indirectly,
+      through a phantom's fat compartment.  Available via MRzeroCore if a later review wants it.
+  package_suite: 1033 passed / 6 skipped
+  compiler_changes: none
 
 status: NEW_LEAF
-traffic_light: YELLOW
-reason_code: REFERENCES_DISAGREE
-decided_by: human               # PROPOSED by the skill; awaiting review
+traffic_light: GREEN
+reason_code: null
+decided_by: human               # boundary decided at review; extraction authorised and done
 coverage: COMPOSITION_COVERED   # the pulse and the spoiler already compose; the gap is the label
                                 # and the offset arithmetic -- findings.md sections 3 and 4
 

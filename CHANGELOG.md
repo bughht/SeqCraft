@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased — a pulse whose purpose is to destroy what it makes
+
+`SaturationPrep` (`preparation/`): a spectrally selective pulse, offset from water by a chemical
+shift, followed by a spoiler and no rephasing. The sibling `IRPrep` was always going to have —
+`modules/__init__.py` defines the folder as `rf.use in {inversion, saturation, preparation}` and
+only the first seat was taken.
+
+**It is not `Excitation` with a different label.** The two operations are opposites: an excitation
+makes transverse magnetisation to be read and its selective form owns rephasing so the signal
+survives to the echo; a saturation makes it to be thrown away. `Excitation(use='saturation')` was
+considered and rejected — a semantic-purpose flag turns a module with one physical contract into a
+generic RF pulse whose label carries the meaning. Reuse of waveform-design machinery is not reuse
+of the public physical abstraction.
+
+**The chemical-shift sign is the failure that looks fine.** `shift_ppm` is signed and relative to
+water; fat is below it. Get the sign wrong and you get legal Pulseq, legal timing, legal gradients,
+a correct-looking waveform — and water saturated instead of fat, with nothing downstream noticing.
+The two published references reach the same number by different routes, one carrying the sign in
+the ppm constant and the other applying it at the point of use, so an implementation that mixed
+the conventions would be exactly this wrong. The module converts once, reports `offset_hz`, and
+the tests trace `shift_ppm -> offset_hz -> emitted rf.freq_offset` as far as the **compiled
+sequence**.
+
+`freq_ppm` was considered for the emitted event and rejected: letting the interpreter resolve ppm
+against its own B0 is more portable and moves the one number we are most likely to get wrong off
+the file we can inspect.
+
+**`flip_deg`, `duration_s` and `bandwidth_hz` have no defaults.** Two independent references
+disagree on all three — 110° against 90°, 8 ms against 12, a bandwidth derived from the offset
+against a fixed 200 Hz — and both work. That is what a protocol parameter looks like; picking one
+lab's number would encode a protocol as physics. What the module does own is the relationship: it
+refuses a pulse whose excited band reaches water, and reports `band_edge_hz` so the margin is
+visible. At 1.5 T that margin is 8 Hz, against 816 Hz at 7 T.
+
+No selection gradient, therefore no rephaser and no `thickness_mm`. Spatial saturation slabs and
+CEST trains are deliberately not folded in: what they share with this is "prepare, then spoil",
+which is a waveform silhouette rather than a physical solve.
+
+`examples/fat_sat/01_build.ipynb` shows it in composition with `GRE2DTR`, against the same GRE
+without it, and reads `use` and `freq_offset` off both compiled files.
+
 ## Unreleased — the m1 tolerance gets a floor, because the relative term sat in the noise
 
 `verify_against_tree`'s first-moment check refused legal sequences, and which ones was not

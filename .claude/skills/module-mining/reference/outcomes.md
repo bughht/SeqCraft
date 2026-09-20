@@ -109,6 +109,16 @@ Two references produce materially different sequences for the same nominal proto
 yet known whether the difference is representational, historical, or a genuine physical
 disagreement. Record the difference; do not pick a winner to make progress.
 
+> **References disagreeing on protocol parameters does not imply disagreement on the abstraction
+> boundary.** Escalate to this code only when the sources disagree about *what the module
+> fundamentally owns*.
+
+Two independent designs choosing different flip angles, durations or bandwidths, while agreeing on
+the structure, the sign conventions and what must follow what, have not called the boundary into
+question — they have shown you which values are **caller-owned protocol**. That is information, not
+an obstacle. The boundary is in doubt when the sources disagree about which layer determines a
+value, what the module must emit, or what may not be omitted.
+
 ### REFERENCE_NOT_INDEPENDENT
 The references that agree turn out to be one witness — a port, a fork, or a shared house style
 with identical arithmetic. Agreement among copies is not corroboration. This is why the `Evidence`

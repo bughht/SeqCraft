@@ -135,3 +135,62 @@ not a strawman.
   the shared part with spectral saturation is "prepare then spoil", which is the waveform-silhouette
   trap. Not assumed to be the same candidate.
 - **Water excitation / binomial pulses:** related spectral physics, different intent.
+
+---
+
+# 8. Extraction — shared-leaf dependency impact (rule D)
+
+Run after implementation, on the actual diff rather than on the plan.
+
+**No existing module, leaf or shared helper was modified.** `SaturationPrep` composes
+`spoiler()` and `derive()` and adds nothing to either. The compiler and `LogicBlock` are untouched.
+
+Five existing files changed, none of them a physical component:
+
+| file | change | classification |
+|---|---|---|
+| `src/seqcraft/modules/__init__.py` | one import, one `__all__` entry, one line in the folder table | `NO_BEHAVIOR_CHANGE` |
+| `docs/api_reference.md` | three new rows and an index entry | `NO_BEHAVIOR_CHANGE` |
+| `examples/README.md` | a row and a section | `NO_BEHAVIOR_CHANGE` |
+| `tools/run_notebook_smoke.py` | one notebook added to the list | `NO_BEHAVIOR_CHANGE` |
+| `tools/module_mining/inspect_emitted.py` | reports `rf.use` and the carrier offset | `INTENTIONAL_BEHAVIOR_CHANGE` |
+
+`modules/__init__.py` is the only one that is `src/`, and it is a re-export list: nothing in
+`src/seqcraft` imports from it, and adding a name to `__all__` changes no existing call path.
+Every module's own tests pass unchanged.
+
+The inspector change is deliberate and is the one worth recording. It previously reported pulse
+shape, duration and which axes carried gradients — enough to catch the GRE3D mode mistake, and
+**not enough for a preparation pulse**, whose whole physical story is its `use` and its carrier
+offset. Neither is visible in the envelope. It now prints both:
+
+```text
+fat_sat.seq
+   first RF        block 1, 8000 samples, **shaped / soft**, 7.999 ms
+   with the RF     gradients on no axis -> NON-selective
+   declared use    **saturation**, 424.5 Hz BELOW the carrier
+```
+
+Re-run against the GRE3D files as a regression: both still read as before, now with
+`declared use **excitation**, on resonance` added. The tool prints and does not assert, so no
+gate changed.
+
+# 9. Extraction — what was found while implementing
+
+**`bandwidth_hz` needed a conversion the plan had not noticed.** `make_gauss_pulse` takes a
+bandwidth in hertz; `make_sinc_pulse` and `make_slr_pulse` take a time-bandwidth product. Rather
+than expose two spellings, the module takes hertz once and multiplies by the duration for the
+factories that want a product — which is exactly how R3 writes it, `timeBwProduct = fatBW*fatPW`.
+The caller states bandwidth in the unit the physics is argued in, and the module owns the
+conversion. This is a small instance of the thing the candidate exists for.
+
+**`'block'` is refused rather than offered.** A rectangular envelope's spectral profile is a sinc
+whose sidelobes reach water, which is the one outcome this module exists to prevent. Refusing it
+by name, with that reason, was cheaper than documenting it.
+
+**The 1.5 T margin is 8 Hz, not negative.** The example first claimed a 1.5 T protocol would be
+refused. Running it showed `band_edge_hz = +8.1`: legal, and barely. The prose was corrected to
+what the numbers say. Recorded because it is the second time in this project that a written
+expectation disagreed with the measurement and the measurement was right.
+
+**Nothing contradicted the contract**, so extraction proceeded as authorised rather than stopping.
