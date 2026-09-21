@@ -294,3 +294,59 @@ join on the assembled waveform, and keeping reconstruction out of `src/` — all
 independently here, and three of them only after the implementation failed the way PR23 said it
 would. **That is the calibration result**: the ideas survive independent re-derivation, and the
 parts that did not survive are the m0 compiler change and the helper promotions.
+
+---
+
+# 9. A sequence-side defect found by the reconstruction work
+
+Found while building the Phase-A reconstruction contract, and **isolated rather than fixed there**
+— the rule is that reconstruction work does not change sequence code.
+
+## The defect
+
+```text
+variant='in'   reports ZERO origin crossings, at every matrix tried
+```
+
+| matrix | variant | crossings | min \|k\| reached | half-step |
+|---|---|---|---|---|
+| 16 | `in` | **0** | 3.245 | 2.083 |
+| 32 | `in` | **0** | 3.259 | 2.083 |
+| 64 | `in` | **0** | 2.321 | 2.083 |
+| 128 | `in` | **0** | 3.643 | 2.083 |
+
+`out` and `in-out` are unaffected. `out-in` reports **2** crossings only at `matrix=128` and
+**1** below it, which is the same cause at the tail.
+
+## Why
+
+`_crossings` searches the **acquired samples** for one within half a Nyquist step of the origin.
+For `in`, the trajectory reaches the origin at the *end of the arm* — but the acquisition is sized
+to finish **inside** the gradient, so sampling stops while the arm is still braking toward the
+centre, several steps short. No sample is near enough, so the module truthfully reports none.
+
+Truthfully, and uselessly: `time_to_echo(0)` then raises, and a caller has no echo for a variant
+whose mode contract says it has one, at the last sample.
+
+## Why it was not caught
+
+Every existing test asks *"is each reported crossing near the origin?"* — which is vacuously true
+of an empty tuple — or exercises `out` / `in-out`, which have crossings. Nothing asserted that a
+variant **has** the number of crossings its mode contract promises. The contract says so in prose
+and no test read it.
+
+## Disposition
+
+```text
+status          OPEN, isolated, not fixed in the reconstruction phase
+scope           variant='in' entirely; variant='out-in' loses its second crossing below m=128
+workaround      none needed for Phase A -- the reconstruction tests use 'in-out', whose echo is
+                mid-acquisition and makes the same point about not inferring an echo
+revisit trigger BEFORE the Phase A PR merges.  It contradicts the mode contract, which is a
+                v0 deliverable, so it should not sit open behind a merged post-v0 PR.
+```
+
+The fix is likely small — the acquisition should either extend to cover the arm's approach to the
+origin, or the crossing search should locate the trajectory's closest approach rather than require
+a sample within half a step — but choosing between those is a contract question about what
+`origin_crossing_samples` promises, not a debugging question, and it belongs in its own change.
