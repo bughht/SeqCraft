@@ -18,7 +18,7 @@ applies_to: tools/module_mining/plans/radial/candidate.yaml
 
 evidence_state:
   human_review: DONE                    # boundary decision, plus the trajectory plots in
-                                        # examples/radial_gre/01, which is the visual check a
+                                        # examples/gre_radial_2d/01, which is the visual check a
                                         # radial acquisition actually needs
   experiment_design_review: NOT_NEEDED  # for the leaf claim; see the first deferral
   scanner_validation: NOT_REQUIRED_FOR_CLAIM

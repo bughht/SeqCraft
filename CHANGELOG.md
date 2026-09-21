@@ -251,7 +251,7 @@ encoding this module's behaviour. It now passes against the package at ~1e-14 /m
 sweep cases spanning two matrices, two fields of view, three dwell times and the full
 partial-Fourier range.
 
-[`examples/radial_gre/01_build.ipynb`](examples/radial_gre/01_build.ipynb) shows it, and shows the
+[`examples/gre_radial_2d/01_build.ipynb`](examples/gre_radial_2d/01_build.ipynb) shows it, and shows the
 paragraph above rather than asserting it: the repetition is assembled in the notebook out of
 `Excitation`, the spoke, a spoiler and TR fill, and equal-increment and golden-angle schedules are
 two list comprehensions over one readout instance. It is **build and trajectory visualisation

@@ -258,7 +258,7 @@ Before v0 is closed, add a lightweight Radial example if practical.
 Preferred minimum:
 
 ```text
-examples/radial_gre/
+examples/gre_radial_2d/
     01_build.ipynb
 ```
 
@@ -290,7 +290,7 @@ Otherwise do not create a new reconstruction architecture merely to satisfy the 
 
 ### 2.7.1 How this resolved, and what it does **not** claim
 
-`examples/radial_gre/01_build.ipynb` ships. `02_simulate_and_reconstruct.ipynb` is **deferred**, and
+`examples/gre_radial_2d/01_build.ipynb` ships. `02_simulate_and_reconstruct.ipynb` is **deferred**, and
 the deferral is a decision rather than an unfinished v0 task.
 
 ```text
@@ -333,7 +333,7 @@ During Spiral supervised calibration (§6):
 2. determine what is genuinely trajectory-agnostic;
 3. use Radial + Spiral as two real consumers of that contract;
 4. if the shared reconstruction utility survives review,
-   add radial_gre/02_simulate_and_reconstruct.ipynb;
+   add gre_radial_2d/02_simulate_and_reconstruct.ipynb;
 5. use the resulting end-to-end path as Layer-3 evidence
    for both families where appropriate.
 ```
@@ -522,7 +522,7 @@ here so the phase cannot start without it:
 2. determine what is genuinely trajectory-agnostic;
 3. use Radial + Spiral as two real consumers of that contract;
 4. if the shared reconstruction utility survives review,
-   add radial_gre/02_simulate_and_reconstruct.ipynb;
+   add gre_radial_2d/02_simulate_and_reconstruct.ipynb;
 5. use the resulting end-to-end path as Layer-3 evidence
    for both families where appropriate.
 ```

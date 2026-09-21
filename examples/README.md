@@ -11,7 +11,7 @@
 | [`gre_epi_2d/`](gre_epi_2d/) | The whole of k-space in one shot: the centred sampling window, the blip on the zero crossing, ramp sampling and the operator that undoes it, off-resonance and the N/2 ghost, and GRAPPA. Where `EPI2D` came from. Defines `GREEPI2D` in its own notebook. |
 | [`se_epi_2d/`](se_epi_2d/) | The same readout after a refocusing pulse — and the measurement that a spin echo **does not** fix EPI distortion. Defines `SEEPI2D` in its own notebook. |
 | [`megre_2d/`](megre_2d/) | Eight echoes off one excitation, monopolar and bipolar, fitted for T2\* and ΔB0 against a phantom that carries the ground truth for both. **Defines no class**, which no other directory here can say. |
-| [`radial_gre/`](radial_gre/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. **Deliberately defines no class**, because the schedule is the only thing a `RadialGRE` would add. |
+| [`gre_radial_2d/`](gre_radial_2d/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. **Deliberately defines no class**, because the schedule is the only thing a `RadialGRE` would add. |
 | [`fat_sat/`](fat_sat/) | A spectrally selective saturation and the spoiler that destroys what it made — the chemical-shift sign traced from ppm to the emitted `freq_offset`, and the same protocol across four field strengths. Where `SaturationPrep` came from. |
 | [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. **Defines no class.** |
 
@@ -147,11 +147,11 @@ map with nothing to look wrong. `01` is in
 [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is not, for the reason the
 other simulation notebooks are not.
 
-## `radial_gre/`
+## `gre_radial_2d/`
 
 | | |
 |---|---|
-| [`01_build.ipynb`](radial_gre/01_build.ipynb) | `sc.modules.RadialReadout` is **one spoke**, already oriented, and an acquisition is that spoke plus a list of angles — so the repetition is assembled in the notebook out of `Excitation`, the spoke, a spoiler and TR fill rather than by a class. Equal increments and a golden angle from one readout instance, the trajectory drawn for both, the centre sample measured **exactly on `k = 0`** and the spoke angles measured against the ones asked for, then `partial_fourier` walked from a full spoke to centre-out. Two `.seq` files. **Needs nothing but `seqcraft`.** |
+| [`01_build.ipynb`](gre_radial_2d/01_build.ipynb) | `sc.modules.RadialReadout` is **one spoke**, already oriented, and an acquisition is that spoke plus a list of angles — so the repetition is assembled in the notebook out of `Excitation`, the spoke, a spoiler and TR fill rather than by a class. Equal increments and a golden angle from one readout instance, the trajectory drawn for both, the centre sample measured **exactly on `k = 0`** and the spoke angles measured against the ones asked for, then `partial_fourier` walked from a full spoke to centre-out. Two `.seq` files. **Needs nothing but `seqcraft`.** |
 
 **This directory defines no class, and that is the finding.** `MPRAGE2D`, `SE2D`, `FSE2D`,
 `GREEPI2D` and `SEEPI2D` each exist because their sequence is a composition the package does not
