@@ -381,19 +381,30 @@ evidence_state:
       revisit_trigger: >
         A caller outside examples/ needs it, or a third non-Cartesian readout ships.  Shipping
         two consumers did NOT trigger promotion, which is the decision rather than an omission.
+    # A DESIGN-POLICY CONSISTENCY question, not a legality or correctness one.  The package
+    # contract is settled and this does not reopen it: per-axis limits are hard, and the
+    # simultaneous-axis vector norm is informational.  Every physical axis is inside its own
+    # max_slew at every interleaf angle, so there is nothing here to fix.
     - what: >
-        Whether SpiralReadout's dephaser should respect the vector-norm slew limit as its arm
-        does.
+        Should the prephaser and rewinder adopt the arm's conservative vector-norm design
+        policy, for consistency or for extra headroom?
       why: >
-        The arm is designed against the vector norm; the two-axis prephaser and rewinder are
-        designed against the per-axis limit, so a rotated interleaf reaches sqrt(2) times the
-        per-axis slew in vector magnitude -- 138.9 % at 45 degrees, measured in
-        examples/se_spiral_2d/01.  The per-axis limit, which is what an amplifier enforces, is
-        met at every angle, and the compiler classifies the excess as legal.  Making the
-        dephaser respect the norm too would cost up to sqrt(2) more time per interleaf.
+        The arm uses a conservative vector-norm slew ceiling deliberately, because that is what
+        makes it rotationally invariant -- an arm designed per-axis would change shape with the
+        interleaf angle.  The two-axis prephaser and rewinder have no such requirement and are
+        designed against the package's per-axis hardware limits, which they satisfy: measured in
+        examples/se_spiral_2d/01, per-axis slew stays at or below 99.9 % of max_slew at 0, 22.5,
+        45, 67.5 and 90 degrees.  The vector norm across the two axes reaches 138.9 % at 45
+        degrees, which is sqrt(2) times two simultaneous ramps and is exactly the case the
+        package classifies as informational.
+        So the question is one of INTERNAL CONSISTENCY -- two lobes of one module designed to
+        two different policies -- and of whether the auxiliary lobes want the arm's extra
+        headroom.  Adopting it would cost up to sqrt(2) more time at each end of every
+        interleaf.
       revisit_trigger: >
-        A scanner refuses one of these files, or a claim is made that requires the vector norm
-        to hold everywhere rather than only on the arm.
+        A design-policy review of the module's auxiliary lobes, or a protocol that wants the
+        arm's headroom at the ends too.  NOT triggered by the compiler's informational warning,
+        which is the contract working as designed.
     - what: Hardware evidence -- gradient delay, eddy currents, trajectory fidelity.
       why: >
         A spiral is more sensitive to all three than any Cartesian readout, but none of them is

@@ -185,7 +185,12 @@ reconstruction promotion          examples/noncartesian_recon.py has two real co
 into src/seqcraft                 under examples/.  Not an omission -- see section 2
 ```
 
-**One item was added rather than closed by Phase A:** whether `SpiralReadout`'s dephaser should
-respect the vector-norm slew limit as its arm does. A rotated interleaf reaches 138.9 % of the
-per-axis slew in vector magnitude at 45°, measured in `se_spiral_2d/01`; the per-axis limit, which
-is what an amplifier enforces, is met at every angle. Recorded in `spiral/candidate.yaml`.
+**One item was added rather than closed by Phase A**, and it is a **design-policy consistency
+revisit rather than an open defect.** `SpiralReadout`'s arm uses a conservative vector-norm slew
+ceiling on purpose, because that is what makes it rotationally invariant; its prephaser and
+rewinder only need the package's per-axis hardware limits, and they meet them — per-axis slew
+stays at or below 99.9 % of `max_slew` at every interleaf angle measured in `se_spiral_2d/01`.
+The 138.9 % figure at 45° is the *vector norm* across two simultaneous ramps, which the package
+contract treats as informational by design and not as a limit. So the open question is whether
+the auxiliary lobes should adopt the arm's conservative policy for consistency or for extra
+headroom — not whether anything is wrong. Recorded in `spiral/candidate.yaml`.
