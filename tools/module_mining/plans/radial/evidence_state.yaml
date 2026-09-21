@@ -22,22 +22,50 @@ evidence_state:
                                         # radial acquisition actually needs
   experiment_design_review: NOT_NEEDED  # for the leaf claim; see the first deferral
   scanner_validation: NOT_REQUIRED_FOR_CLAIM
-  deferred:
+  # RESOLVED 2026-09-20, post-v0 phase A.  Kept rather than deleted: the deferral states why a
+  # Layer 3 was refused for eight months, and the resolution is only meaningful beside it.
+  resolved:
     - what: >
-        Simulate + non-Cartesian reconstruction -- Layer 3.  No image has been reconstructed from
-        a SeqCraft radial acquisition.
-      why: >
-        The validation oracle has not been independently promoted.  A radial Layer 3 needs a
+        Simulate + non-Cartesian reconstruction -- Layer 3.  Was: no image had been reconstructed
+        from a SeqCraft radial acquisition.
+      was_deferred_because: >
+        The validation oracle had not been independently promoted.  A radial Layer 3 needs a
         non-Cartesian reconstruction whose own conventions -- NUFFT coordinates, density
         compensation, weighting, trajectory timing -- each need review before an image it produces
         is evidence about anything; otherwise it is two unvalidated things agreeing.  The example
-        suite has no such stack: every existing 02 is a Cartesian FFT.  PR #23 holds usable
-        infrastructure but it is an evidence corpus, not accepted architecture.
-      revisit_trigger: >
-        The non-Cartesian reconstruction path is independently reviewed and promoted, OR Radial
-        and Spiral together justify a shared reconstruction contract -- which is the point: a
-        contract with one consumer is that consumer's implementation under a more general name.
-        Picked up in v0_closeout_and_roadmap.md sections 2.7.2 and 6.1.
+        suite had no such stack: every existing 02 was a Cartesian FFT.  PR #23 held usable
+        infrastructure but it was an evidence corpus, not accepted architecture.
+      how_it_was_discharged: >
+        The trigger fired as written: Radial and Spiral together justified a shared contract, and
+        the contract was validated against an oracle that is not SigPy before either consumer used
+        it.  examples/noncartesian_recon.py is the contract; its adapter is checked against an
+        explicit dense DFT in tests/examples/test_noncartesian_recon.py, which immediately caught
+        a real convention error -- sigpy's NUFFT is built on its centred unitary FFT and divides
+        by sqrt(N_pixels), which every self-consistent test would have passed.
+        examples/gre_radial_2d/02_simulate_and_reconstruct.ipynb is the Layer 3 itself.
+      what_it_establishes: >
+        The emitted .seq is parsed and simulated by MRzeroCore, which shares no code with
+        RadialReadout, and the trajectory driving the reconstruction is the one MRzero integrates
+        from the gradients in that file.  The physical-k to SigPy adapter reconstructs a simulated
+        point object to the exact predicted pixel at four off-centre positions -- which is also
+        what established that a non-Cartesian reconstruction here is indexed [x, y] rather than
+        the [y, x] every Cartesian example produces.  All 64 spokes participate in one inverse
+        problem: the adjoint decomposes over spokes to 1e-11 and the solve does not, 0.0725 joint
+        against 0.9691 spoke by spoke.  Sample ordering is a contract and not a convention --
+        permuting spokes and trajectory together changes the image by 1e-13, permuting only the
+        data scores 0.354, and reversing samples within a spoke keeps every k position and every
+        measurement and still scores 0.682.
+      what_it_does_not_establish: >
+        Anything about a scanner.  The trajectory is the one the file encodes, played by a
+        simulator that honours it exactly, so gradient delays, eddy currents, timing errors,
+        concomitant fields and receive-chain delays are all absent -- and each of them degrades a
+        non-Cartesian image in a way that looks like a reconstruction problem.  Also not
+        established: that Pipe-Menon is the optimal density estimate, that 30 CG iterations or
+        conjugate gradient are the right choices, coil-calibration robustness, noise behaviour, or
+        anything about clinical image quality.  Density compensation was measured to make the
+        adjoint usable -- 0.638 to 0.191 -- and measured NOT to change the converged solution:
+        preconditioned and plain CG agree to 0.0003.
+  deferred:
     - what: 3D radial, ramp sampling, and rot3D.
       why: Out of scope for this leaf by decision, not by omission.
       revisit_trigger: A candidate needs one of them; each is its own scan.

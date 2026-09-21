@@ -18,6 +18,12 @@ REJECTED / NOT ESTABLISHED do not port
 
 It remains a **research corpus**, not a merge candidate. Nothing is cherry-picked wholesale.
 
+> **Closure pass, 2026-09-20.** Phase A2 finished, so every disposition below that read
+> "REBUILD NOW" or "REVIEW + SIMPLIFY NOW" has been replaced by what actually happened. Only
+> dispositions that A2 changed were touched; no archaeology was redone. **Every meaningful
+> capability in PR #23 now has a final disposition**, and §5 lists what stays deferred so that a
+> future reader does not mistake silence for rejection.
+
 ---
 
 ## 1. Sequence side — settled by the Spiral calibration
@@ -39,12 +45,19 @@ It remains a **research corpus**, not a merge candidate. Nothing is cherry-picke
 | `oblique_trapezoid` | **DEFERRED** | one consumer; kept private inside the module |
 | `sample_quantum` | **DEFERRED** | one consumer |
 | `segment_samples` | **DEFERRED** | one consumer; `check_event_sizes` already exists on main |
-| `GRESpiral2D` / `SESpiral2D` public Modules | **REJECTED** | composition; the example defines no class |
+| `GRESpiral2D` / `SESpiral2D` public Modules | **REJECTED** | composition; `gre_spiral_2d/` and `se_spiral_2d/` both define no class, and `se_spiral_2d/01` shows what the composition actually owns — the placement arithmetic that puts an origin crossing on a spin echo |
 | reconstruction inside `src/seqcraft` | **REJECTED architecturally** | would put an ESPIRiT dependency on the compile path — PR23's own argument, and it holds |
 
 ## 2. Reconstruction side — Phase A's actual work
 
-`examples/noncartesian_recon.py`, 470 lines. Reviewed, not restored.
+`examples/noncartesian_recon.py`, 323 lines. **Reviewed and rebuilt, not restored** — and
+smaller than PR #23's version because the parts with one consumer stayed out.
+
+**Final disposition: SIMPLIFIED / PORTED AS EXAMPLE INFRASTRUCTURE.** It lives under `examples/`
+beside `phantom.py`, has two real consumers and four notebooks, and was deliberately **not**
+promoted into `src/seqcraft`. Shipping two consumers did not trigger promotion; that is the
+decision, recorded in `spiral/candidate.yaml`'s `evidence_state` with the trigger that would
+change it.
 
 ### Its four design arguments, each from a real failure
 
@@ -52,7 +65,7 @@ It remains a **research corpus**, not a merge candidate. Nothing is cherry-picke
 |---|---|
 | **the operator is composed from sigpy primitives**, so `A.H` is adjoint by construction — hand-writing both is where a forward and an adjoint come to disagree, and CG on a nearly-adjoint pair converges to the wrong image without raising | **PORTED** — the strongest argument in the file |
 | **interleaves are solved together**; separate solves plus averaging throws away the joint conditioning that makes multi-shot work | **PORTED** |
-| **DCF is a preconditioner, not a data weighting** — `sqrt(w)` on both sides is a *different estimator*, and on a variable-density spiral the weights span two orders of magnitude | **PORTED as the default**; the `weighting='data'` comparison path is **DEFERRED** |
+| **DCF is a preconditioner, not a data weighting** — `sqrt(w)` on both sides is a *different estimator*, and on a variable-density spiral the weights span two orders of magnitude | **PORTED as the default**, and **settled numerically rather than inherited**: `gre_radial_2d/02` measures that preconditioned and plain CG agree to 0.0003 at convergence, so the weights change the path and not the answer. PR #23's conclusion stands; the reason it stands is now in the repository. `use='data'` is implemented and compared rather than deferred |
 | **the DCF knows about the density** — `\|k\|` and `\|dk/dt\|` are both wrong on a tapered spiral | **SIMPLIFIED**: Pipe–Menon generic by default, `\|k\|` radial weighting as a family option, the analytic spiral Jacobian kept **outside** the shared core |
 
 ### Feature-by-feature
@@ -68,14 +81,28 @@ It remains a **research corpus**, not a merge candidate. Nothing is cherry-picke
 | `\|k\|` radial DCF | **PORTED** as a trajectory-family option | outside the generic interface |
 | `\|dk/dt\| / FOV(\|k\|)` spiral Jacobian | **DEFERRED / notebook-local** | genuinely spiral-specific; does not belong in a shared core |
 | CG solve | **PORTED**, simplified |  |
-| coil sensitivities / ESPIRiT | **DEFERRED** | §5 of the brief starts single-coil; add only when a notebook needs it |
-| off-resonance time segmentation | **PORTED**, and it is the point of the Spiral `02` |  |
-| exact dense off-resonance operator | **DEFERRED** as a small numerical check | superseded as *validation* by the direct-DFT reference, which calls no SigPy |
+| coil sensitivities / ESPIRiT | **DEFERRED** | all four notebooks are single-coil and none needed it. Trigger unchanged: a notebook that does |
+| off-resonance time segmentation | **PORTED**, and it is the point of `gre_spiral_2d/02` | 108 pixels back to 1 at eight segments; and four segments measured *worse* than none, which is in the notebook because it is the wrong lesson a reader would otherwise draw |
+| exact dense off-resonance operator | **PORTED as a small numerical check**, in `gre_spiral_2d/02` §3 | kept small, as the brief asked: one table showing the segmented operator converging to the exact sum — 100 % error at one segment, 7e-3 at sixteen, with a floor there set by the interpolation between segment centres |
 | row-sum preconditioner | **DEFERRED** | not needed by a first B0-free reconstruction |
 | spectral-norm estimate | **DEFERRED** | internal |
-| field-map helper (two-echo) | **PORTED** | the Spiral `02` needs a field map to correct against |
+| field-map helper (two-echo) | **REJECTED as unnecessary** | `gre_spiral_2d/02` corrects against a *known* imposed offset, which is the honest thing for a teaching notebook and is stated as a limit rather than hidden. A two-echo estimator would add a second unvalidated step to a demonstration of the first. Trigger: a claim that survives an *estimated* field map |
 | gradient-delay experiment (`delayed()`) | **DEFERRED** | trigger: a claim about measured trajectory fidelity. Hardware-sensitive and not needed by any current teaching claim |
-| the eight-experiment spiral study | **DEFERRED** | replaced by one narrative a reader can follow |
+| the eight-experiment spiral study | **REJECTED as a structure** | replaced by three notebooks with one question each: how non-Cartesian reconstruction works, why a long spiral readout cares about off-resonance, and what refocusing changes. The individual experiments it contained are dispositioned in §5 |
+
+### The notebooks PR #23 proposed
+
+| | disposition |
+|---|---|
+| GRE spiral build notebook | **REBUILT** as `examples/gre_spiral_2d/01_build.ipynb` (merged in v0), extended in A2 with a single-shot file because the off-resonance claim needs a long readout |
+| GRE spiral reconstruction notebook | **REBUILT** as `examples/gre_spiral_2d/02_simulate_and_reconstruct.ipynb`, against the current architecture and the shared contract |
+| SE spiral build notebook | **REBUILT** as `examples/se_spiral_2d/01_build.ipynb`, from current modules — `Excitation`, `Refocusing`, `SpiralReadout` — and not from PR #23's structure. Its subject is semantic timing ownership, which PR #23's version did not isolate |
+| SE spiral reconstruction notebook | **REBUILT** as `examples/se_spiral_2d/02_simulate_and_reconstruct.ipynb` |
+
+Building the SE pair found a defect in `SpiralReadout` that the GRE pair could not:
+`time_to_echo` was documented as block-relative and implemented arm-relative, which is invisible
+for `variant='out'` and 300 µs wrong for `'in-out'`. Fixed with a regression before the notebook
+was written; recorded in `spiral/findings.md` §10.
 
 ## 3. What must be validated independently
 
@@ -101,6 +128,15 @@ Both `RadialReadout` and `SpiralReadout` drive the same shared core. If it needs
 `if radial: ... elif spiral: ...` for ordinary coordinate conversion or operator construction,
 it is not shared — it is two implementations behind one name.
 
+**Done, and it paid immediately.** `tests/examples/test_noncartesian_recon.py` implements every
+line of that list against an explicit dense DFT that calls no SigPy, plus a source check that the
+module contains no trajectory branching. The dense DFT caught a real convention error on first
+run: SigPy's NUFFT is built on its *centred, unitary* FFT and divides by `sqrt(N_pixels)`, so the
+adapter was wrong by exactly 15/16 at matrix 16 — a scale error invisible in any windowed
+magnitude image and fatal the moment two reconstructions are compared.
+
+Four notebooks later, the core still has no trajectory branch.
+
 ## 4. Anything else in PR #23
 
 Also present, and dispositioned rather than ignored: the `.seq`-writing GRE and SE spiral build
@@ -109,3 +145,47 @@ test_spiral_2d.py` and `test_spiral_notebooks.py` (**RE-DERIVED** — the curren
 relationships rather than restating each variant's numbers); the CHANGELOG rationale and README
 entries (**SUPERSEDED**); and the `seqcraft[recon]` extra (**PORTED** — `sigpy` stays an optional
 example dependency).
+
+## 5. What stays deferred after Phase A
+
+Listed together so that silence is not mistaken for rejection. Each already carries a trigger
+above or in the relevant `evidence_state`; this is the index, not a second record.
+
+```text
+Spiral echoes > 1                 an extension of the same leaf.  Contract written in
+                                  echoes_contract.md; the plural machinery is already exercised
+                                  by out-in at echoes = 1
+
+gradient-delay study              trigger: a claim about measured trajectory fidelity.  It is
+                                  hardware-sensitive, it blurs a spiral in a way that looks like
+                                  off-resonance, and no teaching claim here needs it
+
+multi-echo / T2* study            trigger: a protocol with more than one echo per excitation.
+                                  se_spiral_2d/02 explicitly does NOT quantify T2' -- it measures
+                                  that it cannot, at one echo time
+
+variable-density comparison       density is implemented and asserted; what is deferred is a
+                                  second witness that the CONVENTION matches another
+                                  implementation's
+
+advanced reconstruction           coil sensitivities / ESPIRiT, row-sum preconditioner,
+comparisons                       spectral-norm estimate, the analytic spiral Jacobian.  Each has
+                                  no consumer among the four notebooks
+
+two-echo field-map estimator      trigger: a claim that survives an estimated rather than a known
+                                  field map
+
+labels (LIN/ECO/SEG/SET/...)      trigger: a consumer that reads them
+
+oblique_trapezoid,                one consumer each, still.  Four notebooks did not change that:
+sample_quantum,                   they are examples, and an example is not a second consumer of a
+segment_samples                   private helper
+
+reconstruction promotion          examples/noncartesian_recon.py has two real consumers and stays
+into src/seqcraft                 under examples/.  Not an omission -- see section 2
+```
+
+**One item was added rather than closed by Phase A:** whether `SpiralReadout`'s dephaser should
+respect the vector-norm slew limit as its arm does. A rotated interleaf reaches 138.9 % of the
+per-axis slew in vector magnitude at 45°, measured in `se_spiral_2d/01`; the per-axis limit, which
+is what an amplifier enforces, is met at every angle. Recorded in `spiral/candidate.yaml`.

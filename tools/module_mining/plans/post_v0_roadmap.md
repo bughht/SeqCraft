@@ -17,7 +17,21 @@ The governing constraint on all of it:
 
 ---
 
-## Phase A — validation-debt cleanup
+## Phase A — validation-debt cleanup — **COMPLETE** (PR #32, 2026-09-20)
+
+```text
+A1  the shared non-Cartesian contract, validated against a dense-DFT oracle, plus the PR23
+    reconciliation                                                                     DONE
+A2  four notebooks -- gre_radial_2d/02, gre_spiral_2d/02, se_spiral_2d/01 and /02 --
+    plus the Radial and Spiral Layer-3 evidence updates and the reconciliation closure  DONE
+```
+
+Radial Layer 3 and Spiral Layer 3 are both **GREEN**, claim-scoped in
+`radial/evidence_state.yaml` and `spiral/candidate.yaml`. The reconstruction stayed under
+`examples/`: two consumers did not trigger promotion, which is the decision rather than an
+omission. Two sequence-side defects were found by composing on top of `SpiralReadout` after its
+own suite was green, and both were fixed with regressions before the work that found them
+landed — `spiral/findings.md` §9 and §10.
 
 **Goal:** recover what is still useful from PR #23, independently validate the shared
 non-Cartesian path against **two** real consumers, and complete Radial's and Spiral's Layer 3.
