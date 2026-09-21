@@ -51,6 +51,16 @@ The budget now grows as well as shrinks. Six of 24 swept protocols were affected
 because the assertion was already there and the single fixture sat on the lucky side of a knife
 edge.
 
+A sixth, found by composing a spin echo against the module rather than by testing the module:
+`time_to_echo` and `sample_times_s` were documented as measured from the readout block's start and
+were measured from the **arm's**. Those differ by the prephaser, so `'in'` and `'in-out'` reported
+every sample time and every origin crossing 300 µs early — in a sequence that compiles, whose
+trajectory is correct to 1e-12, and whose only symptom is that a kernel composing TE from
+`time_to_echo` puts the echo 300 µs off. `'out'` has no prephaser, which is why the one shipped
+consumer never saw it, and `RadialReadout.time_to_center` had been block-relative all along.
+Reporting is now on the block's clock and `prephaser_duration_s` is the bridge to the arm's; no
+emitted waveform changes.
+
 `examples/gre_spiral_2d/01_build.ipynb` is the complete acquisition: Excitation, one arm, eight
 interleaves and spoiling, assembled in the notebook rather than by a class. It exists for the
 join — **TE is owned there, not by the readout** — and checks it against the compiled sequence,

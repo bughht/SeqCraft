@@ -418,3 +418,109 @@ suites did not, because a reconstruction has to have data at k=0 and therefore c
 quantity the sequence tests only asserted. That is an argument for Layer 3 as evidence, not only
 as demonstration — and it is recorded here rather than promoted to a rule, because one instance
 is one instance.
+
+---
+
+# 10. A second sequence-side defect, found by composing a spin echo
+
+Found while building `examples/se_spiral_2d/01_build.ipynb`, which is the first thing in the
+repository to place a *refocused* echo against a reported origin crossing. Fixed in its own change
+before the notebook was written, rather than worked around in it.
+
+## The defect
+
+`SpiralReadout` reported **two different clocks under one docstring.**
+
+```text
+time_to_echo(0) docstring   "the time from the readout block's start to origin crossing index"
+what it returned            the time from the start of the ARM
+```
+
+Those differ by the prephaser, and only for the variants that have one:
+
+| variant | prephaser | `time_to_echo(0)` reported | measured on the compiled block |
+|---|---|---|---|
+| `out` | 0 µs | 12.0 µs | 12.0 µs |
+| `out-in` | 0 µs | 12.0 µs | 12.0 µs |
+| `in` | 300 µs | 2744.0 µs | **3044.0 µs** |
+| `in-out` | 300 µs | 2772.0 µs | **3072.0 µs** |
+
+`sample_times_s()` carried the same error, so the whole reported trajectory was 300 µs early on
+its own block.
+
+## Why it is the dangerous kind
+
+Everything about the sequence is *correct*. The trajectory is right, the k positions are right to
+1e-12, the file compiles, the arm plays exactly as designed. The only thing wrong is the **label
+on the clock** — and the consequence is that a kernel composing `TE` from
+`start + readout.time_to_echo(0) - excitation.time_to_center()` puts the echo 300 µs off, in a
+sequence in which nothing looks wrong.
+
+It is also the precise failure `time_to_echo`'s own docstring warns about, one level down: *"a
+spin echo placed against the wrong crossing is a legal sequence whose echo time is wrong"*. The
+module warned about the caller choosing the wrong crossing and then mis-stated when its own
+crossings were.
+
+## Why nothing caught it
+
+Three things had to line up, and did.
+
+```text
+gre_spiral_2d/01 uses variant='out'      the only shipped consumer, and it has no prephaser
+the k checks compare POSITIONS           sc.kspace agreement to 1e-12 says nothing about instants
+RadialReadout was already right          so the convention existed and nothing compared them
+```
+
+`RadialReadout.time_to_center()` has always included its own 320 µs prephaser and is verified
+against the compiled block. The two sibling readouts documented the same contract and implemented
+different ones, and no test looked at both.
+
+## The fix
+
+The internal clock stays on the arm — `_knots` starts there, and `duration_s` and
+`acquisition_end_s` are statements *about* the arm's gradient, so "the acquisition finishes inside
+its gradient" stays a comparison of two arm-clock quantities. What moves is the **reporting**:
+
+```text
+_arm_sample_times()      new, private, the integration clock
+sample_times_s()         public, block-relative -- the arm clock plus the prephaser
+origin_crossing_times    block-relative, so time_to_echo and echo_spacing_s follow
+prephaser_duration_s     new, public: the bridge, and what build(prephase=False) needs subtracted
+```
+
+A first attempt also moved `acquisition_end_s` onto the block clock. Two tests failed immediately,
+and they were right to: that quantity is compared against `duration_s`, so moving one side of a
+comparison broke the invariant it encodes. The two clocks are now named in the docstrings rather
+than unified, because they measure different things.
+
+## Disposition
+
+```text
+status          RESOLVED
+fix             src/seqcraft/modules/readout/spiral_readout.py
+tests           test_reported_times_are_on_the_block_the_module_builds (all four variants,
+                against sc.kspace) and test_the_prephaser_is_the_offset_between_the_two_clocks.
+                Both fail on the old code; the first fails only on 'in' and 'in-out'
+verified        24 configurations -- four variants, three shot counts, two matrices -- agree
+                with the compiled sequence on crossing time, sample times and k
+scope           no change to any emitted waveform.  The 'out' variant, and therefore every
+                shipped .seq before this change, is bit-identical
+```
+
+## What this says about the process
+
+**Two modules documenting the same contract is not evidence that they implement it.** The
+ownership rule put `time_to_center` on `RadialReadout` and `time_to_echo` on `SpiralReadout` for
+the same reason, and the identical wording made it look settled. Nothing compared the two, and a
+convention held by prose in two files is held by nothing.
+
+**A check on positions is not a check on instants.** The Spiral candidate's Layer-1 evidence is
+unusually strong on *where* the samples are — agreement with an independent measurement to
+1e-12 — and that strength is exactly what made the timing gap invisible. Rule E says to measure on
+the lattice actually emitted; this is the same rule in the time axis, and the candidate record's
+acceptance criterion did not name it.
+
+**The defect appeared at the composition, not in the leaf.** Both defects in this record
+(section 9 and this one) were found by building something *on top of* the module, after its own
+suite was green. That is an argument for the validation ladder having a Layer 3 at all, and it is
+now two instances rather than one.

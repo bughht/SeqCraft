@@ -499,7 +499,7 @@ class SpiralReadout(Module):
         Interpolated, never a nearest-sample search.  A tuple **always** -- ``'out-in'`` has two,
         and a scalar here would change meaning when it arrived.
         """
-        times = self.sample_times_s()
+        times = self._arm_sample_times()
         k = self._k_at(times)
         radius = np.hypot(k[0], k[1])
         near = radius < _ORIGIN_FRACTION * self.dk_per_m
@@ -509,7 +509,9 @@ class SpiralReadout(Module):
         edges = np.flatnonzero(np.diff(near.astype(int)) != 0) + 1
         runs = np.split(np.flatnonzero(near), np.searchsorted(np.flatnonzero(near), edges))
         samples = tuple(int(run[int(np.argmin(radius[run]))]) for run in runs if len(run))
-        return samples, tuple(float(times[s]) for s in samples)
+        # Reported on the block's clock, which is what a composing kernel places against.
+        lead = self.prephaser_duration_s
+        return samples, tuple(float(times[s]) + lead for s in samples)
 
     def _place_adcs(self) -> tuple[float, ...]:
         """
@@ -534,9 +536,13 @@ class SpiralReadout(Module):
             cursor += float(ceil_raster(span, raster))
         return tuple(starts)
 
-    def sample_times_s(self) -> np.ndarray:
+    def _arm_sample_times(self) -> np.ndarray:
         """
-        Return each ADC sample's time from the start of the readout block.
+        Return each ADC sample's time from the start of the **arm**.
+
+        The internal clock.  `_knots` starts at the arm, so every k integration uses this one;
+        :meth:`sample_times_s` is the same thing on the block's clock, and the two differ by a
+        prephaser.
 
         Per segment, because the segments are not contiguous -- and offset by the ADC's own
         leading delay, which pypulseq gives it and which is one dead time long.
@@ -546,6 +552,22 @@ class SpiralReadout(Module):
             count = int(adc.num_samples)
             times.append(start + float(adc.delay) + (np.arange(count) + 0.5) * self.dwell_s)
         return np.concatenate(times)
+
+    def sample_times_s(self) -> np.ndarray:
+        """
+        Return each ADC sample's time from the start of the readout block :meth:`build` returns.
+
+        **Which includes the prephaser**, and that is the whole reason this is not
+        :meth:`_arm_sample_times`.  ``'in'`` and ``'in-out'`` begin at ``k_max``, so their block
+        opens with a dephaser and the arm does not start at zero -- reporting arm time here makes
+        every sample, the origin crossing and therefore ``TE`` early by that dephaser, in a
+        sequence that compiles and whose trajectory is exactly right.  `RadialReadout.
+        time_to_center` has always been block-relative and this now matches it.
+
+        With ``build(prephase=False)`` a caller owns the dephaser, and the block then starts at
+        the arm: subtract :attr:`prephaser_duration_s`.
+        """
+        return self._arm_sample_times() + self.prephaser_duration_s
 
     def _k_at(self, times: np.ndarray) -> np.ndarray:
         """
@@ -601,7 +623,7 @@ class SpiralReadout(Module):
         trajectory reported one raster from where it played is a blur, a shading and a wrong field
         map, and no k-space check would show it.
         """
-        k = self._k_at(self.sample_times_s())
+        k = self._k_at(self._arm_sample_times())
         if not angle_rad:
             return k
         cos, sin = np.cos(angle_rad), np.sin(angle_rad)
@@ -647,6 +669,21 @@ class SpiralReadout(Module):
     def needs_prephase(self) -> bool:
         """Whether the acquisition starts away from the origin, so a moment is required first."""
         return self.start_k_per_m > _AT_ORIGIN * self.dk_per_m
+
+    @property
+    def prephaser_duration_s(self) -> float:
+        """
+        How long the dephaser at the front of :meth:`build`'s block lasts, or ``0``.
+
+        Public because it is the offset between this module's two clocks, and a caller who passes
+        ``prephase=False`` needs it to put the reported times back on the block it assembled.
+        The sibling `RadialReadout.prephaser_duration_s` is the same quantity.
+        """
+        if not self.needs_prephase:
+            return 0.0
+        if getattr(self, '_prephaser_cache', None) is None:
+            self._prephaser_cache = float(self._ramp(self._waveform[:, 0], 0.0).duration)
+        return self._prephaser_cache
 
     @property
     def needs_rewind(self) -> bool:
@@ -700,7 +737,9 @@ class SpiralReadout(Module):
         if prephase and self.needs_prephase:
             lead = self._ramp(self._waveform[:, 0], angle_rad)
             out.add(0.0, lead)
-            start = float(lead.duration)
+            # From the property, so the reported clock and the emitted block cannot drift: a
+            # rotation changes which axes carry the dephaser, never how long it takes.
+            start = self.prephaser_duration_s
             # A boundary, for the same reason the rewinder gets one: superposed into the arm's
             # block, a trapezoid's raster-edge knots and an arbitrary gradient's raster-centre
             # samples are summed on lattices that disagree, and the emitted area stops matching
@@ -736,11 +775,16 @@ class SpiralReadout(Module):
     @property
     def acquisition_end_s(self) -> float:
         """
-        Seconds from the readout's start until nothing is reserved any more.
+        Seconds from the **arm's** start until nothing is reserved any more.
 
         The ADC's own reservation, read off the event: a leading delay, the sampling window, and
         a trailing dead time.  It can outlast the gradient, and a rewinder placed at the arm's
         end would then land inside it.
+
+        On the **arm's** clock, deliberately -- it is compared against :attr:`duration_s`, which
+        is the arm's gradient, and "the acquisition finishes inside its gradient" is a statement
+        about those two and nothing else.  :meth:`sample_times_s` is on the block's clock because
+        a composing kernel places against the block; see :attr:`prephaser_duration_s`.
         """
         last = self._adcs[-1]
         adc = (self._adc_starts[-1] + float(last.delay)
