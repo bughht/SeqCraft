@@ -271,13 +271,31 @@ def reconstruct(data: np.ndarray, acquisition: NonCartesianAcquisition, *,
     use
         **How the weights are used, which is a separate question from what they are.**
 
-        ``'preconditioner'`` -- ``w`` inside the conjugate gradient, changing the path and not the
-        fixed point.  The solution is the unweighted least-squares one, reached sooner.
-        ``'data'`` -- ``sqrt(w)`` applied to both the operator and the data, which is a *weighted*
-        least squares: a different estimator, not a faster route to the same one.
+        ``'preconditioner'`` and ``'data'`` are **the same estimator**, and the names -- inherited
+        from PR #23 -- suggest otherwise.  Both solve
+
+        .. code-block:: text
+
+            A^H W A x = A^H W y
+
+        because ``(W^(1/2) A)^H (W^(1/2) A) = A^H W A`` and
+        ``(W^(1/2) A)^H (W^(1/2) y) = A^H W y``.  That is a **weighted least squares**, not a
+        preconditioned solve of the unweighted one: a true preconditioner would leave the fixed
+        point at the unweighted solution, and this moves it.  The two spellings differ only in
+        which floating-point path reaches it, and `tests/examples/test_noncartesian_recon.py`
+        pins them as identical rather than as alternatives.
+
+        The names are kept because they are what the historical work and the notebooks say; the
+        behaviour is standard and is what a non-Cartesian CG reconstruction normally does.  What
+        was wrong was the description, and a first version of that test asserted the two
+        converged to *different* answers -- which is impossible, and which failed in CI on
+        floating-point noise rather than on physics.
+
         ``'gridding'`` -- no solve at all, just ``A^H (w y)``.  One adjoint, and what "density
         compensation" classically means.
-        ``'none'`` -- ignore the weights.
+        ``'none'`` -- ignore the weights.  On noiseless, consistent data this converges to the
+        *same* image as the weighted solve, because both drive the residual to zero; they part
+        company as soon as there is noise.
 
         Which of these a notebook should use is an evidence question, not a default to inherit;
         ``tests/examples/test_noncartesian_recon.py`` measures them against a known image.

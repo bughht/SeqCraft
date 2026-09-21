@@ -382,31 +382,76 @@ def test_gridding_needs_the_weights_and_a_solve_does_not(kind: str, opts: pp.Opt
 
 
 @pytest.mark.parametrize('kind', CONSUMERS)
-def test_preconditioning_keeps_the_fixed_point_and_data_weighting_changes_it(
-        kind: str, opts: pp.Opts) -> None:
+def test_the_two_weighted_spellings_are_one_estimator(kind: str, opts: pp.Opts) -> None:
     """
     **This is the measurement that decides the policy**, rather than inheriting one.
 
-    ``w`` inside the conjugate gradient changes the path and not the fixed point, so a converged
-    preconditioned solve agrees with a converged unweighted one.  ``sqrt(w)`` on both sides is a
-    *weighted* least squares -- a different estimator -- and converges somewhere else.  Both are
-    legitimate; they are not interchangeable, and a notebook has to say which it means.
+    ``'preconditioner'`` and ``'data'`` are the **same** estimator, and the names say otherwise.
+    Both assemble ``A^H W A x = A^H W y``, because ``(W^(1/2)A)^H (W^(1/2)A) = A^H W A`` and
+    ``(W^(1/2)A)^H (W^(1/2)y) = A^H W y``.  Checked here on the operator itself, not on a solve,
+    so no iteration count or tolerance is involved.
+
+    **This test replaces one that asserted the opposite.**  The first version claimed the two
+    converged to different images and compared the two distances with ``>``; they differ by
+    about 4e-4 of each other, so it passed locally and failed in CI on floating-point ordering.
+    The assertion was not flaky -- it was false, and the flake is what exposed it.  A true
+    preconditioner would leave the fixed point at the unweighted solution; this moves it, which
+    makes it a weighted least squares whatever it is called.
     """
     acq = acquisition(kind, opts)
-    truth = _known_image()
-    data = dense_dft(acq.k_per_m, truth)
+    operator = encoding_operator(acq)
     weights = dcf(acq, method='pipe')
+    image = _known_image().astype(complex)
+    data = dense_dft(acq.k_per_m, _known_image())
+    root = np.sqrt(weights)
 
-    unweighted = reconstruct(data, acq, weights=None, use='none', iterations=120)
-    preconditioned = reconstruct(data, acq, weights=weights, use='preconditioner', iterations=120)
-    reweighted = reconstruct(data, acq, weights=weights, use='data', iterations=120)
+    # use='preconditioner' assembles these two ...
+    normal_w = operator.H(weights * operator(image))
+    rhs_w = operator.H(weights * data)
+    # ... and use='data' assembles these, by applying sqrt(w) to both sides first.
+    normal_root = operator.H(root * (root * operator(image)))
+    rhs_root = operator.H(root * (root * data))
+
+    assert np.abs(normal_w - normal_root).max() < 1e-9 * np.abs(normal_w).max()
+    assert np.abs(rhs_w - rhs_root).max() < 1e-9 * np.abs(rhs_w).max()
+
+
+@pytest.mark.parametrize('kind', CONSUMERS)
+def test_weighting_matters_only_when_the_data_are_inconsistent(kind: str,
+                                                               opts: pp.Opts) -> None:
+    """
+    Why the DCF policy question has the answer it has.
+
+    On **noiseless, consistent** data the weighted and unweighted solves reach the same image:
+    both can drive the residual to zero, and a weight cannot change where zero is.  So density
+    compensation is not a better estimator there -- it is a faster route, and section 3 of
+    ``examples/gre_radial_2d/02`` measures the route.
+
+    Add noise and the system is no longer consistent, the weights decide *which* residual is
+    minimised, and the two answers separate.  That is the regime in which calling this a choice
+    of estimator means something.
+    """
+    acq = acquisition(kind, opts)
+    clean = dense_dft(acq.k_per_m, _known_image())
+    weights = dcf(acq, method='pipe')
+    rng = np.random.default_rng(7)
+    noise = rng.standard_normal(clean.shape) + 1j * rng.standard_normal(clean.shape)
+    noisy = clean + 0.05 * float(np.abs(clean).mean()) * noise
 
     def difference(a: np.ndarray, b: np.ndarray) -> float:
         scale = np.vdot(b, a) / max(np.vdot(b, b).real, 1e-30)
         return float(np.linalg.norm(scale * b - a) / np.linalg.norm(a))
 
-    assert difference(unweighted, preconditioned) < 0.05
-    assert difference(unweighted, reweighted) > difference(unweighted, preconditioned)
+    def solve(data, **kwargs):
+        return reconstruct(data, acq, iterations=120, **kwargs)
+
+    consistent = difference(solve(clean, weights=None, use='none'),
+                            solve(clean, weights=weights, use='preconditioner'))
+    inconsistent = difference(solve(noisy, weights=None, use='none'),
+                              solve(noisy, weights=weights, use='preconditioner'))
+
+    assert consistent < 0.05
+    assert inconsistent > 4.0 * consistent
 
 
 @pytest.mark.parametrize('kind', CONSUMERS)
