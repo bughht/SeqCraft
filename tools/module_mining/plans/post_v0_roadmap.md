@@ -121,6 +121,27 @@ an API.
 
 ---
 
+## Phase B — batch mining with the frozen v0 Skill — **COMPLETE** (2026-09-21)
+
+The scan report is [`post_v0_batch_scan.md`](post_v0_batch_scan.md). Nine registered corpora read,
+the coverage map redrawn against merged `main`, and a candidate backlog with reasoning-class
+annotations. **No Module was implemented and the Skill was not edited**, including where v0's
+vocabulary was awkward — those are recorded as Phase E evidence in the report's §6.
+
+The result that matters is not a candidate. A published 4D-flow implementation does not build its
+velocity-encoding gradients at all: it states a residual **moment requirement**, relative to what
+the imaging gradients already contribute, and calls an external constrained optimiser. The
+requirement-before-realisation regime is now observed rather than hypothesised, and no SeqCraft
+Module can express it.
+
+Proposed Phase C shortlist, chosen to be complementary rather than likely GREEN: **T2
+preparation** (the conventional control), **bSSFP** (two independent witnesses that disagree about
+the boundary), and **velocity encoding with flow compensation scanned together** (can a
+requirement be expressed at all). Diffusion is deliberately held back behind the third.
+
+The report also recommends one ordering change — a bounded Skill pass between C1/C2 and C3 — and
+says plainly why the stricter alternative is defensible. That is a decision to take, not one taken.
+
 ## PR decomposition
 
 The roadmap is one document; implementation stays reviewable.
@@ -130,7 +151,7 @@ Post-v0 PR A     Phase A, as PR #32.  A1 (contract + adapter validation + reconc
                  is pushed and open for early review; A2 (the four notebooks and the
                  Layer-3 evidence updates) lands on the same branch and the PR does not
                  merge until both are in.
-Post-v0 PR B     batch scan / candidate backlog
+Post-v0 PR B     batch scan / candidate backlog.  COMPLETE -- post_v0_batch_scan.md.
 Post-v0 PR C+    selected fine scans
 Skill evolution  separate PR, only when new evidence requires it
 ```

@@ -8,6 +8,7 @@
 ```text
 CURRENT ROADMAP
     post_v0_roadmap.md                       the only active forward plan
+    post_v0_batch_scan.md                    the phase B corpus scan, against merged main
 
 DURABLE PROCESS / OPEN ARCHITECTURE
     fine_scan_playbook.md                    how a candidate is scanned, in depth
@@ -36,6 +37,7 @@ are in [`../skill_v0/`](../skill_v0/).
 | document | class | note |
 |---|---|---|
 | `post_v0_roadmap.md` | **CURRENT** | the only forward roadmap. Everything else that points forward is superseded by it |
+| `post_v0_batch_scan.md` | **CURRENT** | the phase B scan: what the corpus holds after PR #31 and #32, what SeqCraft already covers, and the candidate backlog. Current *evidence*, not a second roadmap — it recommends a Phase C shortlist and the roadmap records the decision |
 | `fine_scan_playbook.md` | **DURABLE_REFERENCE** | the process in depth; the Skill is the operational layer over it |
 | `repetition_augmentation_design_note.md` | **DURABLE_REFERENCE** | open architecture, deliberately not an API (a Chinese translation sits beside it in the workspace mirror) |
 | `pr23_reconciliation.md` | HISTORICAL_UNIQUE | the disposition record; nothing else carries it |
