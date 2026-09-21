@@ -109,11 +109,37 @@ def test_the_join_is_continuous_and_at_rest(opts: pp.Opts, variant: str) -> None
 
 
 # --------------------------------------------------- origin crossings, plural from the start
+#: Matrix, shots and FOV chosen to move the *tail* margin, which is what the crossing count
+#: turned out to depend on.  `fov_mm=400` halves `dk` and so halves the half-step the last
+#: sample has to land inside.
+PROTOCOLS = [
+    {'matrix': 16, 'shots': 1}, {'matrix': 16, 'shots': 4},
+    {'matrix': 64, 'shots': 4}, {'matrix': 128, 'shots': 4},
+    {'matrix': 64, 'shots': 1, 'fov_mm': 400.0},
+    {'matrix': 128, 'shots': 4, 'fov_mm': 400.0},
+]
+
+
 @pytest.mark.parametrize(('variant', 'count'),
                          [('out', 1), ('in', 1), ('in-out', 1), ('out-in', 2)])
-def test_origin_crossing_count(opts: pp.Opts, variant: str, count: int) -> None:
-    """``'out-in'`` crosses twice; the durable model is a sequence because of this one case."""
-    assert len(spiral(opts, variant=variant).origin_crossing_samples) == count
+@pytest.mark.parametrize('protocol', PROTOCOLS, ids=lambda p: '-'.join(map(str, p.values())))
+def test_origin_crossing_count(opts: pp.Opts, variant: str, count: int,
+                               protocol: dict) -> None:
+    """
+    ``'out-in'`` crosses twice; the durable model is a sequence because of this one case.
+
+    **Parametrized over protocols after a near miss.**  This assertion held at the default
+    protocol and failed elsewhere: ``'in'`` reaches the origin at the *end* of the arm, and
+    `_plan_adc` was sizing the acquisition by shrinking a conservative estimate and never growing
+    it back, so it discarded the last ~20 us -- which for a braking arm is the last dk.  At
+    `matrix=128` the final sample landed at 2.281 1/m against a half-step of 2.273, and the
+    module truthfully reported no crossing for a variant whose contract promises one.
+
+    One protocol could not have caught that, because the margin it turns on is not one the
+    default protocol stresses.
+    """
+    module = spiral(opts, variant=variant, **protocol)
+    assert len(module.origin_crossing_samples) == count
 
 
 def test_crossings_are_a_sequence_even_when_there_is_one(opts: pp.Opts) -> None:

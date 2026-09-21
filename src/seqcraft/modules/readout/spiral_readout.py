@@ -437,11 +437,20 @@ class SpiralReadout(Module):
             acquisition then outlasts the gradient, the compiler holds the last block open, and
             the waveform is padded with area nobody designed -- which is exactly the m0 the
             contract check refuses.
+
+            The estimate is deliberately conservative, so the search has to run **both ways**.
+            Shrinking alone leaves whole samples unacquired at the tail, and for ``'in'`` the tail
+            is where the origin is: an arm that brakes to rest at k=0 puts its last dk in its last
+            few microseconds, so discarding 20 us of acquisition can discard the echo.
+            `placed_end` is non-decreasing in the sample count, so growing while it still fits
+            terminates, and lands on the largest acquisition the raster admits.
             """
             samples = int((self.duration_s - count * (lead + trail + raster)) / self.dwell_s)
             samples -= samples % divisor
             while samples > 0 and placed_end(_split(samples, count, divisor)) > self.duration_s:
                 samples -= divisor
+            while placed_end(_split(samples + divisor, count, divisor)) <= self.duration_s:
+                samples += divisor
             return samples
 
         segments = 1 if forced is None else require_count(forced, 'adc_segments', low=1)

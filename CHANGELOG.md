@@ -40,6 +40,17 @@ the waveform is padded with 0.045 1/m nobody designed. The budget is now sized a
 placement rather than an estimate of it. 96 protocols — four matrices by three shot counts by four
 variants — all compile.
 
+A fifth, in the same function, found by building the reconstruction against it: that budget only
+ever searched **downward** from its conservative estimate, so it discarded up to five samples per
+segment. Harmless for `out`, whose origin is at the first sample — and not harmless for `in`,
+which brakes to rest at k = 0 and therefore keeps its last `dk` in its last 20 µs. The discarded
+tail *was* the echo: at `matrix=128` the final sample landed at 1.004 half-steps from the origin
+and `origin_crossing_samples` came back empty for a variant whose contract promises one crossing.
+The budget now grows as well as shrinks. Six of 24 swept protocols were affected;
+`test_origin_crossing_count` is parametrized over six protocols rather than asserted at one,
+because the assertion was already there and the single fixture sat on the lucky side of a knife
+edge.
+
 `examples/gre_spiral_2d/01_build.ipynb` is the complete acquisition: Excitation, one arm, eight
 interleaves and spoiling, assembled in the notebook rather than by a class. It exists for the
 join — **TE is owned there, not by the readout** — and checks it against the compiled sequence,

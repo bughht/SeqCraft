@@ -112,8 +112,10 @@ an API.
 The roadmap is one document; implementation stays reviewable.
 
 ```text
-Post-v0 PR A     Phase A.  Split if it grows -- see the reconciliation document for the
-                 dependency boundary between the reconstruction contract and the notebooks.
+Post-v0 PR A     Phase A, as PR #32.  A1 (contract + adapter validation + reconciliation)
+                 is pushed and open for early review; A2 (the four notebooks and the
+                 Layer-3 evidence updates) lands on the same branch and the PR does not
+                 merge until both are in.
 Post-v0 PR B     batch scan / candidate backlog
 Post-v0 PR C+    selected fine scans
 Skill evolution  separate PR, only when new evidence requires it

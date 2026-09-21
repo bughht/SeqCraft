@@ -242,7 +242,10 @@ validation:
         ~1e-12 1/m; both hardware limits measured on the emitted knots; acquisition finishes
         inside its gradient on all 96 swept protocols
   layers:
-    layer_1: GREEN            # 89 tests; family relationships, crossings, limits, segmentation
+    layer_1: GREEN            # 109 tests; family relationships, crossings, limits,
+                              # segmentation.  The crossing-count assertion is parametrized
+                              # over six protocols after findings.md section 9 -- it held
+                              # at the default protocol and failed one matrix step away
     layer_2: GREEN            # BOTH: examples/gre_spiral_2d/01_build.ipynb is the complete
                               # acquisition build the ladder asks for -- Excitation + one arm +
                               # eight interleaves + spoiling and TR fill, compiled to legal
