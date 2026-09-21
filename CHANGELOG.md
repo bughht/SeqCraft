@@ -40,6 +40,27 @@ the waveform is padded with 0.045 1/m nobody designed. The budget is now sized a
 placement rather than an estimate of it. 96 protocols — four matrices by three shot counts by four
 variants — all compile.
 
+A fifth, in the same function, found by building the reconstruction against it: that budget only
+ever searched **downward** from its conservative estimate, so it discarded up to five samples per
+segment. Harmless for `out`, whose origin is at the first sample — and not harmless for `in`,
+which brakes to rest at k = 0 and therefore keeps its last `dk` in its last 20 µs. The discarded
+tail *was* the echo: at `matrix=128` the final sample landed at 1.004 half-steps from the origin
+and `origin_crossing_samples` came back empty for a variant whose contract promises one crossing.
+The budget now grows as well as shrinks. Six of 24 swept protocols were affected;
+`test_origin_crossing_count` is parametrized over six protocols rather than asserted at one,
+because the assertion was already there and the single fixture sat on the lucky side of a knife
+edge.
+
+A sixth, found by composing a spin echo against the module rather than by testing the module:
+`time_to_echo` and `sample_times_s` were documented as measured from the readout block's start and
+were measured from the **arm's**. Those differ by the prephaser, so `'in'` and `'in-out'` reported
+every sample time and every origin crossing 300 µs early — in a sequence that compiles, whose
+trajectory is correct to 1e-12, and whose only symptom is that a kernel composing TE from
+`time_to_echo` puts the echo 300 µs off. `'out'` has no prephaser, which is why the one shipped
+consumer never saw it, and `RadialReadout.time_to_center` had been block-relative all along.
+Reporting is now on the block's clock and `prephaser_duration_s` is the bridge to the arm's; no
+emitted waveform changes.
+
 `examples/gre_spiral_2d/01_build.ipynb` is the complete acquisition: Excitation, one arm, eight
 interleaves and spoiling, assembled in the notebook rather than by a class. It exists for the
 join — **TE is owned there, not by the readout** — and checks it against the compiled sequence,
@@ -251,7 +272,7 @@ encoding this module's behaviour. It now passes against the package at ~1e-14 /m
 sweep cases spanning two matrices, two fields of view, three dwell times and the full
 partial-Fourier range.
 
-[`examples/radial_gre/01_build.ipynb`](examples/radial_gre/01_build.ipynb) shows it, and shows the
+[`examples/gre_radial_2d/01_build.ipynb`](examples/gre_radial_2d/01_build.ipynb) shows it, and shows the
 paragraph above rather than asserting it: the repetition is assembled in the notebook out of
 `Excitation`, the spoke, a spoiler and TR fill, and equal-increment and golden-angle schedules are
 two list comprehensions over one readout instance. It is **build and trajectory visualisation

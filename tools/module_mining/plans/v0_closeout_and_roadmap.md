@@ -5,9 +5,13 @@
 > The two copies are identical today and there is nothing keeping them that way; see
 > [`../README.md`](../README.md) for which one to edit.
 
-**Status:** v0 close-out active  
-**Current scope:** finish and merge the current integrated PR cleanly  
-**Important:** only the **v0 Close-out** section is actionable now. The later sections are intentionally stored in-repo as the roadmap for the next phase.
+> **Superseded as a forward plan.** The current roadmap is
+> [`post_v0_roadmap.md`](post_v0_roadmap.md). This file is retained for the reasoning it
+> records, not for the plan it proposes; see [`README.md`](README.md) for the audit.
+
+**Status:** v0 closed 2026-09-19; retained as the close-out record  
+**Scope at the time of writing:** finish and merge the v0 integrated PR cleanly  
+**Important:** nothing here is actionable now. The v0 close-out is done; the next-phase sections below have been superseded by [`post_v0_roadmap.md`](post_v0_roadmap.md) and are kept because they record *why* those directions were chosen, which the roadmap does not repeat.
 
 ---
 
@@ -258,7 +262,7 @@ Before v0 is closed, add a lightweight Radial example if practical.
 Preferred minimum:
 
 ```text
-examples/radial_gre/
+examples/gre_radial_2d/
     01_build.ipynb
 ```
 
@@ -290,7 +294,7 @@ Otherwise do not create a new reconstruction architecture merely to satisfy the 
 
 ### 2.7.1 How this resolved, and what it does **not** claim
 
-`examples/radial_gre/01_build.ipynb` ships. `02_simulate_and_reconstruct.ipynb` is **deferred**, and
+`examples/gre_radial_2d/01_build.ipynb` ships. `02_simulate_and_reconstruct.ipynb` is **deferred**, and
 the deferral is a decision rather than an unfinished v0 task.
 
 ```text
@@ -333,7 +337,7 @@ During Spiral supervised calibration (§6):
 2. determine what is genuinely trajectory-agnostic;
 3. use Radial + Spiral as two real consumers of that contract;
 4. if the shared reconstruction utility survives review,
-   add radial_gre/02_simulate_and_reconstruct.ipynb;
+   add gre_radial_2d/02_simulate_and_reconstruct.ipynb;
 5. use the resulting end-to-end path as Layer-3 evidence
    for both families where appropriate.
 ```
@@ -522,7 +526,7 @@ here so the phase cannot start without it:
 2. determine what is genuinely trajectory-agnostic;
 3. use Radial + Spiral as two real consumers of that contract;
 4. if the shared reconstruction utility survives review,
-   add radial_gre/02_simulate_and_reconstruct.ipynb;
+   add gre_radial_2d/02_simulate_and_reconstruct.ipynb;
 5. use the resulting end-to-end path as Layer-3 evidence
    for both families where appropriate.
 ```

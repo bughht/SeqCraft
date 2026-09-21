@@ -109,11 +109,37 @@ def test_the_join_is_continuous_and_at_rest(opts: pp.Opts, variant: str) -> None
 
 
 # --------------------------------------------------- origin crossings, plural from the start
+#: Matrix, shots and FOV chosen to move the *tail* margin, which is what the crossing count
+#: turned out to depend on.  `fov_mm=400` halves `dk` and so halves the half-step the last
+#: sample has to land inside.
+PROTOCOLS = [
+    {'matrix': 16, 'shots': 1}, {'matrix': 16, 'shots': 4},
+    {'matrix': 64, 'shots': 4}, {'matrix': 128, 'shots': 4},
+    {'matrix': 64, 'shots': 1, 'fov_mm': 400.0},
+    {'matrix': 128, 'shots': 4, 'fov_mm': 400.0},
+]
+
+
 @pytest.mark.parametrize(('variant', 'count'),
                          [('out', 1), ('in', 1), ('in-out', 1), ('out-in', 2)])
-def test_origin_crossing_count(opts: pp.Opts, variant: str, count: int) -> None:
-    """``'out-in'`` crosses twice; the durable model is a sequence because of this one case."""
-    assert len(spiral(opts, variant=variant).origin_crossing_samples) == count
+@pytest.mark.parametrize('protocol', PROTOCOLS, ids=lambda p: '-'.join(map(str, p.values())))
+def test_origin_crossing_count(opts: pp.Opts, variant: str, count: int,
+                               protocol: dict) -> None:
+    """
+    ``'out-in'`` crosses twice; the durable model is a sequence because of this one case.
+
+    **Parametrized over protocols after a near miss.**  This assertion held at the default
+    protocol and failed elsewhere: ``'in'`` reaches the origin at the *end* of the arm, and
+    `_plan_adc` was sizing the acquisition by shrinking a conservative estimate and never growing
+    it back, so it discarded the last ~20 us -- which for a braking arm is the last dk.  At
+    `matrix=128` the final sample landed at 2.281 1/m against a half-step of 2.273, and the
+    module truthfully reported no crossing for a variant whose contract promises one.
+
+    One protocol could not have caught that, because the margin it turns on is not one the
+    default protocol stresses.
+    """
+    module = spiral(opts, variant=variant, **protocol)
+    assert len(module.origin_crossing_samples) == count
 
 
 def test_crossings_are_a_sequence_even_when_there_is_one(opts: pp.Opts) -> None:
@@ -199,6 +225,43 @@ def test_reported_k_matches_an_independent_measurement(opts: pp.Opts, variant: s
     count = min(measured.shape[1], reported.shape[1])
     error = float(np.abs(measured[:2, :count] - reported[:, :count]).max())
     assert error < 1e-9 * module.dk_per_m, f'{error:.3g} 1/m'
+
+
+@pytest.mark.parametrize('variant', VARIANTS)
+def test_reported_times_are_on_the_block_the_module_builds(opts: pp.Opts, variant: str) -> None:
+    """
+    The two clocks, and the one that a composing kernel places against.
+
+    ``'in'`` and ``'in-out'`` begin at ``k_max``, so ``build()`` opens the block with a dephaser
+    and the arm does not start at zero.  Reported times used to be measured from the **arm**,
+    which made every sample time and every origin crossing early by that dephaser -- 300 us on
+    this protocol -- in a sequence that compiles, whose trajectory is exactly right, and whose
+    only symptom is that a spin echo composed against ``time_to_echo`` lands 300 us off.
+
+    Nothing caught it because ``gre_spiral_2d/01`` uses ``variant='out'``, which needs no
+    dephaser, and the k check above compares positions rather than instants.  `sc.kspace` walks
+    the compiled tree and shares no code with the module, so it is the independent clock.
+    """
+    module = spiral(opts, variant=variant)
+    measured = sc.kspace(module(), opts)['t_adc']
+
+    assert np.abs(module.sample_times_s() - measured).max() < 1e-9
+    for index in range(len(module.origin_crossing_samples)):
+        reported = module.time_to_echo(index)
+        assert abs(reported - measured[module.echo_sample(index)]) < 1e-9, f'{variant} {index}'
+
+
+def test_the_prephaser_is_the_offset_between_the_two_clocks(opts: pp.Opts) -> None:
+    """`prephaser_duration_s` is what a caller taking `prephase=False` has to subtract."""
+    module = spiral(opts, variant='in-out')
+    assert module.prephaser_duration_s > 0.0
+    assert (module(prephase=True).duration - module(prephase=False).duration
+            == pytest.approx(module.prephaser_duration_s))
+    # And it is exactly the gap between the arm clock and the block clock.
+    assert (module.sample_times_s()[0] - module._arm_sample_times()[0]
+            == pytest.approx(module.prephaser_duration_s))
+    # 'out' needs none, which is why the defect above stayed invisible.
+    assert spiral(opts, variant='out').prephaser_duration_s == 0.0
 
 
 def test_reported_k_follows_the_rotation(opts: pp.Opts) -> None:

@@ -11,9 +11,10 @@
 | [`gre_epi_2d/`](gre_epi_2d/) | The whole of k-space in one shot: the centred sampling window, the blip on the zero crossing, ramp sampling and the operator that undoes it, off-resonance and the N/2 ghost, and GRAPPA. Where `EPI2D` came from. Defines `GREEPI2D` in its own notebook. |
 | [`se_epi_2d/`](se_epi_2d/) | The same readout after a refocusing pulse — and the measurement that a spin echo **does not** fix EPI distortion. Defines `SEEPI2D` in its own notebook. |
 | [`megre_2d/`](megre_2d/) | Eight echoes off one excitation, monopolar and bipolar, fitted for T2\* and ΔB0 against a phantom that carries the ground truth for both. **Defines no class**, which no other directory here can say. |
-| [`radial_gre/`](radial_gre/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. **Deliberately defines no class**, because the schedule is the only thing a `RadialGRE` would add. |
+| [`gre_radial_2d/`](gre_radial_2d/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. **Deliberately defines no class**, because the schedule is the only thing a `RadialGRE` would add. Its `02` is the introduction to non-Cartesian reconstruction. |
 | [`fat_sat/`](fat_sat/) | A spectrally selective saturation and the spoiler that destroys what it made — the chemical-shift sign traced from ppm to the emitted `freq_offset`, and the same protocol across four field strengths. Where `SaturationPrep` came from. |
-| [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. **Defines no class.** |
+| [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. Then what a 21.7 ms readout pays in off-resonance. **Defines no class.** |
+| [`se_spiral_2d/`](se_spiral_2d/) | A refocusing pulse in front of a spiral, and the one question that raises: **which instant is the echo aligned to.** Three wrong placements that all compile, and then what refocusing is actually worth. **Defines no class.** |
 
 ## `gre_2d/`
 
@@ -147,11 +148,11 @@ map with nothing to look wrong. `01` is in
 [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is not, for the reason the
 other simulation notebooks are not.
 
-## `radial_gre/`
+## `gre_radial_2d/`
 
 | | |
 |---|---|
-| [`01_build.ipynb`](radial_gre/01_build.ipynb) | `sc.modules.RadialReadout` is **one spoke**, already oriented, and an acquisition is that spoke plus a list of angles — so the repetition is assembled in the notebook out of `Excitation`, the spoke, a spoiler and TR fill rather than by a class. Equal increments and a golden angle from one readout instance, the trajectory drawn for both, the centre sample measured **exactly on `k = 0`** and the spoke angles measured against the ones asked for, then `partial_fourier` walked from a full spoke to centre-out. Two `.seq` files. **Needs nothing but `seqcraft`.** |
+| [`01_build.ipynb`](gre_radial_2d/01_build.ipynb) | `sc.modules.RadialReadout` is **one spoke**, already oriented, and an acquisition is that spoke plus a list of angles — so the repetition is assembled in the notebook out of `Excitation`, the spoke, a spoiler and TR fill rather than by a class. Equal increments and a golden angle from one readout instance, the trajectory drawn for both, the centre sample measured **exactly on `k = 0`** and the spoke angles measured against the ones asked for, then `partial_fourier` walked from a full spoke to centre-out. Two `.seq` files. **Needs nothing but `seqcraft`.** |
 
 **This directory defines no class, and that is the finding.** `MPRAGE2D`, `SE2D`, `FSE2D`,
 `GREEPI2D` and `SEEPI2D` each exist because their sequence is a composition the package does not
@@ -161,15 +162,22 @@ golden angle or equal increment, how many spokes, in what order — and a schedu
 choice, which is exactly the thing `sc.modules` does not take from the caller. So the notebook
 writes the loop, and it is four lines.
 
-**There is no `02_simulate_and_reconstruct.ipynb`, on purpose.** A radial image needs a
-non-Cartesian reconstruction, and no other example here has one to reuse — the `02`s are all FFTs
-on a Cartesian grid. Writing a gridding or NUFFT pipeline to complete a pair would be new
-reconstruction infrastructure justified by a directory listing rather than by a question, and the
-one check a radial acquisition actually needs is whether the spokes go where they were asked to,
-which is the trajectory plot in `01` and is asserted numerically in
-[`tests/modules/test_radial_readout.py`](../tests/modules/test_radial_readout.py) on every commit.
-If a non-Cartesian reconstruction arrives here for some other reason, this is the notebook to pair
-with it. `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
+| [`02_simulate_and_reconstruct.ipynb`](gre_radial_2d/02_simulate_and_reconstruct.ipynb) | **The introduction to the non-Cartesian path.** Why `ifft2` is not the reconstruction for these samples — 4096 samples for a 4096-point grid with a third of the grid empty — where the physical trajectory enters, what density compensation buys and what it is assumed to be and is not, why the spokes are one inverse problem, and a point at four known positions that fixes the image's axis convention. **Needs `seqcraft[recon]`, `MRzeroCore` and a phantom download.** |
+
+**The reconstruction lives in [`noncartesian_recon.py`](noncartesian_recon.py)**, beside
+[`phantom.py`](phantom.py) and for the same reason: it is example infrastructure, not API.
+SeqCraft builds sequences, MRzeroCore simulates them, SigPy reconstructs them, and a
+reconstruction dependency has no business on the compile path. Its adapter — physical k times the
+field of view — is checked against an explicit dense DFT that calls no SigPy in
+[`tests/examples/test_noncartesian_recon.py`](../tests/examples/test_noncartesian_recon.py).
+
+Two results from `02` that nothing else in this repository states. A non-Cartesian reconstruction
+comes out indexed **`[x, y]`**, not the `[y, x]` every Cartesian `02` produces — a property of the
+adapter's axis order, established by putting a point somewhere known. And **preconditioning
+changes the path and not the answer**: preconditioned and plain conjugate gradient agree to 0.0003
+at convergence, so density compensation is a speed choice there rather than a better estimator.
+
+`01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
 
 ## `fat_sat/`
 
@@ -220,11 +228,48 @@ matches the reported value exactly.
 gradient echo whose readout happens to be a spiral — so a `GRESpiral2D` would own the schedule and
 no physics, which is the same argument that declined `RadialGRETR` and `GRE3D`.
 
-There is **no `02_simulate_and_reconstruct.ipynb`**. A spiral image needs a non-Cartesian
-reconstruction and every existing `02` here is a Cartesian FFT. Reviewing that path is a separate
-task — and it now has **two** real consumers, `RadialReadout` and `SpiralReadout`, which is the
-condition for asking whether a shared contract exists. Promotion into the package is not a
-predetermined outcome. `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
+[`02_simulate_and_reconstruct.ipynb`](gre_spiral_2d/02_simulate_and_reconstruct.ipynb) is **the
+off-resonance notebook**, and it reuses `noncartesian_recon.py` with no additions. `01` writes a
+single-shot file as well as the interleaved one, because the claim needs a long readout: at 100 Hz
+the 2.73 ms interleaved acquisition holds one voxel in one pixel and the 21.7 ms single-shot one
+spreads it over 108. Eight time segments put it back — and **four segments is worse than none**,
+because a four-point phase screen aliases 2.17 cycles of phase, which is the wrong lesson a reader
+would otherwise draw from a real measurement.
+
+`01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
+
+## `se_spiral_2d/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](se_spiral_2d/01_build.ipynb) | **Semantic timing ownership.** A 90, a `Refocusing`, and an `'in-out'` arm placed so that its origin crossing lands on the spin echo — measured against the compiled sequence, with pypulseq's own refocusing conjugation applied, at 2.0 µs residual and 0.02 Δk. Then **three wrong placements that all compile**. Two `.seq` files. **Needs nothing but `seqcraft`.** |
+| [`02_simulate_and_reconstruct.ipynb`](se_spiral_2d/02_simulate_and_reconstruct.ipynb) | What the 180 is worth: a $T_2'$ sweep in which the spin echo does not move and the gradient echo follows $e^{-\mathrm{TE}/T_2'}$ to 1 %, off-resonance refocused to 0.0000 cycles, and the brain. **Needs `seqcraft[recon]`, `MRzeroCore` and a phantom download.** |
+
+**A crossing through `k = 0` is not a spin echo**, and the two files exist to say so with one
+variable. Their in-plane trajectories are bit-identical and both sample the origin at 14.002 ms;
+one has a refocusing pulse and the other does not, and at that instant one carries zero
+off-resonance phase and the other carries 0.7 of a cycle at 50 Hz.
+
+```text
+SpiralReadout   owns   where the trajectory crosses k = 0, and reports it
+this layer      owns   where the readout starts, so that a crossing lands on the spin echo
+```
+
+Nothing enforces the join, which is why `01` builds the wrong versions too. Starting the readout
+at the echo refocuses the magnetisation at $k_{\max}$, 32 Δk out. "The echo is in the middle of
+the readout" is correct for `'in-out'` and wrong for the other three variants — worst for
+`'out-in'`, whose midpoint falls *between* its two crossings.
+
+**Defines no class**, for the third time in a row: strip out the placement arithmetic and the
+angle list and nothing is left that owns physics.
+
+This directory found the defect recorded in
+[`tools/module_mining/plans/spiral/findings.md`](../tools/module_mining/plans/spiral/findings.md)
+§10 — `time_to_echo` documented as block-relative and implemented arm-relative, invisible for
+`variant='out'` and 300 µs wrong for `'in-out'`. It was fixed with a regression before this
+notebook was written, not worked around in it.
+
+`01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
 
 ## Requirements
 

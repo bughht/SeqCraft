@@ -294,3 +294,233 @@ join on the assembled waveform, and keeping reconstruction out of `src/` — all
 independently here, and three of them only after the implementation failed the way PR23 said it
 would. **That is the calibration result**: the ideas survive independent re-derivation, and the
 parts that did not survive are the m0 compiler change and the helper promotions.
+
+---
+
+# 9. A sequence-side defect found by the reconstruction work — found, then fixed
+
+Found while building the Phase-A reconstruction contract and **isolated rather than fixed there**
+— the rule is that reconstruction work does not change sequence code. Fixed in its own change
+afterwards, before the Phase-A PR merged.
+
+## The defect, as first seen
+
+```text
+variant='in'   reports ZERO origin crossings
+```
+
+| fov | matrix | shots | variant | crossings | min \|k\| | half-step |
+|---|---|---|---|---|---|---|
+| 240 | 16 | 1 | `in` | **0** | 3.245 | 2.083 |
+| 240 | 32 | 1 | `in` | **0** | 3.259 | 2.083 |
+| 240 | 64 | 1 | `in` | **0** | 2.321 | 2.083 |
+| 240 | 128 | 1 | `in` | **0** | 3.643 | 2.083 |
+| 220 | 128 | 4 | `in` | **0** | 2.281 | 2.273 |
+| 220 | 128 | 4 | `out-in` | **1** of 2 | 2.550 | 2.273 |
+
+`time_to_echo(0)` then raises, and a caller has no echo for a variant whose mode contract says it
+has one, at the last sample.
+
+## Why
+
+`in` reaches the origin at the *end* of the arm, where the gradient is braking to rest, so the
+last `dk` of the trajectory lives in the last few microseconds. `_plan_adc.budget` sized the
+acquisition by **shrinking a deliberately conservative estimate and never growing it back**:
+
+```python
+samples = int((duration - count * (lead + trail + raster)) / dwell)   # conservative
+samples -= samples % divisor
+while placed_end(...) > duration:                                     # shrink only
+    samples -= divisor
+```
+
+`lead + trail + raster` over-reserves, and the `divisor` floor rounds further down, so the
+acquisition finished 32–36 µs before the gradient where the raster admitted 12–20. Those 20 µs
+are the last `dk`.
+
+**This is the measurement that names it.** The two ends of the arm should be symmetric — the same
+reservation at each — and they were not. Measured as a fraction of the half-step, which is the
+quantity that actually decides the outcome, over 24 protocols (3 FOVs × 4 matrices × 2 shot
+counts):
+
+```text
+                        |k| at the sample nearest the origin, / half-step
+out   (first sample)                   0.130 -- 0.299
+in    (last sample, before)            0.453 -- 1.498      -- over 1.0 is a missed crossing,
+                                                              and 6 of the 24 were
+in    (last sample, after)             0.204 -- 0.901
+```
+
+The fix restores the symmetry rather than adjusting a threshold: `budget` now also grows while
+`placed_end` still fits. `placed_end` is non-decreasing in the sample count, so the loop
+terminates on the largest acquisition the raster admits.
+
+It also **acquires more data**, which was the other cost of the bug and was invisible: every
+variant was discarding up to five samples per segment for no reason.
+
+**The margin is smaller at the tail than at the head, and that is not fixed.** `out` sits at a
+third of the half-step at worst; `in` sits at nine tenths. The asymmetry is structural — the ADC
+reserves a lead delay at the head and a dead time *plus* a raster rounding at the tail — and it
+means a protocol harsher than any tested here (higher slew, larger FOV, coarser raster) could
+still put `in`'s last sample outside the half-step. That is recorded as a margin to watch, not
+closed, and not papered over with a runtime refusal on evidence this thin.
+
+## Why it was not caught — and one correction to the first reading
+
+The first reading of this was that *"nothing asserted that a variant has the number of crossings
+its mode contract promises."* **That was wrong**, and worth recording because the wrong reading
+would have produced the wrong fix. `test_origin_crossing_count` asserts exactly that, and has
+since the module was written.
+
+It ran at **one** protocol — `matrix=64, shots=4, fov=220` — which sits on the lucky side of a
+knife edge. At that protocol the last sample lands at 1.53 against a half-step of 2.273 and the
+test passes. One matrix step away it lands at 2.281 and the test would have failed.
+
+So the gap was not a missing assertion but an **unstressed margin**: the quantity the assertion
+depends on is not one the default protocol varies. `test_origin_crossing_count` is now
+parametrized over six protocols spanning matrix 16–128, 1 and 4 shots, and FOV 220 and 400 mm —
+FOV because it halves `dk` and so halves the margin the last sample must land inside. Two of the
+twenty-four combinations fail without the fix.
+
+A sweep of 96 combinations (3 FOVs × 4 matrices × 2 shot counts × 4 variants) now agrees with the
+mode contract in every case; before the fix it did not.
+
+## Disposition
+
+```text
+status          RESOLVED
+fix             src/seqcraft/modules/readout/spiral_readout.py -- _plan_adc.budget grows as
+                well as shrinks
+test            tests/modules/test_spiral_readout.py::test_origin_crossing_count, parametrized
+                over six protocols; fails on two of them without the fix
+scope           no contract change.  origin_crossing_samples still promises a sample within half
+                a Nyquist step of the origin, and now the acquisition actually reaches one
+margin          variant='in' lands at 0.20--0.90 of the half-step against 'out' at 0.13--0.30.
+                Structural: the tail reserves a dead time and a raster rounding, the head only a
+                lead delay
+revisit trigger if any protocol is found where 'in' or 'out-in' reports fewer crossings than its
+                mode contract promises.  The parametrized test is the detector; widen its grid
+                before widening the module's claimed protocol range
+```
+
+## What this says about the process
+
+Two things, neither of them about spirals.
+
+**A margin that no test varies is not tested.** The assertion was right, the fixture was one
+point, and a one-point fixture cannot find a knife edge. This is the same shape as rule E —
+measure on the lattice you actually emit — applied to the *parameter* space rather than the time
+lattice.
+
+**Reconstruction found a sequence defect that sequence tests did not.** Phase A's stated purpose
+was to validate the reconstruction adapter; it also exercised the modules at protocols their own
+suites did not, because a reconstruction has to have data at k=0 and therefore cares about a
+quantity the sequence tests only asserted. That is an argument for Layer 3 as evidence, not only
+as demonstration — and it is recorded here rather than promoted to a rule, because one instance
+is one instance.
+
+---
+
+# 10. A second sequence-side defect, found by composing a spin echo
+
+Found while building `examples/se_spiral_2d/01_build.ipynb`, which is the first thing in the
+repository to place a *refocused* echo against a reported origin crossing. Fixed in its own change
+before the notebook was written, rather than worked around in it.
+
+## The defect
+
+`SpiralReadout` reported **two different clocks under one docstring.**
+
+```text
+time_to_echo(0) docstring   "the time from the readout block's start to origin crossing index"
+what it returned            the time from the start of the ARM
+```
+
+Those differ by the prephaser, and only for the variants that have one:
+
+| variant | prephaser | `time_to_echo(0)` reported | measured on the compiled block |
+|---|---|---|---|
+| `out` | 0 µs | 12.0 µs | 12.0 µs |
+| `out-in` | 0 µs | 12.0 µs | 12.0 µs |
+| `in` | 300 µs | 2744.0 µs | **3044.0 µs** |
+| `in-out` | 300 µs | 2772.0 µs | **3072.0 µs** |
+
+`sample_times_s()` carried the same error, so the whole reported trajectory was 300 µs early on
+its own block.
+
+## Why it is the dangerous kind
+
+Everything about the sequence is *correct*. The trajectory is right, the k positions are right to
+1e-12, the file compiles, the arm plays exactly as designed. The only thing wrong is the **label
+on the clock** — and the consequence is that a kernel composing `TE` from
+`start + readout.time_to_echo(0) - excitation.time_to_center()` puts the echo 300 µs off, in a
+sequence in which nothing looks wrong.
+
+It is also the precise failure `time_to_echo`'s own docstring warns about, one level down: *"a
+spin echo placed against the wrong crossing is a legal sequence whose echo time is wrong"*. The
+module warned about the caller choosing the wrong crossing and then mis-stated when its own
+crossings were.
+
+## Why nothing caught it
+
+Three things had to line up, and did.
+
+```text
+gre_spiral_2d/01 uses variant='out'      the only shipped consumer, and it has no prephaser
+the k checks compare POSITIONS           sc.kspace agreement to 1e-12 says nothing about instants
+RadialReadout was already right          so the convention existed and nothing compared them
+```
+
+`RadialReadout.time_to_center()` has always included its own 320 µs prephaser and is verified
+against the compiled block. The two sibling readouts documented the same contract and implemented
+different ones, and no test looked at both.
+
+## The fix
+
+The internal clock stays on the arm — `_knots` starts there, and `duration_s` and
+`acquisition_end_s` are statements *about* the arm's gradient, so "the acquisition finishes inside
+its gradient" stays a comparison of two arm-clock quantities. What moves is the **reporting**:
+
+```text
+_arm_sample_times()      new, private, the integration clock
+sample_times_s()         public, block-relative -- the arm clock plus the prephaser
+origin_crossing_times    block-relative, so time_to_echo and echo_spacing_s follow
+prephaser_duration_s     new, public: the bridge, and what build(prephase=False) needs subtracted
+```
+
+A first attempt also moved `acquisition_end_s` onto the block clock. Two tests failed immediately,
+and they were right to: that quantity is compared against `duration_s`, so moving one side of a
+comparison broke the invariant it encodes. The two clocks are now named in the docstrings rather
+than unified, because they measure different things.
+
+## Disposition
+
+```text
+status          RESOLVED
+fix             src/seqcraft/modules/readout/spiral_readout.py
+tests           test_reported_times_are_on_the_block_the_module_builds (all four variants,
+                against sc.kspace) and test_the_prephaser_is_the_offset_between_the_two_clocks.
+                Both fail on the old code; the first fails only on 'in' and 'in-out'
+verified        24 configurations -- four variants, three shot counts, two matrices -- agree
+                with the compiled sequence on crossing time, sample times and k
+scope           no change to any emitted waveform.  The 'out' variant, and therefore every
+                shipped .seq before this change, is bit-identical
+```
+
+## What this says about the process
+
+**Two modules documenting the same contract is not evidence that they implement it.** The
+ownership rule put `time_to_center` on `RadialReadout` and `time_to_echo` on `SpiralReadout` for
+the same reason, and the identical wording made it look settled. Nothing compared the two, and a
+convention held by prose in two files is held by nothing.
+
+**A check on positions is not a check on instants.** The Spiral candidate's Layer-1 evidence is
+unusually strong on *where* the samples are — agreement with an independent measurement to
+1e-12 — and that strength is exactly what made the timing gap invisible. Rule E says to measure on
+the lattice actually emitted; this is the same rule in the time axis, and the candidate record's
+acceptance criterion did not name it.
+
+**The defect appeared at the composition, not in the leaf.** Both defects in this record
+(section 9 and this one) were found by building something *on top of* the module, after its own
+suite was green. That is an argument for the validation ladder having a Layer 3 at all, and it is
+now two instances rather than one.

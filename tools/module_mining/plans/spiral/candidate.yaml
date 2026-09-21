@@ -242,28 +242,106 @@ validation:
         ~1e-12 1/m; both hardware limits measured on the emitted knots; acquisition finishes
         inside its gradient on all 96 swept protocols
   layers:
-    layer_1: GREEN            # 89 tests; family relationships, crossings, limits, segmentation
+    layer_1: GREEN            # 109 tests; family relationships, crossings, limits,
+                              # segmentation.  The crossing-count assertion is parametrized
+                              # over six protocols after findings.md section 9 -- it held
+                              # at the default protocol and failed one matrix step away
     layer_2: GREEN            # BOTH: examples/gre_spiral_2d/01_build.ipynb is the complete
                               # acquisition build the ladder asks for -- Excitation + one arm +
                               # eight interleaves + spoiling and TR fill, compiled to legal
                               # Pulseq -- AND the 96-protocol SpiralReadout compile sweep, which
                               # is leaf coverage rather than an acquisition.  The sweep alone was
                               # the stronger-sounding claim and the wrong one for this layer.
-    layer_3: DEFERRED
-    layer_3_reason: >
-      Layer 3 for a spiral needs the non-Cartesian reconstruction whose promotion is itself
+    layer_3: GREEN            # post-v0 phase A2, 2026-09-20.  The trigger below fired: the
+                              # shared contract exists and was validated against an oracle that
+                              # is not SigPy BEFORE either consumer used it.
+    layer_3_was_deferred_because: >
+      Layer 3 for a spiral needed the non-Cartesian reconstruction whose promotion was itself
       deferred -- see radial/evidence_state.yaml.  The trajectory claims are carried more
       directly by the emitted-trajectory measurement (~1e-12 1/m against an independent
       measurement) than an image could carry them.
-      REVISIT TRIGGER: the non-Cartesian reconstruction path is independently reviewed and
-      promoted, or a claim is made that depends on image quality rather than on trajectory
+      REVISIT TRIGGER (fired): the non-Cartesian reconstruction path is independently reviewed
+      and promoted, or a claim is made that depends on image quality rather than on trajectory
       correctness.
+    layer_3_establishes:
+      - >
+        GRE spiral, examples/gre_spiral_2d/02.  A long readout exhibits the off-resonance
+        degradation the physics predicts, measured on a point object rather than on an image:
+        at 100 Hz the 2.73 ms eight-interleaf acquisition holds one voxel in one pixel and the
+        21.7 ms single-shot one spreads it over 108.  Controlled -- same arm family, FOV,
+        matrix, k_max, reconstruction and offset; only the readout length differs.
+      - >
+        The B0-aware forward model reduces that specific artefact: 108 pixels back to 1 at
+        eight time segments for 2.17 cycles of accumulated phase, and the peak recovers by a
+        factor of eleven.  On a brain, 0.299 uncorrected against the shimmed control and 0.025
+        with sixteen segments.
+      - >
+        The segmented operator converges to the exact forward model it approximates -- 100 %
+        error at one segment, 7e-3 at sixteen, with a floor there set by the interpolation
+        between segment centres rather than by the count.  Checked against a dense sum, with
+        no simulator and no reconstruction in the way.
+      - >
+        Semantic trajectory timing is consumed consistently by the reconstruction path.  The
+        echo time handed to the operator is stated explicitly and never inferred, and
+        examples/se_spiral_2d/01 measures the composition that produces it against the compiled
+        sequence at 2.0 us -- one gradient raster -- across eight interleaves.
+      - >
+        SE spiral, examples/se_spiral_2d/02.  The selected origin crossing is aligned with the
+        intended spin echo, and the simulated magnetisation follows the claimed refocusing
+        relationship: the spin echo does not see T2' at all (0.54493 to 0.54503 while T2'
+        changes by a factor of 100) and the gradient-echo ratio is exp(-TE/T2') to about 1 %,
+        with nothing fitted.  Off-resonance refocuses to 0.0000 cycles at the spin echo where
+        the gradient echo carries 0.7 of a cycle at 50 Hz.  The two files have bit-identical
+        in-plane trajectories, so the 180 is the only variable.
+    layer_3_does_not_establish:
+      - >
+        Anything about a scanner.  Every trajectory here is the one the file encodes, played by
+        a simulator that honours it exactly.  Gradient delays and trajectory infidelity blur a
+        spiral in a way that looks like off-resonance and are fixed by something else; none is
+        measured.
+      - >
+        That a field map is known.  Every B0 correction was handed the exact offset that was
+        simulated.  On a scanner it is measured, with its own resolution, noise and unwrapping
+        failures.
+      - >
+        T2* decay during the readout, which is also a function of time and is not corrected by
+        a phase screen.
+      - >
+        Anything about a real 180.  The refocusing pulse in the simulation inverts phase over
+        the whole slab; a real one has a slice profile, a B1 error and stimulated-echo pathways
+        that this comparison does not separate.
+      - >
+        T2 or T2' quantification.  A per-pixel T2' map is explicitly NOT recoverable from the
+        SE/GRE pair at one echo time -- correlation 0.235, because the reconstruction error is
+        wider than the contrast -- and that negative result is in the notebook.
+      - >
+        Optimal density compensation, weighting or solver.  Measured: Pipe-Menon makes the
+        adjoint usable and preconditioning does not change the converged answer.
   compiler_changes: none made
 
 evidence_state:
   human_review: DONE            # boundary, ownership, mode contract and endpoint policy reviewed
   experiment_design_review: NOT_NEEDED
   scanner_validation: FUTURE
+  # Kept rather than deleted: a deferral states why a layer was refused, and the resolution is
+  # only meaningful beside it.  Listed apart from `deferred` so the inventory does not report a
+  # discharged item as still owed.
+  resolved:
+    - what: >
+        Simulation and reconstruction of any spiral acquisition -- Layer 3.
+      was_deferred_because: >
+        Needed the non-Cartesian reconstruction whose promotion was itself deferred.  The
+        trajectory claims are carried more directly by emitted-trajectory measurement than an
+        image would carry them.
+      revisit_trigger_that_fired: >
+        The reconstruction contract question is settled either way.
+      how_it_was_discharged: >
+        examples/noncartesian_recon.py is the shared contract, validated against a dense-DFT
+        oracle that calls no SigPy before either consumer used it.  Two notebooks discharge the
+        deferral -- gre_spiral_2d/02 for off-resonance during a long readout, and
+        se_spiral_2d/02 for the refocusing relationship.  Nothing spiral-specific was added to
+        the shared path.  What it establishes and what it does not are in
+        validation.layers.layer_3_establishes and layer_3_does_not_establish.
   deferred:
     - what: >
         echoes > 1.  An explicit deferred EXTENSION of this leaf, not a gap in it.
@@ -275,13 +353,6 @@ evidence_state:
         derived spacing at echoes=1, so the plural machinery is exercised rather than declared.
       revisit_trigger: >
         A protocol needs more than one echo per excitation.  This does NOT keep v0 open.
-    - what: >
-        Simulation and reconstruction of any spiral acquisition -- Layer 3.
-      why: >
-        Needs the non-Cartesian reconstruction whose promotion is itself deferred.  The trajectory
-        claims are carried more directly by emitted-trajectory measurement than an image would
-        carry them.
-      revisit_trigger: The reconstruction contract question is settled either way.
     - what: >
         An independent witness for the in / in-out / out-in variants and for multi-echo.
       why: >
@@ -299,11 +370,41 @@ evidence_state:
         A claim is made that this convention matches another implementation's, or measured turn
         spacing is questioned.  `density` itself is implemented and its meaning is asserted by
         test; what is missing is a second witness that the CONVENTION is the conventional one.
-    - what: A decision on whether the reconstruction's shared contract is promoted anywhere.
+    - what: >
+        A decision on whether the reconstruction's shared contract is promoted into src/.
       why: >
         The audit found one exists and is small, which is what the Radial trigger asked.  What to
-        do about it is separate, and example-only remains valid.
-      revisit_trigger: A second non-Cartesian readout ships, making the two consumers real.
+        do about it is separate, and example-only remains valid.  Post-v0 phase A built it and
+        left it under examples/: it now has two real consumers and four notebooks, and is still
+        example infrastructure rather than API, because a reconstruction dependency on the
+        compile path is the thing the division of labour exists to prevent.
+      revisit_trigger: >
+        A caller outside examples/ needs it, or a third non-Cartesian readout ships.  Shipping
+        two consumers did NOT trigger promotion, which is the decision rather than an omission.
+    # A DESIGN-POLICY CONSISTENCY question, not a legality or correctness one.  The package
+    # contract is settled and this does not reopen it: per-axis limits are hard, and the
+    # simultaneous-axis vector norm is informational.  Every physical axis is inside its own
+    # max_slew at every interleaf angle, so there is nothing here to fix.
+    - what: >
+        Should the prephaser and rewinder adopt the arm's conservative vector-norm design
+        policy, for consistency or for extra headroom?
+      why: >
+        The arm uses a conservative vector-norm slew ceiling deliberately, because that is what
+        makes it rotationally invariant -- an arm designed per-axis would change shape with the
+        interleaf angle.  The two-axis prephaser and rewinder have no such requirement and are
+        designed against the package's per-axis hardware limits, which they satisfy: measured in
+        examples/se_spiral_2d/01, per-axis slew stays at or below 99.9 % of max_slew at 0, 22.5,
+        45, 67.5 and 90 degrees.  The vector norm across the two axes reaches 138.9 % at 45
+        degrees, which is sqrt(2) times two simultaneous ramps and is exactly the case the
+        package classifies as informational.
+        So the question is one of INTERNAL CONSISTENCY -- two lobes of one module designed to
+        two different policies -- and of whether the auxiliary lobes want the arm's extra
+        headroom.  Adopting it would cost up to sqrt(2) more time at each end of every
+        interleaf.
+      revisit_trigger: >
+        A design-policy review of the module's auxiliary lobes, or a protocol that wants the
+        arm's headroom at the ends too.  NOT triggered by the compiler's informational warning,
+        which is the contract working as designed.
     - what: Hardware evidence -- gradient delay, eddy currents, trajectory fidelity.
       why: >
         A spiral is more sensitive to all three than any Cartesian readout, but none of them is

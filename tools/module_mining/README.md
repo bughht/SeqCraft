@@ -67,6 +67,7 @@ remembers to update.
 
 ```text
 module_mining/
+  plans/README.md                 which plan is current, which documents are evidence
   plans/                          the plan and the evidence -- see "Which copy to edit" below
   reference.py                    one record per executed reference implementation
   fingerprint.py                  the comparator stack: L0 / L2 / L3 / L4

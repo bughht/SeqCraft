@@ -176,7 +176,7 @@ The candidate shipped with tests but with no example, which was the one coverage
 close-out found: every other module in `sc.modules` has a notebook where a reader can see what it
 does, and `RadialReadout` did not.
 
-`examples/radial_gre/01_build.ipynb` closes it, and it is a **build and trajectory-visualisation
+`examples/gre_radial_2d/01_build.ipynb` closes it, and it is a **build and trajectory-visualisation
 notebook only**. What it shows:
 
 | | |
