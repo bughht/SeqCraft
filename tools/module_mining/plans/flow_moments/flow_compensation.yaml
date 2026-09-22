@@ -123,7 +123,9 @@ ownership:
       table reserves the kernel layer for "coupling between leaves that no leaf can see".  This is
       that, exactly- one leaf's moment is an input to another's design.
   what_the_candidate_would_output: >
-    **Events, for the canonical cases.**  Not moments, and not requirements.  The closed forms in
+    **Events, for the canonical cases.**  Not moments, and not requirements.  And it emits them as
+    the outcome of a coupled design held BEFORE materialisation, rather than by editing events
+    another module has already produced.  The closed forms in
     D1 turn (target, neighbour's moment, hardware limits) into lobe areas and widths directly.  A
     requirement interface would be needed only for the general case- arbitrary orders, merged
     minimum-TE designs, or added eddy-current constraints, which is what a solver is for and what
@@ -194,10 +196,14 @@ open_questions:
     moments up to n) or a boolean?  D1 says the useful order "depends on the specifics of the
     application and on the performance of the gradient hardware", which argues for an order.
   - >
-    Should the cross-leaf slice-selection case wait for a kernel, or should `Excitation` publish
-    its own `ms` -- the first moment from its isodelay point -- so that a caller can do the
-    algebra?  Publishing a measured quantity is cheap, faithful to the ownership rule, and would
-    make the closed form available without any new layer.  **Recommended, and not done.**
+    What must a leaf expose for a joint owner to do the algebra?  **Not a cached moment.**  A
+    moment is not an intrinsic property of a waveform -- it depends on the placement time, the
+    semantic origin, the endpoint and the order -- so a leaf publishing `m1` would be publishing
+    something that is only true for one choice of all four.
+    The faithful form is that a leaf exposes SEMANTIC FACTS and its own EVENTS -- the RF centre or
+    isodelay instant, the echo instant, the gradient events it intends -- and the joint owner
+    integrates what it needs, on demand, over the interval it cares about.  Moment analysis is an
+    internal helper, not an interface a leaf must implement.
 
 evidence_state:
   human_review: NEEDED
@@ -209,15 +215,22 @@ evidence_state:
     mechanism; it does not establish the benefit.
   deferred:
     - what: The merged velocity-encoding-plus-compensation waveform.
-      why: Needs one abstraction to own lobes that several leaves emit.  See gap_note.md.
+      why: >
+        The efficient waveform spans what are currently two modules' territories, so it needs a
+        joint owner holding the coupled design before events are materialised.  See gap_note.md.
       revisit_trigger: That capability exists, or a protocol needs the shorter TE badly enough.
     - what: Orders above the first -- acceleration compensation and beyond.
       why: >
         D1- four lobes minimum instead of three, and nulling beyond some order "will invariably
         become counterproductive".  One order at a time.
       revisit_trigger: A protocol needs it.
-    - what: Whether `Excitation` should publish its isodelay-referenced first moment.
+    - what: >
+        What a leaf must expose so that a joint owner can compute the moments it needs.
       why: >
-        It is the one input the cross-leaf closed form needs, it is cheap to expose, and exposing
-        a measured quantity is not the same as taking on a design responsibility.
-      revisit_trigger: The single-axis extension lands and the slice case is wanted next.
+        A moment depends on placement time, semantic origin, endpoint and order, so it is not a
+        property a leaf can cache and publish truthfully.  The candidate answer is that a leaf
+        exposes its semantic instants and its events, and the joint owner integrates.  Broadening
+        a leaf's interface for one consumer is the thing this workflow refuses elsewhere.
+      revisit_trigger: >
+        Several consumers repeatedly need the same semantic measurement, at which point a query
+        API can be evaluated on more than one case.

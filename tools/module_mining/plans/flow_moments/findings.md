@@ -63,8 +63,14 @@ compensation option on the leaf that owns the waveform, which can already comput
 
 The cross-leaf case — velocity-compensating a slice-selection waveform, which needs the first
 moment the excitation already accumulated **from the RF isodelay point** — is kernel work by the
-ownership table's own definition. A cheaper first step, recommended and not done: have
-`Excitation` publish that moment, so a caller can do the algebra without a new layer.
+ownership table's own definition.
+
+What a leaf should expose for that is **not a cached moment.** A moment depends on the placement
+time, the semantic origin, the endpoint and the order, so `m1` is not a property a leaf can
+publish truthfully. The faithful form is that a leaf exposes its *semantic instants* and its
+*events* — the RF centre or isodelay instant, the echo instant, the gradients it intends — and the
+joint owner integrates what it needs over the interval it cares about. Moment analysis is an
+internal helper, not an interface every leaf must implement.
 
 ## 4. The correction that matters most — it is closed form
 
@@ -79,8 +85,22 @@ lobe's first moment from the RF isodelay point — to
 > (§10.4, p. 343, Eqs. 10.70–10.73)
 
 Target, neighbour's contribution, hardware limits in; lobe areas and widths out. **Algebra, not
-search.** The solver buys generality — arbitrary orders, eddy-current constraints, a minimum-TE
-search — not the canonical answer.
+search.**
+
+The correction has to be stated precisely, because it is easy to over-shoot:
+
+```text
+WRONG       Open4DFlow uses GrOpt, therefore SeqCraft needs a general solver layer
+CORRECT     the canonical cases do not justify introducing a general solver layer
+ALSO WRONG  coupled gradient design never needs an optimizer
+```
+
+The Handbook gives closed forms for the canonical constructions and **does not establish them for
+the general problem** — several moment orders at once, several semantic windows, a minimum-TE
+search, fixed waveform segments, non-zero endpoints, arbitrary pre-existing waveforms, or
+eddy-current, concomitant-field and PNS constraints. A numerical optimizer remains a legitimate
+*realization backend* there. What the evidence rules out is founding SeqCraft's public semantics
+on one.
 
 So the questions the earlier directive asked, answered:
 
@@ -102,17 +122,30 @@ express. §9.2.3, p. 290: appending the bipolar to an already-compensated imagin
 five lobes, and *"the resulting five lobes can be combined into three"*, which *"always reduces the
 minimum TE"*.
 
-Merging requires one abstraction to reshape lobes that `Excitation` or `CartesianLine` emit. **That
-is the same limitation C2 measured**, from the opposite direction:
+Merging means the efficient waveform spans territory currently split between `Excitation` or
+`CartesianLine` and the encoding. **That is the same limitation C2 measured**, from the opposite
+direction:
 
 ```text
 C2  the rewinder of repetition n and the prephaser of n+1 are one lobe    220 us / axis / TR
 C3  the encoding lobe and the compensated imaging lobe are one lobe       ~0.4-0.9 ms
 ```
 
-Two fine scans, two sequence families, neither looking for it, same cause: **the physical object
-spans what SeqCraft has made into separate modules.** A boundary-ownership problem, not a missing
-solver — which is a materially different thing to take into Phase E than what Phase B suggested.
+Two fine scans, two sequence families, neither looking for it, same cause:
+
+> **The most efficient physical waveform may span boundaries that SeqCraft currently assigns to
+> separate leaf/module instances.**
+
+Put that way rather than "one abstraction cannot own a waveform several leaves emit", because the
+preferred resolution is that those leaves never emit the contested pieces — a joint owner holds
+their coupled design **before events are materialised**, which keeps `Module → LogicBlock → tree →
+compiler` intact and adds nothing between the layers.
+
+The two cases are not identical, and Phase E should not merge them. C2's may be a case where two
+already-decided events could be fused with **no change of physical semantics** — a candidate for a
+compiler optimisation. C3's is not: its merged shape depends on VENC and a moment target, so it
+must be designed with the physics in view. Recovering C2's 220 µs by teaching the compiler about
+bSSFP would be the wrong fix.
 
 ## 6. v0
 
@@ -123,8 +156,10 @@ discovery-only, the physics was re-derived from the Handbook, and nothing was ad
 
 **Reasoned outside v0.** Three things, all in [`gap_note.md`](gap_note.md): one record holds one
 status and this candidate was two; the ownership model has no vocabulary for a kernel that
-*reshapes* its leaves rather than *placing* them; and the acceptance claim that matters here is a
-sum across several modules' events, which rules E and F, both per-module, do not reach.
+*jointly realizes* a waveform from its leaves' physical facts rather than merely *placing* them;
+and the acceptance claim that matters here is a sum across several modules' events, which rules E
+and F, both per-module, do not reach — and which the validator must integrate for itself rather
+than ask a module to report.
 
 ## 7. Did domain evidence change the outcome again?
 

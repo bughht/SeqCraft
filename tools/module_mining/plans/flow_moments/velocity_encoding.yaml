@@ -182,12 +182,22 @@ decision_summary: >
   express requirements before realisation.  The Handbook shows the canonical cases are algebra-
   the bipolar pair is two lobes of equal and opposite area, and even the harder
   velocity-compensated slice-selection case is the physically significant root of a quadratic.
-  The solver buys generality, not the canonical answer.
+
+  **The correction must not over-shoot.**  What the evidence establishes is that the canonical
+  cases do not justify introducing a general solver layer.  It does NOT establish that coupled
+  gradient design never needs an optimizer- the source gives closed forms for canonical
+  constructions and not for the general problem, where several moment orders, several semantic
+  windows, a minimum-TE search, fixed waveform segments, non-zero endpoints, arbitrary existing
+  waveforms, or eddy-current, concomitant-field and PNS constraints may combine.  A numerical
+  backend stays a legitimate REALIZATION strategy there; what it may not do is define SeqCraft's
+  public physical semantics.
 
   What is genuinely not expressible is narrower and is recorded in gap_note.md- the MERGED form,
-  where the encoding lobe and a compensated imaging lobe become one three-lobe waveform.  That
-  needs one module to reshape another's events, which is the same limitation C2 measured at 220 us
-  per repetition.  It is a boundary-ownership problem, not a missing solver.
+  where the encoding lobe and a compensated imaging lobe become one three-lobe waveform.  The most
+  efficient physical waveform spans a boundary SeqCraft currently assigns to separate modules,
+  which is the same limitation C2 measured at 220 us per repetition.  The resolution is a joint
+  owner holding the coupled design BEFORE events are materialised -- not one module editing
+  another's output.
 
 open_questions:
   - >
@@ -209,9 +219,10 @@ evidence_state:
   deferred:
     - what: The merged / minimum-TE waveform designs.
       why: >
-        Requires reshaping another module's lobes.  D1 defers the designs themselves to Bernstein
-        et al. (1992) and names three without a criterion for choosing; the choice is stated to
-        depend on magnitude-image reconstruction.
+        The efficient waveform spans two modules' territories, so it needs a joint owner that
+        holds the coupled design before events exist.  D1 defers the designs themselves to
+        Bernstein et al. (1992) and names three without a criterion for choosing; the choice is
+        stated to depend on magnitude-image reconstruction.
       revisit_trigger: >
         A kernel exists that owns a waveform currently split across leaves -- the same capability
         C2 needs.  See gap_note.md.

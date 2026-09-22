@@ -147,6 +147,15 @@ the two relevant cases in hand.
 missing capability — a requirement realised jointly with its surroundings — from opposite
 directions, and neither was looking for it.
 
+*Added after C3.* The two are not quite the same case, and Phase E should keep them apart. If
+these two lobes can be fused with **no change of physical semantics** — same integrated waveform,
+same RF and ADC timing, same requirements, merely a more efficient continuous representation —
+that is a candidate for a semantics-preserving optimisation in the **compiler**. C3's merged flow
+waveform is *not* of that kind: its shape depends on VENC and on a moment target, so it is
+physics-aware joint design and belongs to a joint owner in the **Module layer**. Which kind
+bSSFP's is has not been established, and the distinction matters more than the microseconds.
+**Recovering the 220 µs by teaching the compiler about bSSFP would be the wrong fix either way.**
+
 ## 9. v0
 
 **Handled well.** The ownership test did the whole boundary analysis: "can this state a correctness

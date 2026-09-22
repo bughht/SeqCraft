@@ -452,11 +452,24 @@ evidence_state:
       revisit_trigger: >
         C3 concludes.  Then either accept the cost and build the kernel, or build whatever C3
         shows is needed to avoid it.
-    - what: A balanced-requirement abstraction that spans the repetition boundary.
+    - what: >
+        Whatever removes the 220 us -- and C3 has narrowed what that is.
       why: >
-        Not expressible today, and it is the only thing that removes the 220 us.  Same missing
-        capability C3 is about, reached independently.
-      revisit_trigger: C3 concludes.  **Do not design it from this candidate alone.**
+        Two readings, and they lead to different layers.
+        (a) If the rewinder of repetition n and the prephaser of n+1 could be fused with NO change
+        of physical semantics -- same integrated waveform, same RF and ADC timing, same
+        requirements, merely a more efficient continuous representation -- then this is a
+        candidate for a semantics-preserving optimisation in the COMPILER, and no bSSFP physics
+        need go anywhere near it.
+        (b) If the efficient form requires choosing the waveform with the balance target in view,
+        it is physics-aware joint design and belongs to a joint owner in the MODULE layer, which
+        is where C3's merged flow waveform lands.
+        **Which of the two this is has not been established**, and the distinction matters more
+        than the microseconds- (a) is a compiler optimisation available to every sequence, (b) is
+        a new kind of kernel.
+      revisit_trigger: >
+        Phase E decides the ownership question.  **Do not recover the 220 us by teaching the
+        compiler about bSSFP** -- that would be (b) implemented as (a).
     - what: Banding, CISS and multi-acquisition phase cycling.
       why: >
         D1 places them above the repetition- two acquisitions separately reconstructed and

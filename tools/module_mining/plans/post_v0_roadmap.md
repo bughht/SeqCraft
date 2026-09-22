@@ -142,6 +142,26 @@ requirement be expressed at all). Diffusion is deliberately held back behind the
 The report also recommends one ordering change — a bounded Skill pass between C1/C2 and C3 — and
 says plainly why the stricter alternative is defensible. That is a decision to take, not one taken.
 
+## Phase C and E — **fine scans COMPLETE, synthesis READY FOR REVIEW** (2026-09-22)
+
+Three fine scans against frozen v0, four recommendations, **nothing implemented**:
+
+```text
+C1  T2 preparation      plans/t2prep/        NEW_LEAF        / APPROVED_FOR_IMPLEMENTATION
+C2  balanced SSFP       plans/bssfp/         NEW_KERNEL      / APPROVED_FOR_IMPLEMENTATION
+C3  velocity encoding   plans/flow_moments/  NEW_LEAF        / APPROVED_FOR_IMPLEMENTATION
+    flow compensation   plans/flow_moments/  EXTEND_EXISTING / APPROVED_FOR_IMPLEMENTATION
+```
+
+Domain literature became a distinct evidence class during C1 and changed the outcome of all three
+scans by three different mechanisms — supplying a family, correcting a contract three witnesses
+agreed on, and correcting an architectural inference. Cards in `../domain_evidence/`.
+
+The Phase E recommendation is [`phase_e_synthesis.md`](phase_e_synthesis.md). Its headline: the
+findings **refine the meaning of the Module layer** and require no change to `LogicBlock`, the
+compiler, or the `Module → LogicBlock → Tree → Compiler` architecture. C2's 220 µs stays
+undecided pending one ownership question the synthesis poses.
+
 ## PR decomposition
 
 The roadmap is one document; implementation stays reviewable.
