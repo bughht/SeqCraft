@@ -1,0 +1,236 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-22.
+# See ../../README.md for which copy to edit.
+# Flow compensation / gradient moment nulling -- C3, second of two records.
+#
+# The other half of the joint C3 scan.  It shares velocity encoding's requirement model and has a
+# DIFFERENT OWNER, which is why there are two records.  See findings.md.
+#
+#   python tools/module_mining/schema.py tools/module_mining/plans/flow_moments/flow_compensation.yaml
+
+id: flow-compensation
+name: gradient moment nulling   # NOT a module name -- see decision_summary
+
+capability:
+  family: encoding
+  summary: >
+    Making an imaging gradient waveform insensitive to motion, by arranging that its first moment
+    (velocity compensation) or higher moments are zero at the echo.  The domain source's own
+    definition is the finding- it is "the process of MODIFYING a gradient waveform", and the
+    modifications "can include changing the amplitude, duration, shape, or number of gradient
+    lobes that make up the waveform".
+  what_a_user_could_get_wrong: >
+    (1) Nulling m0 and believing m1 follows.  A 1,-1 pair nulls the zeroth moment and leaves the
+    first and second non-zero -- the image looks encoded correctly and still ghosts.
+    (2) Nulling the compensating lobe's own first moment while ignoring the moment the
+    slice-select lobe already accumulated from the RF isodelay point.  The waveform is then
+    self-consistent and the sequence is not compensated.
+    (3) Nulling to too high an order- D1 says it "will invariably become counterproductive"
+    because each order costs lobes, and therefore time.
+
+target:
+  layer: >
+    NOT a leaf.  See decision_summary -- the recommendation is EXTEND_EXISTING on the leaves whose
+    waveforms are being modified, with the cross-leaf case belonging to a kernel.
+  untouched:
+    - src/seqcraft/compiler
+    - src/seqcraft/design
+    - src/seqcraft/modules            # nothing modified by this scan; this is a recommendation
+
+evidence:
+  - id: D1
+    source: domain-reference
+    repo: n/a -- a book; see `citation` and `curated_card`
+    license: Copyrighted textbook.  CITED ONLY.
+    citation: >
+      Bernstein, King & Zhou, Handbook of MRI Pulse Sequences, Elsevier 2004.  Chapter 10
+      "Correction Gradients", section 10.4 "Gradient Moment Nulling" (M. A. Bernstein), book pages
+      331-348; read pages 331-333 and 343.  Also section 9.2 page 290 for how the two families
+      compose.
+    role: authoritative-external
+    evidence_class: domain-reference
+    independence: Not an implementation.
+    curated_card: tools/module_mining/domain_evidence/gradient_moments.md
+    what_it_establishes: >
+      **That this is a modification of an existing waveform, not an insertable block.**  GMN "is
+      the process of modifying a gradient waveform", changing "the amplitude, duration, shape, or
+      number of gradient lobes that make up the waveform".  Per-axis independence, in the same
+      words section 9.2 uses for flow encoding.  Canonical closed-form constructions- the binomial
+      family, with 1,-1 nulling m0 only and a third lobe in the 1,-2,1 pattern nulling m1; a
+      minimum of three lobes for a velocity-compensated readout, four for acceleration.
+      **And the decisive one-** the velocity-compensated slice-selection construction accounts
+      explicitly for `ms`, "the first moment of the slice-select lobe from the RF isodelay point",
+      gives `ms` in closed form, and reduces the design to "a quadratic equation for the unknown
+      lobe area" with an explicit physically significant root.  So the joint solve -- target
+      moment, moment already accumulated by a neighbour measured from a semantic instant, and
+      hardware limits -- is CLOSED FORM for the canonical case.
+      Also- once m0 = 0, m1 is independent of the chosen time origin.
+    what_it_does_not_establish: >
+      A general algorithm for arbitrary waveforms or arbitrary orders, eddy-current or
+      concomitant-field constraints as part of the moment solve, or a criterion for choosing the
+      nulling order beyond "the specifics of the application and the performance of the gradient
+      hardware".
+  - id: R1
+    source: open4dflow
+    repo: BAMMri/Open4DFlow
+    path: sequences/4Dflow.py
+    commit: 9e752d8
+    license: GPL-3.0
+    role: architecture-evidence
+    independence: One witness, DISCOVERY ONLY.  Physics and problem structure only; no text adapted.
+    what_it_establishes: >
+      That it computes the imaging gradients' own m0 and m1 analytically and then states the
+      residual requirement -- so even the solver-based implementation accounts for the neighbour's
+      contribution the way D1 does.  The solver handles the realisation, not the bookkeeping.
+    what_it_does_not_establish: That a solver is needed for the canonical cases.
+
+contract:
+  the_requirement:
+    form: >
+      On one axis, over an interval ending at a semantic instant (the echo), the n-th moment of
+      EVERYTHING that plays on that axis shall equal a target.
+      Flow compensation- target 0.  Velocity encoding- target set by venc.  **Same form, different
+      target** -- which is the question C3 was asked.
+    what_is_known_before_the_solve:
+      - the target moment and its order
+      - the hardware limits on that axis
+      - the time available
+      - the moments already accumulated by the neighbouring lobes, IF something can see them
+    what_depends_on_the_surrounding_sequence:
+      - >
+        `ms`, the first moment the slice-select lobe has already accumulated from the RF isodelay
+        point.  This is a property of the EXCITATION, not of the compensating waveform.
+      - >
+        the readout lobe's own moment to the echo, which is a property of the READOUT.
+      - the position of the echo, which is a kernel-level timing decision
+  origin_independence: >
+    Once m0 = 0 the first moment does not depend on the chosen time origin (D1 p. 343, citing
+    Simonetti 1991).  That is why a requirement can be stated without agreeing a clock, provided
+    the zeroth moment is already nulled -- a small but real simplification.
+
+ownership:
+  why_not_a_leaf: >
+    Because there is nothing for it to own.  The waveform it modifies belongs to `CartesianLine`,
+    `Excitation` or `PhaseEncode`, and a leaf may not rewrite another leaf's events.  D1's own
+    definition -- "modifying a gradient waveform" -- says the same thing.
+  where_it_belongs:
+    single_axis_self_contained: >
+      **EXTEND_EXISTING.**  A velocity-compensated readout waveform is three lobes instead of two,
+      and `CartesianLine` already owns its prephaser and readout lobe and can compute their
+      moments.  Adding a compensation option to the leaf that owns the waveform is the faithful
+      placement, and it is what D1 describes- the same waveform, reshaped.
+    cross_leaf: >
+      **KERNEL.**  The slice-selection case needs `ms` from the excitation, and the ownership
+      table reserves the kernel layer for "coupling between leaves that no leaf can see".  This is
+      that, exactly- one leaf's moment is an input to another's design.
+  what_the_candidate_would_output: >
+    **Events, for the canonical cases.**  Not moments, and not requirements.  And it emits them as
+    the outcome of a coupled design held BEFORE materialisation, rather than by editing events
+    another module has already produced.  The closed forms in
+    D1 turn (target, neighbour's moment, hardware limits) into lobe areas and widths directly.  A
+    requirement interface would be needed only for the general case- arbitrary orders, merged
+    minimum-TE designs, or added eddy-current constraints, which is what a solver is for and what
+    this candidate does not propose.
+
+acceptance:
+  defined_before_extraction: true
+  claim_scope: >
+    No module is proposed, so there is no acceptance claim for one.  What is recorded is the claim
+    that a future extension would have to establish.
+  establishes:
+    - >
+      The n-th moment of everything emitted on the axis, from the semantic origin to the echo,
+      equals the target -- measured on the emitted knots, summed across every event on that axis
+      rather than checked per event.  **That summing is the whole point and is what no per-event
+      check would catch.**
+    - >
+      The compensated waveform meets the same hardware limits as the uncompensated one, and its
+      cost in time is reported rather than hidden.
+    - >
+      Metamorphic- with the target set to zero and the neighbour's moment set to zero, the
+      construction reduces to the canonical binomial pattern.
+  does_not_establish:
+    - >
+      Artefact reduction in an image.  D1's own justification is ghosting and signal loss from
+      pulsatile flow, and that is a phantom-and-scanner claim.
+    - Any moment order above the one being nulled, which D1 warns is left non-zero.
+    - Eddy-current or concomitant-field behaviour.
+
+validation:
+  layers:
+    layer_1: NOT_APPLICABLE
+    layer_2: NOT_APPLICABLE
+    layer_3: NOT_APPLICABLE
+    layer_3_reason: >
+      NOT_APPLICABLE because no module is proposed.  Recorded for a future extension- the
+      measurable claim is the summed moment on the axis, which is Layer 1; the artefact claim
+      needs moving spins, which MRzeroCore can provide and which would be Layer 3.
+  planned: see acceptance.establishes, if an extension is approved
+
+coverage_classification: null
+
+status: EXTEND_EXISTING
+traffic_light: APPROVED_FOR_IMPLEMENTATION
+
+decision_summary: >
+  **Flow compensation is not a Module, and the domain source says so in its first sentence.**
+  Gradient moment nulling is "the process of modifying a gradient waveform", and the waveform it
+  modifies belongs to a leaf that already exists.  A separate insertable block is not the
+  abstraction; a reshaped readout, phase-encode or slice-selection waveform is.
+
+  So the recommendation is EXTEND_EXISTING- a compensation option on the leaf that owns the
+  waveform, for the self-contained single-axis cases, because that leaf can already compute its
+  own moments.  The cross-leaf case -- velocity-compensating a slice-selection waveform, which
+  needs the first moment the excitation already accumulated from the RF isodelay point -- is
+  kernel work by the ownership table's own definition.
+
+  **And it is closed form.**  D1 reduces that cross-leaf case to a quadratic with an explicit
+  root, given the neighbour's moment and the hardware limits.  So the requirement-before-
+  realisation machinery Phase B inferred from a solver-based implementation is not needed for the
+  canonical cases.  What IS needed is narrower- a way for one abstraction to own a waveform that
+  currently belongs to several leaves.  That is the same capability C2 needs, and it is recorded
+  in gap_note.md rather than designed here.
+
+open_questions:
+  - >
+    Which leaves should carry a compensation option, and should the option be an order (null
+    moments up to n) or a boolean?  D1 says the useful order "depends on the specifics of the
+    application and on the performance of the gradient hardware", which argues for an order.
+  - >
+    What must a leaf expose for a joint owner to do the algebra?  **Not a cached moment.**  A
+    moment is not an intrinsic property of a waveform -- it depends on the placement time, the
+    semantic origin, the endpoint and the order -- so a leaf publishing `m1` would be publishing
+    something that is only true for one choice of all four.
+    The faithful form is that a leaf exposes SEMANTIC FACTS and its own EVENTS -- the RF centre or
+    isodelay instant, the echo instant, the gradient events it intends -- and the joint owner
+    integrates what it needs, on demand, over the interval it cares about.  Moment analysis is an
+    internal helper, not an interface a leaf must implement.
+
+evidence_state:
+  human_review: NEEDED
+  experiment_design_review: DONE
+  scanner_validation: RECOMMENDED
+  note: >
+    Recommended rather than not-required, because the justification for this family in D1 is
+    artefact reduction in images of pulsatile flow.  A moment measurement establishes the
+    mechanism; it does not establish the benefit.
+  deferred:
+    - what: The merged velocity-encoding-plus-compensation waveform.
+      why: >
+        The efficient waveform spans what are currently two modules' territories, so it needs a
+        joint owner holding the coupled design before events are materialised.  See gap_note.md.
+      revisit_trigger: That capability exists, or a protocol needs the shorter TE badly enough.
+    - what: Orders above the first -- acceleration compensation and beyond.
+      why: >
+        D1- four lobes minimum instead of three, and nulling beyond some order "will invariably
+        become counterproductive".  One order at a time.
+      revisit_trigger: A protocol needs it.
+    - what: >
+        What a leaf must expose so that a joint owner can compute the moments it needs.
+      why: >
+        A moment depends on placement time, semantic origin, endpoint and order, so it is not a
+        property a leaf can cache and publish truthfully.  The candidate answer is that a leaf
+        exposes its semantic instants and its events, and the joint owner integrates.  Broadening
+        a leaf's interface for one consumer is the thing this workflow refuses elsewhere.
+      revisit_trigger: >
+        Several consumers repeatedly need the same semantic measurement, at which point a query
+        API can be evaluated on more than one case.

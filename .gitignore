@@ -116,3 +116,9 @@ examples/*/seq/
 # Shared across examples rather than one copy per folder: a phantom belongs to no single notebook,
 # and the second example to want one should find it already there.
 examples/data/
+
+# Machine-local resolution of domain-literature sources.  The workflow and the filename are
+# shared; each developer's absolute path is not.  Copy local_sources.example.json and fill it in.
+# The template is tracked, so it needs a negation against the repo-wide *.json rule above.
+tools/module_mining/local_sources.json
+!tools/module_mining/local_sources.example.json

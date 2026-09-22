@@ -86,6 +86,31 @@ _ROLES = frozenset({
     'supporting', 'architecture-evidence', 'deferred',
 })
 
+#: What KIND of evidence a reference is, which `role` does not say.  Every `role` value describes a
+#: reference's relationship to the OTHER references cited for a candidate, and all of them presume
+#: the reference is an implementation.  A handbook is none of them.
+#:
+#: Added in v1 after C1, C2 and C3, where domain literature changed the outcome three times by
+#: three different mechanisms -- it supplied a family one witness could not establish (T2Prep),
+#: corrected a contract three independent witnesses agreed on (bSSFP), and corrected an
+#: architectural inference drawn from the only witness there was (flow encoding).  The second is
+#: why this is not merely a thin-corpus fallback.
+#:
+#: **The number of executable repositories is not a vote on whether a physical abstraction
+#: exists.**  Code witnesses constrain implementation-specific claims; they do not determine the
+#: family.
+#:
+#: Optional: three pilots and six candidates ran without it, and a record that omits it is not
+#: worse for the families where every reference is code.
+_EVIDENCE_CLASSES = frozenset({
+    'domain-reference',   # handbook, authoritative review, classic paper -- canonical concepts,
+                          # semantic quantities, mature family boundaries
+    'design-witness',     # an external implementation -- corroborates a realisation, a timing
+                          # convention, a mode
+    'oracle',             # analytic calculation, simulation, independent measurement -- tests
+                          # whether OUR realisation produces the claimed physics
+})
+
 _LAYER_STATES = frozenset({'GREEN', 'YELLOW', 'RED', 'DEFERRED', 'NOT_APPLICABLE'})
 
 _DEFERRED = frozenset({'DEFERRED', 'NOT_APPLICABLE'})
@@ -141,8 +166,24 @@ def _check_evidence(record: dict[str, Any], errors: list[str], warnings: list[st
         if not isinstance(item, dict):
             errors.append(f'{where}: must be a mapping')
             continue
+        kind = item.get('evidence_class')
+        if kind is not None and kind not in _EVIDENCE_CLASSES:
+            listed = ', '.join(sorted(_EVIDENCE_CLASSES))
+            errors.append(f'{where}: evidence_class {kind!r} is not one of {listed}')
         if not item.get('repo'):
-            errors.append(f'{where}: repo is required')
+            # A domain reference is a book or a paper, so `repo` is a category error for it --
+            # but say so rather than silently exempting it, because "no repo" and "a book" are
+            # different situations and only one of them is fine.
+            if kind == 'domain-reference':
+                if not item.get('citation'):
+                    errors.append(f'{where}: a domain-reference needs a `citation`')
+                if not item.get('curated_card'):
+                    warnings.append(
+                        f'{where}: a domain-reference with no `curated_card` makes the next '
+                        f'reader re-read the source -- see tools/module_mining/domain_evidence/'
+                    )
+            else:
+                errors.append(f'{where}: repo is required')
         if not item.get('license'):
             warnings.append(f'{where}: no license recorded')
         role = item.get('role')

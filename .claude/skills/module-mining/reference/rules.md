@@ -1,4 +1,4 @@
-# The four rules, the failures behind them, and the compiler escalation
+# The rules, the failures behind them, and the compiler escalation
 
 Each rule is here because something passed every check that existed and was still wrong. The
 failure is kept with the rule, because a rule without its failure gets optimised away by the next
@@ -190,6 +190,57 @@ The padding is not a compiler error. It is the correct response to a tree that a
 So: after placement, check that every waveform's designed support **contains** the block it lands
 in, not merely that each event is individually legal. Budgets computed by subtracting nominal
 overheads are the usual way this is got wrong, because the true overhead includes the rounding.
+
+---
+
+## G. Composition-level claims are validated on the composition
+
+### The failure
+
+Not a historical one — this rule comes from a fine scan rather than from a defect, which is why it
+is stated narrowly.
+
+The flow-compensation candidate's central invariant is:
+
+```text
+the n-th moment of EVERY gradient on one axis,
+from a semantic origin to the echo,
+equals the target
+```
+
+`Excitation`, `PhaseEncode`, `CartesianLine` and the compensation all contribute. **Every one of
+them can be individually correct and the sum wrong**, and no module-local check can see it. Rules
+B, E and F are all module-local: inspect what *you* emit, measure on the lattice *you* emit,
+validate occupancy after *your* events are placed.
+
+### The rule
+
+> When the property a candidate claims is a property of several modules together, validate it on
+> the composition, not on the parts.
+
+And:
+
+> **The validator integrates; it does not ask.**
+
+A module reporting its own `M1` while the validator checks that number against the module's own
+target tests the module's arithmetic against itself. The derived quantity is computed from the
+emitted events by something that shares no code with the module — which is the same argument rule
+E makes about lattices, applied to quantities that span modules.
+
+### What this is not
+
+It is not a requirement that every candidate validate on a composition. Most claims are local and
+rules B, E and F reach them. This applies when the *claim* spans modules — and a candidate whose
+claim spans modules is usually a joint-realization kernel, which is the other thing the post-v0
+scans found.
+
+### A note on derived quantities
+
+A moment is not an intrinsic property of a gradient event: it depends on the placement time, the
+semantic origin, the integration endpoint and the order. So it is not something an event carries
+or a leaf publishes — it is computed on demand from events and their placements. Keep moment
+analysis an internal helper, and if it ever becomes a bottleneck, cache primitive integrals inside
+that helper rather than changing the event API.
 
 ---
 

@@ -49,7 +49,7 @@ operational layer over it and does not repeat it.
 | layer | owns |
 |---|---|
 | leaf (`rf/ preparation/ encoding/ readout/`) | intrinsic physics and geometry, determinable from its own parameters |
-| kernel | coupling **between** leaves that no leaf can see |
+| kernel | coupling **between** leaves that no leaf can see — see the two kinds below |
 | imaging | acquisition policy — how many, which order |
 | compiler | Pulseq legality, and nothing about any candidate |
 | validation tooling | measures claims; never defines physics |
@@ -62,6 +62,33 @@ The test that settles most disputes:
 Two corollaries that have each been needed: **reuse of semantics does not oblige reuse of an
 emitted event**, and a composite that merely sequences leaves in a fixed order is composition, not
 a kernel.
+
+### Two kinds of kernel
+
+Every kernel shipped so far **places**. Two post-v0 fine scans found the same second kind.
+
+```text
+PLACEMENT kernel          decides WHEN leaves happen.  Each leaf's waveform is its own and is
+                          handed through unchanged.  GRE2DTR, GRE3DTR, TSEShot.
+
+JOINT-REALIZATION kernel  takes physical facts and requirements from several leaves and designs
+                          the coupled waveform itself, because the most efficient physical
+                          waveform spans a boundary we assigned to separate leaves.
+```
+
+The bSSFP scan measured the cost of the boundary at **220 µs per axis per repetition**; the flow
+scan found a five-lobe construction that becomes three, with a shorter minimum TE. Both are the
+second kind.
+
+**A joint-realization kernel designs before materialisation.** It does not build child
+`LogicBlock`s, take them apart and rewrite their events. It holds the coupled physical design and
+emits the final events once — so it is still an ordinary Module whose `build()` returns a
+`LogicBlock`, and the tree and the compiler never learn anything unusual happened.
+
+> **Who owns coupled physical design is settled. The interface by which leaves supply
+> pre-materialisation physical information is not.** Whether that is events, semantic-timing
+> queries, physical requirements, some smaller combination, or nothing reusable at all is open,
+> and naming it before a second real consumer exists is how a framework gets built for one case.
 
 ## The rules a candidate must satisfy before promotion
 
@@ -99,6 +126,18 @@ one can extend a compiled block past another waveform's designed support, and th
 follows is the compiler obeying the tree. Budgets computed by subtracting nominal overheads miss
 the rounding.
 
+**G. Composition-level claims are validated on the composition.** When the property a candidate
+claims is a property of several modules together, a per-module check cannot see it. Rules B, E and
+F are all module-local; this is the one that is not.
+
+> The flow-compensation invariant is *the n-th moment of **every** gradient on one axis, from a
+> semantic origin to the echo, equals the target* — contributed to by `Excitation`, `PhaseEncode`,
+> `CartesianLine` and the compensation. Each part can be individually correct and the sum wrong.
+
+And the validator **integrates; it does not ask.** A module reporting its own `M1` while a
+validator checks that against the module's own target tests arithmetic, not physics. Derived
+quantities are computed from the emitted events, by something that shares no code with the module.
+
 **D. Shared-leaf dependency impact.** A candidate that changes an existing leaf maps
 `changed leaf -> direct consumers -> transitive consumers -> examples/notebooks`, and classifies
 each as `NO_BEHAVIOR_CHANGE`, `NEW_EARLY_REFUSAL_FOR_PREVIOUSLY_INVALID_INPUT`,
@@ -133,6 +172,38 @@ discovery       tells us a family exists and is worth looking at
 design-witness  an implementation whose construction can corroborate another's
 oracle          an independent measurement path, for validating rather than designing
 ```
+
+### Code is not the only evidence class
+
+`sources.yaml` is a corpus of implementations, and implementations are the wrong evidence for one
+question: *is this a mature, well-established physical abstraction?* A family can be textbook
+physics and appear in one of nine registered repositories.
+
+```text
+domain-reference   handbook / authoritative review / classic paper
+                   -> canonical concepts, terminology, semantic quantities, family boundaries
+design-witness     an external implementation
+                   -> corroborates a realisation, a timing convention, a mode
+oracle             analytic calculation / simulation / independent measurement
+                   -> tests whether OUR realisation produces the claimed physics
+```
+
+> **The number of executable repositories is not a vote on whether a physical abstraction exists.**
+> Code witnesses constrain implementation-specific claims; they do not determine the family.
+
+This is not a fallback for thin corpora. Of the three post-v0 fine scans it changed the outcome of
+all three, by three different mechanisms — it supplied a family one witness could not establish,
+**corrected a contract that three independent witnesses agreed on**, and corrected an
+architectural inference drawn from the only witness there was. The middle case is why it needs
+vocabulary rather than a note.
+
+Record it as `evidence[].evidence_class`, optional. A domain reference carries a `citation` and a
+`curated_card` instead of a `repo`. Cards live in `tools/module_mining/domain_evidence/`: one to
+two pages, provenance per claim, *establishes* and *does not establish* for every statement, and
+**no local paths** — see that directory's README. Escalate progressively: handbook or major review
+first, a classic paper only if a question is still open, application-specific papers only for a
+concrete unresolved one. **If a source is unavailable, report the gap — do not reconstruct it from
+general knowledge.**
 
 A corpus is never automatically a design-witness because it contains working sequences.
 `MRsources/MRzero-Core` is registered `discovery` + `oracle` with `design-witness` **excluded**:
@@ -201,6 +272,35 @@ RED - EXTRACTION_CHANGES_THE_PHYSICS
 
 A corpus containing no new Module is a correct answer. Reaching `NO_NEW_MODULE` early is cheaper
 than reaching `RED - WRAPPER_ONLY` after an extraction.
+
+## Realization: analytic first, optimizer as a fallback
+
+Some physical designs are a constrained waveform problem — a target moment at a semantic instant,
+under hardware limits, in the time available. Three questions stay separate, and answering one does
+not answer the others:
+
+```text
+WHAT must be true?    the physical requirement
+WHO owns it?          which abstraction holds the coupled design
+HOW is it realised?   a closed-form construction, or a numerical backend
+```
+
+The canonical cases are usually algebra. A velocity-compensated slice-selection waveform, which
+must absorb the moment the excitation already accumulated, is the root of a quadratic. **That one
+published implementation reaches for an optimizer does not mean the canonical case needs one** —
+and the converse over-correction is just as wrong: nothing here establishes that coupled gradient
+design *never* needs an optimizer. Several moment orders at once, several semantic windows, a
+minimum-TE search, fixed waveform segments, non-zero endpoints, eddy-current or PNS constraints —
+those are what a numerical backend is for.
+
+> **The physical problem definition belongs to SeqCraft. A realization backend does not define
+> SeqCraft's public semantics.**
+
+When one is first needed, write the smallest adapter for that concrete problem. Consider a formal
+backend protocol only after a *second, genuinely different* optimizer exists. And an optimizer is
+never the oracle: measure the moments, amplitude, slew, fixed regions and semantic timing
+independently, and distinguish *feasible under the requested constraints* from *globally minimum
+TE*, which is a much stronger claim.
 
 ## Compiler changes are exceptional
 

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "_comment": "Copy to local_sources.json and fill in the paths you have. That file is gitignored: the workflow and the filename are shared, the resolved path is not. Leave an entry empty or omit it if you do not have that source.",
+  "sources": {
+    "handbook_mri_pulse_sequences_2004": {
+      "citation": "Bernstein, M. A., King, K. F., Zhou, X. J. Handbook of MRI Pulse Sequences. Elsevier, 2004.",
+      "env_override": "SEQCRAFT_HANDBOOK_PDF",
+      "path": ""
+    }
+  }
+}
