@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased — the examples teach, the docstrings document, and the history lives elsewhere
+
+No behaviour changes, no API changes, no test changes. Every edited notebook's code cells and
+outputs are byte-identical; only markdown moved.
+
+**22 of 29 example notebooks edited**, three of them structurally. The rule, calibrated on
+`dwi_se_epi_2d/` and written down in `examples/README.md` → *Writing example notebooks*: an
+example is a tutorial and a runnable demonstration, and a reader should not need SeqCraft's
+implementation history to follow it.
+
+What came out: openings that defended an abstraction instead of introducing a sequence
+(`gre_3d/01`, `gre_radial_2d/01`, `se_spiral_2d/01` all opened on why some class does not exist);
+"the check this notebook exists for"; "a prediction that turned out to be wrong"; "the refusals,
+each shown once"; comparisons against what a reference repository omits; and
+*What this notebook established*, which read as a validation report rather than a summary.
+
+What stayed: the physics, the equations, the measured numbers, and the **intentionally wrong
+cases that teach MRI** — `se_spiral_2d/01`'s three echo placements that all compile,
+`megre_2d/01`'s uncentred lobe, `se_epi_2d/02`'s demonstration that a spin echo does **not** fix
+EPI distortion. Ownership statements stayed too, where they tell a caller how to compose:
+`SpiralReadout` reports where its trajectory crosses the origin, and the layer above decides which
+crossing the echo lands on.
+
+**Eight public module docstrings** rewritten from design record toward API documentation.
+`SaturationPrep` lost "why this is not `Excitation` with a different label", "`freq_ppm` was
+considered and rejected" and "only the first seat was taken", and kept every word about the signed
+chemical shift, the ppm → Hz conversion and pypulseq's 1.5 T `B0` default. `CartesianLine` kept the
+ramp-area arithmetic, the three wrong fly-back areas and the echo-time-versus-echo-spacing scale
+error, and lost the argument for why no sibling class exists. Also trimmed: `SpiralReadout`,
+`TSEShot`, `Refocusing`, `GRE3DTR`, `IRPrep`, `Excitation`.
+
+Private helpers and implementation comments are untouched: a maintainer-facing argument that stops
+a bug being reintroduced belongs next to the code.
+
+One factual finding, documented rather than changed: **`Excitation` does not check `opts.max_b1`
+and `Refocusing` does.** A 1 ms 90° sinc at TBW 4 reaches 130 % of a 20 µT limit — the same
+excess `Refocusing` refuses at 2 ms — and all a caller gets is pypulseq's own
+`system maximum RF amplitude exceeded` warning before the pulse is handed back. `Refocusing`'s
+docstring now says so.
+
 ## Unreleased — a b-value in, and the analyser that had to be corrected to prove it
 
 `DiffusionSEPrep` (`kernel/`): a diffusion-weighted spin echo. `b_s_per_mm2` in; the lobe width,

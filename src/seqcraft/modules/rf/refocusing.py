@@ -1,10 +1,10 @@
 r"""
 :class:`Refocusing` -- a 180 and its crusher pair, as one waveform symmetric about the pulse.
 
-``rf/`` because the pulse's ``use`` is ``'refocusing'``.  That is the folder's second membership
-value and until now it had no member; MRzero maps the same field onto its ``PulseUsage``, and
-pypulseq's ``calculate_kspacePP`` reads it to decide where to **conjugate k**.  Which is the whole
-reason this module is more than a wrapper around ``make_sinc_pulse``.
+The pulse's ``use`` is ``'refocusing'``, and that field is load-bearing rather than decorative:
+pypulseq's ``calculate_kspacePP`` reads it to decide where to **conjugate k**, and MRzero maps it
+onto its own ``PulseUsage``.  A 180 emitted without it is a 180 that no downstream tool knows is
+one.
 
 The one rule
 ------------
@@ -76,8 +76,12 @@ The B1 refusal, which lives here rather than in the compiler
 B1 scales with flip angle at a fixed shape, so a 180 needs exactly twice a 90's: measured, a 2 ms
 sinc 180 at TBW 4 asks **130 % of a 20 uT ``max_b1``** and 2.7 ms is the floor.  A 180 is where
 that first bites, so it is refused here, with the duration that fixes it.
-:class:`~seqcraft.modules.Excitation` has the same hole and it is deliberately not patched from
-here: widening a new module's change to fix an old one is how a one-module change becomes five.
+
+**:class:`~seqcraft.modules.Excitation` does not make this check.**  It can exceed ``max_b1`` too
+-- a 1 ms 90 at the same shape reaches the same 130 % -- but there pypulseq's own
+``system maximum RF amplitude exceeded`` warning is all that is raised, and the pulse is handed
+back.  Read the warnings, or measure ``max(abs(module.rf.signal))`` against ``opts.max_b1``
+directly -- both are in hertz.
 """
 
 from __future__ import annotations

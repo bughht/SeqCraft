@@ -1,12 +1,9 @@
 r"""
 :class:`GRE3DTR` -- one repetition of a 3D Cartesian gradient echo.
 
-A **sibling** of :class:`~seqcraft.modules.GRE2DTR`, not a wrapper around it and not a
-generalisation of it.  ``GRE2DTR`` has already decided its winder timing, its TE and TR, its
-rewinding and its spoiling; a 3D kernel that contained one would have to reach back inside those
-decisions to change the z axis, which is the reverse nesting this library avoids.  Nor is a
-slice-selective 2D acquisition the centre partition of a 3D slab.  Both compose the same leaves,
-independently.
+A **sibling** of :class:`~seqcraft.modules.GRE2DTR` rather than a wrapper around it: the two
+compose the same leaves independently, and a slice-selective 2D acquisition is not the centre
+partition of a 3D slab.
 
 The z axis is the whole reason this exists
 -------------------------------------------
@@ -17,9 +14,9 @@ On x and y a 3D repetition is a 2D one.  On z it is not, and there are two cases
 z axis carries a partition encode and nothing else.
 
 **Slab-selective excitation.**  Now two moments land on one axis inside one window: the rephasing
-the slab selection implies, and the partition encoding.  Played in sequence they cost two windows
-of echo time -- ``fmrifrey/lps`` does exactly that, and its own ``te_min`` pays for both.  Played
-as one gradient they cost one.
+the slab selection implies, and the partition encoding.  Played one after the other they cost two
+windows of echo time; added together and played as a single gradient they cost one, which is what
+this module does.
 
 So this module solves
 

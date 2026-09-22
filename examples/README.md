@@ -10,11 +10,11 @@
 | [`fse_2d/`](fse_2d/) | The same composition at 1, 16 and 72 echoes — TSE and HASTE — and what an echo train costs in blurring, ghosting and signal. Defines `FSE2D` in its own notebook. |
 | [`gre_epi_2d/`](gre_epi_2d/) | The whole of k-space in one shot: the centred sampling window, the blip on the zero crossing, ramp sampling and the operator that undoes it, off-resonance and the N/2 ghost, and GRAPPA. Where `EPI2D` came from. Defines `GREEPI2D` in its own notebook. |
 | [`se_epi_2d/`](se_epi_2d/) | The same readout after a refocusing pulse — and the measurement that a spin echo **does not** fix EPI distortion. Defines `SEEPI2D` in its own notebook. |
-| [`megre_2d/`](megre_2d/) | Eight echoes off one excitation, monopolar and bipolar, fitted for T2\* and ΔB0 against a phantom that carries the ground truth for both. **Defines no class**, which no other directory here can say. |
-| [`gre_radial_2d/`](gre_radial_2d/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. **Deliberately defines no class**, because the schedule is the only thing a `RadialGRE` would add. Its `02` is the introduction to non-Cartesian reconstruction. |
+| [`megre_2d/`](megre_2d/) | Eight echoes off one excitation, monopolar and bipolar, fitted for T2\* and ΔB0 against a phantom that carries the ground truth for both — the one directory here whose output is a *map* rather than an image. |
+| [`gre_radial_2d/`](gre_radial_2d/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. Its `02` is the introduction to non-Cartesian reconstruction. |
 | [`fat_sat/`](fat_sat/) | A spectrally selective saturation and the spoiler that destroys what it made — the chemical-shift sign traced from ppm to the emitted `freq_offset`, and the same protocol across four field strengths. Where `SaturationPrep` came from. |
-| [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. Then what a 21.7 ms readout pays in off-resonance. **Defines no class.** |
-| [`se_spiral_2d/`](se_spiral_2d/) | A refocusing pulse in front of a spiral, and the one question that raises: **which instant is the echo aligned to.** Three wrong placements that all compile, and then what refocusing is actually worth. **Defines no class.** |
+| [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. Then what a 21.7 ms readout pays in off-resonance. |
+| [`se_spiral_2d/`](se_spiral_2d/) | A spin echo in front of a spiral, and the alignment it needs: the trajectory's origin crossing has to land on the physical echo. Three placements that all compile and only one of which is right, and then what refocusing is actually worth. |
 | [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | Diffusion-weighted imaging: a Stejskal–Tanner gradient pair around a 180°, a single-shot EPI readout, and an ADC map recovered from a phantom whose diffusion coefficient is known. Where `DiffusionSEPrep` and `sc.b_value` came from. |
 
 ## `gre_2d/`
@@ -57,9 +57,8 @@ cannot drift silently.
 | [`gre_3d/01_build.ipynb`](gre_3d/01_build.ipynb) | A complete 3D acquisition out of `sc.modules.GRE3DTR` and **two `for` loops** — non-selective and slab-selective, the signed `kz` coupling printed partition by partition, and TE measured constant across the volume. **Needs nothing but `seqcraft`.** |
 | [`gre_3d/02_simulate_and_reconstruct.ipynb`](gre_3d/02_simulate_and_reconstruct.ipynb) | The volume, reconstructed with a 3D FFT and shown in three planes — which is where a reversed `kz` or a `ky`/`kz` swap stops being a number. Also compares the kernel's **combined** z winder against a **sequential** slab-rephase-then-encode arrangement: same image to 0.0014 of the peak, 100 µs less TE per repetition. **Needs `seqcraft[sim]`**; runs in about a minute. |
 
-**There is deliberately no `GRE3D` imaging class**, and `01` is part of the argument: if a complete
-3D acquisition is a kernel plus the ordering you would have written anyway, an imaging module
-would wrap the ordering rather than own any physics.
+A complete 3D acquisition is `GRE3DTR` plus two loops, and `01` writes the loops out so that the
+ordering stays the caller's.
 
 The four `.seq` files under `gre_3d/seq/` are **two pairs answering two questions**, not four
 sequence variants:
@@ -201,9 +200,8 @@ the ppm constant and the other applying it at the point of use, so an implementa
 the conventions would be exactly this wrong. That is why the module owns the conversion and why
 the notebook reads the answer off the *compiled sequence* rather than off the constructor.
 
-CEST saturation trains, spatial saturation slabs and water excitation are deliberately absent.
-Each would need its own evidence that it shares a physical solve with this one, and "prepare, then
-spoil" is a waveform silhouette rather than a shared solve. `01` is in
+CEST saturation trains, spatial saturation slabs and water excitation are out of scope: each is a
+different physical contract rather than a mode of this one. `01` is in
 [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
 
 ## `gre_spiral_2d/`
@@ -225,9 +223,8 @@ from two numbers each module reports about itself, and then checks the result ag
 with either module. TE comes out identical across all eight interleaves **to 0.000 ns**, and
 matches the reported value exactly.
 
-**Defines no class.** Strip the angle list out of a spiral GRE and what remains is a spoiled
-gradient echo whose readout happens to be a spiral — so a `GRESpiral2D` would own the schedule and
-no physics, which is the same argument that declined `RadialGRETR` and `GRE3D`.
+A spiral GRE is one arm, an excitation and a list of angles, so `01` writes those three lines out
+rather than wrapping them.
 
 [`02_simulate_and_reconstruct.ipynb`](gre_spiral_2d/02_simulate_and_reconstruct.ipynb) is **the
 off-resonance notebook**, and it reuses `noncartesian_recon.py` with no additions. `01` writes a
@@ -261,14 +258,11 @@ at the echo refocuses the magnetisation at $k_{\max}$, 32 Δk out. "The echo is 
 the readout" is correct for `'in-out'` and wrong for the other three variants — worst for
 `'out-in'`, whose midpoint falls *between* its two crossings.
 
-**Defines no class**, for the third time in a row: strip out the placement arithmetic and the
-angle list and nothing is left that owns physics.
+The composition is the placement arithmetic and an angle list, both written out in `01`.
 
-This directory found the defect recorded in
-[`tools/module_mining/plans/spiral/findings.md`](../tools/module_mining/plans/spiral/findings.md)
-§10 — `time_to_echo` documented as block-relative and implemented arm-relative, invisible for
-`variant='out'` and 300 µs wrong for `'in-out'`. It was fixed with a regression before this
-notebook was written, not worked around in it.
+`SpiralReadout.time_to_echo` is measured from the start of the block `build()` returns, not from
+the start of the arm — the prephaser sits between them, and for this readout that is 300 µs.
+Measuring from the wrong one is the first of `01`'s three placements.
 
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
 
@@ -347,8 +341,8 @@ EPI distortion, and it does not.
 mismatched echo time that contaminates an ADC, a readout aligned to the wrong instant. Replaying a
 historical *software* bug because it was instructive during development does not.
 
-> `dwi_se_epi_2d/` is the pilot for these rules. The rest of this directory predates them and is
-> being brought across in a separate editorial pass.
+> `dwi_se_epi_2d/` was the pilot for these rules and the rest of this directory has since been
+> brought across. New examples are expected to follow them from the start.
 
 ## Requirements
 

@@ -1,10 +1,13 @@
 """
 :class:`CartesianLine` -- prephaser, readout gradient and ADC designed as one thing.
 
-``readout/`` because it contains an ADC.  The line index is deliberately *not* an argument: a
-Cartesian line is identical every TR, and which line of k-space it lands on is the phase
-encoding's business.  What is this module's business is where the echo falls inside it, which
-nothing can measure from the tree -- a block knows times, not meanings.
+One line of k-space: a prephaser that moves `k` to the start of the line, a readout gradient that
+traverses it, and an ADC that samples while it does.
+
+The **line index is not an argument**.  A Cartesian line is identical every TR, and which line of
+k-space it lands on is set by the phase encoding on another axis.  What this module does own is
+where the echo falls inside the readout, which nothing downstream can recover -- a block of events
+knows times, not meanings.
 
 The one piece of arithmetic worth reading twice
 -----------------------------------------------
@@ -38,33 +41,25 @@ closed form stops holding: **ramp sampling**, where the ADC opens during the ram
 echo**, where the echo is not at the centre of the readout.  Hand-deriving each of those
 separately is how the ramp gets dropped from one of them.
 
-The prephaser is an argument rather than a second module
---------------------------------------------------------
-``prephase=False`` drops the prephaser event and nothing else, which is what a **spin-echo** readout
-needs.  In a CPMG train the readout's dephasing is not cancelled by an event of its own: it is half
+``prephase=False``, for a spin-echo readout
+-------------------------------------------
+Dropping the prephaser event and changing nothing else is what a **spin-echo** readout needs.  In a CPMG train the readout's dephasing is not cancelled by an event of its own: it is half
 of a pair that straddles a *refocusing pulse*, and the refocusing pulse's conjugation does the
 cancelling.  So there is no prephaser to design -- but everything else here is identical, down to
 the last microsecond: the dwell resolution and its raster snap, ``num_samples`` and
 ``pre_echo_samples`` from `partial_fourier`, the amplitude ``dk / dwell``, the flat top rounded onto
-the gradient raster, the ADC-dead-time overrun fix, and the exact pre-echo area.  A sibling module
-would have been a second copy of all of that, kept in step by hand, so that the two could come to
-disagree about a dwell time.
+the gradient raster, the ADC-dead-time overrun fix, and the exact pre-echo area.
 
-:attr:`~CartesianLine.area_to_echo_per_m` is the other half of the argument.  It is the *physics*
-number -- what the readout accumulates by the echo -- rather than the *event's* number, so it is
-what a prephaser cancels when there is one and what a symmetric crusher pair is balanced around when
-there is not.  Exposing it is what lets one module serve both.
+:attr:`~CartesianLine.area_to_echo_per_m` is what makes that work.  It is the *physics* number --
+what the readout accumulates by the echo -- rather than the *event's* number, so it is what a
+prephaser cancels when there is one, and what a symmetric crusher pair is balanced around when
+there is not.
 
-The echo train is two more arguments, and for the same reason
---------------------------------------------------------------
-`echoes` and `polarity` read the line more than once after one excitation.  That is a multi-echo
-gradient echo, and it is **not a second module**, because a ``MultiEchoLine`` sibling would be a
-second copy of every bullet in the paragraph above plus ``prephase=False``, ``acquire=False``,
-``phase_deg`` and ``offset_mm``.  What differs is how many times the lobe is played and whether
-every other one is upside down -- two arguments' worth, and both of them facts about the *train*
-rather than about the line.  The name stays :class:`CartesianLine`: it is still one line of
-k-space, read more than once, which is exactly why ``ECO`` varies across the block and ``LIN``
-does not.
+``echoes`` and ``polarity``, for a multi-echo train
+---------------------------------------------------
+Reading the same line more than once after one excitation is a multi-echo gradient echo.  It is
+still one line of k-space, read repeatedly, which is why ``ECO`` varies across the block and
+``LIN`` does not.
 
 Three things change with a second echo, and each of them is a place where the obvious
 implementation is wrong in a way that compiles, passes every k-space extent check, and produces a
@@ -97,29 +92,16 @@ exposes.  Measured at the reference protocol: the lobe's total area is **585.664
 ``area_to_echo_per_m`` is **294.638695 1/m** -- the same order of magnitude, roughly a factor of
 two apart, and each echo would start half a k-space further along than the last.
 
-**3.  The block structure is stated rather than left to a preference.**  ``'bipolar'`` puts one
-:func:`~seqcraft.barrier` at each seam and ``'monopolar'`` two, at the fly-back's start and at its
-end -- one per gradient edge, which is what keeps a block to one gradient per axis.
+**3.  The block structure is stated rather than inferred.**  A Pulseq block holds at most one
+gradient per axis and one ADC, so a boundary has to fall somewhere between consecutive echoes.
+``'bipolar'`` puts one :func:`~seqcraft.barrier` at each seam and ``'monopolar'`` two, at the
+fly-back's start and at its end -- one per gradient edge.
 
-**Measured, and worth stating because the obvious claim about them is false:** against this
-compiler the barriers change *nothing*.  Building the same 8-echo train with two barriers, one,
-and none produces the identical 16 blocks (monopolar) or 9 (bipolar), every gradient a ``trap``,
-and no ``merge`` warning, at 250, 500 and 1000 Hz/px.  The reason is
-:func:`~seqcraft.compiler.boundaries.find_boundaries`'s *opportunistic* rule: every gradient edge
-is already a boundary candidate, accepted whenever it falls strictly inside no gradient and no
-indivisible span -- and in this design every seam is exactly such an edge, because the lobe ends
-where the fly-back starts and the fly-back ends where the next lobe starts, with nothing
-overlapping either join.
-
-That is precisely the difference from :class:`~seqcraft.modules.EPI2D`, where the blip is
-**centred on the seam** and so covers it: there the seam is not an acceptable candidate, the
-compiler falls back to the midpoint of the mandatory gap between consecutive ADCs, and that
-midpoint lands inside the readout lobe.  The barriers stay here anyway, and the reason is not
-superstition: that opportunistic rule is documented as *a preference, not a requirement*, and one
-``sc.barrier`` per gradient edge turns this train's block structure into a property of the design
-rather than a consequence of a preference.  They cost nothing -- the emitted file is byte-identical
-with and without -- and ``tests/modules/test_cartesian_line.py`` asserts that rather than asserting
-the claim this paragraph replaced.
+For this train those barriers are free: the emitted file is byte-identical with and without them,
+because every seam here is already a boundary the compiler would choose.  They are stated anyway,
+so that the block structure is a property of the design rather than of a compiler preference.  A
+readout whose seam is *covered* -- :class:`~seqcraft.modules.EPI2D`, whose blip straddles it --
+has no such luck, and there the boundary falls inside the readout lobe unless it is stated.
 
 And the fourth thing, which is a fact about the caller rather than about the waveform:
 **the echo times are not the echo spacing**.  ``k = 0`` is a *sample*, not an instant, and it sits

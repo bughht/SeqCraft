@@ -14,14 +14,13 @@ can be laid end to end with no connector, because both are at :math:`g = 0` wher
 four variants are then a choice of *how many arms and in which order*, not four implementations
 behind a string flag.
 
-The independent reference -- ``pulseq/pulseq``'s ``writeSpiral.m`` -- does the opposite: it ends
-its spiral-out at full gradient and ramps down inside the spoiler.  That is coherent for a family
-of one, and it is why that reference has **no spiral-in**: an arm ending at full gradient
-time-reverses into one starting there, which no block can begin with.
+The alternative -- ending the arm at full gradient and ramping down inside whatever follows -- is
+shorter, but it admits only one direction of travel: an arm that ends at full gradient
+time-reverses into one that *starts* there, which no block can begin with.  So a family with
+``'in'`` in it has to brake.
 
-**What the policy costs, measured** (``tools/module_mining/candidates/spiral/run_endpoint_cost.py``,
-seven protocols across two hardware regimes): 0.097--0.137 ms, which is 0.20--0.78 % of readout
-duration.  The penalty is a *braking distance* and so is fixed in absolute terms -- it shrinks as
+**What braking costs, measured** over seven protocols and two hardware regimes: 0.097--0.137 ms,
+which is 0.20--0.78 % of readout duration.  The penalty is a *braking distance* and so is fixed in absolute terms -- it shrinks as
 readouts lengthen, and its worst case is the shortest readout.  k-space extent is identical and
 peak gradient is unchanged or lower, because braking happens where a spiral is fastest.
 
@@ -54,13 +53,12 @@ where and when the trajectory passes through :math:`k = 0`; the kernel above it 
 physical echo is aligned with the intended crossing.  A readout that claimed to own TE would hide
 exactly that error.
 
-What is deliberately not here
------------------------------
-``echoes > 1`` refuses, naming the contract: multi-echo is the last step of the recorded
-implementation order and needs the transition rules -- a fly-back for one-arm variants, continuous
-traversal for two-arm ones -- which nothing yet exercises.  ``'out-in'`` already produces two
-crossings and a derived spacing at ``echoes=1``, so the plural machinery is exercised, not merely
-declared.
+Out of scope
+------------
+``echoes > 1`` refuses.  A multi-echo spiral needs transition rules between arms -- a fly-back for
+the one-arm variants, continuous traversal for the two-arm ones -- and those are not implemented.
+The reporting side is ready for it: ``'out-in'`` already produces two crossings and a derived
+spacing at ``echoes=1``.
 
 No 3D, no anisotropic field of view, no shipped density presets, and no ordering tables:
 ``density`` is data and ``angle_rad`` is an argument.

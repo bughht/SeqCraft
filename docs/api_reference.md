@@ -291,10 +291,8 @@ assert PhaseEncode(opts=opts, fov_m=0.22, matrix=64,
 never sees the second call, so a module that mutates itself hands it a perfectly legal tree every
 time. The three-line check is in [`writing_a_module.md`](writing_a_module.md).
 
-Three things `Module` deliberately does not do: declare a `duration` (the block measures itself),
-check units, or scrape `__dict__` for provenance. Each was a real feature; none is needed by *every*
-module, and a base class carrying what only some subclasses need is how a small idea becomes a
-framework.
+Three things `Module` does **not** do, so do not look for them: declare a `duration` — the block
+measures itself — check units, or scrape `__dict__` for provenance.
 
 `_finalize(block)` is the private hook `__call__` runs: it type-checks and names. Tests call it
 directly; nothing else should.
@@ -1040,10 +1038,10 @@ several distinct physics share one `use` here, so the name carries both parts. I
 real collision — a diffusion *preparation* and a diffusion *encoding* are different modules in
 different folders, and without the suffix both would be `Diffusion`.
 
-**Nothing here was designed in the abstract.** Every module was extracted from
-[`examples/gre_2d/01_build.ipynb`](../examples/gre_2d/README.md), which builds the same sequence
-out of raw pypulseq beside it — so a module that cannot be extracted without altering the sequence
-is not a module, and one whose extraction does not shorten the notebook is a wrapper.
+Every module here was extracted from a working example rather than designed in the abstract.
+[`examples/gre_2d/01_build.ipynb`](../examples/gre_2d/01_build.ipynb) builds the same sequence
+three ways — raw pypulseq, the leaves composed inline, and the composition as a module — which is
+the shortest route to seeing what each one is for.
 
 ## What each one knows that a block cannot
 

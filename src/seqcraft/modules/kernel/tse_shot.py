@@ -1,17 +1,15 @@
 r"""
 :class:`TSEShot` -- one excitation and its train of refocused Cartesian readouts.
 
-``kernel/`` for the reason :class:`~seqcraft.modules.GRE2DTR` is: it is the repeating acquisition
-unit, it contains an imaging readout, and the thing above it decides how many of them to run and
-what each one samples.  A shot rather than a single echo, because the excitation cannot be
-separated from the train without losing arithmetic -- the first interval's length, the initial
-dephaser's area *and* its placement, and the shift that keeps the echo at the midpoint all couple
-the excitation's effective centre to the first refocusing centre.
+One **shot** rather than one echo, because the excitation cannot be separated from the train
+without losing arithmetic: the first interval's length, the initial dephaser's area *and* its
+placement, and the shift that keeps the echo at the midpoint all couple the excitation's effective
+centre to the first refocusing centre.  The layer above decides how many shots to run and what
+each one samples.
 
-What this module owns, and why it rather than a leaf
-----------------------------------------------------
-A leaf owns intrinsic physics; a kernel owns the **coupling between leaves**.  The test is which
-layer has enough information to determine the correct value:
+What this module owns
+---------------------
+The **coupling between leaves** -- the values no single leaf has enough information to determine:
 
 * :class:`~seqcraft.modules.CartesianLine` knows how asymmetric it is about its own echo
   (:attr:`~seqcraft.modules.CartesianLine.echo_moment_imbalance_per_m`) but not what window it
@@ -32,8 +30,8 @@ two examples.
 
 The three invariants a train has to hold
 ----------------------------------------
-Measured rather than argued; ``tools/module_mining/`` compares all three against the official
-PyPulseq and Pulseq MATLAB TSE demos.
+All three are properties of the emitted waveform, so they can be checked on a compiled sequence
+rather than taken on trust.
 
 1. **k is exact at every echo.**  A refocusing pulse conjugates k, so the gradient area between
    one echo and the next pulse's effective centre must equal the area between that centre and the
