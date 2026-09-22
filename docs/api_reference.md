@@ -49,7 +49,7 @@ assert round(m['x']) == 258      # 256 of flat area, plus what the two ramps con
 | **design** | `logic` `module` `events` `timing` `units` | say what you mean |
 | **scanner** | `opts` `hardware` | say what the machine can do |
 | **compiler** | `compile()` | turn meaning into legal pulseq blocks |
-| **analysis** | `sample` `moments` `kspace` `pns` | measure a tree |
+| **analysis** | `sample` `moments` `kspace` `pns` `b_value` | measure a tree |
 | **display** | `plot_block` | look at a tree |
 
 **The central contract.** `sc.compile(tree, opts)` returns a `pypulseq.Sequence` and nothing else.
@@ -70,7 +70,7 @@ Everything reachable as `sc.<name>`. This is the whole of what `__init__.py` re-
 | `timing`, `Raster` | module, class | [1.5](#15-designtiming--exact-time-arithmetic) |
 | `units`, `convert` | module, function | [1.6](#16-designunits--one-conversion-function) |
 | `scanner`, `opts`, `hardware` | module | [2](#2-scanner--what-you-build-against) |
-| `analysis`, `sample`, `moments`, `kspace`, `pns` | module, function | [4](#4-analysis--measuring-a-tree) |
+| `analysis`, `sample`, `moments`, `kspace`, `pns`, `b_value` | module, function | [4](#4-analysis--measuring-a-tree) |
 | `display`, `plot_block` | module, function | [5](#5-display--looking-at-a-tree) |
 | `SeqCraftError`, `ConfigurationError`, `MissingExtraError` | exception | [6](#6-errors--the-exception-hierarchy) |
 | `CompileError`, `HardwareLimitError`, `DefinitionConflict` | exception | [6](#6-errors--the-exception-hierarchy) |
@@ -927,7 +927,36 @@ the wrong thing to own.
 
 > **Never used to clear a human scan with a synthetic model.** See §2.3.
 
-## 4.5 Which function is exact, and which is not
+## 4.5 `b_value(tree, opts, *, end_s=None) -> dict[str, float]`
+
+The diffusion `b`-value per axis, in s/mm², from `(2π)² ∫ k(t)·k(t) dt` over the **emitted**
+gradients. Bernstein, King & Zhou §9.1, Eqs. 9.5–9.7.
+
+```python
+g = pp.make_trapezoid('x', amplitude=25e-3 * 42.576e6, rise_time=200e-6,
+                      flat_time=10e-3, system=opts)
+b = sc.b_value(sc.LogicBlock('mono').add(0.0, g), opts)
+assert set(b) == {'x', 'total'}
+assert round(b['total'], 1) == 16.3
+```
+
+Three things about it are the whole design:
+
+| | |
+|---|---|
+| **it measures the tree, not a module** | `b` is a property of *every* gradient on the axis — slice lobes, crushers and readout prephasers all contribute, so a "b = 0" acquisition is not b = 0 |
+| **the origin is the excitation** | integration runs from the first `use='excitation'` pulse's centre, with `k` measured from its value there, because that is when transverse magnetisation exists |
+| **refocusing pulses conjugate `k`** | every `use='refocusing'` pulse, at its own effective centre — `event.delay` **plus** `pp.calc_rf_center` — which is what makes a spin-echo pair with the same polarity integrate to a large `b` |
+
+`end_s` bounds the integration; for a spin echo the physically meaningful endpoint is the echo,
+and integrating past it reports a number no experiment measures.
+
+> **The last two rows were both wrong in the first version**, and neither was visible on the
+> diffusion axis, where `k` is zero before the encoding and flat across the refocusing block. A
+> Bloch simulation found them — see
+> [`examples/dwi_se_epi_2d/02`](../examples/dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb).
+
+## 4.6 Which function is exact, and which is not
 
 The single most important thing to get right in this module:
 
@@ -937,6 +966,7 @@ The single most important thing to get right in this module:
 | `moments` | `knots_of` + `pwl_moment` over `flatten(tree)` | **Yes** — never routed through `sample` |
 | `kspace` | compiled, then `calculate_kspacePP()` | **Yes**, at true ADC sample times |
 | `pns` | compiled, then `calculate_pns()` | pypulseq's validated SAFE model |
+| `b_value` | `sample`, then the running integral on the raster | **No** — a trapezoid sum, ~0.1 % against a Bloch simulation |
 
 `moments` looks like it could be built on `sample` now that they sit together. It must not be — and
 the reason is subtler than "sampling is lossy". Linear interpolation errs **antisymmetrically** about
@@ -992,6 +1022,7 @@ Re-exported **flat**, so no import path names a folder:
 | `GRE3DTR` | one repetition of a 3D Cartesian gradient echo — a sibling of `GRE2DTR`, owning the z axis where a slab's rephasing and a partition's encoding become one gradient |
 | `TSEShot` | one excitation and its train of refocused Cartesian readouts — the crusher window three axes share, and the moment balance around every refocusing pulse |
 | `FSE2D` | the complete turbo-spin-echo scan: shots, and which lines each one acquires |
+| `DiffusionSEPrep` | a diffusion-weighted spin echo: the excitation, the refocusing pulse, and two equal same-polarity lobes either side of it. `b_s_per_mm2` in; the lobe width, the amplitude and the echo time out |
 
 The folders behind that table are taxonomy, and each has a rule: `rf/` is `rf.use` in
 {excitation, refocusing}, `preparation/` is the rest of `rf.use` — everything played before the
@@ -1001,7 +1032,9 @@ not an `sc.Module` subclass. `tests/modules/test_layout.py` asserts all of it, i
 nothing in `preparation/` emits an excitation or a refocusing.
 
 Classes in `preparation/` end in `Prep` — `IRPrep`, `SaturationPrep`, and after them `T2Prep`,
-`MTPrep`, `CESTPrep`.
+`MTPrep`, `CESTPrep`. `DiffusionSEPrep` carries the suffix for the same reason and lives in
+`kernel/` anyway, because it owns an excitation and a refocusing pulse as well as its own
+gradients, and the folder rule is about what a class composes rather than what it is for.
 The rule is that a class is named after its role: for `rf/` the `use` value *is* the role, while
 several distinct physics share one `use` here, so the name carries both parts. It also resolves a
 real collision — a diffusion *preparation* and a diffusion *encoding* are different modules in
@@ -1708,6 +1741,7 @@ at import.
 | `ConfigurationError` | `errors` | exception |
 | `ContractViolation` | `compiler.verification` | class |
 | `DefinitionConflict` | `compiler.errors` | exception |
+| `DiffusionSEPrep` | `modules` | class |
 | `EPI2D` | `modules` | class |
 | `EPS` | `design.timing` | constant |
 | `EXCLUSIVE_KINDS` | `compiler.model` | constant |
@@ -1748,6 +1782,7 @@ at import.
 | `UNSUPPORTED_KINDS` | `compiler.placement` | constant |
 | `UnknownFieldError` | `scanner.opts` | exception |
 | `axis_gradient` | `compiler.legalization` | function |
+| `b_value` | `analysis` | function |
 | `barrier` | `design.logic` | function |
 | `check_event_sizes` | `compiler.verification` | function |
 | `check_exclusive` | `compiler.boundaries` | function |

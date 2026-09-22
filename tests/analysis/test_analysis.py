@@ -194,3 +194,63 @@ def test_the_synthetic_hardware_says_it_is_not_a_real_scanner() -> None:
     assert hw.is_synthetic is True
     assert 'NOT a real scanner' in repr(hw)
     assert 'human scan' in repr(hw)
+
+
+# ------------------------------------------------------------------------------------ b_value
+def _spin_echo(opts, te_s: float):
+    """A bare slice-selective spin echo: excitation, refocusing, nothing else."""
+    exc = sc.modules.Excitation(opts=opts, thickness_mm=4.0, flip_deg=90.0)
+    refoc = sc.modules.Refocusing(opts=opts, thickness_mm=4.0)
+    raster = sc.Raster(opts.grad_raster_time)
+    start = float(raster.ceil(exc.time_to_center() + te_s / 2.0 - refoc.time_to_center()))
+    tree = sc.LogicBlock('se').add(0.0, exc()).add(start, refoc())
+    return tree, float(raster.nearest(exc.time_to_center() + te_s))
+
+
+@pytest.mark.parametrize('te_s', [0.030, 0.060, 0.090])
+def test_b_value_does_not_grow_with_dead_time(opts, te_s: float) -> None:
+    """
+    **The regression this function was written wrong twice for.**
+
+    A spin echo with no encoding in it weights the slice axis a little -- the slice-select lobes
+    and the crushers are gradients.  What it must *not* do is weight it more when the echo time
+    is longer, because `k` is zero in the gaps: nothing is playing.
+
+    Both original defects showed up here and nowhere else.  Measuring `k` from the start of the
+    tree rather than from the excitation's centre left half the slice-select lobe as a constant
+    offset, and locating the refocusing pulse without its own ``delay`` put the conjugation 700 us
+    early, leaving a second constant.  A constant `k` over a gap integrates in proportion to the
+    gap, so the reported `b` grew with the echo time out of nothing at all.
+    """
+    tree, echo_s = _spin_echo(opts, te_s)
+    delivered = sc.b_value(tree, opts, end_s=echo_s)
+    assert delivered['z'] < 0.5                     # the lobes themselves, and only them
+    reference = sc.b_value(_spin_echo(opts, 0.030)[0], opts, end_s=_spin_echo(opts, 0.030)[1])
+    assert delivered['z'] == pytest.approx(reference['z'], rel=1e-6)
+
+
+def test_b_value_leaves_the_slice_axis_refocused_at_the_echo(opts) -> None:
+    """
+    The physical statement behind the previous test, and the sharper form of it.
+
+    A spin echo refocuses the slice axis: `k` at the echo is zero, crushers and all.  That is a
+    claim about *where the pulses act* -- get either RF centre wrong and this is the first thing
+    to break, long before any `b` looks suspicious.
+    """
+    tree, echo_s = _spin_echo(opts, 0.060)
+    trajectory = sc.kspace(tree, opts)
+    assert float(np.interp(echo_s, trajectory['t_k'], trajectory['k'][2])) == pytest.approx(
+        0.0, abs=1.0)
+
+
+def test_b_value_measures_from_the_excitation_not_the_tree(opts) -> None:
+    """
+    Padding a tree in front of the excitation cannot change what it delivers.
+
+    `b` is a property of the magnetisation's history, and there is no magnetisation before the
+    excitation.  Anything integrated from ``t = 0`` fails this.
+    """
+    tree, echo_s = _spin_echo(opts, 0.060)
+    padded = sc.LogicBlock('padded').add(0.020, tree)
+    assert sc.b_value(padded, opts, end_s=echo_s + 0.020)['z'] == pytest.approx(
+        sc.b_value(tree, opts, end_s=echo_s)['z'], rel=1e-9)

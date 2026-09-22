@@ -15,6 +15,7 @@
 | [`fat_sat/`](fat_sat/) | A spectrally selective saturation and the spoiler that destroys what it made — the chemical-shift sign traced from ppm to the emitted `freq_offset`, and the same protocol across four field strengths. Where `SaturationPrep` came from. |
 | [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. Then what a 21.7 ms readout pays in off-resonance. **Defines no class.** |
 | [`se_spiral_2d/`](se_spiral_2d/) | A refocusing pulse in front of a spiral, and the one question that raises: **which instant is the echo aligned to.** Three wrong placements that all compile, and then what refocusing is actually worth. **Defines no class.** |
+| [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | One number in — `b_s_per_mm2` — and a diffusion-weighted spin-echo EPI out. The first **kernel** here: the encoding is defined around a refocusing pulse it does not own, so one module owns all three. Where `DiffusionSEPrep` and `sc.b_value` came from, and where the simulator corrected `sc.b_value`. |
 
 ## `gre_2d/`
 
@@ -271,6 +272,37 @@ notebook was written, not worked around in it.
 
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
 
+## `dwi_se_epi_2d/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](dwi_se_epi_2d/01_build.ipynb) | `b_s_per_mm2` in; the lobe width, the amplitude and the echo time all out. The handbook's cubic including the **ramp terms** the permissive reference implementations leave out, delivered `b` measured by integrating the emitted gradients at 0.003 % over 100 to 3000, and `b = 0` shown not to be b = 0. Then a whole single-shot EPI acquisition whose centre-line echo lands on the spin echo, at **one echo time for every b**. Four `.seq` files and a nominal `.npz`. **Needs nothing but `seqcraft`.** |
+| [`02_simulate_and_reconstruct.ipynb`](dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb) | A known $D$ recovered to 0.06 % from $\ln(S/S_0) = -bD$; **the measurement that corrected `sc.b_value`**, which was reporting nine times the weighting the magnetisation experienced; what a mismatched echo time costs, matched to the closed form to four decimals; and a brain with an ADC map against the phantom's own diffusion map. **Needs `MRzeroCore`, `torch` and a phantom download.** |
+
+`DiffusionSEPrep` is the first module here that is neither a leaf nor a plain composition. The two
+encoding lobes have the **same polarity** and sit either side of a 180 that conjugates what came
+before them, so neither lobe can be designed without knowing where that pulse is and how long it
+lasts — and the pulse belongs to `Refocusing`. One owner holds all three.
+
+```text
+Excitation, Refocusing   own   their own waveforms, and report their own timing
+DiffusionSEPrep          owns  the lobes, the echo time, and where the 180 goes
+the acquisition          owns  the echo time across b, which no single module can see
+```
+
+The last line is the composition-level fact `01` §5 measures: the encoding needs one echo time and
+the EPI readout's first half needs another, and a protocol needs **one** echo time for every b or
+the attenuation ratio carries $T_2$ as well as $D$. No module can decide that.
+
+**`02` is the notebook that corrected the validator**, which is worth reading for that alone.
+`sc.b_value` shares no code with `DiffusionSEPrep` and it caught a real error in it — a lobe
+separation one ramp short, hidden because the amplitude solve compensated. It was then itself
+wrong by a factor of nine on the *slice* axis, which the module does not own and no test in this
+repository was pointed at, until a Bloch simulation disagreed with it. Both defects are fixed and
+pinned in [`tests/analysis/`](../tests/analysis/test_analysis.py).
+
+`01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
+
 ## Requirements
 
 Building needs only `seqcraft`. Simulating and reconstructing need `MRzeroCore`, `torch` and
@@ -358,6 +390,13 @@ making real scans work, and `gre_2d/` is the one that was written against.
 
 They are in git history, and the physics they depended on — the b-value solve, the
 variable-density spiral, the EPI ramp-sampling moment integral — is in [`salvage/`](../salvage/) as
-plain functions, which is where a future spiral or EPI module should start from. `mr0_bridge.py`
+plain functions, which is where a future spiral or EPI module should start from. Two of those three
+have since been written: the spiral in [`gre_spiral_2d/`](gre_spiral_2d/) and the b-value solve in
+[`dwi_se_epi_2d/`](dwi_se_epi_2d/), neither by adapting the salvaged code — and the diffusion one
+contradicts it. `salvage/bvalue.py` says "a closed form does not exist because `Delta` depends on
+`delta`" and steps up the raster to find the lobe width; substituting `Delta = delta + gap` into
+the handbook's own expression makes it a cubic in `delta`, which `DiffusionSEPrep` solves directly.
+The two agree to 1e-9 on the resulting waveform, which is
+[a test](../tests/modules/test_diffusion_se.py). `mr0_bridge.py`
 went with them: `02` uses `mr0.Sequence.import_file` on the written `.seq`, which is a stronger
 check than converting the tree, because it tests the file a scanner would actually play.

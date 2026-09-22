@@ -9,8 +9,9 @@
 CURRENT ROADMAP
     post_v0_roadmap.md                       the only active forward plan
     post_v0_batch_scan.md                    the phase B corpus scan, against merged main
-    phase_e_synthesis.md                     what C1-C3 justify changing in the Skill.  A
-                                             RECOMMENDATION -- v0 is still frozen
+    phase_e_synthesis.md                     what C1-C3 justify changing in the Skill.  Its
+                                             five recommendations are APPLIED -- the Skill is
+                                             v1, and diffusion/ is the first run under it
 
 DOMAIN EVIDENCE                              ../domain_evidence/ -- curated literature cards,
                                              one per fine-scan candidate.  A separate evidence
@@ -23,6 +24,7 @@ DURABLE PROCESS / OPEN ARCHITECTURE
 CANDIDATE EVIDENCE                           one folder per candidate: the record and its reasoning
     tse/  radial/  gre3d/  steam/  saturation/  spiral/  t2prep/  bssfp/
     flow_moments/  -- two records from one scan, plus a gap note
+    diffusion/     -- the only one that did not stop at a decision: DiffusionSEPrep exists
 
 HISTORICAL / RECONCILIATION RECORDS
     pr23_reconciliation.md                   one disposition per PR #23 capability
@@ -44,7 +46,7 @@ are in [`../skill_v0/`](../skill_v0/).
 | document | class | note |
 |---|---|---|
 | `post_v0_roadmap.md` | **CURRENT** | the only forward roadmap. Everything else that points forward is superseded by it |
-| `phase_e_synthesis.md` | **CURRENT** | the Phase E recommendation across C1, C2 and C3. Nothing in it is applied: the Skill is unchanged and every proposed change is costed |
+| `phase_e_synthesis.md` | **CURRENT** | the Phase E synthesis across C1, C2 and C3. Its five recommendations were applied in Skill v1; the document stands as the reasoning behind them, and every change it proposed is still costed here |
 | `post_v0_batch_scan.md` | **CURRENT** | the phase B scan: what the corpus holds after PR #31 and #32, what SeqCraft already covers, and the candidate backlog. Current *evidence*, not a second roadmap — it recommends a Phase C shortlist and the roadmap records the decision |
 | `fine_scan_playbook.md` | **DURABLE_REFERENCE** | the process in depth; the Skill is the operational layer over it |
 | `repetition_augmentation_design_note.md` | **DURABLE_REFERENCE** | open architecture, deliberately not an API (a Chinese translation sits beside it in the workspace mirror) |

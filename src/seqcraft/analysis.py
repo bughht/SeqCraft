@@ -226,6 +226,19 @@ def b_value(tree: LogicBlock, opts: Opts, *, end_s: float | None = None) -> dict
     the 180 conjugates what came before.  Every RF event with ``use='refocusing'`` flips it here,
     at its own effective centre.
 
+    **The origin is the excitation, not the start of the tree.**  Integration runs from the first
+    ``use='excitation'`` pulse's centre, with `k` measured from its value there, because that is
+    when transverse magnetisation exists and where its phase starts.  It matters on the slice
+    axis, whose rephaser undoes the slice-select area *after* the RF centre rather than half the
+    lobe: measuring from ``t = 0`` leaves the other half as a constant offset, and a constant `k`
+    integrates without bound -- reporting a `b` that grows with the echo time out of nothing.  A
+    tree with no excitation in it is measured from its own start.
+
+    Both of these were wrong in the first version of this function and neither was visible on the
+    diffusion axis, where `k` is flat across the refocusing block and zero before the encoding.
+    ``examples/dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb`` is what found them: the Bloch
+    simulator and this integral disagreed about a `b = 0` acquisition by a factor of nine.
+
     Examples
     --------
     >>> import numpy as np, pypulseq as pp, seqcraft as sc
@@ -243,14 +256,26 @@ def b_value(tree: LogicBlock, opts: Opts, *, end_s: float | None = None) -> dict
     grid, grads, _spans = sample(tree, opts)
     if grid.size < 2:
         return {}
-    # Where the accumulated k is conjugated, in increasing time order.
-    flips = sorted(
-        start + float(pp.calc_rf_center(event)[0])
+    # An RF pulse acts at its own effective centre, which is the pulse's delay -- transmit dead
+    # time and any asymmetry of the envelope -- plus the centre within the waveform.  Omitting
+    # the delay puts a refocusing pulse early, which is invisible on an axis whose k happens to
+    # be flat across the block and badly wrong on one that is not.
+    centres = [
+        (start + float(event.delay) + float(pp.calc_rf_center(event)[0]),
+         getattr(event, 'use', None))
         for start, event, _path in flatten(tree)
-        if getattr(event, 'type', None) == 'rf' and getattr(event, 'use', None) == 'refocusing'
-    )
+        if getattr(event, 'type', None) == 'rf'
+    ]
+    # Transverse magnetisation exists only after the excitation, and its phase origin is that
+    # pulse's centre -- which is why a slice-select rephaser undoes the area *after* the centre
+    # rather than half the lobe.  Measuring k from the start of the tree instead leaves that
+    # half-lobe as a spurious constant offset, and a constant k integrates without bound.
+    origin = min((t for t, use in centres if use == 'excitation'), default=float(grid[0]))
+    # Where the accumulated k is conjugated, in increasing time order.
+    flips = sorted(t for t, use in centres if use == 'refocusing')
     stop = float(grid[-1]) if end_s is None else float(end_s)
-    keep = grid <= stop + 0.5 * float(opts.grad_raster_time)
+    raster = 0.5 * float(opts.grad_raster_time)
+    keep = (grid >= origin - raster) & (grid <= stop + raster)
 
     out: dict[str, float] = {}
     for axis, waveform in grads.items():
@@ -258,6 +283,7 @@ def b_value(tree: LogicBlock, opts: Opts, *, end_s: float | None = None) -> dict
         # piecewise linear between grid points.
         k = np.concatenate([[0.0], np.cumsum(
             0.5 * (waveform[1:] + waveform[:-1]) * np.diff(grid))])
+        k = k - float(np.interp(origin, grid, k))
         # A refocusing pulse at `when` conjugates what has accumulated:
         #     k_after(t) = -k(when) + [k(t) - k(when)] = k(t) - 2 k(when)
         # applied in time order, so a second pulse conjugates the already-conjugated value.

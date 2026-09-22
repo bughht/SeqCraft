@@ -227,3 +227,47 @@ def test_it_compiles(opts: pp.Opts) -> None:
 def _flatten(tree: sc.LogicBlock):
     from seqcraft.design.logic import flatten
     return flatten(tree)
+
+
+# ---------------------------------------------------------------------- a third implementation
+def _salvaged_b_of_monopolar():
+    """``salvage/bvalue.py``, loaded by path because ``salvage/`` is not an installed package."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / 'salvage' / 'bvalue.py'
+    spec = importlib.util.spec_from_file_location('_salvaged_bvalue', path)
+    if spec is None or spec.loader is None:                          # pragma: no cover
+        pytest.skip(f'{path} is not present')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.b_of_monopolar
+
+
+@pytest.mark.parametrize('b_requested', [100.0, 500.0, 1000.0, 2000.0, 3000.0])
+def test_the_closed_form_agrees_with_a_direct_integration(opts: pp.Opts,
+                                                          b_requested: float) -> None:
+    """
+    A third implementation, and the most independent one available without a simulator.
+
+    ``salvage/bvalue.py`` is the b-value solve from the pre-reform module set, kept as plain
+    functions.  It does **not** use the handbook's closed form: its docstring says the published
+    ramp correction is written with several incompatible conventions for whether `delta` includes
+    the ramps, so it integrates ``|k(t)|^2`` directly instead and has no convention to pick.
+
+    It also says "a closed form does not exist because ``Delta`` depends on ``delta``", and steps
+    up the raster to find the lobe width.  That is true of the *lobe-width solve* only as long as
+    the two are left independent: substituting ``Delta = delta + gap`` into the handbook's own
+    expression makes it a cubic in `delta`, which :meth:`DiffusionSEPrep._delta_for` solves
+    directly.  This test is the check that the two routes describe the same waveform.
+
+    Its `delta` includes **both** ramps where `b_of_trapezoid_pair` takes one, and its result is
+    in s/m^2; both conversions are here rather than in either implementation.
+    """
+    b_of_monopolar = _salvaged_b_of_monopolar()
+    module = prep(opts, b_s_per_mm2=b_requested)
+    integrated = b_of_monopolar(module.amplitude_hz_m, module.delta_s + module.ramp_s,
+                                module.separation_s, ramp=module.ramp_s) / 1e6
+    closed_form = b_of_trapezoid_pair(module.amplitude_hz_m, module.delta_s,
+                                      module.separation_s, module.ramp_s)
+    assert closed_form == pytest.approx(integrated, rel=1e-9)
