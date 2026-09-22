@@ -162,6 +162,32 @@ findings **refine the meaning of the Module layer** and require no change to `Lo
 compiler, or the `Module → LogicBlock → Tree → Compiler` architecture. C2's 220 µs stays
 undecided pending one ownership question the synthesis poses.
 
+## The approved queue — designed, reviewed, **deliberately unbuilt**
+
+Four designs carry `APPROVED_FOR_IMPLEMENTATION` and none is implemented. That is a decision, not
+a backlog that was forgotten.
+
+| | record | status | why it is not built yet |
+|---|---|---|---|
+| **T2Prep** | `plans/t2prep/` | `NEW_LEAF` | **could be built now.** Held because it would not demonstrate the architecture the Phase C work found, and the next PR is about demonstrating it |
+| **VelocityEncode** | `plans/flow_moments/velocity_encoding.yaml` | `NEW_LEAF` | the appended canonical form is implementation-ready; same reason as above |
+| **FlowComp** | `plans/flow_moments/flow_compensation.yaml` | `EXTEND_EXISTING` | depends on how joint realization is finally expressed |
+| **bSSFPTR** | `plans/bssfp/` | `NEW_KERNEL` | same dependency, plus the open question of whether its 220 µs is joint physical design or semantics-preserving compiler fusion |
+
+Building all four now would either dilute the architectural point or produce code likely to be
+reshaped immediately afterwards.
+
+**The next PR is `Diffusion: architecture stress test + proof-by-implementation`** — a targeted
+fine scan, an architecture decision from it, production implementation, and a Layer 1/2/3
+showcase. It is explicitly not a fourth research-only scan. It tests two Phase E hypotheses on a
+new physical family: *analytic first with an optimizer fallback*, where the MIT Pulseq witness
+inverts the b-factor analytically but leaves trapezoid ramps `TODO` while the copyleft witness
+holds the minimum-TE direction; and *joint realization before materialisation*, by asking whether
+a joint owner can get everything it needs before child `LogicBlock`s are built.
+
+Afterwards the queue is revisited, in the likely order T2Prep, VelocityEncode, FlowComp, bSSFPTR —
+**and not forced through one mechanism if the physical evidence says otherwise.**
+
 ## PR decomposition
 
 The roadmap is one document; implementation stays reviewable.

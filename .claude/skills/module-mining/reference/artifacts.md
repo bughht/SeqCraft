@@ -89,6 +89,27 @@ recorded it, and only in prose at the top level — yet it is what decides wheth
 agreeing is three witnesses or one witness copied twice. Two ported implementations of the same
 design are one witness. Required whenever more than one reference is cited.
 
+### `evidence_class` — what kind of evidence this is
+
+Optional, added in v1. `role` says how a reference relates to the *other* references cited for a
+candidate, and every value presumes the reference is an implementation. A handbook is none of them.
+
+```text
+domain-reference   handbook / authoritative review / classic paper
+design-witness     an external implementation
+oracle             analytic calculation / simulation / independent measurement
+```
+
+A `domain-reference` carries a `citation` and a `curated_card` in place of a `repo`, and the card
+lives in `tools/module_mining/domain_evidence/`. The schema enforces the citation and warns about a
+missing card, because a reference with neither makes the next reader re-read the source.
+
+**Why it exists:** across three post-v0 fine scans, domain literature changed the outcome three
+times by three different mechanisms — supplying a family a single code witness could not establish,
+correcting a contract three independent witnesses agreed on, and correcting an architectural
+inference. The second is the one that made it vocabulary rather than a note: it means domain
+evidence is not a fallback for a thin corpus.
+
 ## 3. PhysicalContract
 
 ```yaml
@@ -233,6 +254,18 @@ decision in the record that was never made.
 `YELLOW` with the physics already settled and only the boundary open.
 
 ---
+
+## One scan may produce more than one record
+
+A fine scan asks one question; the answer may be that the candidate has more than one owner. The
+flow scan asked whether velocity encoding and flow compensation are one contract, and found one
+requirement model with two owners — `NEW_LEAF` for the encoding, `EXTEND_EXISTING` for the
+compensation. A record holds one `status`, so forcing them together would have meant choosing
+which half to misreport.
+
+**Group them in one folder with a shared findings document.** That is the whole convention. There
+is deliberately no `scan_id` field: it would be invented from one case, which is the rule the
+schema sets for itself everywhere else.
 
 ## What the schema deliberately does not do
 

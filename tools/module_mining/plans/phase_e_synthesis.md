@@ -22,6 +22,10 @@ used as a mining tool and it produced designs, not modules.
 
 ---
 
+> **Applied 2026-09-22.** The five recommendations below are now in the Skill — see
+> "Recommended Skill v1" for the list and `git log` for the change. Nothing else was applied, and
+> no production module was written.
+
 ## The architecture these findings must not disturb
 
 ```text
@@ -34,6 +38,68 @@ Everything below **refines what the Module layer contains**. Nothing below adds 
 ```text
 modules know physics     tree knows times     compiler knows Pulseq
 ```
+
+### What changed, in one picture
+
+```text
+BEFORE -- the mental model going into Phase C
+
+    leaf  ->  LogicBlock  --,
+                             >--  kernel PLACES  ->  LogicBlock
+    leaf  ->  LogicBlock  --'
+
+
+AFTER -- Phase E
+
+    simple case, unchanged and still the common one
+
+        leaf  ->  LogicBlock
+
+
+    coupled case
+
+        leaf physical facts  --,
+        leaf physical facts  --+->  joint physical kernel  ->  LogicBlock
+        physical target      --'
+
+
+both still end the same way
+
+    LogicBlock  ->  Compiler  ->  PyPulseq Sequence
+```
+
+The motivation is measured, not hypothetical:
+
+```text
+bSSFP        the independent-module boundary costs ~220 us per axis per repetition
+flow / VENC  a five-lobe independent construction becomes three lobes, with a shorter minimum TE
+```
+
+> **This does not add a top-level architectural layer. It refines the Module layer:** some kernels
+> place already-designed components, and some coupled physical problems may need joint realization
+> *before* `LogicBlock` materialisation.
+
+**No joint-realization API is being proposed.** The picture above shows an ownership shape, not an
+interface — see the next section.
+
+### Ownership is established; the interface is not
+
+```text
+ESTABLISHED
+    joint cross-leaf physical design belongs in Module/kernel land
+    LogicBlock remains a timed-event tree
+    the compiler remains Pulseq lowering and legalisation
+
+NOT ESTABLISHED
+    the exact facts a leaf exposes before build
+    whether those are events, semantic-timing queries, physical requirements,
+        or a smaller combination
+    whether a reusable internal contract is needed at all
+```
+
+Names such as `RequirementIR`, `GradientDesignSpec`, `WaveformContract` or `JointDesignContext` are
+deliberately **not** introduced. Each would be a framework designed from one or two cases, which is
+the error C3 caught in Phase B's own reading.
 
 The rule that decides future cases:
 
