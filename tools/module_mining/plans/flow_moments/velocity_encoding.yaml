@@ -1,0 +1,225 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-22.
+# See ../../README.md for which copy to edit.
+# Velocity encoding -- post-v0 Phase C, third fine scan (C3), first of two records.
+#
+# C3 scanned velocity encoding and flow compensation TOGETHER, to test whether they are one
+# reusable contract with different target values.  They share one requirement model and have
+# DIFFERENT OWNERS, so the scan produced two records.  See findings.md for the split and
+# gap_note.md for what v0 could not express.
+#
+#   python tools/module_mining/schema.py tools/module_mining/plans/flow_moments/velocity_encoding.yaml
+
+id: velocity-encoding
+name: VelocityEncode
+
+capability:
+  family: encoding
+  summary: >
+    A bipolar gradient pair on one logical axis that leaves stationary spins unaffected and gives
+    moving spins a phase proportional to their velocity along that axis.  Zeroth moment zero,
+    first moment at a declared value, toggled in sign between acquisitions so that a phase
+    subtraction recovers velocity.
+  what_a_user_could_get_wrong: >
+    (1) That the public quantity is the CHANGE in first moment between the two toggles, not the
+    first moment of either one.  VENC = pi / (gamma * |delta m1|), so a caller who sets m1 rather
+    than delta m1 is wrong by a factor of two.
+    (2) That m0 must be zero.  A bipolar pair with unequal lobe areas still encodes velocity and
+    also displaces stationary spins, which reads as a geometric artefact rather than as an error.
+    (3) The sign convention between the two toggles, which determines the sign of measured flow.
+
+target:
+  layer: encoding
+  seat: >
+    modules/encoding/, beside PhaseEncode.  The folder contract is "gradients, no ADC, imposing a
+    phase you intend to sample", which is exactly this.
+  untouched:
+    - src/seqcraft/compiler
+    - src/seqcraft/design
+    - src/seqcraft/modules/readout    # NOT modified; see flow_compensation.yaml
+    - src/seqcraft/modules/rf
+
+evidence:
+  - id: D1
+    source: domain-reference
+    repo: n/a -- a book; see `citation` and `curated_card`
+    license: Copyrighted textbook.  CITED ONLY.
+    citation: >
+      Bernstein, King & Zhou, Handbook of MRI Pulse Sequences, Elsevier 2004.  Chapter 9
+      "Motion-Sensitizing Gradients", section 9.2 "Flow-Encoding Gradients" (M. A. Bernstein),
+      book pages 281-291; read pages 281-283 and 287-290.
+    role: authoritative-external
+    evidence_class: domain-reference
+    independence: Not an implementation and not derived from any corpus here.
+    curated_card: tools/module_mining/domain_evidence/gradient_moments.md
+    what_it_establishes: >
+      The canonical realisation- "two lobes of equal area and opposite polarity", net area zero so
+      stationary spins accumulate no phase, and a phase for moving spins "linearly proportional to
+      their velocity".  The public quantity- VENC = pi / (gamma |delta m1|), with delta m1 the
+      CHANGE in first moment on toggling, and delta m1 = 2 A dT for a bipolar pair.  Per-axis
+      independence- "each of the three logical axes is treated independently", so the encoding can
+      be added to one, two or three axes.  And that VENC is a protocol choice, "usually selected
+      to be slightly higher (e.g. 30 %) than the expected peak vessel velocity".
+    what_it_does_not_establish: >
+      Any general design algorithm.  It gives the bipolar closed form and defers the MERGED
+      designs -- where the encoding lobe is combined with a compensated imaging lobe -- to
+      Bernstein et al. (1992), naming three of them without a criterion for choosing.
+  - id: R1
+    source: open4dflow
+    repo: BAMMri/Open4DFlow
+    path: sequences/4Dflow.py
+    commit: 9e752d8
+    license: GPL-3.0
+    role: architecture-evidence
+    independence: >
+      One witness, and DISCOVERY ONLY under its licence.  Physics and problem structure were read;
+      no implementation text was adapted, and nothing here is derived from its code.
+    what_it_establishes: >
+      That a published 4D-flow implementation states the encoding as a RESIDUAL moment requirement
+      -- the target first moment minus what the imaging gradients already contribute, per axis --
+      and delegates realisation to an external constrained optimiser, caching by the moment pair.
+      So the merged form is solved numerically in at least one real pipeline.
+    what_it_does_not_establish: >
+      That a solver is NECESSARY.  D1 gives closed forms for the canonical cases, and the solver
+      buys generality -- arbitrary moment orders, added eddy-current constraints, a minimum-TE
+      search -- rather than the canonical answer.  **This correction is the main result of C3.**
+
+contract:
+  public_quantity:
+    name: venc_m_s
+    relation: >
+      delta_m1 = pi / (gamma * venc), and the module emits the two toggles whose first moments
+      differ by delta_m1.
+  invariants:
+    - net gradient area zero over the pair, so stationary spins accumulate no phase
+    - >
+      the two toggles differ in first moment by exactly delta_m1, and in nothing else
+    - >
+      first moment is origin-independent once the zeroth is zero (D1 section 10.4 p. 343, citing
+      Simonetti 1991), so the module need not be told a time origin
+  determinable_from_own_parameters:
+    - lobe area and separation, from venc and the hardware limits, in closed form
+    - both toggles, and the difference between them
+    - its own duration and its own moments to any order
+  caller_policy:
+    - which axis or axes, and venc per axis
+    - how the two toggles are scheduled across the acquisition
+    - the phase-difference reconstruction that turns two acquisitions into a velocity map
+
+ownership:
+  why_a_leaf: >
+    In the APPENDED form it needs nothing from outside.  D1's bipolar pair is a self-contained
+    closed-form construction whose correctness -- m0 = 0, delta m1 = target -- is checkable on the
+    module's own events.  That is the ownership test passed.
+  why_not_merged: >
+    The MERGED form is a different matter and is NOT this module.  D1 p. 290- appending the
+    bipolar to an already velocity-compensated imaging waveform gives five lobes, and "the
+    resulting five lobes can be combined into three", which "always reduces the minimum TE".
+    Merging requires reshaping lobes that belong to the readout or the excitation, and no SeqCraft
+    module may rewrite another's events.  See gap_note.md.
+  toggling: >
+    Caller policy.  The module emits a toggle on request; which toggle is played when, and how the
+    two are subtracted, is acquisition and reconstruction policy -- and D1 says the choice among
+    the three merged designs "is often determined by how the accompanying magnitude images are
+    reconstructed", which is above this layer by the source's own account.
+
+acceptance:
+  defined_before_extraction: true
+  claim_scope: The appended bipolar form on one axis.  The merged form is explicitly excluded.
+  establishes:
+    - zeroth moment zero over the pair, measured on the emitted events' own knots (rule E)
+    - >
+      the two toggles' first moments differ by the delta_m1 that the requested venc implies, to
+      within a stated tolerance, computed from the emitted knots rather than from the design
+    - >
+      the two toggles are identical in every other respect -- duration, zeroth moment, and
+      moments above the first
+    - >
+      metamorphic- halving venc doubles delta_m1 and leaves m0 at zero
+    - >
+      analytic- a spin moving at venc accumulates exactly pi of phase difference between the
+      toggles, checked against the closed-form relation and not against another implementation
+  does_not_establish:
+    - >
+      Any merged or minimum-TE design, and therefore any claim about achievable minimum TE.
+    - >
+      Agreement with Open4DFlow, whose licence forbids it and whose realisation is numerical.
+    - >
+      Concomitant-field phase behaviour.  D1 notes the merged form breaks the automatic
+      cancellation that the simple bipolar has; this module keeps the simple form, and the claim
+      is still not made because it was not measured.
+    - Anything about flow quantification accuracy, which needs a phantom and a scanner.
+
+validation:
+  layers:
+    layer_1: NOT_APPLICABLE
+    layer_2: NOT_APPLICABLE
+    layer_3: NOT_APPLICABLE
+    layer_3_reason: >
+      NOT_APPLICABLE because nothing is implemented -- the scan stops at the acceptance claim.
+      Layer 3 would be unusually direct here- MRzeroCore can move spins, so a simulated flowing
+      phantom tests the pi-at-venc claim end to end.  Recorded as available rather than done.
+  planned: >
+    Layer 1 from acceptance.establishes, on the emitted lattice.  Layer 2 as a complete
+    acquisition- a phase-contrast pair, since a single toggle is not an acquisition.  Layer 3
+    against a simulated moving phantom.
+
+coverage_classification: null
+
+status: NEW_LEAF
+traffic_light: APPROVED_FOR_IMPLEMENTATION
+
+decision_summary: >
+  Velocity encoding, in its appended bipolar form, is an ordinary encoding leaf.  Its public
+  quantity is venc; its requirement is m0 = 0 with a declared change in first moment between two
+  toggles; both are closed-form from the hardware limits; and its correctness is checkable on its
+  own events without reference to anything around it.  It belongs beside PhaseEncode in
+  modules/encoding/, whose contract -- "gradients, no ADC, imposing a phase you intend to sample"
+  -- describes it exactly.
+
+  **The reason this is approved rather than deferred is domain evidence correcting a code-only
+  inference.**  Phase B observed a real 4D-flow implementation stating a residual moment
+  requirement and handing it to an external optimiser, and concluded that SeqCraft needs a way to
+  express requirements before realisation.  The Handbook shows the canonical cases are algebra-
+  the bipolar pair is two lobes of equal and opposite area, and even the harder
+  velocity-compensated slice-selection case is the physically significant root of a quadratic.
+  The solver buys generality, not the canonical answer.
+
+  What is genuinely not expressible is narrower and is recorded in gap_note.md- the MERGED form,
+  where the encoding lobe and a compensated imaging lobe become one three-lobe waveform.  That
+  needs one module to reshape another's events, which is the same limitation C2 measured at 220 us
+  per repetition.  It is a boundary-ownership problem, not a missing solver.
+
+open_questions:
+  - >
+    Should the module emit one toggle per call with a sign argument, or both toggles as a pair?
+    A pair states the delta_m1 invariant in one object and makes it checkable; a single toggle
+    composes more simply.  No evidence decides it -- an API question for a human.
+  - >
+    Higher-order encoding -- acceleration and above.  D1 says FE gradients "can encode information
+    about velocity, acceleration, or higher derivatives" and this candidate covers velocity only.
+    Deferred, not refused.
+
+evidence_state:
+  human_review: NEEDED
+  experiment_design_review: DONE
+  scanner_validation: NOT_REQUIRED_FOR_CLAIM
+  note: >
+    The pi-at-venc claim is analytic and simulable.  A scanner is needed only for quantification
+    accuracy, which this module does not claim.
+  deferred:
+    - what: The merged / minimum-TE waveform designs.
+      why: >
+        Requires reshaping another module's lobes.  D1 defers the designs themselves to Bernstein
+        et al. (1992) and names three without a criterion for choosing; the choice is stated to
+        depend on magnitude-image reconstruction.
+      revisit_trigger: >
+        A kernel exists that owns a waveform currently split across leaves -- the same capability
+        C2 needs.  See gap_note.md.
+    - what: Acceleration and higher-order encoding.
+      why: One order at a time, and velocity is the witnessed and canonical case.
+      revisit_trigger: A protocol needs it.
+    - what: Concomitant-field phase behaviour.
+      why: >
+        D1 raises it for the merged form specifically and says it can be computed exactly
+        (section 10.1).  Out of scope for the simple bipolar, and not claimed.
+      revisit_trigger: A merged design is pursued, or a phase-contrast accuracy claim is made.

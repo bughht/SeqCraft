@@ -20,6 +20,7 @@ DURABLE PROCESS / OPEN ARCHITECTURE
 
 CANDIDATE EVIDENCE                           one folder per candidate: the record and its reasoning
     tse/  radial/  gre3d/  steam/  saturation/  spiral/  t2prep/  bssfp/
+    flow_moments/  -- two records from one scan, plus a gap note
 
 HISTORICAL / RECONCILIATION RECORDS
     pr23_reconciliation.md                   one disposition per PR #23 capability

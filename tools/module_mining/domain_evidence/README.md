@@ -81,3 +81,4 @@ for a replacement.
 |---|---|---|
 | [`t2prep.md`](t2prep.md) | T2 preparation (Phase C, first fine scan) | Bernstein, King & Zhou, *Handbook of MRI Pulse Sequences* (2004), §17.4 |
 | [`bssfp.md`](bssfp.md) | balanced SSFP (Phase C, second fine scan) | the same, §14.1 and Table 14.2 |
+| [`gradient_moments.md`](gradient_moments.md) | flow encoding + moment nulling (Phase C, third fine scan) | the same, §9.2 and §10.4 |
