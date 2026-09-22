@@ -1,136 +1,146 @@
 # T2 preparation — Phase C first fine scan
 
-> **Mirrored from the workspace planning repository** (`docs/plans/module-mining/`) on
-> 2026-09-21, so that the pull request carries the evidence behind the modules it adds.
-> The two copies are identical today and there is nothing keeping them that way; see
-> [`../README.md`](../README.md) for which one to edit.
+**Date:** 2026-09-22 (revised) · **Skill:** v0, frozen and unmodified
+**Result:** `NEW_LEAF / APPROVED_FOR_IMPLEMENTATION`, for one mode
 
-**Date:** 2026-09-21 · **Skill:** v0, frozen · **Result:** `UNDECIDED / YELLOW / MODE_CONTRACT_INCOMPLETE`
+The conventional-control candidate, chosen to answer *"does the ordinary reusable-leaf path still
+work cleanly?"* — and it does. Nothing has been implemented; the record is
+[`candidate.yaml`](candidate.yaml) and the domain card is
+[`../../domain_evidence/t2prep.md`](../../domain_evidence/t2prep.md).
 
-The conventional-control candidate. The question it was chosen to answer was *"does the ordinary
-reusable-leaf path still work cleanly after all the difficult calibration work?"* — and the answer
-is **mostly yes, and the workflow stopped it for a reason that is about evidence rather than about
-the workflow.**
+## What changed, and why
 
-Nothing was implemented. The record is [`candidate.yaml`](candidate.yaml).
+The first pass of this scan reached `YELLOW / MODE_CONTRACT_INCOMPLETE`, and part of the reasoning
+was wrong. It treated **one executable repository** as thin evidence for the family itself. That
+conflates two different things:
 
----
+```text
+does this physical abstraction exist, with canonical semantics?   -> domain evidence
+does OUR realisation match a particular implementation?           -> code witnesses
+```
 
-## 1. What the evidence turned out to be
+Reference coverage limits how strongly we may claim equivalence to an implementation. It does not
+decide whether a mature abstraction exists. Under the corrected standard the boundary was never
+the problem, and the two questions that genuinely blocked are both now answered.
 
-Searched all nine registered corpora. `pypulseq`, `pulseq-matlab`, `pulseq-cest`,
-`PulseqDiffusion` and `Open4DFlow` have no T2 preparation at all. The MRzero playground appeared
-to match on `MLEV` in three notebooks; the hits were case-insensitive fragments of base64 image
-data and were discarded after checking.
+## 1. Evidence, in three classes
 
-**So: one independent witness, `OpenMRF`, and two designs inside it.**
+**Domain reference (D1).** *Handbook of MRI Pulse Sequences*, §17.4 "Driven Equilibrium", pp.
+888–895; §17.4.2 at pp. 893–895. The Handbook's own term is driven equilibrium and it says
+plainly: *"This use of driven equilibrium is also called T2 preparation (T2-prep)"* (p. 888). It
+gives the nonselective `90x–τ–180y–τ–90₋ₓ` structure, the weighting `Mz·exp(−Tprep/T2)`, multiple
+180° pulses as the canonical way to lengthen `Tprep`, composite pulses as an optional B0/B1
+robustness choice, the spoiler after the tip-up, and centric k-space ordering as *downstream*
+policy. Full extraction with page-level provenance is in the card.
 
-| | `src_preparations/T2/` | `src_preparations/MLEV/` |
+**Design witnesses.** Two implementations, different institutions, different languages:
+
+| | OpenMRF `T2/` and `MLEV/` | `mrseq` `preparations/t2_prep.py` |
 |---|---|---|
-| tip-down / tip-up | adiabatic, BIR-4 default | adiabatic, AHP default |
-| refocusing train | exactly **two** composite pulses | `n_mlev` × **four**, with an explicit ±1 cycling list |
-| preparation duration | an **input**; spacing derived from it | an **output**; `n_composite × 1/f_SL` |
-| inter-pulse gaps | `(prep_time − 2·rfc_dur) / 4`, four of them | minimal between pulses, longer at the ends |
-| crusher | 3-axis, each derated to 1/√3 | identical helper, identical derating |
+| licence | MIT | **Apache-2.0** |
+| tip pair | adiabatic BIR-4 / AHP | **hard 90x; composite 270x + (−360x)** |
+| train | 2 composites, or n×4 with a ±1 list | **MLEV-4, phase `+ + − −`** |
+| public quantity | `prep_times`, edge-to-edge | **`echo_time`, centre-to-centre** |
+| spoiler | 3 axes, each derated 1/√3, ramps staggered | 1 axis (z), optional |
+| tests assert | — | block durations and a short-TE refusal |
 
-They are **not** two witnesses — same corpus, same author, shared crusher helper and shared
-composite-pulse concept. They are two *designs*, which is evidence about the abstraction rather
-than corroboration of either one's numbers.
+`mrseq` cites Levitt & Freeman (1981) for the composite pulse and **Brittain et al. (1995)** for
+the application — the same Brittain reference the Handbook names for cardiac blood–myocardial
+contrast. Independent literature and independent code converging on one citation.
 
-## 2. The contract, stated from the numbers
+**Oracle.** Not used yet; `Mz·exp(−Tprep/T2)` is exactly a Bloch-simulation claim and is the
+planned Layer 3.
 
-`t_inter = (prep_time − 2·rfc_dur)/4`, used four times, with a composite pulse after the first and
-the third. So the pulses sit at one quarter and three quarters of the preparation period, the gaps
-either side of each are equal, and the two spin echoes coincide with the pulse centres. Summing
-the block gives `tip_down + prep_time + tip_up`, which fixes the semantics precisely:
+### Measured, not read
 
-> **`prep_time` is the interval from the end of the tip-down pulse to the start of the tip-up
-> pulse** — edge to edge, not centre to centre.
+I executed `mrseq` at seven protocols (TE 30–100 ms, 180-pulse 1 and 2 ms):
 
-The composite refocusing pulse is constant amplitude with phase −y for the first quarter, +x for
-the middle half, −y for the last quarter: the classic **90(−y) 180(+x) 90(−y)**. The two composites
-carry opposite phase, `ref_phase ± π/2`, which is the alternation that cancels B1 error to first
-order.
+```text
+realised echo time  ==  requested, to 0.00 us, at every protocol
+refocusing points   ==  0.1250, 0.3750, 0.6250, 0.8750 of it   (MLEV-4, exact)
+tip-up              ==  1.0000
+15 RF pulses: 1 excitation + 4 composites x 3 + a 2-pulse composite tip-up
+```
 
-Four things a user could get wrong, each producing a legal sequence and a plausible image: the
-tip-up phase sense, the interval symmetry (get it wrong and you have measured T2\* while calling it
-T2), the refocusing phase alternation, and putting the crusher before the tip-up instead of after.
+So the semantic timing definition is realisable **exactly**, which is the fact the whole timing
+question turned on.
 
-## 3. Ownership — settled
+## 2. The timing semantics — resolved, and it was not a disagreement
 
-The refocusing train is **intrinsic to the leaf**. Both designs keep it entirely inside the
-preparation and never expose it; its count and spacing follow from the preparation time and the
-leaf's own pulse durations; nothing outside influences either. v0's ownership test answers in the
-affirmative, and nothing in the evidence argues for a kernel or for a caller-assembled train.
+The two implementations book the preparation time differently: OpenMRF tip-down-**end** to
+tip-up-**start**, `mrseq` excitation-**centre** to tip-up-**centre**. They differ by one tip-pulse
+duration — 2 to 10 ms against a 40 to 100 ms preparation, so it matters.
 
-**`Refocusing` is not reusable here, and that was measured rather than assumed.** It refuses
-`crush_cycles_per_voxel=0` — "must be positive" — so it cannot emit a crusher-free pulse, and a
-crusher inside a T2 preparation destroys the magnetisation being stored. It is also built to be
-slice-selective with a balanced crusher pair, which is the opposite job. This is v0's corollary
-exactly: *reuse of semantics does not oblige reuse of an emitted event.*
+It is **two bookkeepings of one physical interval**, not two physics. The Handbook states the
+weighting for *"the time between the DE 90° pulses"*, the period during which the magnetisation is
+transverse. So SeqCraft takes the semantic definition and inherits neither implementation's block
+arithmetic:
 
-So the shape is a self-contained preparation leaf owning its tip pair, its train, its timing solve
-and its crusher — the same shape as `IRPrep` and `SaturationPrep`, in a folder whose contract
-already names the third seat.
+> **`prep_time_s` = effective tip-down rotation instant → effective tip-up rotation instant.**
+> For the hard and composite pulses of the initial mode this reduces to RF centre to RF centre.
 
-## 4. What blocked it, and it is not the boundary
+An adiabatic tip pair does *not* rotate at its pulse centre, so a future adiabatic mode must
+define its own effective-rotation instant. That is written into the mode differential so adding
+the mode cannot silently change what `prep_time_s` means.
 
-**The parameterisation is genuinely open.** One design takes the duration and derives the train;
-the other takes the train and derives the duration. Rule A's mode table cannot be written honestly
-from that, and picking one now would be picking the one that is easier to code.
+## 3. Ownership — and two things the Handbook decided that code could not
 
-**And the more serious one: both witnesses tip with an adiabatic 90, and SeqCraft cannot build
-one.** `pypulseq.make_adiabatic_pulse` is documented "Make an adiabatic **inversion** pulse" and
-offers only `hypsec` and `wurst`; those invert and cannot perform a 90° rotation. BIR-4 and AHP are
-a different family, and OpenMRF generates BIR-4 through SigPy.
+The leaf owns the tip pair, the refocusing train, the timing solve and the spoiler. `caller` owns
+placement, the readout, the collection of preparation times and any fitting. No kernel, no
+compiler involvement. Two refinements came from the domain source:
 
-My first guess — that SeqCraft has no adiabatic support at all — was wrong, and checking it
-mattered: `IRPrep` already routes `hypsec` and `wurst` to `make_adiabatic_pulse`. What is absent is
-specifically the 90° adiabatic family.
+**The input magnetisation is not the leaf's, and the Handbook says so explicitly** — `Mz` "must be
+calculated by taking into account steady-state conditions; it is not simply the equilibrium
+longitudinal magnetisation" (p. 893). So the leaf owns the *factor* it applies and cannot know the
+quantity it multiplies. That is a clean ownership statement rather than a gap, and it sharpens the
+claim: the module's claim is about `exp(−prep_time/T2)`, not about absolute signal.
 
-The consequence is a claim-scope problem rather than a capability one. A `T2Prep` shipped today
-would use a non-adiabatic tip pair — a variant **no witness implements**, and one that is *not* a
-metamorphic transform of a witnessed variant either. That is the difference from the Spiral
-precedent, where `in` really is `out` reversed and analytic plus metamorphic evidence carried the
-unwitnessed modes. Here the unwitnessed thing is the pulse family, and B1 robustness is the whole
-reason the witnesses chose adiabatic pulses.
+**One canonical variant crosses the boundary.** The Handbook's B1-robust scheme (Fig. 17.36) puts a
+dephasing lobe inside the preparation and its matching rephaser *inside the subsequent imaging
+sequence*, "combined with the slice-selection rephaser". No single module can hold that
+correctness condition — it is a cross-leaf coupling, so it is excluded from the initial mode and
+flagged as kernel-layer work. Cross-referenced to C3, which is about exactly this class.
 
-**Cheapest unblock:** a permissively licensed non-adiabatic T2 preparation, which would witness
-the buildable variant directly instead of by analogy. That is a registry question, not this scan's
-to answer.
+**`Refocusing` is still not reusable**, measured as before: it refuses `crush_cycles_per_voxel=0`,
+and a crusher inside the preparation destroys what is being stored.
 
-## 5. What this says about the workflow
+## 4. What the abstraction establishes, and what it does not
 
-**v0 handled this well, and that is the result the candidate was chosen to produce.**
+**Establishes**, all measurable without a scanner: interval symmetry on the emitted lattice; the
+declared `prep_time_s` equal to the measured effective-rotation interval; the `+ + − −` phase
+pattern read off the compiled file; zero net gradient area inside the preparation with the spoiler
+moment entirely outside it; and the metamorphic relation that doubling `prep_time_s` doubles the
+transverse interval while leaving pulse count, phases and spoiler unchanged.
 
-- The ownership test settled the boundary without a tiebreaker, and settled the `Refocusing`
-  question by making a claim that turned out to be measurable — the refusal is in the code.
-- `MODE_CONTRACT_INCOMPLETE` was already in the reason-code vocabulary and fits exactly. I did not
-  have to bend a label or invent one.
-- Rule A's "no extraction before the mode table" is what stopped this, and it stopped it for the
-  right reason: the evidence contains two parameterisations and does not choose between them.
-- The evidence-tier rule — *reference coverage sets the evidence tier, not the abstraction
-  boundary* — did real work. The boundary is settled on one witness; what one witness cannot do is
-  license a claim about an unwitnessed pulse family.
+**Does not establish:** `exp(−prep_time/T2)` weighting until Layer 3 runs — and that is the claim a
+user actually cares about, so Layer 3 is not optional garnish here. **Nor B1 or B0 robustness.**
+That claim belongs to the deferred adiabatic mode. The composite pulses in the initial mode do buy
+some insensitivity — the Handbook says so — and no quantitative claim is made about it. Nor
+absolute signal, per the ownership note above.
 
-One small thing v0 did not have a place for: the distinction between **one independent witness**
-and **two designs by one author**. Both are `evidence[]` entries with an `independence` note, and
-that is adequate — but `reference_situation.designs_examined` is a field I added by hand because
-the schema has no way to say "the variation I am reasoning from is intra-corpus". Recorded as a
-Phase E observation, not a schema change.
+## 5. Recommendation
 
-## 6. Recommendation
+**Implement `mlev4-hard`, and only that.** Boundary, ownership, semantic timing, mode contract and
+acceptance claim are all written and the mode has a permissively licensed witness that I executed
+and measured. Deferred with triggers: the adiabatic modes, a refocusing-count API, the G1/G2
+variant, MRF scheduling, and the three-axis crusher policy.
 
-Do not implement yet. Two questions need a human, and neither is answered by more scanning:
+Corpus completeness is not a promotion condition, and four deferred modes do not block the first.
 
-1. Is the leaf's parameter the preparation time or the refocusing count?
-2. Should a non-adiabatic `T2Prep` ship at all, given that no witness implements one — or should
-   this wait for a witness of the buildable variant, or for a 90° adiabatic family?
+## 6. Skill observation — recorded, v0 unchanged
 
-If the answer to (2) is "ship the non-adiabatic variant with an explicit claim scope", this becomes
-`APPROVED_FOR_IMPLEMENTATION` immediately — the boundary, the ownership and the acceptance claim
-are all written and only the mode table is missing. If the answer is "wait for a witness", the
-record stands as it is with a trigger.
+> Mature MRI physical abstractions may be established by authoritative domain evidence even when
+> executable implementation witnesses are sparse. Code witnesses constrain implementation-specific
+> claims; they do not determine the existence of the physical abstraction.
 
-**Either answer is cheap from here.** That is what a clean conventional case looks like when the
-evidence is thin rather than the physics.
+Concretely, v0 lacks an **evidence class**. Its `evidence[].role` vocabulary describes a
+reference's relationship to *other references* and every value presumes the reference is an
+implementation; `authoritative-external` is the nearest fit and means something else. This record
+carries a hand-added `evidence_class: domain-reference` plus a `curated_card` pointer.
+
+It changed the outcome here, which is why it is worth recording: the same evidence read through
+v0's implementation-only lens gave YELLOW, and read with a domain class gives
+`APPROVED_FOR_IMPLEMENTATION` with the code witnesses doing the job they are good for — fixing the
+mode and the timing convention.
+
+**Whether it earns formalisation depends on C2 and C3.** One case is not enough.

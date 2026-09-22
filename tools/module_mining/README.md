@@ -67,6 +67,8 @@ remembers to update.
 
 ```text
 module_mining/
+  domain_evidence/                curated literature cards -- the evidence class the code
+                                  corpus cannot supply.  See its README
   plans/README.md                 which plan is current, which documents are evidence
   plans/                          the plan and the evidence -- see "Which copy to edit" below
   reference.py                    one record per executed reference implementation

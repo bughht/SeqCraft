@@ -208,6 +208,52 @@ sources:
       before any use beyond discovery.  The AGPL/EULA combination is more restrictive than the
       GPL sources above; treat any proposal to depend on it as a licensing question first.
 
+  # ---------------------------------------------------------------- added 2026-09-22
+  # Admitted during the C1 T2-preparation fine scan, which needed a permissively licensed witness
+  # for a NON-adiabatic realisation.  It is one, and it is a good one.
+  - id: ptb-mrseq
+    repo: PTB-MR/mrseq
+    commit_scanned: df03749
+    license: Apache-2.0
+    compatible_with_seqcraft_mit: true
+    roles: [discovery, design-witness]
+    language: python
+    executable: yes
+    maintained: true
+    covers: >
+      A `preparations/` package -- t2_prep, t1rho_prep, t1_inv_prep -- beside a `sequences/`
+      package holding T2-prep FLASH, MOLLI bSSFP, inversion-recovery SE and GRE, multi-echo SE,
+      T2* multi-echo FLASH, spiral and radial FLASH, GRPE Dixon, EPI, and a cardiac MRF spiral.
+      Also trajectory helpers (vds, spiral and Cartesian sampling).
+    independence_note: >
+      Built on PyPulseq, so it is NOT independent of the Pulseq line for low-level event
+      construction -- the same caveat the pypulseq and pulseq-matlab entries carry.  What it IS
+      independent of is OpenMRF, which is the comparison that matters for preparations: different
+      institution (PTB, the German national metrology institute), different language, different
+      structure, and a different realisation of the same physical family.  For any candidate where
+      the question is "do two groups build this the same way", it is a genuine second witness.
+      Per-candidate re-check still applies.
+    notable_files:
+      - path: src/mrseq/preparations/t2_prep.py
+        family: T2 preparation
+        role_for_that_family: design-witness
+        what_it_witnesses: >
+          A non-adiabatic MLEV-4 realisation, cited to Levitt & Freeman (1981) for the composite
+          pulse and Brittain et al. (1995) for the T2-prep application.  Hard block pulses
+          throughout; four composite refocusing pulses with the + + - - MLEV-4 phase pattern; a
+          composite 270x / -360x tip-up; an optional single-axis z spoiler documented as not
+          affecting the echo time.  Its public parameter is `echo_time`, defined as the time from
+          the CENTRE of the excitation pulse to the CENTRE of the 270 tip-up pulse, and it raises
+          a ValueError when that is too short for the requested pulse duration.
+        measured_by_us: >
+          Executed at seven protocols.  Realised echo time equals the request to 0.00 us, and the
+          four refocusing points land at 0.1250, 0.3750, 0.6250 and 0.8750 of it -- the MLEV-4
+          symmetric condition, exact.
+        what_it_does_not_witness: >
+          Any physical consequence.  Its own tests assert block-duration arithmetic and the
+          short-echo-time refusal, and do not check that the realised echo time matches the
+          request, the phase pattern, or the T2 weighting.
+
   # ---------------------------------------------------------------- added 2026-09-21
   # Admitted by the post-v0 batch scan.  It is NOT a sequence corpus, and that is why it is here:
   # a published 4D-flow implementation (open4dflow) does not construct its velocity-encoding

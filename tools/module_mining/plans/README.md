@@ -10,6 +10,10 @@ CURRENT ROADMAP
     post_v0_roadmap.md                       the only active forward plan
     post_v0_batch_scan.md                    the phase B corpus scan, against merged main
 
+DOMAIN EVIDENCE                              ../domain_evidence/ -- curated literature cards,
+                                             one per fine-scan candidate.  A separate evidence
+                                             class from the code corpus in ../sources.yaml
+
 DURABLE PROCESS / OPEN ARCHITECTURE
     fine_scan_playbook.md                    how a candidate is scanned, in depth
     repetition_augmentation_design_note.md   a direction for joint-solve augmentations, no API
