@@ -14,8 +14,8 @@
 # A corpus may be more than one.  It is never automatically a design-witness just because it
 # contains working sequences.
 
-registry_version: 2
-updated: 2026-09-21
+registry_version: 3
+updated: 2026-09-22
 
 sources:
 
