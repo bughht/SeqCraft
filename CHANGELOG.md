@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased — a b-value in, and the analyser that had to be corrected to prove it
+
+`DiffusionSEPrep` (`kernel/`): a diffusion-weighted spin echo. `b_s_per_mm2` in; the lobe width,
+the gradient amplitude and the echo time out.
+
+**The first kernel whose reason for existing is a pulse it does not own.** The two encoding lobes
+have the *same* polarity and sit either side of a 180 that conjugates what came before them, so
+neither lobe can be designed without knowing where that pulse is and how long it lasts — and the
+pulse belongs to `Refocusing`. One owner holds all three.
+
+**It needed no new interface to do that.** Every fact the design requires was already a
+construction-time property of the two RF leaves — `time_to_center`, `time_to_rephaser`,
+`rephaser_duration_s`, `time_to_crusher`, `crush_duration_s`. The kernel constructs its leaves,
+reads them, completes the coupled design, and only then calls `build()`. Nothing inspects emitted
+events and nothing rewrites another module's output. `LogicBlock`, the compiler and
+`GradientEvent` are untouched.
+
+**The design is closed form end to end.** Substituting `Δ = C + δ + ε` into the Handbook's
+trapezoid expression makes it a cubic in the lobe width — the source's own Example 9.2 — and both
+timing windows grow as TE/2, so the shortest echo time is a maximum of two linear expressions. No
+optimizer, no search. `salvage/bvalue.py` says "a closed form does not exist because `Delta`
+depends on `delta`" and steps up the raster; it stopped one substitution short. The two agree to
+1e-9, which is a test.
+
+**The ramp terms are in it.** The correction is negative, so the rectangular formula over-states
+`b`. The MIT reference implementation's own helper is documented "for trapezoid gradients: TODO".
+
+New: `sc.b_value(tree, opts, end_s=...)` — the b-value per axis from the emitted gradients, which
+shares no code with the module it checks. That mattered twice. It caught a lobe-centre separation
+one ramp short, where every lobe was legal and the amplitude solve had quietly compensated by
+delivering 4 % too much `b`.
+
+**And then a Bloch simulation caught two defects in `b_value` itself.** It reported nine times the
+weighting the magnetisation experienced on an unweighted acquisition, and a *different* number for
+two files whose encoding is identical and whose only difference is 26 ms of dead time — which is
+the diagnostic, because `k` is zero while nothing is playing.
+
+| | |
+|---|---|
+| the phase origin was the start of the tree | a slice-select rephaser undoes the lobe area *after* the RF centre, not half the lobe, so half a lobe was left as a constant `k` |
+| refocusing pulses were located without `event.delay` | `pp.calc_rf_center` measures from the start of the waveform; the conjugation was applied 700 µs early |
+
+Neither was visible on the diffusion axis, where `k` is zero before the encoding and flat across
+the refocusing block. Both are fixed and pinned by regression tests. **An independent validator is
+only independent of what it was pointed at.**
+
+New examples in [`examples/dwi_se_epi_2d/`](examples/dwi_se_epi_2d/): `01` builds a complete
+single-shot diffusion-weighted spin-echo EPI at b = 0, 500 and 1000 s/mm², **all at one echo
+time**, because a diffusion coefficient comes from a ratio and a mismatch adds
+`(TE_b − TE_0)/(T2·b)` to every reported ADC. `02` plays them through MRzeroCore and recovers a
+known diffusion coefficient to 0.06 %.
+
+Evidence and the architecture argument:
+[`tools/module_mining/plans/diffusion/`](tools/module_mining/plans/diffusion/).
+
 ## Unreleased — one reversible spiral arm, and the four ways to traverse it
 
 `SpiralReadout` (`readout/`): the Nyquist path, its slew- and amplitude-limited traversal, the

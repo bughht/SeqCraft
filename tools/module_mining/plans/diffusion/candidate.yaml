@@ -1,0 +1,348 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-22.
+# See ../../README.md for which copy to edit.
+# Diffusion weighting -- the architecture stress test AND the first production showcase of the
+# Phase C / Phase E work.  Unlike C1-C3 this record did not stop at a decision: the module exists,
+# `DiffusionSEPrep`, with 26 tests and a complete acquisition.
+#
+#   python tools/module_mining/schema.py tools/module_mining/plans/diffusion/candidate.yaml
+
+id: diffusion-weighting
+name: DiffusionSEPrep
+
+capability:
+  family: kernel
+  summary: >
+    A diffusion-weighted spin-echo preparation- an excitation, two equal same-polarity gradient
+    lobes either side of a refocusing pulse, and the spin echo they are designed around.  The
+    public quantity is the b-value; the lobe width, the amplitude and the echo time follow.
+  what_a_user_could_get_wrong: >
+    (1) That the two lobes have the SAME polarity in a spin echo.  The 180 conjugates what the
+    first accumulated, so opposite polarity -- correct for a gradient echo -- cancels the encoding
+    instead of doubling it.
+    (2) That b is a property of the diffusion lobes.  It is an integral over every gradient on the
+    axis between excitation and echo, so slice lobes, crushers and a readout prephaser all
+    contribute.  A "b = 0" acquisition is not b = 0.
+    (3) That the ramps can be ignored.  The trapezoid correction is negative, so the rectangular
+    formula over-estimates b -- and the reference implementation in the MIT corpus carries a
+    helper documented "for trapezoid gradients: TODO".
+    (4) The separation Delta is between lobe CENTRES, and a lobe occupies delta plus one ramp of
+    wall time.  Getting that wrong by one ramp is invisible except in the delivered b.
+    (5) That each b may be acquired at its own shortest echo time.  A diffusion coefficient comes
+    from a RATIO, so a mismatch adds (TE_b - TE_0)/(T2 b) to every reported ADC -- 0.43 um^2/ms at
+    a 60 ms T2 across the echo times this candidate's own showcase produces.  The error is
+    ADDITIVE in ADC, so it does not calibrate away against a phantom of different diffusivity.
+    This is an ACQUISITION-level fact: no module can see it.
+
+target:
+  layer: kernel
+  seat: >
+    modules/kernel/diffusion_se.py.  A kernel rather than a leaf because the encoding is defined
+    around a pulse owned by another module- neither lobe can be designed without knowing where the
+    refocusing pulse is and how long it lasts.
+  untouched:
+    - src/seqcraft/compiler        # no compiler change
+    - src/seqcraft/design          # no LogicBlock change
+    - src/seqcraft/modules/rf      # Excitation and Refocusing used as they are, unmodified
+  extended:
+    - src/seqcraft/analysis.py     # adds b_value; see dependency_impact
+
+evidence:
+  - id: D1
+    source: domain-reference
+    repo: n/a -- a book; see `citation` and `curated_card`
+    license: Copyrighted textbook.  CITED ONLY.
+    citation: >
+      Bernstein, King & Zhou, Handbook of MRI Pulse Sequences, Elsevier 2004.  Chapter 9
+      "Motion-Sensitizing Gradients", section 9.1 "Diffusion-Weighting Gradients" (X. J. Zhou),
+      book pages 274-281; Figures 9.3 and 9.4, pages 278-279; Example 9.2, page 279.
+      Read- pages 274, 278-280.
+    role: authoritative-external
+    evidence_class: domain-reference
+    independence: Not an implementation and not derived from any corpus here.
+    curated_card: tools/module_mining/domain_evidence/diffusion.md
+    what_it_establishes: >
+      The canonical structure- "two lobes with equal area", same polarity, either side of a
+      refocusing pulse.  The b-value as an integral over ANY gradient waveform in the pulse
+      sequence (Eqs. 9.5-9.7).  The closed forms of Figure 9.3, INCLUDING the finite-ramp
+      correction eps^3/30 - delta*eps^2/6, with the caption confirming it reduces to the
+      rectangular case as the ramp vanishes.  That the canonical design problem is a cubic with
+      "a single physically meaningful solution" (Example 9.2).  That the amplitude is "typically
+      the maximum allowed by the system" while "maximum slew rate is often not used ... especially
+      for imaging human subjects", for dB/dt and eddy currents.  And that identical lobes either
+      side of the refocusing pulse cancel the concomitant-field phase.
+    what_it_does_not_establish: >
+      Any minimum-TE construction -- it says a long TE is the consequence and that amplitude is
+      the lever, and gives no design.  Twice-refocused eddy-current-compensated designs, which it
+      names, motivates and defers to section 17.2 and Reese et al. (2003).  Direction schemes,
+      b-matrices or tensor encoding.  And how the imaging gradients' own contribution to b should
+      be handled- Eq. 9.7 includes them and the figures' closed forms do not.
+  - id: R1
+    source: pulseq-matlab
+    repo: pulseq/pulseq
+    path: matlab/demoSeq/writeEpiDiffusionRS.m
+    commit: 2fd6ab6
+    license: MIT
+    role: independent-implementation
+    independence: >
+      Independent of PulseqDiffusion and of MRzero.  No PyPulseq counterpart, so the usual port
+      caveat does not apply.
+    what_it_establishes: >
+      The direction "TE given -> timing windows -> amplitude".  small_delta and big_delta are
+      DERIVED from TE and the RF/EPI timing, and the amplitude then comes from inverting the
+      analytic b-factor- `g = sqrt(bFactor / bFactCalc(1, small_delta, big_delta))`.  So a real
+      MIT implementation does solve the canonical case analytically.
+    what_it_does_not_establish: >
+      An exact b.  Its own helper is documented "for rect gradients- sigma=1 lambda=1/2
+      kappa=1/3" with "for trapezoid gradients: TODO", so the shipped physics IGNORES THE RAMPS,
+      which D1 supplies.  Nor a minimum-TE design- TE is the user's input.
+  - id: R2
+    source: pulseq-diffusion
+    repo: ritagnunes/PulseqDiffusion
+    commit: 0517ae1
+    license: AGPL-3.0
+    role: architecture-evidence
+    independence: >
+      DISCOVERY ONLY under its licence.  File names and solve structure were read; no
+      implementation text was adapted and nothing here derives from its code.
+    what_it_establishes: >
+      That the opposite direction is a real design problem someone attacks- `opt_TE_bv_SE` and
+      `opt_TE_bv_TRSE` find a minimum TE for a TARGET b, single- and twice-refocused, and
+      `calc_exact_bval` sits beside `calc_bval`.  So the harder direction and the ramp-inclusive
+      physics both exist in the copyleft corpus.
+    what_it_does_not_establish: >
+      That minimum-TE needs a numerical optimizer.  For the single-refocused canonical case this
+      candidate reaches it in closed form -- see contract.realization.  What it does establish is
+      that TWICE-refocused designs, which carry their own cancellation conditions, are a different
+      problem.
+  - id: O1
+    source: mrzero-core
+    repo: MRsources/MRzero-Core
+    path: documentation/playground_mr0/mr0_DWI_SE_EPI.ipynb
+    commit: 5732d86
+    license: AGPL-3.0 plus EULA
+    role: supporting
+    evidence_class: oracle
+    independence: >
+      ORACLE ONLY, never a design witness -- it builds with PyPulseq.  It is in the CI-tested
+      subset of the playground, so the simulator path is exercised upstream.
+    what_it_establishes: >
+      That a Bloch simulator can produce diffusion-weighted signal from an emitted .seq, which is
+      what makes Layer 3 possible for this candidate.
+    what_it_does_not_establish: Anything about construction.
+
+reference_situation:
+  independent_witnesses: 2    # R1 usable, R2 discovery-only
+  note: >
+    The evidence is asymmetric in a way that matters- the permissive witness solves the EASY
+    direction with INCOMPLETE physics, and the complete physics and the hard direction are both
+    copyleft.  D1 supplies the ramp-inclusive closed form that R1 marks TODO, which is what let
+    this candidate be built from a permissive source at all.
+
+contract:
+  public_quantity:
+    name: b_s_per_mm2
+    why: >
+      It is what a protocol specifies and what a reader of the image interprets.  Amplitude,
+      width, separation and echo time are all consequences.
+  inputs_and_outputs:
+    inputs: b_s_per_mm2, the direction axes, the slice, the pulse durations, optionally te_s
+    solved: >
+      the lobe width (the cubic's root), the amplitude (trimmed after rastering), the lobe-centre
+      separation, and the minimum echo time
+    note: >
+      te_s is the one that goes both ways- given, it is used and a too-short value is REFUSED;
+      omitted, the shortest that fits is computed.  That is the same shape mrseq's bSSFP uses for
+      TR, and it is how "b is the input and TE is a consequence" is expressed without taking the
+      choice away from a protocol.
+  what_it_needs_from_other_leaves:
+    facts:
+      - the excitation's effective centre and where its rephaser ends
+      - the refocusing pulse's effective centre and the extent of its crusher pair
+    all_available_before_build: >
+      **Yes, and this is the architecture finding.**  Every one is a construction-time property --
+      Excitation.time_to_center, time_to_rephaser, rephaser_duration_s; Refocusing.time_to_center,
+      time_to_crusher, crush_duration_s.  The kernel constructs its leaves, reads those, completes
+      the coupled design, and only then calls build().  Nothing is inspected after materialisation
+      and nothing is rewritten.
+  realization:
+    method: closed form, end to end
+    detail: >
+      With the amplitude at the cap, substituting Delta = C + delta + eps into Figure 9.3 gives
+      a cubic in delta whose smallest positive real root is the width -- the handbook's own
+      Example 9.2 calculation.  The echo time does not enter the lobe design at all; it only
+      decides whether the pair fits, and both windows grow as TE/2, so the shortest echo time is a
+      max of two linear expressions.  The width is then rounded up onto the gradient raster and
+      the amplitude trimmed with one square root, because b is quadratic in it.
+    no_optimizer: >
+      No numerical optimizer is used and none is needed for this mode.  That is a measured result,
+      not a preference- the delivered b matches the request to 0.001 % from 100 to 3000 s/mm^2.
+    where_the_line_falls: >
+      It does NOT generalise to everything diffusion.  Twice-refocused designs add eddy-current
+      cancellation conditions across four lobes and two refocusing pulses; a genuine minimum-TE
+      search over the readout as well as the encoding has more free variables than this; and
+      multiple moment orders, fixed waveform segments or PNS constraints are a different problem.
+      An optimizer remains a legitimate realization strategy there.  See findings.md.
+
+acceptance:
+  defined_before_extraction: true
+  claim_scope: >
+    Single-refocused PGSE with identical trapezoid lobes, one or more axes, designed at maximum
+    amplitude and below the slew limit.
+  establishes:
+    - >
+      The delivered b-value on the encoding axis equals the request, measured by integrating the
+      EMITTED gradients with an analyser that shares no code with the design -- to 0.001 % over
+      100 to 3000 s/mm^2.
+    - >
+      The closed form matches the handbook- the trapezoid expression reduces to the rectangular
+      one as the ramp vanishes, and Example 9.2's published number is reproduced.
+    - >
+      The spin echo lands at the declared TE, measured from the compiled sequence's own
+      excitation and refocusing instants.
+    - >
+      The two lobes are identical in duration and amplitude -- the condition D1 gives for
+      concomitant-field cancellation.
+    - >
+      The second lobe finishes before the spin echo, at every b including zero.
+    - >
+      Metamorphic- b is quadratic in the amplitude at fixed geometry; a longer echo time leaves
+      more room and changes neither the width nor the amplitude; a larger b needs a longer minimum
+      echo time.
+    - >
+      A complete diffusion-weighted acquisition builds and compiles, with the readout's echo on
+      the spin echo.
+    - >
+      Layer 3- a known diffusion coefficient is recovered from the emitted files by a Bloch
+      simulator to 0.06 % at 0.7, 1, 2 and 3 um^2/ms, with nothing fitted but the slope of
+      ln(S/S0) against -b.
+    - >
+      Layer 3- the cost of a mismatched echo time matches (TE_b - TE_0)/(T2 b) to four decimal
+      places and is independent of D, which is the additivity the closed form predicts.
+    - >
+      The closed form agrees to 1e-9 with `salvage/bvalue.py`, a third implementation that
+      integrates |k(t)|^2 directly rather than using any published ramp correction.
+  does_not_establish:
+    - >
+      Anything about a scanner.  Eddy currents, concomitant fields and PNS are named by D1 as the
+      reasons for design choices here, and none of them is measured.
+    - >
+      Twice-refocused or any multi-lobe eddy-current-compensated design.
+    - >
+      GLOBAL minimum TE.  The echo time returned is the shortest that fits THIS geometry -- the
+      lobes at full amplitude, symmetric about the refocusing pulse.  A different arrangement
+      might be shorter, and no claim is made that this one is optimal.
+    - >
+      Diffusion coefficients, ADC maps or tensor quantities.  The module delivers a b-value; what
+      an experiment infers from a set of them is not its claim.
+    - >
+      Accuracy of the simulated diffusion attenuation against a physical phantom.
+
+dependency_impact:
+  - what: src/seqcraft/analysis.py -- adds `b_value`
+    classification: NO_BEHAVIOR_CHANGE
+    why: >
+      A new public function and a new name in __all__.  Nothing existing calls it, no existing
+      function changed, and `sample`, `moments`, `kspace` and `pns` are untouched.  Grepped for
+      real consumers rather than for the name.
+
+validation:
+  layers:
+    layer_1: GREEN            # 26 tests: the handbook closed forms, the delivered b measured
+                              # independently, metamorphic scaling, timing against sc.kspace,
+                              # identical lobes, the lobe-before-echo invariant, the refusals
+    layer_2: GREEN            # examples/dwi_se_epi_2d/01_build.ipynb -- a complete
+                              # diffusion-weighted spin-echo EPI acquisition, compiled
+    layer_3: GREEN            # examples/dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb --
+                              # MRzeroCore on the emitted .seq recovers a known diffusion
+                              # coefficient to 0.06 % at 0.7, 1, 2 and 3 um^2/ms, and CORRECTED
+                              # the Layer 1 analyser; see layer_3_result.
+  layer_3_result: >
+    The decisive one.  Playing the emitted files through a Bloch simulator agreed with the
+    encoding to 0.06 % and DISAGREED with `sc.b_value` about the unweighted acquisition by a
+    factor of nine -- 0.639 s/mm^2 reported against 0.074 delivered, and a different number for
+    two files whose encoding is identical and whose only difference is 26 ms of dead time.  The
+    simulator was right.  Two independent defects in the analyser- the phase origin was the start
+    of the tree rather than the excitation's centre, which left half a slice-select lobe as a
+    constant k; and refocusing pulses were located without their own `delay`, putting the
+    conjugation 700 us early.  Both are fixed, both are pinned by regression tests in
+    tests/analysis/, and NEITHER was visible on the diffusion axis, where k is zero before the
+    encoding and flat across the refocusing block.  See findings.md section 4.
+  composition_level: >
+    Rule G applies and is exercised- the claim is the b-value of EVERY gradient on the axis
+    between excitation and echo, so `sc.b_value` integrates the whole tree rather than the
+    module's own lobes.  That is how the b = 0 case is shown to carry a small real weighting from
+    the slice lobes and crushers, which no module-local check could see.
+
+coverage_classification: null
+
+status: NEW_KERNEL
+traffic_light: GREEN
+
+decision_summary: >
+  Implemented, not merely approved.  Diffusion is a kernel- the encoding is two lobes either side
+  of a pulse that belongs to another module, so neither lobe can be designed without it.
+
+  **Hypothesis 1 -- analytic first, optimizer fallback -- survived, and the canonical case came
+  out entirely analytic.**  The handbook's Example 9.2 is a cubic with one physical root, and
+  substituting the geometry makes the whole design closed form including the echo time.  The
+  measured agreement between what the module intends and what the sequence delivers is 0.001 %.
+  The line where that stops is written down rather than left implied- twice-refocused designs,
+  genuine minimum-TE search over the readout, and multi-constraint problems are not this.
+
+  **Hypothesis 2 -- joint realization before materialisation -- survived without needing any new
+  interface.**  Everything the kernel needed was already a construction-time property of
+  Excitation and Refocusing.  It constructs its leaves, reads their semantic instants and
+  durations, designs, and only then builds.  No `RequirementIR`, no design context, no rewrite
+  layer, and nothing added to LogicBlock or the compiler.
+
+  The strongest evidence for the Phase E validation rule is that **independent validation caught
+  two real defects** that every module-local check passed- a lobe-centre separation one ramp
+  short, which the amplitude solve hid by delivering 4 % too much b, and a lobe sized without its
+  ramp, which ran past the spin echo and left a readout nowhere to go.  The second appeared only
+  when a real acquisition was composed against it, which is Rule G's argument in one sentence.
+
+open_questions:
+  - >
+    Should a longer-than-minimum echo time lower the amplitude rather than leave the lobes
+    unchanged?  D1 says maximum amplitude is what is used, so the current behaviour follows the
+    source -- but lowering it would reduce eddy currents and PNS, which D1 also cares about.  No
+    evidence decides it; recorded rather than guessed.
+  - >
+    The slew fraction is 0.7 by default because D1 says maximum slew "is often not used ...
+    especially for imaging human subjects" and gives no number.  A second witness with an explicit
+    fraction would settle it.
+  - >
+    Twice-refocused designs are the obvious next mode and are NOT a parameter away- four lobes,
+    two refocusing pulses, and cancellation conditions the single-refocused case does not have.
+    That is where an optimizer may genuinely be needed, and it should be scanned in its own right.
+
+evidence_state:
+  human_review: NEEDED
+  experiment_design_review: DONE
+  scanner_validation: RECOMMENDED
+  note: >
+    Recommended rather than not-required- D1's practical section is about eddy currents,
+    concomitant fields and nerve stimulation, and those are the things a phantom and a magnet
+    settle.  The b-value claim itself is analytic and simulable and does not need one.
+  deferred:
+    - what: Twice-refocused / eddy-current-compensated designs.
+      why: >
+        D1 names them, gives the motivation, and defers the design to section 17.2 and Reese et
+        al. (2003).  Four lobes and two refocusing pulses with their own cancellation conditions
+        are a different physical contract, not a mode of this one.
+      revisit_trigger: >
+        A protocol needs eddy-current compensation, or a permissive witness for the design
+        appears.  **This is also the best test of whether an optimizer is ever needed here.**
+    - what: A global minimum-TE claim.
+      why: >
+        The echo time returned is the shortest for THIS geometry -- full amplitude, symmetric
+        about the refocusing pulse.  Another arrangement might be shorter.
+      revisit_trigger: A claim is made that depends on TE being optimal rather than feasible.
+    - what: Direction schemes, b-matrices and tensor encoding.
+      why: >
+        The module encodes along the axes it is given; how many directions, in what order, and
+        what is fitted afterwards is acquisition and analysis policy.
+      revisit_trigger: A DTI candidate is scanned in its own right.
+    - what: An explicit slew fraction from a second source.
+      why: D1 gives the reason and not the number.
+      revisit_trigger: A permissive witness states one.

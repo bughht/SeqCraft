@@ -3,7 +3,7 @@
 > **Mirrored from the workspace planning repository** (`docs/plans/module-mining/`) on
 > 2026-09-20, so that the pull request carries the evidence behind the modules it adds.
 > The two copies are identical today and there is nothing keeping them that way; see
-> [`../README.md`](../README.md) for which one to edit.
+> [`../README.md`](../../README.md) for which one to edit.
 
 **v0 is a baseline, not a final theory.** Module Mining Skill v0 merged as PR #31 and is frozen:
 the workflow, the schema, the vocabulary and the three prospective calibrations. Everything below
@@ -37,7 +37,7 @@ landed — `spiral/findings.md` §9 and §10.
 non-Cartesian path against **two** real consumers, and complete Radial's and Spiral's Layer 3.
 
 ```text
-PR23 capability reconciliation        pr23_reconciliation.md -- one disposition per capability
+PR23 capability reconciliation        archive/2026-09-20_pr23_reconciliation.md -- one disposition per capability
 non-Cartesian reconstruction review   reduce to the smallest contract two consumers justify
 Radial / Spiral Layer 3               four notebooks, each with a different job
 ```
@@ -116,14 +116,14 @@ principle is unchanged and is what any such abstraction must be reconciled again
 > Leaves know intrinsic physics, kernels own cross-leaf coupling, imaging owns acquisition policy,
 > and the compiler owns Pulseq legality.
 
-See also `repetition_augmentation_design_note.md`, which records the direction without proposing
+See also `process/repetition_augmentation_design_note.md`, which records the direction without proposing
 an API.
 
 ---
 
 ## Phase B — batch mining with the frozen v0 Skill — **COMPLETE** (2026-09-21)
 
-The scan report is [`post_v0_batch_scan.md`](post_v0_batch_scan.md). Nine registered corpora read,
+The scan report is [`archive/2026-09-21_batch_corpus_scan.md`](../archive/2026-09-21_batch_corpus_scan.md). Nine registered corpora read,
 the coverage map redrawn against merged `main`, and a candidate backlog with reasoning-class
 annotations. **No Module was implemented and the Skill was not edited**, including where v0's
 vocabulary was awkward — those are recorded as Phase E evidence in the report's §6.
@@ -157,7 +157,7 @@ Domain literature became a distinct evidence class during C1 and changed the out
 scans by three different mechanisms — supplying a family, correcting a contract three witnesses
 agreed on, and correcting an architectural inference. Cards in `../domain_evidence/`.
 
-The Phase E recommendation is [`phase_e_synthesis.md`](phase_e_synthesis.md). Its headline: the
+The Phase E recommendation is [`archive/2026-09-22_skill_v1_synthesis.md`](../archive/2026-09-22_skill_v1_synthesis.md). Its headline: the
 findings **refine the meaning of the Module layer** and require no change to `LogicBlock`, the
 compiler, or the `Module → LogicBlock → Tree → Compiler` architecture. C2's 220 µs stays
 undecided pending one ownership question the synthesis poses.
@@ -197,7 +197,7 @@ Post-v0 PR A     Phase A, as PR #32.  A1 (contract + adapter validation + reconc
                  is pushed and open for early review; A2 (the four notebooks and the
                  Layer-3 evidence updates) lands on the same branch and the PR does not
                  merge until both are in.
-Post-v0 PR B     batch scan / candidate backlog.  COMPLETE -- post_v0_batch_scan.md.
+Post-v0 PR B     batch scan / candidate backlog.  COMPLETE -- archive/2026-09-21_batch_corpus_scan.md.
 Post-v0 PR C+    selected fine scans
 Skill evolution  separate PR, only when new evidence requires it
 ```

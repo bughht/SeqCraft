@@ -41,7 +41,7 @@ source corpus
 Stages do not overlap. In particular, **no extraction before the acceptance claim is written
 down** — an acceptance criterion invented after the code exists is a description of the code.
 
-Depth for every stage: `tools/module_mining/plans/fine_scan_playbook.md`. This skill is the
+Depth for every stage: `tools/module_mining/plans/process/fine_scan_playbook.md`. This skill is the
 operational layer over it and does not repeat it.
 
 ## Ownership, which is what most of the argument turns out to be
@@ -329,6 +329,10 @@ Layer 3  simulate + reconstruct                   review evidence
 
 State status **per layer**. A GREEN that covers Layers 1 and 2 does not license an end-to-end
 claim, and the difference must be written where a reader will hit it.
+
+Layer 2 and Layer 3 notebooks are **user-facing examples**, so they follow the repository rule in
+`examples/README.md` -> *Writing example notebooks*. The scan record is where the evidence
+argument goes; the notebook is a tutorial.
 
 **The ladder describes software-validation depth and nothing else.** It does not describe
 reference comparison, emitted-sequence inspection, human expert review or scanner work, and those

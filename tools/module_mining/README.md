@@ -11,7 +11,7 @@ layout, names and return shapes are free to change.
 
 `.claude/skills/module-mining/` is the operational layer over all of this: the pipeline, the four
 rules, the artifact shape and the stop outcomes, written to be loaded when a candidate is being
-worked rather than read end to end. `plans/fine_scan_playbook.md` remains the depth reference and
+worked rather than read end to end. `plans/process/fine_scan_playbook.md` remains the depth reference and
 the skill does not repeat it.
 
 ```text
@@ -70,7 +70,10 @@ module_mining/
   domain_evidence/                curated literature cards -- the evidence class the code
                                   corpus cannot supply.  See its README
   plans/README.md                 which plan is current, which documents are evidence
-  plans/                          the plan and the evidence -- see "Which copy to edit" below
+  plans/current/                  the active forward plan
+  plans/process/                  how a candidate is scanned
+  plans/archive/                  completed records, date-prefixed
+  plans/<candidate>/              one folder each -- see "Which copy to edit" below
   reference.py                    one record per executed reference implementation
   fingerprint.py                  the comparator stack: L0 / L2 / L3 / L4
   inspect_emitted.py              read a .seq back and report the physics it actually encodes

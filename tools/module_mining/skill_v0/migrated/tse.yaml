@@ -145,7 +145,7 @@ acceptance:                           # [RECONSTRUCTED] boundary_decision.md sec
   tolerance: exact -- absolute times and content hashes, at four turbo factors
   defined_before_extraction: true     # [RECONSTRUCTED] the playbook fixed event identity as the
                                       # promotion criterion before this pilot began; see
-                                      # fine_scan_playbook.md section 11
+                                      # process/fine_scan_playbook.md section 11
   establishes:
     - the extracted TSEShot and FSE2D emit exactly the notebook's events at echoes 1, 8, 16 and
       at a 72-echo HASTE with partial_fourier 0.625

@@ -3,14 +3,14 @@
 > **Mirrored from the workspace planning repository** (`docs/plans/module-mining/`) on
 > 2026-09-19, so that the pull request carries the evidence behind the modules it adds.
 > The two copies are identical today and there is nothing keeping them that way; see
-> [`../README.md`](../README.md) for which one to edit.
+> [`../README.md`](../../README.md) for which one to edit.
 
 **Status:** Local execution guide  
 **Date:** 2026-09-18  
 **First recommended pilot:** TSE / FSE  
 **Relationship to other documents:**
-- [`module_mining_plan.md`](module_mining_plan.md) — overall strategy and milestones.
-- [`coarse_scan_2026-09-18.md`](coarse_scan_2026-09-18.md) — coarse-scan evidence and candidate map.
+- [`archive/2026-09-18_original_mining_plan.md`](../archive/2026-09-18_original_mining_plan.md) — overall strategy and milestones.
+- [`archive/2026-09-18_coarse_scan.md`](../archive/2026-09-18_coarse_scan.md) — coarse-scan evidence and candidate map.
 - this file — how to execute a candidate fine scan locally.
 
 ---

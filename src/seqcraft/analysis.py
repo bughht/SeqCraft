@@ -34,6 +34,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import pypulseq as pp
 
 from .compiler import compile_sequence
 from .design import events as ev
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
 
     from .design.logic import LogicBlock
 
-__all__ = ['kspace', 'moments', 'pns', 'sample']
+__all__ = ['b_value', 'kspace', 'moments', 'pns', 'sample']
 
 
 def sample(
@@ -175,6 +176,124 @@ def moments(tree: LogicBlock, order: int = 0) -> dict[str, float]:
             continue
         axis = str(event.channel)
         out[axis] = out.get(axis, 0.0) + ev.pwl_moment(*ev.knots_of(event, start), order)
+    return out
+
+
+def b_value(tree: LogicBlock, opts: Opts, *, end_s: float | None = None) -> dict[str, float]:
+    r"""
+    Return the diffusion `b`-value per axis, in s/mm\ :sup:`2`, integrated from emitted gradients.
+
+    .. math::
+
+        b = (2\pi)^2 \int_0^{T} k(t)\cdot k(t)\, \mathrm{d}t
+        \qquad
+        k(t) = \int_0^{t} G(t')\, \mathrm{d}t'
+
+    Bernstein, King & Zhou, *Handbook of MRI Pulse Sequences* (2004), §9.1, Eqs. 9.5--9.7.  In
+    SeqCraft gradients are already in Hz/m, so :math:`\int G\,\mathrm{d}t` **is** the handbook's
+    :math:`k(t)` in 1/m and no gyromagnetic ratio appears here.
+
+    **This measures the tree, not any module's arithmetic.**  It shares no code with whatever
+    designed the waveform, which is the point: a module that both computes its own `b` and is
+    checked against its own number has tested nothing.  And `b` is a property of *everything* on
+    the axis -- slice-select lobes, crushers and readout prephasers all contribute -- so this
+    integrates the whole tree rather than one component.
+
+    Parameters
+    ----------
+    tree
+        The block to measure.  Nested blocks are flattened.
+    opts
+        Supplies the gradient raster, which is the integration grid.
+    end_s
+        Integrate to this time from the start of `tree`.  ``None`` integrates to the end.  For a
+        spin echo the physically meaningful endpoint is the echo; integrating past it keeps
+        accumulating and reports a number no experiment measures.
+
+    Returns
+    -------
+    dict
+        ``axis -> b`` over the axes actually used, plus ``'total'``, the sum -- which is the
+        scalar `b` of a single-direction experiment.  A full b-matrix would need the cross terms
+        and is deliberately not returned: no candidate has needed one, and the trace is what a
+        b-value means.
+
+    Notes
+    -----
+    **Refocusing pulses flip the sign of the accumulated k.**  That is what makes the spin-echo
+    case work at all -- the handbook's §9.1 notes the two lobes "have the same polarity and are
+    placed at either side of a refocusing RF pulse", which only integrates to a large `b` because
+    the 180 conjugates what came before.  Every RF event with ``use='refocusing'`` flips it here,
+    at its own effective centre.
+
+    **The origin is the excitation, not the start of the tree.**  Integration runs from the first
+    ``use='excitation'`` pulse's centre, with `k` measured from its value there, because that is
+    when transverse magnetisation exists and where its phase starts.  It matters on the slice
+    axis, whose rephaser undoes the slice-select area *after* the RF centre rather than half the
+    lobe: measuring from ``t = 0`` leaves the other half as a constant offset, and a constant `k`
+    integrates without bound -- reporting a `b` that grows with the echo time out of nothing.  A
+    tree with no excitation in it is measured from its own start.
+
+    Both instants are the *effective* RF centres -- ``event.delay`` plus
+    ``pp.calc_rf_center(event)``.  ``tools/module_mining/plans/diffusion/findings.md`` records how
+    this was validated against a Bloch simulation and what that comparison corrected.
+
+    Examples
+    --------
+    >>> import numpy as np, pypulseq as pp, seqcraft as sc
+    >>> opts = pp.Opts(max_grad=80, grad_unit='mT/m', max_slew=200, slew_unit='T/m/s',
+    ...                rf_dead_time=100e-6, rf_ringdown_time=30e-6)
+    >>> g = pp.make_trapezoid('x', amplitude=25e-3 * 42.576e6, rise_time=200e-6,
+    ...                       flat_time=10e-3, system=opts)
+    >>> tree = sc.LogicBlock('mono').add(0.0, g)
+    >>> round(sc.b_value(tree, opts)['total'], 1)
+    16.3
+
+    One lobe on its own is a weak diffusion weighting; the pair straddling a refocusing pulse is
+    what makes a useful `b`.  ``examples/dwi_se_epi_2d/`` shows the difference.
+    """
+    grid, grads, _spans = sample(tree, opts)
+    if grid.size < 2:
+        return {}
+    # An RF pulse acts at its own effective centre, which is the pulse's delay -- transmit dead
+    # time and any asymmetry of the envelope -- plus the centre within the waveform.  Omitting
+    # the delay puts a refocusing pulse early, which is invisible on an axis whose k happens to
+    # be flat across the block and badly wrong on one that is not.
+    centres = [
+        (start + float(event.delay) + float(pp.calc_rf_center(event)[0]),
+         getattr(event, 'use', None))
+        for start, event, _path in flatten(tree)
+        if getattr(event, 'type', None) == 'rf'
+    ]
+    # Transverse magnetisation exists only after the excitation, and its phase origin is that
+    # pulse's centre -- which is why a slice-select rephaser undoes the area *after* the centre
+    # rather than half the lobe.  Measuring k from the start of the tree instead leaves that
+    # half-lobe as a spurious constant offset, and a constant k integrates without bound.
+    origin = min((t for t, use in centres if use == 'excitation'), default=float(grid[0]))
+    # Where the accumulated k is conjugated, in increasing time order.
+    flips = sorted(t for t, use in centres if use == 'refocusing')
+    stop = float(grid[-1]) if end_s is None else float(end_s)
+    raster = 0.5 * float(opts.grad_raster_time)
+    keep = (grid >= origin - raster) & (grid <= stop + raster)
+
+    out: dict[str, float] = {}
+    for axis, waveform in grads.items():
+        # The running integral on the raster, trapezoid because the sampled waveform is
+        # piecewise linear between grid points.
+        k = np.concatenate([[0.0], np.cumsum(
+            0.5 * (waveform[1:] + waveform[:-1]) * np.diff(grid))])
+        k = k - float(np.interp(origin, grid, k))
+        # A refocusing pulse at `when` conjugates what has accumulated:
+        #     k_after(t) = -k(when) + [k(t) - k(when)] = k(t) - 2 k(when)
+        # applied in time order, so a second pulse conjugates the already-conjugated value.
+        for when in flips:
+            after = grid >= when
+            if not after.any():
+                continue
+            k = np.where(after, k - 2.0 * float(np.interp(when, grid, k)), k)
+        out[axis] = float((2.0 * np.pi) ** 2 * np.trapezoid(k[keep] ** 2, grid[keep]) / 1e6)
+    if out:
+        out['total'] = float(sum(out.values()))
     return out
 
 

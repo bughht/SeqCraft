@@ -30,7 +30,8 @@ The folders, and what each one means
                    epi_2d.py           EPI2D
                    radial_readout.py   RadialReadout
                    spiral_readout.py   SpiralReadout
-      kernel/      gre_2d_tr.py        GRE2DTR      composes leaves; one repeating unit
+      kernel/      diffusion_se.py     DiffusionSEPrep
+                   gre_2d_tr.py        GRE2DTR      composes leaves; one repeating unit
                    gre_3d_tr.py        GRE3DTR
                    tse_shot.py         TSEShot
       imaging/     gre_2d.py           GRE2D        composes kernels; a complete scan
@@ -93,6 +94,7 @@ from __future__ import annotations
 from .encoding.phase_encoding import PhaseEncode
 from .imaging.fse_2d import FSE2D
 from .imaging.gre_2d import GRE2D
+from .kernel.diffusion_se import DiffusionSEPrep
 from .kernel.gre_2d_tr import GRE2DTR
 from .kernel.gre_3d_tr import GRE3DTR
 from .kernel.tse_shot import TSEShot
@@ -107,7 +109,8 @@ from .rf.refocusing import Refocusing
 from .spoiler import spoiler
 
 __all__ = [
-    'CartesianLine', 'EPI2D', 'Excitation', 'FSE2D', 'GRE2D', 'GRE2DTR', 'GRE3DTR', 'IRPrep',
+    'CartesianLine', 'DiffusionSEPrep', 'EPI2D', 'Excitation', 'FSE2D', 'GRE2D', 'GRE2DTR',
+    'GRE3DTR', 'IRPrep',
     'PhaseEncode',
     'RadialReadout', 'Refocusing', 'SaturationPrep', 'SpiralReadout', 'TSEShot', 'spoiler',
 ]

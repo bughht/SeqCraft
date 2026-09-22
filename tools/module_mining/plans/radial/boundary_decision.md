@@ -219,7 +219,7 @@ independent review first; an image produced through an unreviewed reconstruction
 things agreeing, not evidence about the sequence. PR #23 holds usable non-Cartesian reconstruction
 infrastructure, but under the roadmap it is **evidence for the Spiral supervised-calibration phase,
 not accepted architecture**, and nothing in `examples/` may depend on it until that review happens.
-It is picked up in `v0_closeout_and_roadmap.md` §2.7.2 and §6.1, where the notebook is a
+It is picked up in `archive/2026-09-19_v0_closeout.md` §2.7.2 and §6.1, where the notebook is a
 **conditional** on that review rather than a scheduled deliverable: if no genuinely shared
 reconstruction utility survives, the radial `02` is never written and this module stays Layer-2
 GREEN with the claim above.
