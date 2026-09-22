@@ -60,7 +60,8 @@ evidence:
       from it introduces T2-prime weighting -- with partial-echo bSSFP at TE < TR/2 given as a
       named realisation (Fig. 14.13).  That RF sign alternation is equivalent to a constant 180
       degrees of precession per TR, so the phase progression is a frame convention.  That the
-      approach to steady state takes four to five times T1, making catalyzation "an important
+      approach to steady state takes four to five times T1, making "accelerating or catalyzing the
+      approach to steady state ... an important
       practical problem" with several named solutions -- the alpha/2 with TR/2 scheme AND a linear
       flip-angle ramp.  And that Table 14.2 factorises a gradient-echo sequence into gradient
       waveform class x RF pulse train class x contrast formula.
@@ -68,7 +69,7 @@ evidence:
       Whether TR is an input or an output -- it treats TR as a protocol parameter and never
       discusses a minimum.  Where a software repetition boundary should fall.  Anything about 2D
       against 3D or segmentation- section 14.1 is dimension-agnostic and nothing in the balanced
-      subsection makes segmentation a property of the repetition.  How many catalyzation pulses
+      subsection makes segmentation a property of the repetition.  How many start-up pulses
       suffice, or how to verify steady state was reached.
   - id: R1
     source: pulseq-matlab
@@ -88,7 +89,7 @@ evidence:
       prephaser of the NEXT one.  Its own comment names the interval- the ringdown correction is
       "needed to center the ADC and the gradient echo in the center of RF-RF period".
       TR is an OUTPUT- "there is no user control for TR/TE, you just specify the ADC time", and
-      TR = duration(gz_1) + duration(gx_1), TE = TR/2.  Catalyzation is alpha/2 with a TR/2 delay.
+      TR = duration(gz_1) + duration(gx_1), TE = TR/2.  Its catalyzing method is alpha/2 with a TR/2 delay.
       Phase progression- pi*mod(i,2) on both RF and ADC.
     what_it_does_not_establish: >
       3D or segmentation.  Nor that its reshuffling is necessary rather than an optimisation- it
@@ -106,7 +107,7 @@ evidence:
       block sequence is fixed -- RF+slice, tr_fill, prephasers on x/y/z, readout+ADC, rewinders on
       x/y/z, tr_fill -- and `loop_y` and `loop_z` only select WHICH phase-encode and partition
       values are used.  TR is an INPUT with the fill split into two equal halves either side of
-      the readout, and TE = TR/2 is set by construction.  Catalyzation is a LIST of flip angles
+      the readout, and TE = TR/2 is set by construction.  Its catalyzing method is a LIST of flip angles
       (`exc_flipangle`, `n_FAs`) -- the linear ramp, which is the other scheme D1 names.
       Prephaser and rewinder share one duration (`t_pre_rew`) per axis.
     what_it_does_not_establish: >
@@ -120,15 +121,15 @@ evidence:
     role: independent-implementation
     independence: >
       Independent of OpenMRF and writeTrufi.  Built on PyPulseq for event construction, which is
-      irrelevant here- the comparison is about repetition structure and catalyzation, and no
+      irrelevant here- the comparison is about repetition structure and start-up preparation, and no
       PyPulseq example implements bSSFP.
     what_it_establishes: >
       That TR is neither simply an input nor simply an output.  `tr: float | None` -- None means
       "use the computed minimum", a supplied value is used, and a value below the minimum is
       REFUSED.  Same for TE, which is an INDEPENDENT parameter with its own minimum and is NOT
       tied to TR/2 -- so the Handbook's partial-echo case is realised by a witness.
-      Catalyzation is `n_bssfp_startup_pulses` with a linear flip-angle ramp, counted and
-      subtracted from the timing budget in units of the SAME TR -- so a catalyzing repetition is
+      Start-up preparation is `n_bssfp_startup_pulses` with a linear flip-angle ramp, counted and
+      subtracted from the timing budget in units of the SAME TR -- so a start-up repetition is
       the ordinary repetition at a different flip angle.  Phase alternation of pi on both RF and
       ADC.  k-space ordering is a separate helper (`cartesian_phase_encoding`).
       Its steady state is INTERRUPTED per cardiac cycle, which is the case D1 names.
@@ -159,13 +160,13 @@ reference_situation:
     made the boundary analysis tractable.
   what_they_agree_on: >
     Zero net gradient area per axis per repetition; the RF-to-RF interval; phase alternation on
-    both RF and ADC; catalyzation outside the repetition, in repetitions of the same length;
+    both RF and ADC; start-up preparation outside the repetition, in repetitions of the same length;
     k-space ordering outside the repetition.
   what_they_disagree_on: >
     TR as output (R1), input (R2), or input-with-a-floor (R3).  TE tied to TR/2 (R1, R2) or
-    independent with a floor (R3).  Catalyzation by alpha/2 (R1) or flip-angle ramp (R2, R3).
+    independent with a floor (R3).  Start-up by the alpha/2 method (R1) or a flip-angle ramp (R2, R3).
     **D1 resolves all three**- TR is a protocol parameter, TE = TR/2 is a contrast condition and
-    not a constraint, and both catalyzation schemes are named canonical alternatives.
+    not a constraint, and both catalyzing methods are named canonical alternatives.
 
 contract:
   the_two_conditions:
@@ -180,11 +181,20 @@ contract:
       RF to show the symmetry; R1's own comment says "the center of RF-RF period".  All three
       implementations place the readout echo at the centre of that interval by default.
   te_relationship: >
-    TE is measured from the RF centre to the echo.  TE = TR/2 is the condition under which the
-    signal carries T2 rather than T2-star weighting (D1 p. 593) and is the canonical default in
-    all three witnesses; R3 exposes TE independently with a floor, and D1 names partial-echo
-    bSSFP at TE < TR/2 with T2-prime weighting as its consequence.  **So TE = TR/2 is a default,
-    not an invariant.**
+    TE is measured from the RF centre to the echo.  **Canonical symmetric bSSFP uses TE = TR/2,
+    but the balanced condition itself does not require it** -- balance is the zero-area condition
+    above and says nothing about where the echo falls.  The hierarchy the evidence supports is-
+
+      defining bSSFP balance     zero net gradient area per axis over the TR
+      canonical realisation      TE = TR/2, which is also the condition for T2 rather than
+                                 T2-star weighting (D1 p. 593), and the default in all three
+                                 witnesses
+      valid variants             partial or asymmetric echo (D1 Fig. 14.13), and by extension
+                                 UTE-bSSFP and dual-echo forms, each still balanced and each
+                                 with different susceptibility / T2-prime behaviour
+
+    So TR/2 remains the natural default for any future API.  An asymmetric TE is a legitimate
+    variant rather than an equally canonical one, and R3 is the witness that exposes it.
   phase_progression: >
     Alternating 0 / pi on the RF, matched on the ADC.  D1- alternation is EQUIVALENT to a constant
     180 degrees of precession per repetition, so this is a frame convention rather than a free
@@ -198,7 +208,7 @@ contract:
   needs_from_outside:
     - the repetition index, for the phase progression
     - the phase-encode and partition values
-    - the flip angle, which a catalyzation schedule varies
+    - the flip angle, which a start-up schedule varies
   cannot_state_at_all: >
     That the magnetisation is in a steady state.  D1- four to five times T1.  **This is the
     waveform-legality against steady-state-correctness distinction, and it is the reason the
@@ -209,8 +219,8 @@ boundary_hypotheses:
   why: >
     A is the only hypothesis whose correctness condition is both stateable and checkable on one
     instance.  C cannot state its own correctness.  B cannot be expressed.  D is A plus
-    composition, and composition is where every witness and the domain source put catalyzation
-    and ordering.  The selection follows from those conditions and not from the class name -- and
+    composition, and composition is where every witness and the domain source put steady-state
+    establishment and ordering.  The selection follows from those conditions and not from the class name -- and
     the name `bSSFPTR` is kept only because the unit it denotes turned out to be the right one.
   compared:
     - id: A
@@ -252,26 +262,27 @@ boundary_hypotheses:
       sources_contradicting: not contradicted; simply unwitnessed for bSSFP
     - id: C
       name: a steady-state segment abstraction
-      owns: catalyzation, N repetitions, and optionally the interruption and restore
-      can_determine: a catalyzation schedule from a flip angle and a scheme; the dummy count
+      owns: steady-state establishment, N repetitions, and optionally the interruption and restore
+      can_determine: a start-up schedule from a flip angle and a scheme; the dummy count
       correctness_condition: >
         "The magnetisation is in steady state by repetition k" -- **not checkable from the
         waveform at all.**  It needs T1, T2 and either a simulation or an analytic model, so the
         validation tooling would have to supply physics, which the ownership table forbids.
-      needs_from_outside: T1 and T2, to know whether the catalyzation worked
+      needs_from_outside: T1 and T2, to know whether the start-up preparation worked
       what_becomes_awkward: >
         It would also have to own or accept k-space ordering, and it cannot state its own
-        correctness.  D1 treats catalyzation as a practical problem with several named solutions,
+        correctness.  D1 treats the approach to steady state as a practical problem with several named
+        catalyzing methods,
         which is the signature of policy rather than of physics.
       sources_supporting: >
-        All three witnesses put catalyzation outside the repetition, and R3 counts startup pulses
-        in units of the same TR -- so a catalyzing repetition IS the ordinary one at another flip
+        All three witnesses put start-up preparation outside the repetition, and R3 counts its pulses
+        in units of the same TR -- so a start-up repetition IS the ordinary one at another flip
         angle.
       sources_contradicting: >
-        D1 gives at least three catalyzation schemes and no criterion for choosing between them.
+        D1 gives at least three catalyzing methods and no criterion for choosing between them.
     - id: D
-      name: layered -- kernel A, with catalyzation and ordering as composition
-      owns: A owns the repetition; a caller owns catalyzation, segmentation and ordering
+      name: layered -- kernel A, with start-up preparation and ordering as composition
+      owns: A owns the repetition; a caller owns start-up preparation, segmentation and ordering
       can_determine: as A
       correctness_condition: as A, plus nothing it cannot check
       needs_from_outside: as A
@@ -288,18 +299,19 @@ two_d_versus_three_d:
     **Segmentation does not change the intrinsic repetition physics.**  R2 is 3D and its
     repetition is byte-for-byte the same structure as R1's 2D one; `loop_y` and `loop_z` select
     encode values and nothing else.  R3 is 2D and cardiac-gated, and what its segmentation changes
-    is how many repetitions share one catalyzation and how often the steady state is interrupted.
+    is how many repetitions share one start-up preparation and how often the steady state is
+    interrupted.
     D1's balanced-SSFP subsection is dimension-agnostic and says nothing that makes segmentation a
     property of the repetition.
   consequence: >
     A segment boundary carries **steady-state** physics, not bSSFP repetition physics- it is where
-    catalyzation is needed again, or where the magnetisation must be stored on the longitudinal
+    start-up preparation is needed again, or where the magnetisation must be stored on the longitudinal
     axis and restored (D1 p. 595).  That belongs to the layer above the kernel, and the same
     kernel serves 2D and 3D.
 
 acceptance:
   defined_before_extraction: true
-  claim_scope: Scoped to hypothesis A as the kernel, with catalyzation explicitly outside it.
+  claim_scope: Scoped to hypothesis A as the kernel, with steady-state establishment explicitly outside it.
   establishes:
     - >
       Zero net gradient area on every axis over the RF-to-RF interval, measured on the emitted
@@ -325,7 +337,7 @@ acceptance:
     - >
       Any contrast claim.  T2/T1 weighting follows from the steady state, not from the repetition.
     - Banding behaviour, which is an off-resonance property of the train and the object.
-    - That catalyzation worked, which the kernel does not own.
+    - That start-up preparation worked, which the kernel does not own.
 
 validation:
   layers:
@@ -339,9 +351,9 @@ validation:
       test them.  MRzeroCore's bSSFP notebook is in its CI-tested subset, so the oracle exists.
   planned: >
     Layer 1 from acceptance.establishes, all on the emitted lattice.  Layer 2 as a complete
-    acquisition with catalyzation composed in the notebook, which is also where the 2D and 3D cases
+    acquisition with start-up preparation composed in the notebook, which is also where the 2D and 3D cases
     are shown to share the kernel.  Layer 3 against MRzeroCore- signal against repetition index
-    for a catalyzed and an uncatalyzed train, which tests the one claim the kernel cannot make.
+    for a train with and without start-up preparation, which tests the one claim the kernel cannot make.
 
 coverage_classification: null
 coverage_flags: [ARCHITECTURE_REVISIT_CANDIDATE]
@@ -351,7 +363,8 @@ traffic_light: APPROVED_FOR_IMPLEMENTATION
 
 decision_summary: >
   The smallest reusable physical boundary whose correctness conditions cannot be separated is the
-  **RF-to-RF balanced repetition**, and the answer is layered- that kernel, with catalyzation and
+  **RF-to-RF balanced repetition**, and the answer is layered- that kernel, with steady-state
+  establishment and
   k-space ordering as composition above it.
 
   The boundary follows from one test applied to four hypotheses- can this thing state a correctness
@@ -365,7 +378,8 @@ decision_summary: >
   Domain evidence decided three things the code corpus obscured.  **TE = TR/2 is not an
   invariant** -- it is the condition for T2 rather than T2-star weighting, and partial-echo bSSFP
   at TE < TR/2 is a named realisation.  Two of three witnesses hard-wire TR/2 and would have
-  taught us the wrong contract.  **Both catalyzation schemes are canonical**, so the witnesses'
+  taught us the wrong contract.  **Both catalyzing methods the witnesses use are canonical**, so
+  their
   disagreement is two named alternatives rather than evidence about the boundary.  And **"balanced"
   is a strictly stronger condition than "SSFP"** -- area zero per repetition, not merely area
   constant across repetitions -- which no implementation states because each implements only one
@@ -418,14 +432,26 @@ evidence_state:
         exclude it.  D1- four to five times T1 to converge.
       revisit_trigger: >
         Layer 3 runs, or a caller wants the library to assert that a train has converged.
-    - what: Catalyzation as a shipped abstraction.
+    - what: Start-up preparation as a shipped abstraction.
       why: >
-        D1 names at least three schemes -- alpha/2 with TR/2, a linear flip-angle ramp, and
-        ramp-down storage on the longitudinal axis -- and gives no criterion for choosing.  An
+        D1 names at least three catalyzing methods -- alpha/2 with TR/2, a linear flip-angle ramp,
+        and ramp-down storage on the longitudinal axis -- and gives no criterion for choosing.  An
         abstraction with no correctness condition of its own is policy.  GRE2DTR sets the
         precedent- its dummy repetitions live in the example's loop.
       revisit_trigger: >
         Two schemes turn out to share a correctness condition a caller keeps getting wrong.
+    - what: >
+        Implementation of bSSFPTR itself.  **Deferred by review, 2026-09-22.**
+      why: >
+        The boundary finding is accepted -- RF-to-RF is the candidate kernel, steady-state
+        establishment sits above it, and segmentation and ordering are acquisition policy.  What
+        is NOT decided is whether to pay the measured 220 us per axis per repetition that forcing
+        gradients to terminate at a module boundary costs.  That cost converges directly with the
+        cross-boundary physical-requirement problem C3 studies, so deciding it now would be
+        deciding it with one of the two relevant cases in hand.
+      revisit_trigger: >
+        C3 concludes.  Then either accept the cost and build the kernel, or build whatever C3
+        shows is needed to avoid it.
     - what: A balanced-requirement abstraction that spans the repetition boundary.
       why: >
         Not expressible today, and it is the only thing that removes the 220 us.  Same missing

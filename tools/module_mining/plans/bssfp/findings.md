@@ -20,7 +20,7 @@ Nothing implemented. Record: [`candidate.yaml`](candidate.yaml). Domain card:
 
 ## 2. Witnesses, and this is the best evidence base in the project
 
-| | licence | dim | TR | TE | catalyzation |
+| | licence | dim | TR | TE | start-up |
 |---|---|---|---|---|---|
 | `writeTrufi.m` (Pulseq) | MIT | 2D | **output** — "you just specify the ADC time" | `TR/2` | **α/2 + TR/2** |
 | OpenMRF `BSSFP` | MIT | **3D** | input, fill split in halves | `TR/2` by construction | **flip-angle ramp** |
@@ -44,10 +44,22 @@ waveform" — the domain source has to reach into the next repetition to show it
 comment independently names it: the ringdown correction is "needed to center the ADC and the
 gradient echo in the center of **RF-RF period**".
 
-**TE = TR/2 is a contrast condition, not an invariant.** T2 rather than T2\* appears in the
-exponent "**if** the balanced SSFP signal is rephased in the center of the TR interval"; away from
-centre, T2′ weighting enters (p. 593), and Figure 14.13 gives partial-echo bSSFP at TE < TR/2 as a
-named realisation. Two of three witnesses hard-wire TR/2.
+**Canonical symmetric bSSFP uses TE = TR/2, but the balanced condition itself does not require
+it.** Balance is the zero-area condition above and says nothing about where the echo falls. The
+hierarchy the evidence supports:
+
+```text
+defining bSSFP balance    zero net gradient area per axis over the TR
+canonical realization     TE = TR/2 -- also the condition for T2 rather than T2* weighting,
+                          and the default in all three witnesses
+valid variants            partial / asymmetric echo (Fig. 14.13), and by extension UTE-bSSFP
+                          and dual-echo forms -- still balanced, different susceptibility
+                          and T2-prime behaviour
+```
+
+So `TR/2` stays the natural default for any future API; an asymmetric TE is a legitimate variant
+rather than an equally canonical one. Two of three witnesses hard-wire TR/2, and `mrseq` is the
+witness that exposes TE independently.
 
 **Phase progression is a frame convention.** Sign alternation "is **equivalent to** a pulse
 sequence … that has constant precession … by φ = 180° in each TR interval" (p. 593). That is also
@@ -83,28 +95,32 @@ both an RF and an ADC stays continuous at constant amplitude across both seams i
 two blocks, one waveform, never forced to zero. So the compiler already does *inside* a module what
 `writeTrufi` does by hand. What it cannot do is carry a waveform across the repetition boundary.
 
-## 5. Catalyzation ownership — outside the kernel
+## 5. Steady-state establishment — outside the kernel
 
-The Handbook settles it: the approach to steady state takes "four to five times T1", making
-catalyzation "an important practical problem", and it names **at least three** schemes — α/2 with
-TR/2, a linear flip-angle ramp (Le Roux 2003; Hargreaves 2001), and ramp-down storage on the
-longitudinal axis for an interposed preparation. **An abstraction with three named solutions and
-no criterion for choosing is policy.**
+The Handbook settles it: the approach to steady state takes "four to five times T1", so
+"accelerating or **catalyzing** the approach to steady state is an important practical problem" —
+and it names **at least three catalyzing methods**: α/2 with TR/2, a linear flip-angle ramp
+(Le Roux 2003; Hargreaves 2001), and ramp-down storage on the longitudinal axis for an interposed
+preparation. **An abstraction with three named methods and no criterion for choosing is policy.**
 
-The witnesses agree structurally: all three put catalyzation outside the repetition, and `mrseq`
-counts its startup pulses in units of the *same* TR — so a catalyzing repetition is the ordinary
-repetition at a different flip angle. `GRE2DTR` sets the shipped precedent, with dummies in the
-example's loop.
+The witnesses agree structurally: all three put start-up preparation outside the repetition, and
+`mrseq` counts its start-up pulses in units of the *same* TR — so a start-up repetition is the
+ordinary repetition at a different flip angle. `GRE2DTR` sets the shipped precedent, with dummies
+in the example's loop.
+
+*("Catalyzing" is the Handbook's own word and is kept where a source or a literature-named method
+is being cited. Our own headings and ownership statements say "steady-state establishment" or
+"start-up preparation", which is what those passages actually describe.)*
 
 ## 6. 2D versus 3D — segmentation is not repetition physics
 
 OpenMRF is 3D and its repetition is structurally identical to `writeTrufi`'s 2D one; `loop_y` and
 `loop_z` select encode values and nothing else. `mrseq` is 2D and cardiac-gated, and what its
-segmentation changes is how many repetitions share one catalyzation and how often the steady state
+segmentation changes is how many repetitions share one start-up preparation and how often the steady state
 is interrupted. §14.1 is dimension-agnostic.
 
 **So a segment boundary carries steady-state physics, not bSSFP physics** — it is where
-catalyzation is needed again, or where magnetisation must be stored and restored (p. 595). One
+start-up preparation is needed again, or where magnetisation must be stored and restored (p. 595). One
 kernel serves 2D and 3D.
 
 ## 7. The four hypotheses
@@ -121,9 +137,11 @@ kernel serves 2D and 3D.
 **Implement A as the kernel, in the layered form D.** Expose TE with `TR/2` as the default and the
 T2′ consequence documented — the faithful choice, per the domain source and `mrseq`.
 
-**The one thing for a reviewer to decide first:** accept 220 µs per axis per repetition, or wait
-for the capability that removes it. Accepting ships a correct composable kernel a few per cent
-slower than a hand-written script. Declining waits on C3.
+**Implementation is deferred pending C3** (review decision, 2026-09-22). The boundary finding
+stands; what is undecided is whether to pay the measured 220 µs per axis per repetition that
+forcing gradients to terminate at a module boundary costs. That cost converges directly with the
+cross-boundary requirement problem C3 studies, so deciding it now would mean deciding with one of
+the two relevant cases in hand.
 
 **That convergence is this scan's most useful result.** bSSFP and velocity encoding reach the same
 missing capability — a requirement realised jointly with its surroundings — from opposite
@@ -148,8 +166,8 @@ decision summary, which is adequate but is not in the light.
 
 In C1 it established a family one code witness could not. **Here the corpus was rich — three
 independent implementations — and would still have taught the wrong contract.** Two of three
-hard-wire TE = TR/2, so a boundary derived from code alone would have made it an invariant; the
-Handbook says it is a contrast condition with a named realisation on the other side. And the
+hard-wire TE = TR/2, so a contract derived from code alone would have folded it into the balance
+invariant; the Handbook keeps the two apart and names a valid variant on the other side. And the
 SSFP-versus-balanced distinction appears in no implementation, because each implements one side.
 
 So domain evidence is not a fallback for thin corpora. In C1 it supplied what was missing; here it

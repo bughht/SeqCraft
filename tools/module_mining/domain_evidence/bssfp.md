@@ -5,8 +5,9 @@ Curated card. **Not a literature review.**
 **Primary source.** Bernstein, King & Zhou, *Handbook of MRI Pulse Sequences*, Elsevier 2004 —
 **Ch. 14 "Basic Pulse Sequences", §14.1 "Gradient Echo"**, subsection **"Balanced SSFP (True
 FISP)"**, book **pp. 592–597**, with Figures **14.12** and **14.13** (pp. 600–601) and **Table
-14.2** (p. 597). Vendor-name cross-reference in Table 14.1 (p. 584). The PDF is not in the
-repository.
+14.2** (p. 597). Vendor-name cross-reference in Table 14.1 (p. 584).
+**Source ID:** `handbook_mri_pulse_sequences_2004` — see
+[`README.md`](README.md) for how a local copy is resolved.
 
 Only pp. 592–597 and the two figure captions were read.
 
@@ -32,11 +33,11 @@ waveform class (Table 14.2, p. 597).
 | Signal **with** sign alternation (14.23) exceeds that without (14.24), "so in practice sign alternation is used" | 593 | RF phase alternation is the canonical progression, on signal grounds | that it is required |
 | "the effect of the sign alternation is **analogous to the driven equilibrium methods** discussed in §17.4" | 593 | a direct physical link to the T2Prep family (C1) | |
 | "The effect of sign alternation is **equivalent to** a pulse sequence (without sign alternation) that has constant precession … by φ = 180° in each TR interval" (Hinshaw 1976) | 593 | that the phase progression is a **frame convention**, interchangeable with an off-resonance condition — so "alternation" and "180° per TR" are one thing | a preferred implementation |
-| T2 rather than T2\* appears in the exponent "**if** the balanced SSFP signal is rephased in the center of the TR interval (i.e. **TE = TR/2**) … As the peak … is moved away from the center, T2′ weighting is introduced" | 593 | **TE = TR/2 is the condition for the stated T2/T1 contrast, not a legality constraint** | that TE must equal TR/2 |
-| Fig. 14.13, partial-echo balanced SSFP: "The net area on the readout gradient waveform remains zero. **Because TE < TR/2**, a slight amount of susceptibility weighting is introduced." | 601 | that **TE ≠ TR/2 is a named, legitimate realisation** whose consequence is contrast, not illegality | |
+| T2 rather than T2\* appears in the exponent "**if** the balanced SSFP signal is rephased in the center of the TR interval (i.e. **TE = TR/2**) … As the peak … is moved away from the center, T2′ weighting is introduced" | 593 | that **TE = TR/2 is the canonical symmetric realisation** and the condition for the stated T2/T1 contrast | that the *balance* condition requires it — balance is the zero-area condition above, and says nothing about TE |
+| Fig. 14.13, partial-echo balanced SSFP: "The net area on the readout gradient waveform remains zero. **Because TE < TR/2**, a slight amount of susceptibility weighting is introduced." | 601 | that an asymmetric echo is a **legitimate variant**, still balanced, with different susceptibility / T2′ behaviour | that it is equally canonical — the source presents it as a named departure from the symmetric case |
 | Banding: a region where φ ≈ 180° in a sign-alternated sequence, which "effectively removes the sign alternation"; worsens as B0 rises | 593–594 | off-resonance sensitivity as intrinsic to the method | a correction |
 
-## Steady state, catalyzation and interruption — named as a separate problem
+## Approach to steady state, and interruption — named as a separate problem
 
 | claim | page | establishes | does not establish |
 |---|---|---|---|
@@ -54,10 +55,11 @@ waveform class (Table 14.2, p. 597).
   and draws the neighbouring RF to show the waveform is symmetric across that boundary.
 - 2D against 3D, or segmentation. §14.1 is dimension-agnostic; nothing in the balanced-SSFP
   subsection makes segmentation a property of the repetition.
-- How many catalyzation pulses, or how to verify that steady state was reached.
+- How many start-up pulses, or how to verify that steady state was reached. The source
+  discusses *catalyzing methods* and gives several; it sets no criterion for choosing.
 
 ## Provenance note
 
-Located by searching the PDF text for "balanced SSFP", "TrueFISP" and "FIESTA", which pointed at
+Located by a full-text search for "balanced SSFP", "TrueFISP" and "FIESTA", which pointed at
 §14.1; then the two figure captions and Table 14.2 by figure number. Nothing else in the Handbook
 was consulted for this card.

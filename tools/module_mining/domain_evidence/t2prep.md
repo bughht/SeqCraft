@@ -5,7 +5,8 @@ A curated card, so a later reader does not have to re-read the source. **Not a l
 **Primary source.** Bernstein, King & Zhou, *Handbook of MRI Pulse Sequences*, Elsevier 2004 —
 **Ch. 17 "Advanced Pulse Sequence Techniques", §17.4 "Driven Equilibrium"** (author K. F. King),
 book **pp. 888–895**. §17.4.2 *Gradient-Echo-Driven Equilibrium Preparation* is **pp. 893–895**.
-The PDF is not in the repository and must not be committed; it lives outside the tree.
+**Source ID:** `handbook_mri_pulse_sequences_2004` — see [`README.md`](README.md) for how a local
+copy is resolved.
 
 The Handbook's own term is **driven equilibrium (DE)**, also DEFT and fast recovery (FR). It names
 the gradient-echo-preparation use explicitly:
@@ -52,7 +53,6 @@ ones a mode contract has to fix — see `plans/t2prep/candidate.yaml`.
 
 ## Provenance note
 
-Facts above were located by searching the PDF's text for "T2 preparation" and "driven
-equilibrium", which pointed at the index entry (book p. 890 index → pp. 888–890) and then at
-§17.4. Only pp. 888–889 and 893–895 were read. Nothing else in the Handbook was consulted for this
-card.
+Facts above were located by a full-text search for "T2 preparation" and "driven equilibrium",
+which pointed at the index entry (book p. 890 index → pp. 888–890) and then at §17.4. Only
+pp. 888–889 and 893–895 were read. Nothing else in the Handbook was consulted for this card.
