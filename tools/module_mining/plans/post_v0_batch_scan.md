@@ -191,13 +191,13 @@ velocity / flow      ONE witness, GPL, discovery only.  Any candidate would rest
 diffusion            TWO witnesses and they are NOT interchangeable.  pulseq's
                      writeEpiDiffusionRS.m is MIT and usable as a design-witness -- the
                      registry lists diffusion only under the AGPL PulseqDiffusion entry,
-                     which understates what is available.  REGISTRY CORRECTION, recorded
-                     here rather than applied, because sources.yaml is not Phase B's to edit
-                     mid-scan.
+                     which understates what is available.  REGISTRY CORRECTION -- recorded here
+                     during the scan and APPLIED afterwards in sources.yaml v2.
 
 gropt                NOT in the registry, present locally, GPL-3.0.  It is the solver a
                      real flow implementation delegates to, so it is discovery evidence
-                     about the shape of the problem.  Adding it is a registry decision.
+                     about the shape of the problem.  ADMITTED afterwards in sources.yaml v2
+                     as discovery-only, explicitly not a design-witness and not an oracle.
 
 T2prep, spin-lock,   ONE witness each (OpenMRF).  Independent of the Pulseq line, which
 MRF, rosette         makes it a genuine witness -- but a single one, and v0's rule is that

@@ -14,8 +14,8 @@
 # A corpus may be more than one.  It is never automatically a design-witness just because it
 # contains working sequences.
 
-registry_version: 1
-updated: 2026-09-19
+registry_version: 2
+updated: 2026-09-21
 
 sources:
 
@@ -46,10 +46,43 @@ sources:
     ships_seq_files: true
     covers: >
       The demoSeq corpus: GRE, TSE, HASTE, EPI, MPRAGE, radial, UTE, spiral, bSSFP, ZTE/PETRA,
-      PRESS, diffusion, fat saturation, cine and label demos.  Several ship .seq files, which
-      makes them measurable under the Python-only constraint without a MATLAB run.
+      PRESS/semi-LASER, diffusion, fat saturation, cine and label demos.  Several ship .seq files,
+      which makes them measurable under the Python-only constraint without a MATLAB run.
     independence_note: >
       Original of many pypulseq examples.  See above.
+    # Corrected 2026-09-21 by the post-v0 batch scan.  Diffusion had been represented in this
+    # registry ONLY by the AGPL `pulseq-diffusion` entry, which understated the evidence: this
+    # corpus holds an MIT diffusion implementation, and it has no PyPulseq counterpart to be a
+    # port of.  It is therefore usable as a design-witness, not merely for discovery.
+    notable_files:
+      - path: matlab/demoSeq/writeEpiDiffusionRS.m
+        family: diffusion weighting (Stejskal-Tanner, single refocused, ramp-sampled EPI)
+        license: MIT
+        role_for_that_family: design-witness
+        no_pypulseq_counterpart: true
+        what_it_witnesses: >
+          Monopolar diffusion gradients placed either side of the refocusing pulse, with the
+          timing windows `small_delta` and `big_delta` DERIVED from TE and the RF/EPI timing, and
+          the amplitude then solved by inverting the analytic b-factor.  So it witnesses the
+          direction `TE given -> b achievable -> amplitude`.
+        stated_limits: >
+          Its own b-factor helper is documented for rectangular gradients with
+          "for trapezoid gradients: TODO", so the shipped physics IGNORES THE RAMPS.  A comparison
+          against it establishes the monopolar structure and the timing derivation; it does not
+          establish an exact b-value.
+      - path: matlab/demoSeq/writeEpiDiffusionRS_PMC.m
+        family: the same, with prospective motion correction
+        license: MIT
+        role_for_that_family: discovery
+        note: shares the same b-factor helper, so not an independent witness of it.
+      - path: matlab/demoSeq/writeTrufi.m
+        family: bSSFP / TrueFISP
+        license: MIT
+        role_for_that_family: design-witness
+        what_it_witnesses: >
+          TE = TR/2, alternating RF phase, balanced moments, and an alpha/2 preparation.  TR is an
+          OUTPUT of the ADC duration rather than an input.  Independent of OpenMRF's bSSFP, which
+          catalyses with a flip-angle ramp instead -- see the openmrf entry.
 
   # ---------------------------------------------------------------- research repositories
   - id: openmrf
@@ -89,6 +122,7 @@ sources:
 
   - id: pulseq-diffusion
     repo: ritagnunes/PulseqDiffusion
+    commit_scanned: 0517ae1
     license: AGPL-3.0
     compatible_with_seqcraft_mit: false
     roles: [discovery]
@@ -97,6 +131,16 @@ sources:
     constraint: >
       COPYLEFT.  Extract physics and invariants only.  No implementation text may be copied or
       adapted into SeqCraft.
+    # Added 2026-09-21 by the post-v0 batch scan.
+    independence_note: >
+      NOT the only diffusion source, and not the one to reach for first.  `pulseq-matlab` holds an
+      MIT diffusion implementation -- see its `notable_files` -- and that is the usable
+      design-witness.  What is unique here is the OPPOSITE solve direction: `opt_TE_bv_SE` and
+      `opt_TE_bv_TRSE` find the minimum TE for a TARGET b-value, single- and twice-refocused,
+      where the MIT witness takes TE as given.  It also carries `calc_exact_bval` beside
+      `calc_bval`, so it has the ramp-inclusive physics the MIT witness marks TODO.
+      **The harder direction and the more complete physics are the copyleft ones.**  Any candidate
+      that needs them must re-derive analytically.
 
   - id: rtspiral
     repo: usc-mrel/rtspiral_pypulseq
@@ -109,12 +153,21 @@ sources:
 
   - id: open4dflow
     repo: BAMMri/Open4DFlow
+    commit_scanned: 9e752d8
     license: GPL-3.0
     compatible_with_seqcraft_mit: false
     roles: [discovery]
     language: python
     covers: velocity encoding, first-moment gradient design, cardiac triggering, 4D flow.
     constraint: COPYLEFT.  Extract physics and invariants only.
+    # Added 2026-09-21 by the post-v0 batch scan.
+    independence_note: >
+      It does not design its velocity-encoding gradients in closed form.  It computes M0 and M1
+      analytically for the imaging gradients that are already present, forms the RESIDUAL moment
+      requirement per axis -- target M1 minus what the readout and slice gradients contribute --
+      and delegates realisation to `gropt`, caching by the moment pair.  So it is one witness to
+      the requirement MODEL, and zero witnesses to any closed-form construction.  See the `gropt`
+      entry.
 
   # ---------------------------------------------------------------- added 2026-09-19
   - id: mrzero-core
@@ -154,6 +207,45 @@ sources:
       existence of families only.  No implementation text, and provenance must be re-checked
       before any use beyond discovery.  The AGPL/EULA combination is more restrictive than the
       GPL sources above; treat any proposal to depend on it as a licensing question first.
+
+  # ---------------------------------------------------------------- added 2026-09-21
+  # Admitted by the post-v0 batch scan.  It is NOT a sequence corpus, and that is why it is here:
+  # a published 4D-flow implementation (open4dflow) does not construct its velocity-encoding
+  # gradients from trapezoids at all -- it states a moment requirement and calls this.  So it is
+  # discovery evidence about the SHAPE of a design problem SeqCraft cannot currently express,
+  # which is the same kind of evidence a sequence corpus gives about a family.
+  - id: gropt
+    repo: mloecher/gropt
+    commit_scanned: 7f07796
+    license: GPL-3.0
+    compatible_with_seqcraft_mit: false
+    roles: [discovery]
+    explicitly_not: [design-witness, oracle]
+    language: c, with python and matlab wrappers
+    executable: yes
+    covers: >
+      Constrained numerical gradient-waveform design.  Constraint families: peak gradient, slew
+      rate, gradient moments of arbitrary order, and eddy currents.  Also a minimum-TE finder
+      (`minTE_diff` / `test_TE_finder`) which searches for the shortest feasible TE satisfying a
+      moment requirement, and simultaneous multi-axis optimisation.
+    why_registered: >
+      It is the only registered source that expresses a gradient design as a REQUIREMENT rather
+      than as a waveform.  Its moment constraint is a 7-tuple --
+      (axis, moment order, t=0 offset, window start, window end, target, tolerance) --
+      and the `t=0 offset` field exists precisely so a moment can be constrained relative to a
+      semantic instant OUTSIDE the waveform being solved, its documentation giving the example of
+      an RF pulse that precedes the waveform.  That is "moments at semantic times" as a published
+      interface, and it is the vocabulary a Phase C velocity/flow scan has to compare against.
+    role_note: >
+      Discovery only, and NOT a design-witness even for gradient design.  A witness corroborates
+      how another implementation CONSTRUCTS something; this constructs nothing in closed form, so
+      there is no construction to corroborate.  Nor an oracle: its output is a solution to a
+      stated problem, not an independent measurement of a physical quantity.  What it witnesses is
+      that the problem is posed this way by practitioners.
+    constraint: >
+      COPYLEFT.  Extract the problem formulation, the constraint vocabulary and the physics only.
+      No implementation text, and no dependency: adding a GPL solver to SeqCraft's compile path is
+      a licensing decision, not a design one, and is out of scope for any fine scan.
 
 # ---------------------------------------------------------------------------------------------
 # Per-candidate questions.  A corpus's registry entry does NOT answer these; they are re-asked
