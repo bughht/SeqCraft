@@ -39,3 +39,4 @@ Code witnesses constrain implementation-specific claims; they do not decide the 
 | card | candidate | primary source |
 |---|---|---|
 | [`t2prep.md`](t2prep.md) | T2 preparation (Phase C, first fine scan) | Bernstein, King & Zhou, *Handbook of MRI Pulse Sequences* (2004), §17.4 |
+| [`bssfp.md`](bssfp.md) | balanced SSFP (Phase C, second fine scan) | the same, §14.1 and Table 14.2 |
