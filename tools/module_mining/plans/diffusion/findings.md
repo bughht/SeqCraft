@@ -235,6 +235,10 @@ Both are fixed and pinned by three regression tests in `tests/analysis/`. After 
 analyser reports 0.0749 against the simulator's 0.0741 — 1 %, which is raster integration against
 state propagation — and no longer grows with echo time.
 
+**This record is where that history lives.** The notebook shows the corrected comparison and the
+current agreement; it is a tutorial, and replaying a fixed software defect is not what it is for.
+See `examples/README.md` → *Writing example notebooks*.
+
 > **Neither defect was visible on the diffusion axis.** There, k is zero before the encoding and
 > flat across the whole refocusing block, so conjugating 700 µs early gives *exactly* the same
 > answer, and there is no excitation gradient to leave an offset. Both were visible only on the

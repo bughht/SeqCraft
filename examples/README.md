@@ -15,7 +15,7 @@
 | [`fat_sat/`](fat_sat/) | A spectrally selective saturation and the spoiler that destroys what it made — the chemical-shift sign traced from ppm to the emitted `freq_offset`, and the same protocol across four field strengths. Where `SaturationPrep` came from. |
 | [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. Then what a 21.7 ms readout pays in off-resonance. **Defines no class.** |
 | [`se_spiral_2d/`](se_spiral_2d/) | A refocusing pulse in front of a spiral, and the one question that raises: **which instant is the echo aligned to.** Three wrong placements that all compile, and then what refocusing is actually worth. **Defines no class.** |
-| [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | One number in — `b_s_per_mm2` — and a diffusion-weighted spin-echo EPI out. The first **kernel** here: the encoding is defined around a refocusing pulse it does not own, so one module owns all three. Where `DiffusionSEPrep` and `sc.b_value` came from, and where the simulator corrected `sc.b_value`. |
+| [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | Diffusion-weighted imaging: a Stejskal–Tanner gradient pair around a 180°, a single-shot EPI readout, and an ADC map recovered from a phantom whose diffusion coefficient is known. Where `DiffusionSEPrep` and `sc.b_value` came from. |
 
 ## `gre_2d/`
 
@@ -276,32 +276,79 @@ notebook was written, not worked around in it.
 
 | | |
 |---|---|
-| [`01_build.ipynb`](dwi_se_epi_2d/01_build.ipynb) | `b_s_per_mm2` in; the lobe width, the amplitude and the echo time all out. The handbook's cubic including the **ramp terms** the permissive reference implementations leave out, delivered `b` measured by integrating the emitted gradients at 0.003 % over 100 to 3000, and `b = 0` shown not to be b = 0. Then a whole single-shot EPI acquisition whose centre-line echo lands on the spin echo, at **one echo time for every b**. Four `.seq` files and a nominal `.npz`. **Needs nothing but `seqcraft`.** |
-| [`02_simulate_and_reconstruct.ipynb`](dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb) | A known $D$ recovered to 0.06 % from $\ln(S/S_0) = -bD$; **the measurement that corrected `sc.b_value`**, which was reporting nine times the weighting the magnetisation experienced; what a mismatched echo time costs, matched to the closed form to four decimals; and a brain with an ADC map against the phantom's own diffusion map. **Needs `MRzeroCore`, `torch` and a phantom download.** |
+| [`01_build.ipynb`](dwi_se_epi_2d/01_build.ipynb) | What a b-value is, the same-polarity gradient pair a spin echo needs, and the trapezoid expression that turns a target `b` into a waveform — including the finite-ramp terms. Then the weighting the sequence actually delivers, the background weighting the imaging gradients contribute, an EPI readout with its centre-line echo on the spin echo, and why every b-value is acquired at one echo time. Four `.seq` files and a nominal `.npz`. **Needs nothing but `seqcraft`.** |
+| [`02_simulate_and_reconstruct.ipynb`](dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb) | The mono-exponential model, a known diffusion coefficient recovered to 0.06 %, what a mismatched echo time costs, and a brain ADC map against the phantom's own diffusion map — with an honest account of why one shot per b-value is not yet quantitative. **Needs `MRzeroCore`, `torch` and a phantom download.** |
 
-`DiffusionSEPrep` is the first module here that is neither a leaf nor a plain composition. The two
-encoding lobes have the **same polarity** and sit either side of a 180 that conjugates what came
-before them, so neither lobe can be designed without knowing where that pulse is and how long it
-lasts — and the pulse belongs to `Refocusing`. One owner holds all three.
+`DiffusionSEPrep` owns the excitation, the refocusing pulse and both diffusion lobes together,
+because the lobe separation Δ is measured **across** the 180°: neither lobe can be designed
+without knowing where that pulse sits and how long it lasts.
 
 ```text
-Excitation, Refocusing   own   their own waveforms, and report their own timing
-DiffusionSEPrep          owns  the lobes, the echo time, and where the 180 goes
-the acquisition          owns  the echo time across b, which no single module can see
+DiffusionSEPrep   owns   the lobes, the echo time, and where the 180 goes
+the acquisition   owns   the echo time across the b-value list
 ```
 
-The last line is the composition-level fact `01` §5 measures: the encoding needs one echo time and
-the EPI readout's first half needs another, and a protocol needs **one** echo time for every b or
-the attenuation ratio carries $T_2$ as well as $D$. No module can decide that.
+The second line is the part no module can decide. A diffusion coefficient comes from a ratio, so
+every b-value has to be acquired at the same echo time or the ratio carries `T2` as well as `D` —
+`01` §6 derives the bias and `02` §3 measures it.
 
-**`02` is the notebook that corrected the validator**, which is worth reading for that alone.
-`sc.b_value` shares no code with `DiffusionSEPrep` and it caught a real error in it — a lobe
-separation one ramp short, hidden because the amplitude solve compensated. It was then itself
-wrong by a factor of nine on the *slice* axis, which the module does not own and no test in this
-repository was pointed at, until a Bloch simulation disagreed with it. Both defects are fixed and
-pinned in [`tests/analysis/`](../tests/analysis/test_analysis.py).
+`sc.b_value` measures the weighting a whole tree delivers, by integrating the emitted gradients.
+It is what shows that a nominally unweighted acquisition is not unweighted, which no check on the
+diffusion lobes alone could see.
+
+This directory is the pilot for **Writing example notebooks** below.
 
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
+
+## Writing example notebooks
+
+**Examples are tutorials and runnable demonstrations, not pull-request records, design reviews or
+development postmortems.** A reader arrives knowing some MRI and no project history, wanting to
+build something. Write for them.
+
+The shape that works:
+
+```text
+concept  ->  physics  ->  SeqCraft API  ->  composition  ->  measurement
+         ->  interpretation  ->  limitations  ->  references
+```
+
+| | |
+|---|---|
+| **start from the MRI concept and the user's goal** | title the notebook after the sequence or the problem, not after a conclusion about it |
+| **define domain terms before using them** | if b-value, VENC or turbo factor is the organising idea, say what it is first |
+| **explain formulas directly** | write the equation and define every symbol; a citation supports the explanation, it is not the explanation |
+| **keep the depth** | measurements, closed forms, tolerances and honest negative results are the value. Only the framing changes |
+| **state limitations plainly** | what the example demonstrates, and what it does not |
+| **end with `Summary` and `References`** | not "What this notebook established" |
+
+Do **not** organise a notebook around:
+
+```text
+abstraction-selection history      why this is a kernel and not a leaf
+rejected alternatives              what a different design would have cost
+previous implementation bugs       what an earlier version of this module got wrong
+reference-repository shortcomings  what some other project leaves out
+licence and evidence arguments     which corpus witnessed what
+solver / compiler avoidance        that no new layer was needed
+```
+
+All of that is real and worth recording — in `CHANGELOG.md`, in the pull request, or in
+`tools/module_mining/plans/<candidate>/`. Page-level source provenance belongs in
+`tools/module_mining/domain_evidence/`.
+
+Avoid raising an imagined objection in order to answer it — "why this is not a defect", "the
+check this notebook exists for", "three pieces, none of them new". State what the sequence does
+and what the reader is about to build. The exception is a genuine **MRI** misconception, which is
+worth confronting directly: `se_epi_2d/02` exists because most readers expect a spin echo to fix
+EPI distortion, and it does not.
+
+**Deliberately wrong cases earn their place when they teach physics or protocol design** — a
+mismatched echo time that contaminates an ADC, a readout aligned to the wrong instant. Replaying a
+historical *software* bug because it was instructive during development does not.
+
+> `dwi_se_epi_2d/` is the pilot for these rules. The rest of this directory predates them and is
+> being brought across in a separate editorial pass.
 
 ## Requirements
 

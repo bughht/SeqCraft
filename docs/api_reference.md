@@ -951,10 +951,10 @@ Three things about it are the whole design:
 `end_s` bounds the integration; for a spin echo the physically meaningful endpoint is the echo,
 and integrating past it reports a number no experiment measures.
 
-> **The last two rows were both wrong in the first version**, and neither was visible on the
-> diffusion axis, where `k` is zero before the encoding and flat across the refocusing block. A
-> Bloch simulation found them — see
-> [`examples/dwi_se_epi_2d/02`](../examples/dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb).
+> **Both instants are the *effective* RF centres** — `event.delay` plus `pp.calc_rf_center`. The
+> last two rows are validated against a Bloch simulation in
+> [`examples/dwi_se_epi_2d/02`](../examples/dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb), and
+> `tools/module_mining/plans/diffusion/findings.md` records what that comparison found.
 
 ## 4.6 Which function is exact, and which is not
 

@@ -1,57 +1,77 @@
 r"""
-A diffusion-weighted spin echo: the Stejskal--Tanner pair, designed against a requested `b`.
+Diffusion-weighted spin echo: the Stejskal--Tanner gradient pair, designed against a target `b`.
 
-The physical family
--------------------
-From Bernstein, King & Zhou, *Handbook of MRI Pulse Sequences* (2004), §9.1
-"Diffusion-Weighting Gradients", book pp. 274--281:
+Scope
+-----
+One realization: **single-refocused** (PGSE / Stejskal--Tanner) diffusion weighting with a
+trapezoidal lobe on each side of one refocusing pulse.
 
-    "A diffusion-weighting gradient typically consists of **two lobes with equal area**.  In pulse
-    sequences based on spin echoes, the two lobes have the **same polarity** and are placed at
-    either side of a refocusing RF pulse."
+.. code-block:: text
 
-Same polarity, because the refocusing pulse conjugates what the first lobe accumulated.  That is
-why this is a kernel and not a leaf: **the encoding is defined around a pulse that belongs to
-another module**, and neither lobe can be designed without knowing where that pulse is and how
-long it lasts.
+    90        lobe         180         lobe          echo
+              <-- delta -->      <-- delta -->
+              <---------- Delta ---------->
 
-The `b`-value of a trapezoid pair, §9.1 Figure 9.3, with :math:`\delta` the lobe width including
-one ramp, :math:`\Delta` the separation of the lobe centres and :math:`\varepsilon` the ramp time:
+The two lobes have the **same polarity**.  The refocusing pulse conjugates the phase accumulated
+before it, so identical lobes either side of it subtract for stationary spins and add for
+diffusing ones.  (In a gradient echo, with no refocusing pulse, the pair is bipolar instead; that
+is a different realization and is not this module.)
+
+Gradient-echo, twice-refocused and multi-lobe eddy-current-compensated designs are deliberately
+out of scope -- they differ in polarity, lobe count and cancellation conditions, not in a
+parameter.  So are direction schemes, b-matrices and tensor encoding, which are acquisition and
+analysis policy above this layer.
+
+The b-value
+-----------
+For a trapezoidal pair, with :math:`G` the lobe amplitude, :math:`\delta` the lobe width
+including one ramp, :math:`\Delta` the separation between the lobe centres and
+:math:`\varepsilon` the ramp time:
 
 .. math::
 
     b = \gamma^2 G^2 \left[ \delta^2\!\left(\Delta - \frac{\delta}{3}\right)
         + \frac{\varepsilon^3}{30} - \frac{\delta\,\varepsilon^2}{6} \right]
 
-The ramp terms are the part the reference implementations leave out -- ``pulseq``'s own
-``writeEpiDiffusionRS.m`` carries a helper documented "for trapezoid gradients: TODO" -- and they
-are not negligible at the durations diffusion uses.
+The last two terms are the finite-ramp correction; they vanish as :math:`\varepsilon \to 0`,
+leaving the rectangular-lobe expression :math:`b = \gamma^2 G^2 \delta^2 (\Delta - \delta/3)`.
+The correction is negative, so omitting it over-states `b`.
 
-What this owns, and what it does not
-------------------------------------
-It owns the coupled design: the excitation, the refocusing pulse, and the pair of lobes whose
-width and amplitude follow from the requested `b` and from the windows those two pulses leave.
-It does **not** own the readout, the direction schedule, the b-value list, or the averaging -- all
-of which are acquisition policy, and all of which a caller writes in four lines.
+:func:`b_of_trapezoid_pair` evaluates this expression and is importable on its own.
 
-Realization is analytic, and that is a finding rather than a preference
-----------------------------------------------------------------------
-With the geometry fixed by the timing, `b` is quadratic in the amplitude, so the amplitude that
-reaches a requested `b` is a square root and nothing more.  The minimum echo time for a requested
-`b` is then a bisection on one monotone scalar -- as TE grows the windows grow, so the achievable
-`b` grows.  **No numerical optimizer is involved**, and none is needed for this family.
+What this module owns
+---------------------
+The coupled design: the excitation, the refocusing pulse, and the pair of lobes.  The lobe width
+and amplitude follow from the requested `b` and from the windows the two RF pulses leave, and
+none of them can be chosen independently -- which is why one module holds all three.
 
-That is not a claim that diffusion never needs one.  Several moment orders at once, eddy-current
-constraints, fixed waveform segments or a twice-refocused design with its own cancellation
-conditions are a different problem, and `tools/module_mining/plans/diffusion/` records where the
-line falls.
+It does **not** own the readout, the direction schedule, the b-value list or the averaging.  Those
+are acquisition policy; ``examples/dwi_se_epi_2d/`` shows a caller composing them.
 
-Validation is independent of the design
----------------------------------------
-:func:`seqcraft.b_value` integrates the emitted gradients and applies the refocusing conjugation
-itself.  It shares no code with this module, and it measures the **whole tree** -- so the slice
-lobes, the crushers and anything a caller adds are all counted, which is what `b` actually means.
-This module's own arithmetic is never the thing that checks it.
+Timing
+------
+The block runs from the excitation to the end of the second lobe.  The spin echo is at
+:meth:`DiffusionSEPrep.time_to_echo`, which is normally **after** the block ends: a caller places
+a readout so that the readout's own echo lands there.
+
+For the mode implemented here the lobe width follows analytically from the `b`-value relation.
+With the amplitude at ``max_grad`` and :math:`\Delta` expressed in terms of :math:`\delta` and the
+fixed refocusing block, the expression above is a cubic in :math:`\delta` whose smallest positive
+real root is the width; `b` is then quadratic in the amplitude, so rounding the width onto the
+gradient raster is corrected with one square root.  Both timing windows grow as TE/2, so the
+shortest echo time reaching a given `b` is the larger of two linear expressions.
+
+Measuring what was delivered
+----------------------------
+`b` is an integral over **every** gradient on the axis between excitation and echo -- slice-select
+lobes, crushers and a readout prephaser all contribute, so a nominally unweighted acquisition
+carries a small real weighting.  :func:`seqcraft.b_value` measures that on a whole tree and shares
+no code with this module.
+
+References
+----------
+Bernstein, King & Zhou, *Handbook of MRI Pulse Sequences*, Elsevier 2004, Chapter 9.
+Stejskal & Tanner, *J. Chem. Phys.* **42**, 288 (1965).
 """
 
 from __future__ import annotations
@@ -87,23 +107,18 @@ _GAMMA_HZ_T = 42.576e6
 #: So this is a physical default with a source, not a safety margin someone guessed.
 _SLEW_FRACTION = 0.7
 
-#: How close the minimum-TE search gets before it stops, in seconds.  One gradient raster would be
-#: pointless -- the result is rounded onto the block raster anyway.
-_TE_TOLERANCE_S = 5e-6
-
 
 def b_of_trapezoid_pair(amplitude_hz_m: float, delta_s: float, separation_s: float,
                         ramp_s: float) -> float:
     r"""
     Return the `b`-value of one trapezoid pair, in s/mm\ :sup:`2`.
 
-    Handbook §9.1, Figure 9.3.  `delta_s` is the lobe width **including one ramp**, `separation_s`
-    is the distance between the two lobe centres, and `ramp_s` is the ramp time.  Setting
-    ``ramp_s=0`` recovers the rectangular-lobe expression, which is the check the figure's own
-    caption suggests.
+`delta_s` is the lobe width **including one ramp**, `separation_s` is the distance between the
+    two lobe centres, and `ramp_s` is the ramp time.  Setting ``ramp_s=0`` recovers the
+    rectangular-lobe expression.
 
-    A free function because it is the physics, not the module: the tests use it as an independent
-    expectation, and it takes no ``self`` that could carry a stale assumption.
+    A free function rather than a method: it is the `b`-value of a trapezoid pair and needs
+    nothing from a module instance.
     """
     gamma_rad = 2.0 * np.pi * _GAMMA_HZ_T
     grad_t_m = float(amplitude_hz_m) / _GAMMA_HZ_T
@@ -200,9 +215,8 @@ class DiffusionSEPrep(Module):
                                 crush_cycles_per_voxel=crush_cycles_slice,
                                 crush_voxel_mm=self.thickness_mm)
 
-        # --- every number below comes from the two leaves' CONSTRUCTION-TIME properties.  Nothing
-        # here calls build(), so the coupled design is complete before any event exists.  That is
-        # the architectural claim this module was written to test.
+        # --- every number below comes from the two leaves' construction-time properties, so the
+        # coupled design is complete before any event exists and nothing here calls build().
         raster = float(opts.grad_raster_time)
         self._t90c = float(self.exc.time_to_center())
         self._exc_end = ceil_raster(
@@ -242,18 +256,15 @@ class DiffusionSEPrep(Module):
 
     # ------------------------------------------------------------------ the coupled design
     #
-    # All of it closed form, and all of it before any event exists.
-    #
-    # With the amplitude pinned at the scanner maximum -- which is what the handbook says is done,
-    # §9.1 p. 280 -- the lobe width follows from the requested `b` by solving a cubic, which is
-    # exactly the calculation of the handbook's own Example 9.2.  Substituting the separation
-    # `Delta = C + delta + eps`, where `C` is the refocusing block, into Figure 9.3's expression:
+    # With the amplitude pinned at the scanner maximum, the lobe width follows from the requested
+    # `b` by solving a cubic.  Substituting the separation `Delta = C + delta + eps`, where `C` is
+    # the refocusing block, into the trapezoid-pair expression:
     #
     #     b / (gamma^2 G^2) = (2/3) delta^3 + (C + eps) delta^2 - (eps^2/6) delta + eps^3/30
     #
-    # The echo time then does not enter the lobe design at all -- it only decides whether the lobe
+    # The echo time does not enter the lobe design at all -- it only decides whether the lobe
     # FITS.  Both windows grow as TE/2, so the shortest echo time that holds the pair is a max of
-    # two linear expressions.  No search, no optimizer, no iteration.
+    # two linear expressions.
     def _delta_for(self, b: float) -> float:
         """Return the lobe width reaching `b` at full amplitude, in seconds.  The cubic's root."""
         if b <= 0.0:

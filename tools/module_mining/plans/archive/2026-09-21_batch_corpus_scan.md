@@ -3,7 +3,7 @@
 > **Mirrored from the workspace planning repository** (`docs/plans/module-mining/`) on
 > 2026-09-21, so that the pull request carries the evidence behind the modules it adds.
 > The two copies are identical today and there is nothing keeping them that way; see
-> [`../README.md`](../README.md) for which one to edit.
+> [`../README.md`](../../README.md) for which one to edit.
 
 **Date:** 2026-09-21 · **Phase:** B · **Skill:** v0, frozen and unmodified
 
@@ -12,7 +12,7 @@ under calibration. It produces a **candidate map**, not implementations. No Modu
 no production code was changed, and `.claude/skills/module-mining/` was not touched — including
 where v0 was awkward, which is recorded in §6 as Phase E evidence instead.
 
-`coarse_scan_2026-09-18.md` is the previous scan and stays as historical evidence. This one
+`archive/2026-09-18_coarse_scan.md` is the previous scan and stays as historical evidence. This one
 replaces nothing; it re-reads the corpus against **merged `main`**, which now ships
 `RadialReadout`, `SpiralReadout`, `SaturationPrep` and `GRE3DTR`.
 
@@ -167,7 +167,7 @@ base sequence moment state   (M0, M1 already accumulated)
     waveform
 ```
 
-This is the shape `post_v0_roadmap.md` refused to build speculatively, observed in a published
+This is the shape `current/roadmap.md` refused to build speculatively, observed in a published
 implementation rather than hypothesised. **No SeqCraft Module can express it today**: a Module
 computes its events in closed form from its own parameters, and this requirement is stated
 *relative to what the rest of the sequence already does*.
@@ -250,7 +250,7 @@ Three, chosen to be complementary rather than likely to go GREEN.
 | | candidate | what it tests | why this one |
 |---|---|---|---|
 | **C1** | **T2 preparation** | *does the ordinary path still work?* | The conventional control. A preparation leaf beside `IRPrep` and `SaturationPrep`, in a folder whose contract already names the third seat. If v0 cannot produce a clean GREEN here, that is a much louder signal than any of the hard cases. One witness, so the evidence tier is capped and the claim scope must say so — which is itself a v0 rule worth exercising again. |
-| **C2** | **bSSFP** | *where does the kernel boundary actually fall?* | Two independent witnesses that agree on the physics and disagree on the boundary. The rewinder/prephaser pair spans the repetition boundary, so a `…TR` kernel shaped like `GRE2DTR` may be the wrong unit — and `post_v0_roadmap.md` names `BalancedSSFPTR` without evidence. Expected outcome is genuinely open, including `ARCHITECTURE_REVISIT_CANDIDATE` against the existing kernel layer. |
+| **C2** | **bSSFP** | *where does the kernel boundary actually fall?* | Two independent witnesses that agree on the physics and disagree on the boundary. The rewinder/prephaser pair spans the repetition boundary, so a `…TR` kernel shaped like `GRE2DTR` may be the wrong unit — and `current/roadmap.md` names `BalancedSSFPTR` without evidence. Expected outcome is genuinely open, including `ARCHITECTURE_REVISIT_CANDIDATE` against the existing kernel layer. |
 | **C3** | **Velocity encoding + flow compensation, scanned together** | *can SeqCraft express a requirement at all?* | The architectural stress case, and the two are scanned as one fine scan precisely to test whether they share a requirement model or merely a silhouette. A likely outcome is "no Module, and here is what would have to exist first", which is the most valuable result available. Licence-constrained to analytic re-derivation, which must be stated in the claim scope up front. |
 
 **Diffusion is deliberately not in the shortlist**, despite being high value. It couples to EPI,

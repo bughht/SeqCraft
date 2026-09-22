@@ -234,10 +234,9 @@ def b_value(tree: LogicBlock, opts: Opts, *, end_s: float | None = None) -> dict
     integrates without bound -- reporting a `b` that grows with the echo time out of nothing.  A
     tree with no excitation in it is measured from its own start.
 
-    Both of these were wrong in the first version of this function and neither was visible on the
-    diffusion axis, where `k` is flat across the refocusing block and zero before the encoding.
-    ``examples/dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb`` is what found them: the Bloch
-    simulator and this integral disagreed about a `b = 0` acquisition by a factor of nine.
+    Both instants are the *effective* RF centres -- ``event.delay`` plus
+    ``pp.calc_rf_center(event)``.  ``tools/module_mining/plans/diffusion/findings.md`` records how
+    this was validated against a Bloch simulation and what that comparison corrected.
 
     Examples
     --------

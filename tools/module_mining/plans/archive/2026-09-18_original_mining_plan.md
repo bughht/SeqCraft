@@ -3,12 +3,12 @@
 > **Mirrored from the workspace planning repository** (`docs/plans/module-mining/`) on
 > 2026-09-19, so that the pull request carries the evidence behind the modules it adds.
 > The two copies are identical today and there is nothing keeping them that way; see
-> [`../README.md`](../README.md) for which one to edit.
+> [`../README.md`](../../README.md) for which one to edit.
 
 > **Status:** Active implementation plan — coarse scan completed; the TSE/FSE fine-scan pilot is
 > **COMPLETE — GREEN** (`TSEShot`, `FSE2D` and the `CartesianLine` echo-geometry extension are
 > extracted and verified); the next candidate is `RadialReadout`, planned in
-> [`next_phase_plan.md`](next_phase_plan.md)  
+> [`archive/2026-09-18_radial_fine_scan_proposal.md`](../archive/2026-09-18_radial_fine_scan_proposal.md)  
 > **Primary goal:** Build an AI-assisted pipeline that mines reusable MRI sequence concepts from mainstream open-source Pulseq/PyPulseq sequences, converts high-confidence concepts into SeqCraft modules, and verifies that the conversion preserves the reference sequence's physical behavior.  
 > **Architectural constraint:** Do **not** change the SeqCraft compiler to accommodate individual source sequences. The compiler architecture is treated as stable. This project operates above the `LogicBlock` boundary.
 
@@ -2514,8 +2514,8 @@ The coarse scan has now been completed and has produced:
   - non-Cartesian trajectory design may deserve a non-Module utility layer.
 
 > **Done, 2026-09-18.** Milestone 4 completed GREEN; see
-> [`tse/boundary_decision.md`](tse/boundary_decision.md) for the outcome and
-> [`next_phase_plan.md`](next_phase_plan.md) for what follows. The rest of this section is
+> [`tse/boundary_decision.md`](../tse/boundary_decision.md) for the outcome and
+> [`archive/2026-09-18_radial_fine_scan_proposal.md`](../archive/2026-09-18_radial_fine_scan_proposal.md) for what follows. The rest of this section is
 > kept as the reasoning that selected TSE/FSE.
 
 The next action is therefore **Milestone 4: local fine-scan pilot**.

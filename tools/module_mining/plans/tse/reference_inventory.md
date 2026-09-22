@@ -10,7 +10,7 @@
 **Pass:** 0 — freeze provenance
 
 Recorded before any analysis, per
-[`../fine_scan_playbook.md`](../fine_scan_playbook.md) §5 Pass 0.
+[`../process/fine_scan_playbook.md`](../process/fine_scan_playbook.md) §5 Pass 0.
 
 ---
 

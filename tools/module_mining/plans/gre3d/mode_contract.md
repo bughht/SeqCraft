@@ -9,7 +9,7 @@
 **Date:** 2026-09-19
 **Why this exists:** written *after* the fact, because the mistake it would have prevented was
 made. Every candidate with physical modes gets this table **before** implementation from here on;
-see [`../fine_scan_playbook.md`](../fine_scan_playbook.md) §19.
+see [`../process/fine_scan_playbook.md`](../process/fine_scan_playbook.md) §19.
 
 ---
 

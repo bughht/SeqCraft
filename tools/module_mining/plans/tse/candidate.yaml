@@ -1,7 +1,7 @@
 # Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-19.
 # See ../../README.md for which copy to edit.
 # Provisional research record -- NOT a schema, NOT runtime code.
-# Fields follow the coarse scan's revised template (coarse_scan_2026-09-18.md section 14).
+# Fields follow the coarse scan's revised template (archive/2026-09-18_coarse_scan.md section 14).
 
 id: tse-fse-shot
 name: TSEShot            # working name only; the boundary decision may reject the class entirely

@@ -3,11 +3,11 @@
 > **Mirrored from the workspace planning repository** (`docs/plans/module-mining/`) on
 > 2026-09-19, so that the pull request carries the evidence behind the modules it adds.
 > The two copies are identical today and there is nothing keeping them that way; see
-> [`../README.md`](../README.md) for which one to edit.
+> [`../README.md`](../../README.md) for which one to edit.
 
 > **Superseded as a forward plan.** The current roadmap is
-> [`post_v0_roadmap.md`](post_v0_roadmap.md). This file is retained for the reasoning it
-> records, not for the plan it proposes; see [`README.md`](README.md) for the audit.
+> [`current/roadmap.md`](../current/roadmap.md). This file is retained for the reasoning it
+> records, not for the plan it proposes; see [`README.md`](../README.md) for the audit.
 
 **Date:** 2026-09-18  
 **Status:** Superseded — retained as the record of the Radial fine scan as it was planned  
