@@ -15,7 +15,7 @@ DURABLE PROCESS / OPEN ARCHITECTURE
     repetition_augmentation_design_note.md   a direction for joint-solve augmentations, no API
 
 CANDIDATE EVIDENCE                           one folder per candidate: the record and its reasoning
-    tse/  radial/  gre3d/  steam/  saturation/  spiral/
+    tse/  radial/  gre3d/  steam/  saturation/  spiral/  t2prep/
 
 HISTORICAL / RECONCILIATION RECORDS
     pr23_reconciliation.md                   one disposition per PR #23 capability

@@ -1,0 +1,321 @@
+# Mirrored from the workspace planning repository (docs/plans/module-mining/) on 2026-09-21.
+# See ../../README.md for which copy to edit.
+# T2Prep -- post-v0 Phase C, first fine scan.  The conventional-control candidate.
+#
+# Run with the merged v0 Skill, unmodified.  Evidence -> contract -> ownership -> acceptance
+# claim, and it stops there: nothing was implemented.
+#
+#   python tools/module_mining/schema.py tools/module_mining/plans/t2prep/candidate.yaml
+
+id: t2-preparation
+name: T2Prep
+
+capability:
+  family: preparation
+  summary: >
+    A T2-weighting preparation period.  Magnetisation is tipped into the transverse plane, held
+    there for a defined time during which static dephasing is refocused by a train of refocusing
+    pulses, tipped back to +z, and whatever transverse magnetisation remains is crushed.  The
+    longitudinal magnetisation that survives is weighted by exp(-tau / T2) rather than by
+    exp(-tau / T2*), and that distinction IS the module.
+  what_a_user_could_get_wrong: >
+    Four things, each of which produces a legal sequence and a plausible image.
+    (1) The tip-up phase relative to the tip-down.  Wrong sign and the second pulse continues the
+    rotation instead of reversing it, so the prepared magnetisation is destroyed rather than
+    stored -- the same class of load-bearing sign as SaturationPrep's frequency offset.
+    (2) The interval symmetry.  If the gaps around each refocusing pulse are not equal, the echoes
+    do not coincide with the pulse centres, static dephasing is NOT refocused, and the result is
+    T2*-weighted while still looking like a T2 preparation.
+    (3) The refocusing phase alternation.  Both witnessed designs alternate the composite pulses'
+    phase; with a single phase, B1 error accumulates instead of cancelling.
+    (4) The crusher placement.  It must follow the tip-up.  Before it, it destroys the
+    magnetisation the preparation exists to store.
+
+target:
+  layer: preparation
+  seat: >
+    modules/preparation/, whose folder contract is `rf.use in {inversion, saturation,
+    preparation}`.  IRPrep and SaturationPrep hold the first two seats; this is a candidate for
+    the third, and the folder docstring already names it.
+  untouched:
+    - src/seqcraft/compiler        # no compiler change is implied or needed
+    - src/seqcraft/design          # no LogicBlock change
+    - src/seqcraft/modules/rf      # see ownership.refocusing_train -- Refocusing is NOT reused
+    - src/seqcraft/modules/kernel  # there is no cross-leaf coupling here
+    - src/seqcraft/modules/imaging
+
+evidence:
+  - id: R1
+    source: openmrf
+    repo: OpenMRF/openmrf-core-matlab
+    path: include_pulseq_toolbox/src_preparations/T2/
+    commit: fd03604
+    license: MIT
+    role: independent-implementation
+    language: matlab
+    executable: documentary
+    independence: >
+      Independent of the Pulseq line -- OpenMRF is developed separately, and the registry records
+      it as a genuine second witness where it overlaps.  Here there is nothing to be second to --
+      see reference_situation.
+    what_it_establishes: >
+      The structure, and four quantitative facts.  The refocusing train is TWO composite pulses.
+      The inter-pulse interval is (prep_time - 2 * rfc_dur) / 4, used four times, which places the
+      pulses at one quarter and three quarters of the preparation period -- so the spacing is
+      symmetric about each pulse and the two echoes coincide with them.  The two composites carry
+      OPPOSITE phase, ref_phase + pi/2 and ref_phase - pi/2.  The composite itself is a constant-
+      amplitude block pulse whose phase is -y for the first quarter, +x for the middle half and -y
+      for the last quarter -- the classic 90(-y) 180(+x) 90(-y).
+    what_it_does_not_establish: >
+      Any agreement with a second independent implementation, because there is none in the
+      registered corpora.  Nor the correctness of its own conventions -- notably that prep_time is
+      measured tip-down-END to tip-up-START rather than centre to centre, which for an adiabatic
+      BIR-4 of 2 to 5 ms is a 5 to 25 percent difference against a 40 ms preparation.
+  - id: R2
+    source: openmrf
+    repo: OpenMRF/openmrf-core-matlab
+    path: include_pulseq_toolbox/src_preparations/MLEV/
+    commit: fd03604
+    license: MIT
+    role: architecture-evidence
+    independence: >
+      NOT an independent witness.  Same corpus, same author, and it shares the crusher helper
+      (CRUSH_x_y_z) and the composite-pulse concept with R1.  It is cited as evidence about the
+      ABSTRACTION's variability, not as corroboration of R1's numbers.
+    what_it_establishes: >
+      That the outer boundary is stable and the inner train is not.  R2 has the same tip-down,
+      tip-up and crusher as R1, and differs in the train -- n_mlev groups of four composites with
+      an explicit +1/-1 cycling list, minimal gaps between them.
+      **The parameterisations are opposite.**  In R1 the preparation duration is an INPUT and the
+      interval spacing is solved from it.  In R2 the train is specified -- a count and a composite
+      duration tau = 1 / fSL -- and the duration FALLS OUT as n_composite * tau.
+    why_it_matters: >
+      Two designs of one physical contract, by one author, disagreeing about which variable is
+      fixed.  That is the mode-contract question stated by the evidence rather than by us, and it
+      is the reason this record does not reach APPROVED_FOR_IMPLEMENTATION.
+  - id: N1
+    source: pypulseq
+    repo: imr-framework/pypulseq
+    path: pypulseq/make_adiabatic_pulse.py
+    commit: f2c582b
+    license: MIT
+    role: architecture-evidence
+    independence: >
+      Not a witness of this family at all, and cited for what it LACKS.  Independence is
+      therefore not the relevant axis: this is a capability check on the RF factory SeqCraft
+      already depends on, and IRPrep is the consumer that proves the adiabatic path works for
+      inversions.
+    what_it_establishes: >
+      A NEGATIVE result, and the blocking one.  Both witnessed designs tip down and tip up with an
+      adiabatic 90 -- BIR-4 or AHP -- and pypulseq's make_adiabatic_pulse is documented "Make an
+      adiabatic inversion pulse" and offers only hypsec and wurst.  Those invert; they cannot
+      perform a 90 degree rotation.  So SeqCraft can build an adiabatic INVERSION, as IRPrep
+      already does, and cannot build the adiabatic ROTATION this candidate's witnesses use.
+    measured: >
+      Verified rather than assumed, and the first guess was wrong -- IRPrep already routes hypsec
+      and wurst to make_adiabatic_pulse, so adiabatic support exists.  What is absent is
+      specifically the 90-degree adiabatic family.
+
+reference_situation:
+  independent_witnesses: 1
+  designs_examined: 2
+  note: >
+    Searched all nine registered corpora for T2-preparation evidence.  pypulseq, pulseq-matlab,
+    pulseq-cest, PulseqDiffusion and Open4DFlow have none.  The MRzero playground appeared to
+    match on "MLEV" and did not -- the hits were case-insensitive fragments of base64 image data,
+    checked and discarded.  So the family is witnessed by OpenMRF alone.
+  oracle_available: >
+    Yes in principle -- MRzeroCore can simulate a T2 preparation and the exp(-tau/T2) weighting is
+    exactly the kind of claim a Bloch simulation settles.  Not used at this stage, because Layer 3
+    is not what is blocking.
+
+contract:
+  invariants:
+    - >
+      Magnetisation is transverse for the declared preparation time and longitudinal outside it.
+    - >
+      Static dephasing accumulated in the first half of each inter-pulse interval is reversed in
+      the second half, so the refocusing condition is that the gaps either side of every
+      refocusing pulse are equal.
+    - >
+      The tip-up reverses the tip-down -- same axis, reversed sense -- so that surviving
+      magnetisation is returned to +z rather than advanced further.
+    - >
+      Residual transverse magnetisation after the tip-up is destroyed before the imaging train
+      begins, and the crusher that does it lies entirely outside the preparation period.
+  determinable_from_own_parameters:
+    - the number of refocusing pulses and their placement, given the preparation time
+    - the four interval durations, given the preparation time and the pulse durations
+    - the phase of every pulse relative to a single reference phase
+    - the crusher moments, given a voxel size
+    - the total block duration
+  caller_policy:
+    - the preparation time, or the refocusing count -- see open_questions
+    - the RF pulse family, and therefore the B1 robustness
+    - where the preparation sits relative to the imaging train
+    - how many preparation times a protocol plays, and in what order
+
+ownership:
+  refocusing_train: >
+    **Intrinsic to the leaf.**  Both designs keep the train entirely inside the preparation and
+    never expose it; the count and spacing are determined by the preparation time and the leaf's
+    own pulse durations, and nothing outside the preparation influences either.  That is the v0
+    ownership test answered in the affirmative.
+  why_refocusing_is_not_reused: >
+    Measured, not assumed.  `Refocusing` refuses crush_cycles_per_voxel=0 -- "must be positive" --
+    so it cannot emit a crusher-free pulse, and a crusher inside a T2 preparation destroys the
+    magnetisation being stored.  It is also built to be slice-selective with a balanced crusher
+    pair, which is the opposite job.  So this is a case of reuse of SEMANTICS -- a 180 that
+    reverses phase -- without reuse of the emitted event, which is the corollary v0 states.
+  tip_pulses: >
+    Intrinsic.  A tip-down whose partner tip-up must reverse it is a pair, and a caller handed
+    two independent Excitation calls is the failure mode in capability.what_a_user_could_get_wrong.
+  crusher: >
+    Intrinsic, by the IRPrep and SaturationPrep precedent -- both own their own spoiler.
+  kernel_involvement: none
+  compiler_involvement: none
+
+acceptance:
+  defined_before_extraction: true   # nothing has been extracted; that is the point of this record
+  not_yet_final: >
+    Deliberately.  v0's pipeline forbids extraction before the acceptance claim, and the claim
+    cannot be written while the mode contract is open -- a criterion written against whichever
+    parameterisation is implemented would describe the implementation.  What the claim WOULD have
+    to establish is recorded below so the next pass does not restate the scan.
+  establishes:
+    - >
+      Interval symmetry on the emitted lattice -- the gaps either side of each refocusing pulse,
+      measured from the emitted events' own knots, equal to within one raster.  Rule E.
+    - >
+      The declared preparation time equals the measured tip-down-end to tip-up-start interval.
+    - >
+      Phase alternation between consecutive refocusing pulses, read off the compiled file.
+    - >
+      Zero net gradient area across the preparation period, and the crusher moment entirely
+      outside it.
+    - >
+      Metamorphic -- doubling the preparation time doubles the measured transverse interval and
+      leaves the pulse count, the phases and the crusher unchanged.
+  does_not_establish:
+    - >
+      exp(-tau/T2) weighting.  That is a Layer 3 claim needing a simulator, and it is the claim a
+      user actually cares about.
+    - >
+      B1 or B0 robustness, which is the entire reason both witnesses use adiabatic pulses.
+    - >
+      Agreement with any second independent implementation.
+
+validation:
+  layers:
+    layer_1: NOT_APPLICABLE   # nothing implemented; this record stops at the acceptance claim
+    layer_2: NOT_APPLICABLE
+    layer_3: NOT_APPLICABLE
+    layer_3_reason: >
+      Not deferred for want of an oracle -- MRzeroCore can simulate a T2 preparation, the
+      exp(-tau/T2) weighting is exactly what a Bloch simulation settles, and the shared BrainWeb
+      phantom carries T2 and T2' separately.  NOT_APPLICABLE because there is nothing to validate --
+      this fine scan stops at the acceptance claim and no module was written.  The moment one is,
+      Layer 3 is both available and the most valuable layer for this candidate, since the claim a
+      user cares about is the weighting itself.
+  planned_if_approved: >
+    Layer 1 from the invariants in acceptance_claim.would_establish, all measured on the emitted
+    lattice.  Layer 2 as a complete acquisition -- a preparation followed by a real imaging train,
+    since a preparation alone is not an acquisition.  Layer 3 against MRzeroCore, comparing
+    recovered signal against exp(-tau/T2) over a spread of preparation times, which is the claim
+    that makes the module worth having and is cheap here because the phantom carries T2 and T2'
+    separately.
+
+coverage_classification: null   # no existing SeqCraft abstraction covers this family
+
+status: UNDECIDED
+traffic_light: YELLOW
+reason_code: MODE_CONTRACT_INCOMPLETE
+
+decision_summary: >
+  The BOUNDARY is settled and the MODE CONTRACT is not.  A T2 preparation is a self-contained
+  preparation leaf that owns its tip pair, its refocusing train, its timing solve and its crusher,
+  with no cross-leaf coupling -- the same shape as IRPrep and SaturationPrep, in a folder whose
+  contract already names the seat.  Nothing in the evidence argues for a kernel, and nothing
+  argues that a caller should assemble the train.
+
+  Two things block implementation, and neither is the boundary.
+
+  First, the two examined designs parameterise the train in opposite directions -- duration in and
+  spacing derived, against train in and duration derived -- so rule A's mode table cannot be
+  written honestly yet.  Picking one now would be picking the one that is easier to code.
+
+  Second, and more serious: both designs use an adiabatic 90 for the tip pair, and SeqCraft cannot
+  build one.  A T2Prep shipped today would use a non-adiabatic tip pair, which is a variant NO
+  witness implements and which is not a metamorphic transform of a witnessed one either -- unlike
+  the Spiral variants, where `in` really is `out` reversed.  So its B1 behaviour would be
+  unwitnessed, and B1 robustness is the reason the witnesses chose adiabatic pulses at all.
+
+  This is a YELLOW that is close to green, and saying so precisely matters more than the colour.
+
+open_questions:
+  - >
+    Which parameterisation is the leaf's mode -- preparation time with derived spacing, or
+    refocusing count with derived duration?  Both are witnessed, by the same author.
+    RESOLVE BY a second independent implementation, or a human decision that one is the API and
+    the other is a caller computing its argument.
+  - >
+    Is the prep_time convention -- tip-down-end to tip-up-start -- the right semantic duration for
+    an adiabatic tip pair, whose effective rotation instant is not its pulse centre?  One witness,
+    one convention, and a 5 to 25 percent effect on the declared weighting time.
+  - >
+    Should a non-adiabatic T2Prep ship at all, given that no witness implements one?  A permissive
+    witness for a hard- or sinc-pulse T2 preparation would settle this; none is in the registry
+    today, and finding one is the cheapest unblock available.
+  - >
+    Is MLEV-2 or MLEV-4 the default refocusing scheme?  R1 uses two composites, R2 uses multiples
+    of four with an explicit cycling list, and the corpus does not say which is intended for
+    general use.
+  - >
+    Does the three-axis crusher policy -- each axis derated to 1/sqrt(3) of the nominal limit and
+    the ramps staggered -- belong to this candidate or to `spoiler`?  It is the same question the
+    Phase A dephaser item left open for SpiralReadout, and this corpus has a deliberate answer to
+    it.  Cross-referenced rather than decided here.
+
+evidence_state:
+  human_review: NEEDED
+  experiment_design_review: NEEDED
+  scanner_validation: NOT_REQUIRED_FOR_CLAIM
+  what_is_owed: >
+    A human decision on two questions, neither of which more scanning will answer.
+  deferred:
+    - what: >
+        Which parameterisation is the leaf's mode -- preparation time in with spacing derived, or
+        refocusing train in with duration derived.
+      why: >
+        Both are witnessed, by the same author in the same corpus, and the corpus does not say
+        which is intended for general use.  Choosing without evidence would be choosing the one
+        that is easier to implement, which is the failure this workflow exists to prevent.
+      revisit_trigger: >
+        A second independent T2-preparation implementation appears, OR a human decides that one
+        form is the API and the other is a caller computing its argument.
+    - what: An adiabatic 90-degree rotation -- BIR-4 or AHP -- as an RF waveform family.
+      why: >
+        Both witnessed designs tip down and up with one.  pypulseq offers adiabatic INVERSION
+        only (hypsec, wurst), so the variant SeqCraft could build today is witnessed by nothing,
+        and B1 robustness is precisely why the witnesses chose adiabatic pulses.
+      revisit_trigger: >
+        pypulseq or SeqCraft gains a 90-degree adiabatic family, OR a permissively licensed
+        non-adiabatic T2 preparation is found and becomes the witness for the variant that is
+        actually buildable.  The second is much cheaper and is the recommended next step.
+    - what: A permissive witness for a hard- or sinc-pulse T2 preparation.
+      why: >
+        It is the cheapest thing that would convert this YELLOW into a writable mode contract --
+        it would witness the buildable variant directly rather than by analogy.
+      revisit_trigger: >
+        A targeted search of sources outside the current registry, which is a registry question
+        and not this fine scan's to answer.
+    - what: >
+        Whether the three-axis crusher policy belongs here or in `spoiler`.
+      why: >
+        Both witnessed designs derate each crusher axis to 1/sqrt(3) of the nominal gradient and
+        slew limit and stagger the three ramps, and both say the slew derating is to avoid
+        peripheral nerve stimulation.  SeqCraft's `spoiler` is one axis at a time with no such
+        policy.
+      revisit_trigger: >
+        The Phase A SpiralReadout dephaser item is taken up -- it is the same question, and this
+        corpus is evidence for it.  Cross-referenced in post_v0_batch_scan.md section 2.
