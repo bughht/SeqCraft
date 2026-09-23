@@ -19,11 +19,16 @@ is long enough that a marginal crusher is not marginal by the time it is sampled
 
 Peak B1
 -------
-The pulse is refused if its peak exceeds ``opts.max_b1``.  The remedy differs by family: a shaped
-pulse scales as ``1 / duration``, so a longer one fits, while an **adiabatic** pulse's peak is set
-by its frequency sweep and moves only as ``1 / sqrt(duration)`` -- there, narrow the sweep
-through ``pulse_opts``.  At pypulseq's defaults ``'wurst'`` asks well over 20 uT; ``'hypsec'``
-does not.
+The pulse is refused if its peak exceeds ``opts.max_b1``, and the remedy differs by family.
+
+* A **fixed-envelope** design -- a sinc, or a gauss pinned by a time--bandwidth product -- scales
+  as ``1 / duration``, so the refusal reports a duration floor.
+* A **redesigned** shape such as SLR gets a starting-point estimate to rebuild and re-check.
+* An **adiabatic** pulse follows its own sweep-dependent scaling: ``'wurst'`` goes as
+  ``sqrt(bandwidth / duration)``, and ``'hypsec'`` takes its sweep from ``beta`` and ``mu`` and
+  does not move with duration at all.  Narrow the sweep through ``pulse_opts``.
+
+At pypulseq's defaults ``'wurst'`` asks well over 20 uT; ``'hypsec'`` does not.
 
 Why the pulse is adiabatic by default
 -------------------------------------
@@ -60,6 +65,7 @@ from .._support import (
     peak_scales_with_duration,
     require_axis,
     require_positive,
+    require_usable_max_b1,
     shift_slice,
 )
 from ..spoiler import spoiler
@@ -213,6 +219,7 @@ class IRPrep(Module):
         if self.selective:
             kwargs['slice_thickness'] = self.thickness_mm / 1e3
             kwargs['return_gz'] = True
+        require_usable_max_b1(self.opts, described=self._described())
         self._design_opts = self._check_pulse_opts(pulse_opts)
         kwargs.update(self._design_opts)
 
@@ -387,6 +394,9 @@ class IRPrep(Module):
         ),
     }
 
+    def _described(self) -> str:
+        return f'a {self.duration_s * 1e3:g} ms {self.pulse} inversion pulse'
+
     def _check_b1(self) -> None:
         """
         Refuse a pulse over ``opts.max_b1``, with the remedy this pulse family actually has.
@@ -394,8 +404,8 @@ class IRPrep(Module):
         The families differ, and quoting the wrong one is worse than quoting none.  A shaped pulse
         at a fixed flip angle scales as ``1 / duration``, so a longer one fits.  An **adiabatic**
         pulse's peak is set by its frequency sweep instead, and the two adiabatic shapes do not
-        even share a control: ``bandwidth`` halves a WURST's peak and does nothing at all to a
-        hyperbolic secant's.
+        even share a control: at fixed duration and adiabaticity a WURST's peak goes roughly as
+        ``sqrt(bandwidth)``, while a hyperbolic secant ignores ``bandwidth`` entirely.
         """
         check_peak_b1(
             self.rf, self.opts,

@@ -18,10 +18,13 @@ The backstop is what makes it a contract rather than four habits: it catches a r
 own check.
 
 The invariant is literal — `peak_b1_hz(rf) <= opts.max_b1` — with no sentinel, so **`max_b1 = +inf`
-is how a caller designs without a transmit limit, and only `+inf` is.** Zero, a negative and `NaN`
-are each reported as an unusable limit rather than treated as unlimited, at **both** layers. `NaN`
-matters most: every comparison against it is False, so a check written as `worst > limit` would let
-any pulse through silently.
+is how a caller designs without a transmit limit, and only `+inf` is.** Zero, a negative, `NaN` and
+an **absent** limit are each reported as unusable rather than treated as unlimited, at **both**
+layers. `NaN` matters most — every comparison against it is False, so a check written as
+`worst > limit` would let any pulse through silently — and `None` is the subtle one, because
+`pp.Opts(max_b1=None)` falls back to the 20 µT default rather than to no limit. An absent limit
+needs a guard before the pulse is built, since pypulseq's shaped factories compare against it while
+designing one.
 
 Zero is not pypulseq's convention here either: unlike `adc_samples_limit`, whose `0` is documented
 as "no limit", `make_sinc_pulse` compares `rf_amplitude > system.max_b1` unconditionally, so a zero

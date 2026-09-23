@@ -93,7 +93,14 @@ from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
-from .._support import check_peak_b1, duration_remedy, peak_b1_hz, require_axis, require_positive
+from .._support import (
+    check_peak_b1,
+    duration_remedy,
+    peak_b1_hz,
+    require_axis,
+    require_positive,
+    require_usable_max_b1,
+)
 from ..spoiler import spoiler
 
 if TYPE_CHECKING:
@@ -203,6 +210,7 @@ class SaturationPrep(Module):
             kwargs['bandwidth'] = self.bandwidth_hz
         else:
             kwargs['time_bw_product'] = self.bandwidth_hz * self.duration_s
+        require_usable_max_b1(self.opts, described=self._described())
         self._design_opts = self._check_pulse_opts(pulse_opts)
         kwargs.update(self._design_opts)
         # No `return_gz`, so no selection gradient and no rephaser to drop.  The absence is the
@@ -321,6 +329,10 @@ class SaturationPrep(Module):
             ],
         )
         raise ConfigurationError(msg)
+
+    def _described(self) -> str:
+        return (f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} '
+                f'saturation pulse')
 
     def _check_b1(self) -> None:
         """

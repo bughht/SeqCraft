@@ -249,12 +249,12 @@ def check_rf_amplitude(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] =
     :class:`~seqcraft.LogicBlock`, a future module that forgets its own check, and any path that
     reaches a block without passing one.
 
-    The comparison is literal, so ``max_b1 = inf`` is how a caller designs without a transmit
-    limit.  **Zero is not that value**: unlike ``adc_samples_limit``, whose ``0`` is pypulseq's
-    documented "no limit", ``make_sinc_pulse`` compares ``rf_amplitude > system.max_b1``
-    unconditionally, so a zero limit warns at ``inf %`` there and refuses everything here.
-    ``pp.Opts()`` **defaults it to 851.52 Hz (20 uT)**, so the limit is live unless a caller has
-    deliberately raised it.
+    The comparison is literal, so ``max_b1 = +inf`` is how a caller designs without a transmit
+    limit -- and it is the only value that does.  Zero, a negative, ``NaN`` and an absent limit
+    are each refused as unusable rather than treated as unlimited; see
+    :func:`~seqcraft.modules._support.check_peak_b1`, which the modules use and which this agrees
+    with.  ``pp.Opts()`` **defaults it to 851.52 Hz (20 uT)**, so the limit is live unless a
+    caller has deliberately raised it.
 
     Raises
     ------
@@ -262,11 +262,11 @@ def check_rf_amplitude(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] =
         Naming the worst event, where it came from, and the peak as a percentage of the limit.
     """
     configured = getattr(opts, 'max_b1', None)
-    limit = float('inf') if configured is None else float(configured)
-    # **Positive** infinity, and only that, means "design without a transmit limit".  NaN and
-    # -inf are not spellings of it: every comparison against NaN is False, so treating it as
-    # unlimited would let any pulse through silently, which is the failure this check exists to
-    # prevent.
+    limit = float('nan') if configured is None else float(configured)
+    # **Positive** infinity, and only that, means "design without a transmit limit".  NaN, -inf
+    # and an absent limit are not spellings of it: every comparison against NaN is False, so
+    # treating it as unlimited would let any pulse through silently, which is the failure this
+    # check exists to prevent.
     if np.isposinf(limit):
         return
     worst = 0.0
@@ -288,8 +288,9 @@ def check_rf_amplitude(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] =
     usable = limit > 0.0                              # False for 0, negatives and NaN alike
     if usable and worst <= limit:
         return
+    stated = 'max_b1 is not set' if configured is None else f'max_b1 is {limit:g}'
     headline = (f'an RF event peaks at {worst / limit * 100:.0f} % of max_b1.' if usable
-                else f'max_b1 is {limit:g}, which is not a transmit limit an RF event can meet.')
+                else f'{stated}, which is not a transmit limit an RF event can meet.')
     fixes = ([
         'lengthen the pulse or lower its flip angle -- peak B1 scales with both for a fixed shape',
         'an adiabatic pulse instead needs a narrower frequency sweep',

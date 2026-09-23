@@ -62,14 +62,17 @@ def test_infinity_disables_enforcement_cleanly(unbounded_b1) -> None:
     sc.compile(sc.LogicBlock('loud').add(0.0, loud()), unbounded_b1)
 
 
-@pytest.mark.parametrize('limit', [0.0, float('nan'), -np.inf])
-def test_only_positive_infinity_means_unlimited(opts, limit: float) -> None:
+@pytest.mark.parametrize('limit', [0.0, -1.0, float('nan'), -np.inf, None])
+def test_only_positive_infinity_means_unlimited(opts, limit: float | None) -> None:
     """
-    Zero, NaN and negative infinity are **not** spellings of "unlimited", at either layer.
+    Zero, a negative, NaN, ``-inf`` and an **absent** limit are not spellings of "unlimited".
 
     NaN is the dangerous one: every comparison against it is False, so a check written as
     ``worst > limit`` would pass it silently -- which is exactly the failure this contract exists
-    to prevent.  Both layers therefore test ``limit > 0.0``, which is False for all three.
+    to prevent.  ``None`` is the subtle one: ``pp.Opts(max_b1=None)`` falls back to the 20 uT
+    default rather than to no limit, so nothing here may invent one from it.
+
+    Both layers reach the same verdict, and both say so in the same words.
     """
     broken = copy.copy(opts)
     broken.max_b1 = limit
@@ -82,6 +85,28 @@ def test_only_positive_infinity_means_unlimited(opts, limit: float) -> None:
                                return_gz=True)[0]
     with pytest.raises(sc.HardwareLimitError, match='not a transmit limit'):
         sc.compile(sc.LogicBlock('raw').add(0.0, quiet), broken)
+
+
+@pytest.mark.parametrize('make', [
+    lambda o: sc.modules.Excitation(opts=o, flip_deg=90.0, thickness_mm=5.0, duration_s=3e-3),
+    lambda o: sc.modules.Refocusing(opts=o, thickness_mm=5.0, duration_s=4e-3),
+    lambda o: sc.modules.IRPrep(opts=o, thickness_mm=None, spoil_voxel_mm=5.0),
+    lambda o: sc.modules.SaturationPrep(opts=o, shift_ppm=-3.4, flip_deg=110.0, duration_s=8e-3,
+                                        bandwidth_hz=200.0, spoil_voxel_mm=5.0),
+])
+def test_an_absent_limit_is_refused_by_every_rf_module(opts, make) -> None:
+    """
+    ``None`` reaches the same refusal from all four, and as a ``ConfigurationError``.
+
+    It needs a guard **before** the pulse is built: pypulseq's shaped factories compare
+    ``rf_amplitude > system.max_b1`` while designing one, so an absent limit otherwise raises
+    ``TypeError`` from inside pypulseq before this package sees it.
+    """
+    unset = copy.copy(opts)
+    unset.max_b1 = None
+
+    with pytest.raises(sc.ConfigurationError, match='max_b1 is not set'):
+        make(unset)
 
 
 def test_the_backstop_allows_positive_infinity(opts) -> None:

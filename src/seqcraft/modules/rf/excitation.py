@@ -22,8 +22,13 @@ in this library is measured from.
 
 Peak B1
 -------
-The pulse is refused if its peak exceeds ``opts.max_b1``, with the duration that would fit.  Note
-that ``pp.Opts()`` defaults that limit to 20 uT, which a 1 ms 90 degree sinc exceeds.
+The pulse is refused if its peak exceeds ``opts.max_b1``.  Where the envelope merely stretches --
+a sinc, or a gauss pinned by a time--bandwidth product -- the refusal reports the **duration
+floor**, because peak B1 then scales as ``1 / duration`` exactly.  Where the design is recomputed
+instead, as it is for SLR and for a gauss given an explicit ``bandwidth``, it reports a **starting
+point** to rebuild and re-check.
+
+Note that ``pp.Opts()`` defaults that limit to 20 uT, which a 1 ms 90 degree sinc exceeds.
 
 One angular unit
 ----------------
@@ -52,6 +57,7 @@ from .._support import (
     peak_scales_with_duration,
     require_axis,
     require_positive,
+    require_usable_max_b1,
     shift_slice,
 )
 
@@ -180,6 +186,7 @@ class Excitation(Module):
         if self.selective:
             kwargs['slice_thickness'] = self.thickness_mm / 1e3
             kwargs['return_gz'] = True
+        require_usable_max_b1(self.opts, described=self._described())
         self._design_opts = self._check_pulse_opts(pulse_opts)
         kwargs.update(self._design_opts)
 
@@ -193,6 +200,10 @@ class Excitation(Module):
             self.rf = factory(**kwargs)
             self.gz = self.gzr = None
         self._check_b1()
+
+    def _described(self) -> str:
+        return (f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} '
+                f'excitation')
 
     def _check_b1(self) -> None:
         """Refuse a pulse over ``opts.max_b1``, with the remedy this shape actually has."""

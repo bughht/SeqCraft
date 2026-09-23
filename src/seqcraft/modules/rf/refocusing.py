@@ -70,11 +70,15 @@ contract is the whole waveform.  It can therefore be checked on its own:
 
 Peak B1
 -------
-This module **refuses an RF waveform whose peak exceeds** ``opts.max_b1``, and names the duration
-that would fix it.  Peak B1 scales with flip angle at a fixed shape, so a 180 needs twice a 90's:
-a 2 ms TBW-4 sinc 180 asks 130 % of a 20 uT limit, and 2.7 ms is the floor at that shape.  Every
-RF-producing module makes the same check, and :func:`seqcraft.compile` checks the emitted sequence
-as a backstop.
+This module **refuses an RF waveform whose peak exceeds** ``opts.max_b1``.  Peak B1 scales with
+flip angle at a fixed shape, so a 180 needs twice a 90's: a 2 ms TBW-4 sinc 180 asks 130 % of a
+20 uT limit, and **2.7 ms is the floor** at that shape -- a sinc's envelope merely stretches, so
+the refusal can report a floor.  For a shape whose design is recomputed by the duration -- SLR, or
+a gauss given an explicit ``bandwidth`` -- it reports a starting point to rebuild and re-check
+instead.
+
+Every RF-producing module makes the same check, and :func:`seqcraft.compile` checks the emitted
+sequence as a backstop.
 """
 
 from __future__ import annotations
@@ -99,6 +103,7 @@ from .._support import (
     peak_scales_with_duration,
     require_axis,
     require_positive,
+    require_usable_max_b1,
     shift_slice,
 )
 
@@ -314,6 +319,7 @@ class Refocusing(Module):
         if self.selective:
             kwargs['slice_thickness'] = self.thickness_mm / 1e3
             kwargs['return_gz'] = True
+        require_usable_max_b1(self.opts, described=self._described())
         self._design_opts = self._check_pulse_opts(pulse_opts)
         kwargs.update(self._design_opts)
 
@@ -583,6 +589,10 @@ class Refocusing(Module):
         return wanted
 
     # -------------------------------------------------------------------- the refusals
+    def _described(self) -> str:
+        return (f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} '
+                f'refocusing pulse')
+
     def _check_b1(self, rf: Event) -> None:
         """Refuse a pulse over ``opts.max_b1``, with the remedy this shape actually has."""
         limit = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)

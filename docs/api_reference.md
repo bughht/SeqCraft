@@ -614,7 +614,7 @@ sinc peaks at 130 % of it.
 |---|---|
 | **every RF module checks its own pulse** | `Excitation`, `Refocusing`, `IRPrep` and `SaturationPrep` raise `ConfigurationError` at construction, naming what to change |
 | **the compiler checks the emitted sequence** | `HardwareLimitError`, naming the block and its origin. This catches a raw pypulseq RF event added straight to a `LogicBlock` |
-| **`max_b1 = +inf` disables both** | and only `+inf` does. Zero, a negative and `NaN` are each refused as an unusable limit rather than silently treated as unlimited — `NaN` especially, since every comparison against it is False. **Zero is not pypulseq's convention here**: unlike `adc_samples_limit`, `make_sinc_pulse` compares `rf_amplitude > system.max_b1` unconditionally, so a zero limit warns at `inf %` there |
+| **`max_b1 = +inf` disables both** | and only `+inf` does. Zero, a negative, `NaN` and an **absent** limit are each refused as unusable rather than silently treated as unlimited — `NaN` because every comparison against it is False, and `None` because `pp.Opts(max_b1=None)` falls back to the 20 µT default rather than to no limit. **Zero is not pypulseq's convention here** either: unlike `adc_samples_limit`, `make_sinc_pulse` compares `rf_amplitude > system.max_b1` unconditionally, so a zero limit warns at `inf %` there |
 
 The remedy depends on the pulse family, which is why each module supplies its own rather than
 sharing one.

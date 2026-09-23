@@ -49,7 +49,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     'area_until', 'ceil_raster', 'check_peak_b1', 'duration_for_peak_b1', 'duration_remedy', 'dwell_quantum',
-    'halve_onto', 'peak_b1_hz', 'peak_scales_with_duration', 'require_axis', 'require_count', 'require_pair',
+    'halve_onto', 'peak_b1_hz', 'peak_scales_with_duration', 'require_axis',
+    'require_usable_max_b1', 'require_count', 'require_pair',
     'require_positive', 'require_range', 'shift_slice',
 ]
 
@@ -68,10 +69,23 @@ def check_peak_b1(rf: Event, opts: Opts, *, described: str, remedies: Iterable[s
         peak_b1_hz(rf) <= opts.max_b1
 
     measured on the waveform that will be emitted rather than predicted from the pulse's
-    parameters.  There is no sentinel: a limit of ``inf`` passes the comparison on its own, which
-    is how a caller disables enforcement.  **Zero is not a disabling value** -- pypulseq's own
-    ``make_sinc_pulse`` compares ``rf_amplitude > system.max_b1`` unconditionally, so a zero limit
-    makes it warn at ``inf %`` rather than fall silent, and it would make this refuse everything.
+    parameters.  There is no sentinel: ``+inf`` passes the comparison on its own, which is how a
+    caller designs without a transmit limit, and **it is the only value that does**.
+
+    ============  ==================================================
+    ``max_b1``    behaviour
+    ============  ==================================================
+    ``+inf``      enforcement disabled
+    finite > 0    the literal comparison above
+    0, negative   refused as an unusable limit
+    ``NaN``       refused -- every comparison against it is False
+    ``None``      refused; it is not a spelling of "unlimited"
+    ============  ==================================================
+
+    Zero is not pypulseq's convention for this field: unlike ``adc_samples_limit``, whose ``0`` is
+    documented as no limit, ``make_sinc_pulse`` compares ``rf_amplitude > system.max_b1``
+    unconditionally, so a zero limit makes it warn at ``inf %``.  And ``pp.Opts(max_b1=None)``
+    falls back to the 20 uT default rather than to no limit, so ``None`` cannot mean one here.
 
     Note that ``pp.Opts()`` **defaults ``max_b1`` to 851.52 Hz (20 uT)**, so the limit is live
     unless a caller has deliberately raised it.
@@ -97,10 +111,18 @@ def check_peak_b1(rf: Event, opts: Opts, *, described: str, remedies: Iterable[s
         Naming the measured peak as a percentage of the limit, and the remedies given.
     """
     configured = getattr(opts, 'max_b1', None)
-    limit = float('inf') if configured is None else float(configured)
     peak = peak_b1_hz(rf)
-    if peak <= limit:
-        return
+    # One comparison decides both questions.  ``limit > 0.0`` is True for a finite positive limit
+    # and for ``+inf``, and False for zero, negatives and NaN alike; ``peak <= limit`` is then
+    # trivially true for ``+inf``, which is how "design without a transmit limit" is spelled.
+    # An absent or ``None`` limit is **not** a third spelling of that: ``pp.Opts(max_b1=None)``
+    # falls back to the 20 uT default rather than to no limit, so nothing here may invent one.
+    if configured is not None:
+        limit = float(configured)
+        if limit > 0.0 and peak <= limit:
+            return
+    else:
+        limit = float('nan')
     # In hertz throughout; microtesla is for the reader, so it follows this scanner's nucleus
     # rather than a hard-coded proton value.
     gamma = abs(float(getattr(opts, 'gamma', 0.0) or 0.0))
@@ -108,16 +130,45 @@ def check_peak_b1(rf: Event, opts: Opts, *, described: str, remedies: Iterable[s
     if gamma > 0.0:
         detail['peak_b1_uT'] = round(peak / gamma * 1e6, 2)
         detail['max_b1_uT'] = round(limit / gamma * 1e6, 2) if np.isfinite(limit) else limit
-    # `limit > 0.0` is False for zero, for negatives and for NaN alike, which is the point: none
-    # of those is a transmit limit, and none of them is a spelling of "unlimited" -- that is
-    # +inf, which the comparison above already let through.
-    usable = limit > 0.0
-    headline = (f'{described} peaks at {peak / limit * 100:.0f} % of max_b1.' if usable
-                else f'max_b1 is {limit:g}, which is not a transmit limit {described} can meet.')
-    fixes = ([*remedies, 'or raise max_b1, if the scanner really does deliver it'] if usable
-             else ['set a real max_b1 -- sc.convert(20, "uT", "Hz") is a common value',
-                   'or use max_b1=inf to design without a transmit limit'])
-    raise ConfigurationError(format_error(headline, detail, fixes))
+    if not limit > 0.0:
+        _raise_unusable_max_b1(configured, limit, described, detail)
+    raise ConfigurationError(format_error(
+        f'{described} peaks at {peak / limit * 100:.0f} % of max_b1.',
+        detail,
+        [*remedies, 'or raise max_b1, if the scanner really does deliver it'],
+    ))
+
+
+def _raise_unusable_max_b1(configured: object, limit: float, described: str,
+                           detail: dict[str, float] | None = None) -> None:
+    """Refuse a ``max_b1`` that is not a transmit limit: zero, negative, NaN or absent."""
+    stated = 'max_b1 is not set' if configured is None else f'max_b1 is {limit:g}'
+    raise ConfigurationError(format_error(
+        f'{stated}, which is not a transmit limit {described} can meet.',
+        detail if detail is not None else {'max_b1': repr(configured)},
+        ['set a real max_b1 -- sc.convert(20, "uT", "Hz") is a common value',
+         'or use max_b1=inf to design without a transmit limit'],
+    ))
+
+
+def require_usable_max_b1(opts: Opts, *, described: str) -> None:
+    """
+    Refuse an unusable ``opts.max_b1`` **before** a pulse is built from it.
+
+    :func:`check_peak_b1` reaches the same verdict, but it needs a waveform to measure -- and
+    pypulseq's shaped factories compare ``rf_amplitude > system.max_b1`` while designing one, so
+    an absent limit raises ``TypeError`` from inside pypulseq before this package ever sees it.
+    Calling this first turns that into the same :class:`~seqcraft.errors.ConfigurationError` every
+    other unusable limit produces.
+
+    ``+inf`` and any finite positive value pass.
+    """
+    configured = getattr(opts, 'max_b1', None)
+    if configured is None:
+        _raise_unusable_max_b1(None, float('nan'), described)
+    limit = float(configured)
+    if not limit > 0.0:
+        _raise_unusable_max_b1(configured, limit, described)
 
 
 def duration_for_peak_b1(duration_s: float, peak_hz: float, max_b1_hz: float) -> float:
