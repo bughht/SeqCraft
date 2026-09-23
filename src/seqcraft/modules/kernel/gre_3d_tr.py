@@ -45,25 +45,17 @@ hardware with a contiguous table the extreme is at one of the two edges -- but t
 nothing at real matrix sizes and stops being true for partial ``kz`` or a supplied partition
 table.
 
-One window, and why it is lengthened rather than refused
----------------------------------------------------------
+One winder window, shared by every partition
+--------------------------------------------
 Every partition uses **one** winder duration.  Letting each take its own shortest would make TE a
 function of ``kz``: a contrast gradient across the volume that no k-space check would show and no
 reconstruction expects.
 
-When the worst partition needs longer than x and y do, the window is lengthened.  That is design,
-not legalization::
+So when the limiting partition needs more time, the shared window is lengthened for **every**
+partition, and TE stays constant across the volume.
 
-    kernel      given a physical target and this scanner's limits, what legal waveform
-                and duration implement it?
-    compiler    given already-designed events at already-chosen times, how are they
-                split, summed and emitted as legal pulseq blocks?
-
-This module holds ``opts``, so "this moment needs 420 us rather than 300" is its question to
-answer.  The compiler must not rescue an infeasible module by stretching a gradient or moving a
-readout, because that would change TE.  With ``te_s=None`` and ``tr_s=None`` the result is the
-shortest legal design; an explicit request below that minimum raises, naming the partition
-responsible.
+With ``te_s=None`` and ``tr_s=None`` the result is the shortest legal design.  An explicit request
+below the achievable minimum raises, naming the partition responsible.
 """
 
 from __future__ import annotations
