@@ -106,11 +106,11 @@ def test_many_barriers_across_one_gradient(opts) -> None:
 
 
 # ------------------------------------------------------------------- gradients beside rf / adc
-def test_gradient_spanning_an_rf(opts) -> None:
-    rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=opts, use='excitation')
-    g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=opts)
+def test_gradient_spanning_an_rf(unbounded_b1) -> None:
+    rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=unbounded_b1, use='excitation')
+    g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=unbounded_b1)
     tree = sc.LogicBlock('t').add(0.0, g).add(1.5e-3, rf)
-    assert_matches(tree, sc.compile(tree, opts))
+    assert_matches(tree, sc.compile(tree, unbounded_b1))
 
 
 def test_gradient_spanning_an_adc(opts) -> None:
@@ -262,15 +262,15 @@ def test_epi_like_train(opts) -> None:
     assert_matches(tree, sc.compile(tree, opts))
 
 
-def test_repeated_tr_accumulates_no_drift(opts) -> None:
+def test_repeated_tr_accumulates_no_drift(unbounded_b1) -> None:
     """40 TRs at a non-raster-friendly spacing: float drift would show as a shifted lobe."""
-    rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=opts, use='excitation')
-    g = pp.make_trapezoid('x', area=100.0, system=opts)
+    rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=unbounded_b1, use='excitation')
+    g = pp.make_trapezoid('x', area=100.0, system=unbounded_b1)
     inner = sc.LogicBlock('tr').add(0.0, rf).add(1.5e-3, g)
     tree = sc.LogicBlock('t')
     for i in range(40):
         tree.add(i * 5e-3, inner)
-    assert_matches(tree, sc.compile(tree, opts))
+    assert_matches(tree, sc.compile(tree, unbounded_b1))
 
 
 # --------------------------------------------------------------------------- a realistic tree

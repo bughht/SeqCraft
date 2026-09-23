@@ -51,6 +51,11 @@ Out of scope, and each a different physical contract rather than a mode of this 
 saturation slabs, which play a gradient and select a region; **CEST** saturation trains, with
 their duty-cycle and :math:`B_{1,\\mathrm{rms}}` constraints; and water-selective excitation.
 
+Peak B1
+-------
+The pulse is refused if its peak exceeds ``opts.max_b1``.  A fat-saturation pulse is long and
+low-amplitude, so this rarely binds -- a 110 degree 8 ms gauss is under a fifth of a 20 uT limit.
+
 Protocol values are the caller's
 --------------------------------
 `flip_deg`, `duration_s` and `bandwidth_hz` have **no defaults**, because published fat-saturation
@@ -88,7 +93,14 @@ from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
-from .._support import require_axis, require_positive
+from .._support import (
+    check_peak_b1,
+    duration_remedy,
+    peak_b1_hz,
+    require_axis,
+    require_positive,
+    require_usable_max_b1,
+)
 from ..spoiler import spoiler
 
 if TYPE_CHECKING:
@@ -198,10 +210,13 @@ class SaturationPrep(Module):
             kwargs['bandwidth'] = self.bandwidth_hz
         else:
             kwargs['time_bw_product'] = self.bandwidth_hz * self.duration_s
-        kwargs.update(self._check_pulse_opts(pulse_opts))
+        require_usable_max_b1(self.opts, described=self._described())
+        self._design_opts = self._check_pulse_opts(pulse_opts)
+        kwargs.update(self._design_opts)
         # No `return_gz`, so no selection gradient and no rephaser to drop.  The absence is the
         # contract, not an omission.
         self.rf = getattr(pp, _FACTORIES[self.pulse])(**kwargs)
+        self._check_b1()
 
         self.spoil_axis = require_axis(spoil_axis, 'spoil_axis')
         self.spoil_cycles_per_voxel = require_positive(
@@ -314,6 +329,31 @@ class SaturationPrep(Module):
             ],
         )
         raise ConfigurationError(msg)
+
+    def _described(self) -> str:
+        return (f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} '
+                f'saturation pulse')
+
+    def _check_b1(self) -> None:
+        """
+        Refuse a pulse over ``opts.max_b1``.
+
+        The duration is never quoted as a floor here.  `bandwidth_hz` is part of this module's
+        public contract and is held fixed, so the time--bandwidth product -- and with it the pulse
+        design -- changes whenever the duration does.  The ``1 / duration`` relation is then a
+        starting point rather than a guarantee, and the wording says so.
+        """
+        limit = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
+        remedies = ['lengthen the pulse, or lower flip_deg'] if not limit > 0.0 else [
+            duration_remedy(self.duration_s, peak_b1_hz(self.rf), limit, exact=False),
+            'or lower flip_deg, at the cost of leaving more fat signal behind',
+        ]
+        check_peak_b1(
+            self.rf, self.opts,
+            described=(f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} '
+                       f'saturation pulse'),
+            remedies=remedies,
+        )
 
     def _check_pulse_opts(self, pulse_opts: dict[str, Any] | None) -> dict[str, Any]:
         """Return `pulse_opts` having checked every key against the chosen factory."""

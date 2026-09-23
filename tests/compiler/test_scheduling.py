@@ -243,15 +243,15 @@ def test_dead_time_conflicts_are_caught_even_when_waveforms_do_not_touch(opts) -
 
 
 # ------------------------------------------------------------------------ boundaries and splits
-def test_a_gradient_spanning_an_rf_stays_one_event(opts) -> None:
+def test_a_gradient_spanning_an_rf_stays_one_event(unbounded_b1) -> None:
     """
     pulseq allows one RF and one gradient per block, so nothing needs splitting here.
 
     Splitting anyway would turn a trapezoid into two arbitrary waveforms and cost two shapes.
     """
-    rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=opts, use='excitation')
-    long_g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=opts)
-    out = compile_one(opts, (0.0, long_g), (1.5e-3, rf))
+    rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=unbounded_b1, use='excitation')
+    long_g = pp.make_trapezoid('x', area=2000.0, duration=4e-3, system=unbounded_b1)
+    out = compile_one(unbounded_b1, (0.0, long_g), (1.5e-3, rf))
     assert len(out.block_events) == 1
     assert out.get_block(1).gx.type == 'trap'
     assert compiled_m0(out, 'x') == pytest.approx(2000.0, rel=1e-9)
@@ -415,7 +415,7 @@ def test_per_axis_m0_survives_compilation(opts) -> None:
     )
 
 
-def test_block_durations_land_on_the_block_raster(opts) -> None:
+def test_block_durations_land_on_the_block_raster(unbounded_b1) -> None:
     """
     Every block duration must be an exact multiple of the block raster.
 
@@ -423,33 +423,33 @@ def test_block_durations_land_on_the_block_raster(opts) -> None:
     a few microseconds short of what its ADC needs, and pypulseq then reports an unaligned duration
     rather than the missing microseconds it actually is.
     """
-    rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=opts, use='excitation')
-    adc = pp.make_adc(num_samples=2372, dwell=2e-6, system=opts)
-    g = pp.make_trapezoid('x', area=400.0, system=opts)
+    rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=unbounded_b1, use='excitation')
+    adc = pp.make_adc(num_samples=2372, dwell=2e-6, system=unbounded_b1)
+    g = pp.make_trapezoid('x', area=400.0, system=unbounded_b1)
     out = sc.compile(
-        sc.LogicBlock('t').add(0.0, rf).add(2e-3, g).add(2e-3, adc), opts
+        sc.LogicBlock('t').add(0.0, rf).add(2e-3, g).add(2e-3, adc), unbounded_b1
     )
-    raster = sc.Raster(opts.block_duration_raster)
+    raster = sc.Raster(unbounded_b1.block_duration_raster)
     for index, duration in out.block_durations.items():
         assert raster.holds(duration), f'block {index} is {duration * 1e6} us'
 
 
-def test_event_delays_land_on_their_own_raster(opts) -> None:
+def test_event_delays_land_on_their_own_raster(unbounded_b1) -> None:
     """
     RF on 1 us, ADC on 100 ns, gradients on 10 us -- and computed in integer picoseconds.
 
     A plain subtraction of absolute times drifts: at 39 s into a sequence it produced an RF delay
     of 129.9999999986 us, which pypulseq rejects.
     """
-    rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=opts, use='excitation')
+    rf = pp.make_sinc_pulse(flip_angle=1.57, duration=1e-3, system=unbounded_b1, use='excitation')
     tree = sc.LogicBlock('t')
     for i in range(40):
         tree.add(i * 1.997e-3 + 3.0, rf)
-    out = sc.compile(tree, opts)
+    out = sc.compile(tree, unbounded_b1)
     for index in out.block_events:
         block = out.get_block(index)
         if getattr(block, 'rf', None) is not None:
-            assert sc.Raster(opts.rf_raster_time).holds(float(block.rf.delay))
+            assert sc.Raster(unbounded_b1.rf_raster_time).holds(float(block.rf.delay))
 
 
 # ---------------------------------------------------------------------------------- provenance

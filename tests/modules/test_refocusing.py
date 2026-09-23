@@ -16,6 +16,8 @@ and which reads as a hardware fault rather than as a design error.
 
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 import pypulseq as pp
 import pytest
@@ -55,6 +57,19 @@ def refocusing(opts: Opts, **kwargs) -> sc.modules.Refocusing:
 
 
 # ------------------------------------------------------------------------------- the oracle
+def _any_b1(opts: Opts) -> Opts:
+    """`opts` with ``max_b1`` set to infinity.
+
+    The reference 180 here is 2 ms, which peaks at 147 % of the 20 uT ``pp.Opts`` default -- and
+    lengthening it would change the crusher window these tests measure.  The tests below are about
+    conjugation and crusher balance, so they run with the limit off;
+    ``test_a_pulse_over_max_b1_is_refused`` is where the limit itself is checked.
+    """
+    relaxed = copy.copy(opts)
+    relaxed.max_b1 = np.inf
+    return relaxed
+
+
 def test_kspace_conjugates_at_a_refocusing_pulse(se_opts: Opts) -> None:
     """
     Two **positive** lobes cancelling is the whole test: without conjugation the answer is ``2A``.
@@ -63,6 +78,7 @@ def test_kspace_conjugates_at_a_refocusing_pulse(se_opts: Opts) -> None:
     pypulseq blocks first -- and against the same tree with ``use='other'``, which is where it would
     show if pypulseq keyed the conjugation off something other than ``use``.
     """
+    se_opts = _any_b1(se_opts)
     def tree(use: str) -> sc.LogicBlock:
         ninety = pp.make_block_pulse(flip_angle=np.pi / 2, duration=200e-6, delay=1e-4,
                                      use='excitation', system=se_opts)
@@ -215,6 +231,7 @@ def test_two_identical_crushers_alternate_k_z_and_the_solve_does_not(se_opts: Op
     Small, and ``k_n = -k_(n-1) + delta`` turns it into ``delta, 0, delta, 0``: a modulation
     between odd and even echoes that no k-space *extent* check can see and that reads as hardware.
     """
+    se_opts = _any_b1(se_opts)
     module = refocusing(se_opts)
     naive, naive_center = _naive_refocusing(se_opts, window_s=module.crush_duration_s)
 
@@ -237,6 +254,7 @@ def test_a_symmetric_plateau_hides_it(symmetric_opts: Opts) -> None:
     accident.  Change either and the sequence is quietly wrong -- which is the argument for the
     module doing the arithmetic rather than the protocol happening to.
     """
+    symmetric_opts = _any_b1(symmetric_opts)
     module = refocusing(symmetric_opts)
     naive, naive_center = _naive_refocusing(symmetric_opts, window_s=module.crush_duration_s)
 
@@ -244,12 +262,12 @@ def test_a_symmetric_plateau_hides_it(symmetric_opts: Opts) -> None:
 
 
 # ------------------------------------------------------------------------------ the refusals
-def test_a_two_millisecond_180_is_refused_with_the_duration_that_fixes_it(se_opts: Opts) -> None:
+def test_a_two_millisecond_sinc_180_reports_the_duration_floor(se_opts: Opts) -> None:
     """
-    ``sc.compile`` checks gradient amplitude and slew and never looks at RF amplitude, and pypulseq
-    warns and hands the pulse back -- so a 2 ms 180 reaches the console, which refuses it there.
+    A 2 ms TBW-4 sinc 180 exceeds the default 20 uT limit.
 
-    The message has to carry the floor, because "too big" without a number is a search.
+    Because this fixed-envelope sinc scales exactly as ``1 / duration``, the refusal reports the
+    2.7 ms floor -- and it has to carry a number, because "too big" without one is a search.
     """
     with pytest.raises(sc.ConfigurationError, match='max_b1') as caught:
         refocusing(se_opts, duration_s=2e-3)

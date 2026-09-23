@@ -15,12 +15,13 @@ A failure here is a compiler bug too -- the tree was legal, since every legality
 passed -- so it raises :class:`CompilerContractError` as well.  All four invariants are measured
 before anything is raised, because seeing every affected axis at once beats stopping at the first.
 
-**Finished-sequence checks** (:func:`check_event_sizes`, :func:`check_label_addresses`) ask what
-only a built :class:`pypulseq.Sequence` can answer: does any one event exceed the interpreter's
-sample limit, and do two imaging ADCs write the same k-space address?  Neither is an internal
-invariant -- both are ways a legal-looking tree produces a sequence a scanner refuses -- so they
-raise :class:`~seqcraft.errors.HardwareLimitError` and :class:`~seqcraft.errors.CompileError`
-respectively.
+**Finished-sequence checks** (:func:`check_event_sizes`, :func:`check_rf_amplitude`,
+:func:`check_label_addresses`) ask what only a built :class:`pypulseq.Sequence` can answer: does
+any one event exceed the interpreter's sample limit, does any RF event's peak exceed the transmit
+limit, and do two imaging ADCs write the same k-space address?  None is an internal invariant --
+all three are ways a legal-looking tree produces a sequence a scanner refuses -- so the first two
+raise :class:`~seqcraft.errors.HardwareLimitError` and the third
+:class:`~seqcraft.errors.CompileError`.
 
 They live here rather than on what a compile returns because a check nobody has to call is a
 check nobody calls.  The reference implementation's ``get_report()`` printed and returned
@@ -236,6 +237,70 @@ def check_event_sizes(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] = 
                 ],
             )
             raise HardwareLimitError(msg)
+
+
+def check_rf_amplitude(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] = ()) -> None:
+    """
+    Check every emitted RF event's peak amplitude against ``opts.max_b1``.
+
+    The **backstop** for the peak-B1 contract.  Every RF-producing module checks its own pulse at
+    design time, where it can say what to change; this one measures the waveform that is actually
+    being emitted, so it also catches a raw ``pp.make_sinc_pulse`` added straight to a
+    :class:`~seqcraft.LogicBlock`, a future module that forgets its own check, and any path that
+    reaches a block without passing one.
+
+    The comparison is literal, so ``max_b1 = +inf`` is how a caller designs without a transmit
+    limit -- and it is the only value that does.  Zero, a negative, ``NaN`` and an absent limit
+    are each refused as unusable rather than treated as unlimited; see
+    :func:`~seqcraft.modules._support.check_peak_b1`, which the modules use and which this agrees
+    with.  ``pp.Opts()`` **defaults it to 851.52 Hz (20 uT)**, so the limit is live unless a
+    caller has deliberately raised it.
+
+    Raises
+    ------
+    HardwareLimitError
+        Naming the worst event, where it came from, and the peak as a percentage of the limit.
+    """
+    configured = getattr(opts, 'max_b1', None)
+    limit = float('nan') if configured is None else float(configured)
+    # **Positive** infinity, and only that, means "design without a transmit limit".  NaN, -inf
+    # and an absent limit are not spellings of it: every comparison against NaN is False, so
+    # treating it as unlimited would let any pulse through silently, which is the failure this
+    # check exists to prevent.
+    if np.isposinf(limit):
+        return
+    worst = 0.0
+    where = ''
+    saw_rf = False
+    for index in sorted(seq.block_events):
+        block = seq.get_block(index)
+        rf = getattr(block, 'rf', None)
+        if rf is None:
+            continue
+        saw_rf = True
+        peak = float(np.abs(np.asarray(rf.signal)).max())
+        if peak > worst:
+            # Block ids are 1-based; `origins` is a list in emission order, so it is not.
+            path = origins[index - 1] if 0 < index <= len(origins) else ()
+            worst, where = peak, f'block {index} ({".".join(path) or "?"})'
+    if not saw_rf:
+        return
+    usable = limit > 0.0                              # False for 0, negatives and NaN alike
+    if usable and worst <= limit:
+        return
+    stated = 'max_b1 is not set' if configured is None else f'max_b1 is {limit:g}'
+    headline = (f'an RF event peaks at {worst / limit * 100:.0f} % of max_b1.' if usable
+                else f'{stated}, which is not a transmit limit an RF event can meet.')
+    fixes = ([
+        'lengthen the pulse or lower its flip angle -- peak B1 scales with both for a fixed shape',
+        'an adiabatic pulse instead needs a narrower frequency sweep',
+        'or raise max_b1, if the scanner really does deliver it',
+    ] if usable else [
+        'set a real max_b1 -- sc.convert(20, "uT", "Hz") is a common value',
+        'or use max_b1=inf to design without a transmit limit',
+    ])
+    raise HardwareLimitError(format_error(
+        headline, {'from': where, 'peak_b1_hz': round(worst, 2), 'max_b1_hz': limit}, fixes))
 
 
 def check_label_addresses(seq: Any) -> None:
@@ -513,6 +578,7 @@ __all__ = [
     'ContractViolation',
     'check_event_sizes',
     'check_label_addresses',
+    'check_rf_amplitude',
     'expected_addresses',
     'require_valid_contract',
     'verify_against_tree',

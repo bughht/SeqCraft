@@ -17,6 +17,19 @@ So the pulse and its crusher are designed and placed together.
 there is a whole inversion time for anything left over to rephase in, and the recovery that follows
 is long enough that a marginal crusher is not marginal by the time it is sampled.
 
+Peak B1
+-------
+The pulse is refused if its peak exceeds ``opts.max_b1``, and the remedy differs by family.
+
+* A **fixed-envelope** design -- a sinc, or a gauss pinned by a time--bandwidth product -- scales
+  as ``1 / duration``, so the refusal reports a duration floor.
+* A **redesigned** shape such as SLR gets a starting-point estimate to rebuild and re-check.
+* An **adiabatic** pulse follows its own sweep-dependent scaling: ``'wurst'`` goes as
+  ``sqrt(bandwidth / duration)``, and ``'hypsec'`` takes its sweep from ``beta`` and ``mu`` and
+  does not move with duration at all.  Narrow the sweep through ``pulse_opts``.
+
+At pypulseq's defaults ``'wurst'`` asks well over 20 uT; ``'hypsec'`` does not.
+
 Why the pulse is adiabatic by default
 -------------------------------------
 B1 insensitivity is the entire reason to use an inversion pulse of any sophistication.  A nominal
@@ -45,7 +58,16 @@ from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
-from .._support import require_axis, require_positive, shift_slice
+from .._support import (
+    check_peak_b1,
+    duration_remedy,
+    peak_b1_hz,
+    peak_scales_with_duration,
+    require_axis,
+    require_positive,
+    require_usable_max_b1,
+    shift_slice,
+)
 from ..spoiler import spoiler
 
 if TYPE_CHECKING:
@@ -197,7 +219,9 @@ class IRPrep(Module):
         if self.selective:
             kwargs['slice_thickness'] = self.thickness_mm / 1e3
             kwargs['return_gz'] = True
-        kwargs.update(self._check_pulse_opts(pulse_opts))
+        require_usable_max_b1(self.opts, described=self._described())
+        self._design_opts = self._check_pulse_opts(pulse_opts)
+        kwargs.update(self._design_opts)
 
         factory = getattr(pp, 'make_adiabatic_pulse' if self.pulse in _ADIABATIC
                           else _FACTORIES[self.pulse])
@@ -210,6 +234,7 @@ class IRPrep(Module):
             self.rf, self.gz = rf, gz
         else:
             self.rf, self.gz = factory(**kwargs), None
+        self._check_b1()
 
         self.spoil_axis = require_axis(spoil_axis, 'spoil_axis')
         self.spoil_cycles_per_voxel = require_positive(
@@ -345,6 +370,57 @@ class IRPrep(Module):
             ],
         )
         raise ConfigurationError(msg)
+
+    #: What actually lowers each adiabatic pulse's peak, measured rather than assumed.
+    #:
+    #: ``make_adiabatic_pulse`` sets the amplitude from the adiabatic condition, so it goes as
+    #: ``sqrt(rate of frequency sweep x adiabaticity)``.  For WURST the sweep rate is
+    #: ``bandwidth / duration``, which makes the peak go as ``sqrt(bandwidth / duration)``:
+    #: measured, 2523 Hz at 40 kHz and 564 Hz at 2 kHz, a factor of 4.47 for a factor of 20.
+    #: A hyperbolic secant ignores ``bandwidth`` entirely -- 563.7 Hz at 40, 10 and 2 kHz alike --
+    #: and takes its sweep from ``beta`` and ``mu`` instead.  Both respond to ``adiabaticity``,
+    #: which is not a free parameter: lowering it is what B1 robustness is bought with.
+    _ADIABATIC_REMEDIES: dict[str, tuple[str, ...]] = {
+        'hypsec': (
+            "narrow the sweep: pulse_opts={'beta': ...} or {'mu': ...}, which set the peak here",
+            "or pulse_opts={'adiabaticity': ...}, at the cost of B1 robustness",
+            'bandwidth is not a remedy for this shape, and neither is a longer duration_s',
+        ),
+        'wurst': (
+            "lower pulse_opts={'bandwidth': ...}: at fixed duration and adiabaticity the peak "
+            "goes roughly as its square root",
+            "or pulse_opts={'adiabaticity': ...}, at the cost of B1 robustness",
+            'a longer duration_s helps only as its square root',
+        ),
+    }
+
+    def _described(self) -> str:
+        return f'a {self.duration_s * 1e3:g} ms {self.pulse} inversion pulse'
+
+    def _check_b1(self) -> None:
+        """
+        Refuse a pulse over ``opts.max_b1``, with the remedy this pulse family actually has.
+
+        The families differ, and quoting the wrong one is worse than quoting none.  A shaped pulse
+        at a fixed flip angle scales as ``1 / duration``, so a longer one fits.  An **adiabatic**
+        pulse's peak is set by its frequency sweep instead, and the two adiabatic shapes do not
+        even share a control: at fixed duration and adiabaticity a WURST's peak goes roughly as
+        ``sqrt(bandwidth)``, while a hyperbolic secant ignores ``bandwidth`` entirely.
+        """
+        check_peak_b1(
+            self.rf, self.opts,
+            described=f'a {self.duration_s * 1e3:g} ms {self.pulse} inversion pulse',
+            remedies=self._b1_remedies(),
+        )
+
+    def _b1_remedies(self) -> list[str]:
+        if self.pulse in self._ADIABATIC_REMEDIES:
+            return list(self._ADIABATIC_REMEDIES[self.pulse])
+        limit = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
+        if not limit > 0.0:
+            return ['lengthen the pulse']
+        return [duration_remedy(self.duration_s, peak_b1_hz(self.rf), limit,
+                                exact=peak_scales_with_duration(self.pulse, self._design_opts))]
 
     def _check_pulse_opts(self, pulse_opts: dict[str, Any] | None) -> dict[str, Any]:
         """Return `pulse_opts` having checked every key against the chosen factory."""

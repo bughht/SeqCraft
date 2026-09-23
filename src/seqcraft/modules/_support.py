@@ -31,7 +31,7 @@ knows the other exists.
 from __future__ import annotations
 
 from math import gcd, pi
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pypulseq as pp
@@ -48,9 +48,188 @@ if TYPE_CHECKING:
     from ..design.events import Event
 
 __all__ = [
-    'area_until', 'ceil_raster', 'dwell_quantum', 'halve_onto', 'require_axis', 'require_count',
-    'require_pair', 'require_positive', 'require_range', 'shift_slice',
+    'area_until', 'ceil_raster', 'check_peak_b1', 'duration_for_peak_b1', 'duration_remedy', 'dwell_quantum',
+    'halve_onto', 'peak_b1_hz', 'peak_scales_with_duration', 'require_axis',
+    'require_usable_max_b1', 'require_count', 'require_pair',
+    'require_positive', 'require_range', 'shift_slice',
 ]
+
+
+def peak_b1_hz(rf: Event) -> float:
+    """Peak :math:`|B_1|` of an RF event, in hertz -- ``max(abs(rf.signal))`` and nothing else."""
+    return float(np.abs(np.asarray(rf.signal)).max())
+
+
+def check_peak_b1(rf: Event, opts: Opts, *, described: str, remedies: Iterable[str]) -> None:
+    """
+    Refuse an RF event whose peak amplitude exceeds ``opts.max_b1``.
+
+    The **shared invariant** every RF-producing module holds, and it is literal::
+
+        peak_b1_hz(rf) <= opts.max_b1
+
+    measured on the waveform that will be emitted rather than predicted from the pulse's
+    parameters.  There is no sentinel: ``+inf`` passes the comparison on its own, which is how a
+    caller designs without a transmit limit, and **it is the only value that does**.
+
+    ============  ==================================================
+    ``max_b1``    behaviour
+    ============  ==================================================
+    ``+inf``      enforcement disabled
+    finite > 0    the literal comparison above
+    0, negative   refused as an unusable limit
+    ``NaN``       refused -- every comparison against it is False
+    ``None``      refused; it is not a spelling of "unlimited"
+    ============  ==================================================
+
+    Zero is not pypulseq's convention for this field: unlike ``adc_samples_limit``, whose ``0`` is
+    documented as no limit, ``make_sinc_pulse`` compares ``rf_amplitude > system.max_b1``
+    unconditionally, so a zero limit makes it warn at ``inf %``.  And ``pp.Opts(max_b1=None)``
+    falls back to the 20 uT default rather than to no limit, so ``None`` cannot mean one here.
+
+    Note that ``pp.Opts()`` **defaults ``max_b1`` to 851.52 Hz (20 uT)**, so the limit is live
+    unless a caller has deliberately raised it.
+
+    What differs between modules is not the measurement but the **remedy**, so that is the
+    caller's to supply: lengthening is right for a sinc whose envelope merely stretches, and
+    meaningless for an adiabatic inversion whose peak is set by its frequency sweep.
+
+    Parameters
+    ----------
+    rf
+        The RF event to measure.
+    opts
+        Supplies ``max_b1`` in hertz, and ``gamma`` for reporting the same numbers in microtesla.
+    described
+        How to name the pulse in the error, e.g. ``"a 2 ms 180 degree sinc pulse"``.
+    remedies
+        Module-specific fixes, in the order a caller should try them.
+
+    Raises
+    ------
+    ConfigurationError
+        Naming the measured peak as a percentage of the limit, and the remedies given.
+    """
+    configured = getattr(opts, 'max_b1', None)
+    peak = peak_b1_hz(rf)
+    # One comparison decides both questions.  ``limit > 0.0`` is True for a finite positive limit
+    # and for ``+inf``, and False for zero, negatives and NaN alike; ``peak <= limit`` is then
+    # trivially true for ``+inf``, which is how "design without a transmit limit" is spelled.
+    # An absent or ``None`` limit is **not** a third spelling of that: ``pp.Opts(max_b1=None)``
+    # falls back to the 20 uT default rather than to no limit, so nothing here may invent one.
+    if configured is not None:
+        limit = float(configured)
+        if limit > 0.0 and peak <= limit:
+            return
+    else:
+        limit = float('nan')
+    # In hertz throughout; microtesla is for the reader, so it follows this scanner's nucleus
+    # rather than a hard-coded proton value.
+    gamma = abs(float(getattr(opts, 'gamma', 0.0) or 0.0))
+    detail: dict[str, float] = {'peak_b1_hz': round(peak, 2), 'max_b1_hz': limit}
+    if gamma > 0.0:
+        detail['peak_b1_uT'] = round(peak / gamma * 1e6, 2)
+        detail['max_b1_uT'] = round(limit / gamma * 1e6, 2) if np.isfinite(limit) else limit
+    if not limit > 0.0:
+        _raise_unusable_max_b1(configured, limit, described, detail)
+    raise ConfigurationError(format_error(
+        f'{described} peaks at {peak / limit * 100:.0f} % of max_b1.',
+        detail,
+        [*remedies, 'or raise max_b1, if the scanner really does deliver it'],
+    ))
+
+
+def _raise_unusable_max_b1(configured: object, limit: float, described: str,
+                           detail: dict[str, float] | None = None) -> None:
+    """Refuse a ``max_b1`` that is not a transmit limit: zero, negative, NaN or absent."""
+    stated = 'max_b1 is not set' if configured is None else f'max_b1 is {limit:g}'
+    raise ConfigurationError(format_error(
+        f'{stated}, which is not a transmit limit {described} can meet.',
+        detail if detail is not None else {'max_b1': repr(configured)},
+        ['set a real max_b1 -- sc.convert(20, "uT", "Hz") is a common value',
+         'or use max_b1=inf to design without a transmit limit'],
+    ))
+
+
+def require_usable_max_b1(opts: Opts, *, described: str) -> None:
+    """
+    Refuse an unusable ``opts.max_b1`` **before** a pulse is built from it.
+
+    :func:`check_peak_b1` reaches the same verdict, but it needs a waveform to measure -- and
+    pypulseq's shaped factories compare ``rf_amplitude > system.max_b1`` while designing one, so
+    an absent limit raises ``TypeError`` from inside pypulseq before this package ever sees it.
+    Calling this first turns that into the same :class:`~seqcraft.errors.ConfigurationError` every
+    other unusable limit produces.
+
+    ``+inf`` and any finite positive value pass.
+    """
+    configured = getattr(opts, 'max_b1', None)
+    if configured is None:
+        _raise_unusable_max_b1(None, float('nan'), described)
+    limit = float(configured)
+    if not limit > 0.0:
+        _raise_unusable_max_b1(configured, limit, described)
+
+
+def duration_for_peak_b1(duration_s: float, peak_hz: float, max_b1_hz: float) -> float:
+    """
+    Return the duration at which a pulse of **unchanged envelope** would fit ``max_b1``, seconds.
+
+    Peak :math:`B_1` scales as ``1 / duration`` for a waveform that is merely stretched -- the
+    shape and the flip angle held fixed -- so this inverts that relation.  Rounded up onto a tenth
+    of a millisecond, because a floor quoted to the nanosecond is refused again by its own last
+    digit.
+
+    **It is only a floor where that premise holds.**  Changing the duration re-runs the pulse
+    design, and several designs are not a simple stretch: an SLR filter is recomputed, and a
+    module that derives ``time_bw_product`` from a fixed bandwidth changes the design by changing
+    the duration.  It does not hold at all for adiabatic pulses, whose peak is set by the
+    frequency sweep -- a hyperbolic secant's peak does not move with duration.
+
+    Use :func:`duration_remedy` rather than this directly, so that the wording matches the
+    strength of the claim.
+    """
+    return float(np.ceil(duration_s * peak_hz / max_b1_hz * 1e4) / 10.0) / 1e3
+
+
+#: Shapes whose envelope is merely stretched by a longer duration *when the time--bandwidth
+#: product is held fixed*, so peak B1 then scales as ``1 / duration`` exactly.  An SLR filter is
+#: recomputed instead, so it never qualifies.
+_STRETCHED_SHAPES = frozenset({'sinc', 'gauss'})
+
+
+def peak_scales_with_duration(pulse: str, design_opts: dict[str, Any]) -> bool:
+    """
+    Whether lengthening this pulse *stretches* it, so that peak B1 scales as ``1 / duration``.
+
+    Two things have to hold, and the second is why the pulse's name is not enough.  The shape has
+    to be one that stretches at all -- ``'sinc'`` or ``'gauss'``, not an SLR filter, which is
+    recomputed.  And the design has to be pinned by a **time--bandwidth product** rather than by a
+    **bandwidth**: ``make_gauss_pulse`` takes an explicit ``bandwidth``, and with one supplied a
+    longer duration buys almost nothing.  Measured, at a 4 kHz bandwidth and a 90 degree flip, the
+    peak is 1000.0 Hz at 1 ms and 1000.0 Hz at 2 ms.
+
+    So a caller who passes ``pulse_opts={'bandwidth': ...}`` must not be told a duration floor,
+    because rebuilding there would still be over the limit.
+    """
+    return pulse in _STRETCHED_SHAPES and 'bandwidth' not in design_opts
+
+
+def duration_remedy(duration_s: float, peak_hz: float, max_b1_hz: float, *,
+                    exact: bool) -> str:
+    """
+    Return the "make it longer" remedy line, worded to match what is actually guaranteed.
+
+    `exact` says whether the envelope is unchanged by the duration, so that the inverted
+    ``1 / duration`` relation is a **floor** rather than a starting point.  It is true for a sinc
+    or gauss at a fixed time--bandwidth product, and false wherever changing the duration
+    redesigns the pulse.
+    """
+    floor_ms = duration_for_peak_b1(duration_s, peak_hz, max_b1_hz) * 1e3
+    if exact:
+        return f'pass duration_s >= {floor_ms:.1f} ms, which is where this shape fits'
+    return (f'try duration_s >= {floor_ms:.1f} ms and check again -- this pulse is redesigned '
+            f'when the duration changes, so that is a starting point rather than a floor')
 
 
 def require_positive(value: float, name: str, *, fixes: Iterable[str] = ()) -> float:

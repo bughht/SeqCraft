@@ -1,5 +1,71 @@
 # Changelog
 
+## Unreleased — SeqCraft does not emit RF over `max_b1`
+
+**`pp.Opts()` defaults `max_b1` to 851.52 Hz — 20 µT — so the limit was always live.** Nothing
+enforced it except `Refocusing`, which meant every other RF path could emit a pulse the scanner's
+transmit chain forbids. An ordinary **1 ms 90° sinc peaks at 130 %** of that default.
+
+The contract now has two layers:
+
+| | |
+|---|---|
+| **each RF module checks its own pulse** | at construction, where it still knows what to suggest changing. `ConfigurationError`, with the measured peak in both Hz and µT |
+| **the compiler checks the emitted sequence** | `check_rf_amplitude`, beside `check_event_sizes` and called from the same place. `HardwareLimitError`, naming the worst block and its origin path |
+
+The backstop is what makes it a contract rather than four habits: it catches a raw
+`pp.make_sinc_pulse` added straight to a `LogicBlock`, and any future RF module that forgets its
+own check.
+
+The invariant is literal — `peak_b1_hz(rf) <= opts.max_b1` — with no sentinel, so **`max_b1 = +inf`
+is how a caller designs without a transmit limit, and only `+inf` is.** Zero, a negative, `NaN` and
+an **absent** limit are each reported as unusable rather than treated as unlimited, at **both**
+layers. `NaN` matters most — every comparison against it is False, so a check written as
+`worst > limit` would let any pulse through silently — and `None` is the subtle one, because
+`pp.Opts(max_b1=None)` falls back to the 20 µT default rather than to no limit. An absent limit
+needs a guard before the pulse is built, since pypulseq's shaped factories compare against it while
+designing one.
+
+Zero is not pypulseq's convention here either: unlike `adc_samples_limit`, whose `0` is documented
+as "no limit", `make_sinc_pulse` compares `rf_amplitude > system.max_b1` unconditionally, so a zero
+limit makes pypulseq warn at `inf %`.
+
+**The measurement is shared and the remedy is not.** `_support.check_peak_b1` measures
+`max(abs(rf.signal))` against the limit; each module supplies its own fixes, because the right
+advice depends on the pulse family — and a quoted number is only called a *floor* where rebuilding
+at it is proved by a test:
+
+| family | how the peak responds | what the refusal says |
+|---|---|---|
+| sinc, or gauss pinned by a **time–bandwidth product** | envelope stretches, so exactly `1 / duration` | the duration that fits, as a **floor** |
+| gauss pinned by an explicit **`bandwidth`** | held to that bandwidth: 1000.0 Hz at 1 ms *and* at 2 ms | a **starting point** |
+| SLR | the filter is recomputed | the same number, as a **starting point** to re-check |
+| `SaturationPrep` | `bandwidth_hz` is fixed, so TBW moves with duration | likewise a starting point |
+| `hypsec` | set by the sweep — **`bandwidth` does nothing**, 563.7 Hz at 40, 10 and 2 kHz alike, and duration does nothing either | `beta`, `mu` or `adiabaticity` |
+| `wurst` | `sqrt(bandwidth / duration)`, so duration helps only as `1/sqrt` | `bandwidth` or `adiabaticity` |
+
+Generalising `Refocusing`'s `1 / duration` estimate to every family would have produced advice
+that does not work. Lowering `adiabaticity` is not free either — it is what B1 robustness is
+bought with — and the messages say so.
+
+Peak amplitudes are reported in microtesla alongside hertz, converted with **`opts.gamma`**, so
+the numbers stay right on a non-proton system.
+
+Two paths were emitting physically impossible pulses **with no warning from anywhere**:
+
+- `IRPrep(pulse='wurst')` at pypulseq's default 40 kHz sweep asks 187 % of 20 µT at 10 ms and
+  419 % at 2 ms. `make_adiabatic_pulse` does not warn.
+- `Excitation(pulse='slr', pulse_opts={'filter_type': 'min'})` returns a waveform peaking at
+  **33 492 Hz ≈ 790 µT** — 3933 % of the limit — and delivering 84° rather than the requested 90°.
+  `make_slr_pulse`'s min/max-phase branch does not warn either. Both are upstream characteristics;
+  this release is the first thing that refuses them.
+
+Every example notebook still compiles unchanged, so no working protocol was in the way. Eleven
+existing tests used an over-limit pulse as a **stand-in** for something else — a 1 ms 90 to give
+the compiler a block to schedule around, a minimum-phase SLR to give the rephaser an asymmetric
+envelope — and now run with `max_b1 = inf` through a new `unbounded_b1` fixture that says why.
+One, `IRPrep`'s WURST case, narrows the sweep instead, because that is the remedy the family has.
+
 ## Unreleased — the examples teach, the docstrings document, and the history lives elsewhere
 
 Editorial only: no behaviour, no API shape, no test behaviour. 27 of 29 example notebooks touched,

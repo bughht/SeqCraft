@@ -604,6 +604,36 @@ the `systems` extra is not installed.
 
 `UnknownFieldError` is defined here and re-exported as `sc.UnknownFieldError`.
 
+### `max_b1`, and why it is required here
+
+**`pp.Opts()` defaults `max_b1` to 851.52 Hz — 20 µT — so the limit is live whether or not anyone
+set it.** SeqCraft enforces it, which makes the default worth knowing about: an ordinary 1 ms 90°
+sinc peaks at 130 % of it.
+
+| | |
+|---|---|
+| **every RF module checks its own pulse** | `Excitation`, `Refocusing`, `IRPrep` and `SaturationPrep` raise `ConfigurationError` at construction, naming what to change |
+| **the compiler checks the emitted sequence** | `HardwareLimitError`, naming the block and its origin. This catches a raw pypulseq RF event added straight to a `LogicBlock` |
+| **`max_b1 = +inf` disables both** | and only `+inf` does. Zero, a negative, `NaN` and an **absent** limit are each refused as unusable rather than silently treated as unlimited — `NaN` because every comparison against it is False, and `None` because `pp.Opts(max_b1=None)` falls back to the 20 µT default rather than to no limit. **Zero is not pypulseq's convention here** either: unlike `adc_samples_limit`, `make_sinc_pulse` compares `rf_amplitude > system.max_b1` unconditionally, so a zero limit warns at `inf %` there |
+
+The remedy depends on the pulse family, which is why each module supplies its own rather than
+sharing one.
+
+| family | how the peak responds | what the refusal says |
+|---|---|---|
+| sinc, or gauss pinned by a **time–bandwidth product** | envelope stretches, so exactly `1 / duration` | the duration that fits, as a **floor** |
+| SLR | the filter is recomputed, so scaling is not guaranteed | the same number, as a **starting point** to re-check |
+| `SaturationPrep` | `bandwidth_hz` is fixed, so TBW moves with the duration | likewise a starting point |
+| `hypsec` | set by the sweep; **`bandwidth` does nothing**, and nor does duration | `beta`, `mu` or `adiabaticity` via `pulse_opts` |
+| `wurst` | `sqrt(bandwidth / duration)`, so duration helps only as `1/sqrt` | `bandwidth` or `adiabaticity` via `pulse_opts` |
+
+Lowering `adiabaticity` is not free — it is what B1 robustness is bought with — and the messages
+say so.
+
+`from_scanner` requires `max_b1` for the same reason it requires the dead times: it belongs to the
+transmit chain and the coil loading, so no vendor database can supply it. Take it from the
+reference voltage the scanner reports, and keep a margin.
+
 ## 2.3 `sc.hardware` — PNS response models
 
 **A hardware model is not a limit.** `Opts` says how hard the amplifier may be driven; this
@@ -717,7 +747,7 @@ one.
 | Exception | Raised when | Fix |
 |---|---|---|
 | `CompileError` | Two RF or two ADC overlap; an absolute start is negative; a gradient starts off the gradient raster; no boundary can be cut in the gap between two exclusive events; a block boundary would fall inside a gradient an ADC is sampling; two ADCs write the same k-space address; an unsupported or unknown event type; `check_timing` fails | Fix the tree — the message names the event, its provenance path, and usually two concrete remedies |
-| `HardwareLimitError` | The *summed* waveform exceeds `max_grad` or `max_slew` on an axis; an ADC or RF event exceeds the interpreter's per-event sample limit | Lengthen the lobe, derate the design, or split the readout into several ADCs |
+| `HardwareLimitError` | The *summed* waveform exceeds `max_grad` or `max_slew` on an axis; an RF event's peak exceeds `max_b1`; an ADC or RF event exceeds the interpreter's per-event sample limit | Lengthen the lobe or the pulse, derate the design, or split the readout into several ADCs |
 | `DefinitionConflict` | `name=` and `definitions['Name']` disagree | Pass one or the other |
 | `CompilerContractError` | The compiled sequence does not match the tree: total duration, m0, m1 or a label address drifted; or a stage broke an IR contract | **A compiler bug.** Report it with the tree that produced it |
 | `ConfigurationError` | `add()` got something that is not an event or a block; a unit is unknown; an `Opts` is unusable | Fix the call |
@@ -1653,6 +1683,7 @@ access to placed events, boundaries, label targets, the scanner limits, or trans
 | `verify_ready_blocks(blocks, *, expected_first_index=0, expected_start=None)` | Structural contract on the second |
 | `require_valid_contract(name, violations) -> None` | Raise `CompilerContractError` if any |
 | `check_event_sizes(seq, opts, origins=()) -> None` | Raise `HardwareLimitError` above the interpreter's per-event sample limit |
+| `check_rf_amplitude(seq, opts, origins=()) -> None` | Raise `HardwareLimitError` if any RF event's peak exceeds `opts.max_b1` |
 | `check_label_addresses(seq) -> None` | Raise `CompileError` if two imaging ADCs write the same k-space address |
 | `expected_addresses(placed, targets) -> list[dict[str, int]]` | Fold the tree's labels the way the interpreter will |
 | `verify_against_tree(placed, targets, *, duration_s, tree_duration_s, moments, label_states) -> None` | The four semantic invariants |
@@ -1782,6 +1813,7 @@ at import.
 | `check_event_sizes` | `compiler.verification` | function |
 | `check_exclusive` | `compiler.boundaries` | function |
 | `check_label_addresses` | `compiler.verification` | function |
+| `check_rf_amplitude` | `compiler.verification` | function |
 | `check_limits` | `design.events` | function |
 | `check_limits` | `compiler.legalization` | function |
 | `common_path` | `compiler.legalization` | function |
