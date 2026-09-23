@@ -3,9 +3,13 @@ r"""
 
 ``readout/`` because it contains ADCs and no RF.
 
-What makes this one module rather than four
+One arm, and why it begins and ends at rest
 -------------------------------------------
-Everything below rests on a single design decision: **an arm begins and ends at rest.**
+A spiral **arm** is one continuous curve through k-space: it starts at the origin, winds outwards
+to the edge, and the ADC samples throughout.  One arm may cover k-space on its own -- a
+single-shot spiral -- or several rotated copies may share it, which is what ``shots`` sets.
+
+Everything below rests on one property: **an arm begins and ends at rest.**
 
 .. math:: g(\text{start}) = 0 \qquad g(\text{end}) = 0
 
@@ -20,9 +24,9 @@ time-reverses into one that *starts* there, which no block can begin with.  So a
 ``'in'`` in it has to brake.
 
 **What braking costs, measured** over seven protocols and two hardware regimes: 0.097--0.137 ms,
-which is 0.20--0.78 % of readout duration.  The penalty is a *braking distance* and so is fixed in absolute terms -- it shrinks as
-readouts lengthen, and its worst case is the shortest readout.  k-space extent is identical and
-peak gradient is unchanged or lower, because braking happens where a spiral is fastest.
+which is 0.20--0.78 % of readout duration.  It is a braking *distance*, so it is fixed in absolute
+terms -- it shrinks as a fraction as readouts lengthen, and its worst case is the shortest
+readout.  k-space extent is identical and peak gradient is unchanged or lower.
 
 Three passes, and only the middle one knows the scanner
 -------------------------------------------------------
@@ -36,10 +40,8 @@ Three passes, and only the middle one knows the scanner
       v
     realization  raster waveform, ADC segmentation, prephaser, rewinder
 
-That separation is **internal**.  It is not two public modules: a path is meaningful without a
-scanner, but no traversal is meaningful without its path, and nothing wants to swap traversal
-policies on a fixed path.  ``writeSpiral.m`` arrives at the same separation independently, which
-is the strongest single piece of corroboration this module has.
+That separation is **internal**: the public object is the arm, and a caller supplies a protocol
+and gets a playable waveform with a reported trajectory.
 
 What it reports, and why the plural matters
 -------------------------------------------

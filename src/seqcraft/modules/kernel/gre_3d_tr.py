@@ -1,12 +1,11 @@
 r"""
 :class:`GRE3DTR` -- one repetition of a 3D Cartesian gradient echo.
 
-A **sibling** of :class:`~seqcraft.modules.GRE2DTR` rather than a wrapper around it: the two
-compose the same leaves independently, and a slice-selective 2D acquisition is not the centre
-partition of a 3D slab.
+A sibling of :class:`~seqcraft.modules.GRE2DTR`: the two compose the same leaves independently,
+and a slice-selective 2D acquisition is not the centre partition of a 3D slab.
 
-The z axis is the whole reason this exists
--------------------------------------------
+The z axis
+----------
 On x and y a 3D repetition is a 2D one.  On z it is not, and there are two cases:
 
 **Non-selective excitation** -- what every official Pulseq 3D reference does
@@ -22,10 +21,11 @@ So this module solves
 
 .. math:: A_z(p) = A_{\text{slab}} + A_{\text{partition}}(p)
 
-for every partition and realises it as **one** z winder.  Neither leaf can:
+for every partition and realises it as **one** z winder of fixed duration, which is what keeps TE
+constant across the volume.  It owns that jointly because neither leaf can:
 :class:`~seqcraft.modules.Excitation` knows the rephasing its own slab implies and nothing about
-partitions, :class:`~seqcraft.modules.PhaseEncode` knows the moment a partition index wants and
-nothing about a slab.  This is the first layer holding both, which is what makes it a kernel.
+partitions, and :class:`~seqcraft.modules.PhaseEncode` knows the moment a partition index wants
+and nothing about a slab.
 
 Both terms are signed, and that matters
 ----------------------------------------

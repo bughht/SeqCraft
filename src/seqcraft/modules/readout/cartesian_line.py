@@ -92,16 +92,11 @@ exposes.  Measured at the reference protocol: the lobe's total area is **585.664
 ``area_to_echo_per_m`` is **294.638695 1/m** -- the same order of magnitude, roughly a factor of
 two apart, and each echo would start half a k-space further along than the last.
 
-**3.  The block structure is stated rather than inferred.**  A Pulseq block holds at most one
-gradient per axis and one ADC, so a boundary has to fall somewhere between consecutive echoes.
-``'bipolar'`` puts one :func:`~seqcraft.barrier` at each seam and ``'monopolar'`` two, at the
-fly-back's start and at its end -- one per gradient edge.
-
-For this train those barriers are free: the emitted file is byte-identical with and without them,
-because every seam here is already a boundary the compiler would choose.  They are stated anyway,
-so that the block structure is a property of the design rather than of a compiler preference.  A
-readout whose seam is *covered* -- :class:`~seqcraft.modules.EPI2D`, whose blip straddles it --
-has no such luck, and there the boundary falls inside the readout lobe unless it is stated.
+**3.  Each seam carries a barrier.**  A Pulseq block holds at most one gradient per axis and one
+ADC, so a block boundary has to fall somewhere between consecutive echoes.  ``'bipolar'`` emits
+one :func:`~seqcraft.barrier` at each seam and ``'monopolar'`` two, at the fly-back's start and at
+its end -- one per gradient edge -- so the train's block structure is part of what this module
+emits rather than something a caller has to arrange.
 
 And the fourth thing, which is a fact about the caller rather than about the waveform:
 **the echo times are not the echo spacing**.  ``k = 0`` is a *sample*, not an instant, and it sits

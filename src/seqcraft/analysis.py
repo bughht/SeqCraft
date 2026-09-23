@@ -199,9 +199,9 @@ def b_value(tree: LogicBlock, opts: Opts, *, end_s: float | None = None) -> dict
     SeqCraft gradients are already in Hz/m, so :math:`\int G\,\mathrm{d}t` **is** the handbook's
     :math:`k(t)` in 1/m and no gyromagnetic ratio appears here.
 
-`b` is a property of **every** gradient on the axis, not only of a diffusion pair: slice-select
-    lobes, crushers and readout prephasers all contribute.  This integrates the whole tree, so a
-    nominally unweighted acquisition generally returns a small non-zero value.
+    `b` is a property of **every** gradient on the axis, not only of a diffusion pair:
+    slice-select lobes, crushers and readout prephasers all contribute.  This integrates the whole
+    tree, so a nominally unweighted acquisition generally returns a small non-zero value.
 
     Parameters
     ----------

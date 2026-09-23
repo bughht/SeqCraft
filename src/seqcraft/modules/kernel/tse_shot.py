@@ -21,12 +21,10 @@ The **coupling between leaves** -- the values no single leaf has enough informat
   which would make the module wrong for SE-EPI, a diffusion spin echo or a spectroscopy pulse.
 * :class:`~seqcraft.modules.PhaseEncode` knows its own shortest blip and nothing about the rest.
 
-This module is the first layer that holds all three at once, so it designs one crusher window wide
-enough for the slice crusher, the readout lobes and the phase blip, and it is where the echo
-spacing that window implies is decided.  That is the same coupling ``GRE2DTR`` performs under the
-name "winder coupling", and the mathematics is written here as two small pure functions in case a
-third kernel ever wants it -- but it is deliberately **not** promoted to a shared abstraction on
-two examples.
+So this module jointly determines, for the whole shot: **one crusher window** wide enough for the
+slice crusher, the readout lobes and the phase blip together; the **echo spacing** that window
+implies; and the **readout-axis moment balance** around every refocusing pulse.  It is the same
+kind of coupling :class:`~seqcraft.modules.GRE2DTR` performs on a single repetition.
 
 The three invariants a train has to hold
 ----------------------------------------

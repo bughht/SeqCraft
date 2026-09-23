@@ -26,8 +26,8 @@ live in two different readout blocks, so the caller places those.
 This module therefore crushes on the **selection axis only**, which is also where a crusher is
 actually wanted: it is what dephases the FID an imperfect 180 leaves behind.  A readout-axis crusher
 is a free choice rather than a requirement -- the conjugation cancels whatever the two lobes share,
-so its area has no k-space consequence at all and it is paid for in echo spacing.  ``writeTSE.m``
-adds one (``rSpoilFac``); ``examples/se_2d/01`` measures what it costs and declines it.
+so its area has no k-space consequence at all and it is paid for in echo spacing.
+``examples/se_2d/01`` measures what one costs.
 
 What "equal-area crushers" does not mean
 ----------------------------------------
@@ -42,9 +42,8 @@ On a scanner with ``rf_dead_time = 100 us`` and ``rf_ringdown_time = 30 us``, a 
 over a 6.25 mm slab leaves a residual of ``a_sel * (dead - ringdown) / 2`` = **5.6 1/m**, 0.035
 cycles across the slab.  Small -- and it **alternates sign echo to echo**, because
 :math:`k_n = -k_{n-1} + \delta`, which is exactly the odd/even modulation an FSE is famous for and
-which reads as a hardware fault.  The pulseq and pypulseq TSE demos get it right *by accident*:
-they set the dead time and the ringdown to the same 100 us, so the plateau is symmetric.  Change
-either and the sequence is quietly wrong.
+which reads as a hardware fault.  It vanishes when the dead time and the ringdown happen to be
+equal, which is why it is easy to miss.
 
 Two things fix it and this module does both, because they fix different halves of the invariant:
 
@@ -61,21 +60,19 @@ Two things fix it and this module does both, because they fix different halves o
    exactly the check that says step 1 worked, on a pulse shape nobody has tried yet.  Deriving the
    amplitudes and asserting the areas from one formula would compare a number with itself.
 
-Why the gradient is one event
------------------------------
-``writeTSE.m`` hand-splits the selection axis into ``GS1 ... GS7`` because a pulseq block holds one
-gradient per axis, so a waveform spanning an RF has to be cut at every block boundary by hand.
-:func:`seqcraft.compile` does that cutting and carries ``first``/``last`` across each seam, so what
-this module emits is **one continuous waveform** that starts and ends at zero --
-``sc.compile(sc.LogicBlock('probe').add(0.0, refoc()), opts)`` is therefore a complete contract
-check.  A module that only works when something happens to be beside it is not reusable.
+One continuous gradient
+-----------------------
+What this module emits on the selection axis is **one waveform** spanning the crusher, the pulse
+and the second crusher, starting and ending at zero.  A Pulseq block holds one gradient per axis,
+so it is cut at each block boundary on the way out; the pieces are the compiler's business and the
+contract is the whole waveform.  It can therefore be checked on its own:
+``sc.compile(sc.LogicBlock('probe').add(0.0, refoc()), opts)``.
 
-The B1 refusal, which lives here rather than in the compiler
-------------------------------------------------------------
-``sc.compile`` checks gradient amplitude and slew and **does not check RF amplitude at all**.  Peak
-B1 scales with flip angle at a fixed shape, so a 180 needs exactly twice a 90's: measured, a 2 ms
-sinc 180 at TBW 4 asks **130 % of a 20 uT ``max_b1``** and 2.7 ms is the floor.  A 180 is where
-that first bites, so it is refused here, with the duration that fixes it.
+Peak B1
+-------
+This module **refuses an RF waveform whose peak exceeds** ``opts.max_b1``, and names the duration
+that would fix it.  Peak B1 scales with flip angle at a fixed shape, so a 180 needs twice a 90's:
+a 2 ms TBW-4 sinc 180 asks 130 % of a 20 uT limit, and 2.7 ms is the floor at that shape.
 """
 
 from __future__ import annotations

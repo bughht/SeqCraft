@@ -31,9 +31,10 @@ the answer would teach nothing.
 asserts that what the notebook writes and what the package ships produce identical events, so the
 tutorial cannot drift from the library without CI noticing.
 
-Every module in `sc.modules` was extracted from this pair. That is the rule the library is built
-on: a module that cannot be extracted without altering the sequence is not a module, and one whose
-extraction does not shorten the notebook is a wrapper.
+This pair established the extraction pattern the library uses: start from a working acquisition,
+find the reusable physical boundary in it, and then compare the extracted module against the
+reference implementation event for event. A module that cannot be extracted without altering the
+sequence is not a module, and one whose extraction does not shorten the notebook is a wrapper.
 
 ## `mprage_2d/` and `mp2rage_2d/`
 
@@ -313,6 +314,18 @@ readout; what it is used to measure; and only then the particular question this 
 A reader who has seen only the **title and the first two paragraphs** should be able to answer the
 first three. Keep the interesting sentence — put it where it lands on a reader who now knows what
 it refers to, as a section heading or a conclusion.
+
+**Do not assume the reader has completed a preceding example.** Cross-links may deepen context,
+but an ordinary build or simulation notebook should establish its sequence or acquisition family,
+its physical purpose and its main components **on its own**. A cross-link extends an explanation;
+it does not supply the missing introduction.
+
+Both rules are about ordinary **build** and **simulation/reconstruction** notebooks.
+Special-purpose documents — API guides, preserved reference implementations, migration guides,
+explicit validation notebooks — may lead with their document purpose instead, and should say what
+that purpose is in the first paragraph. [`fse_2d/03_module_api.ipynb`](fse_2d/03_module_api.ipynb)
+is the example: it opens by relating itself to the reference notebook beside it, which is exactly
+what it is for.
 
 | | |
 |---|---|

@@ -8,3 +8,6 @@ When creating or editing anything under `examples/`, follow the notebook-writing
 Examples are user-facing teaching material, not pull-request or design records. Development
 history, evidence arguments and architecture rationale belong in `CHANGELOG.md`, the pull request,
 or `tools/module_mining/plans/`.
+
+`examples/README.md` is the single source for those rules. This file, `AGENTS.md` and the
+module-mining skill only point at it.

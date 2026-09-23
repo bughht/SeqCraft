@@ -58,9 +58,22 @@ its validation history moved to the module-mining findings.
 | `dwi_se_epi_2d/01` imported `seqcraft.modules.kernel.diffusion_se` | an internal path in a teaching notebook; the equation is now written out in the notebook |
 | eight constructor parameters of `DiffusionSEPrep` were undocumented | documented |
 
-**Deliberately unchanged:** `fse_2d/03_module_api`, whose purpose *is* provenance, and
-`01_getting_started`, `gre_2d/01`, `se_2d/01`, `mprage_2d/01`, `mp2rage_2d/01` and
-`gre_radial_2d/01`, whose openings already pass the test.
+A final pass took the remaining openings that still leaned on a preceding example:
+`gre_2d/01` → **2D spoiled gradient echo**, `se_2d/01` → **2D spin-echo imaging**, `mprage_2d/01`
+→ **MPRAGE — Magnetization-Prepared Rapid Gradient Echo**, `mp2rage_2d/01` → **MP2RAGE —
+Magnetization-Prepared 2 Rapid Acquisition Gradient Echoes**, `se_epi_2d/01` → **Spin-echo
+echo-planar imaging**. Each now states its own sequence structure before any cross-reference, and
+the guideline gained the corollary: *do not assume the reader has completed a preceding example.*
+Special-purpose documents — API guides, preserved references, migration guides — may still lead
+with their document purpose, which is why `fse_2d/03_module_api` is unchanged.
+
+Two stale factual claims fixed: `01_getting_started` said "seqcraft ships no concrete modules",
+which has not been true for some time, and linked to an `examples/_parked/` that no longer exists;
+`examples/README.md` said every module was extracted from the `gre_2d/` pair, which is no longer
+true of Diffusion, Spiral or Saturation.
+
+`AGENTS.md` added as a four-line pointer, so `examples/README.md` is the single source of the
+notebook rules and `CLAUDE.md`, `AGENTS.md` and the module-mining skill only point at it.
 
 ## Unreleased — a b-value in, and the analyser that had to be corrected to prove it
 
