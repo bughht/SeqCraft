@@ -203,7 +203,8 @@ class SaturationPrep(Module):
             kwargs['bandwidth'] = self.bandwidth_hz
         else:
             kwargs['time_bw_product'] = self.bandwidth_hz * self.duration_s
-        kwargs.update(self._check_pulse_opts(pulse_opts))
+        self._design_opts = self._check_pulse_opts(pulse_opts)
+        kwargs.update(self._design_opts)
         # No `return_gz`, so no selection gradient and no rephaser to drop.  The absence is the
         # contract, not an omission.
         self.rf = getattr(pp, _FACTORIES[self.pulse])(**kwargs)
@@ -331,7 +332,7 @@ class SaturationPrep(Module):
         starting point rather than a guarantee, and the wording says so.
         """
         limit = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
-        remedies = ['lengthen the pulse, or lower flip_deg'] if limit <= 0.0 else [
+        remedies = ['lengthen the pulse, or lower flip_deg'] if not limit > 0.0 else [
             duration_remedy(self.duration_s, peak_b1_hz(self.rf), limit, exact=False),
             'or lower flip_deg, at the cost of leaving more fat signal behind',
         ]

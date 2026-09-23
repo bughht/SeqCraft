@@ -31,7 +31,7 @@ knows the other exists.
 from __future__ import annotations
 
 from math import gcd, pi
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pypulseq as pp
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     'area_until', 'ceil_raster', 'check_peak_b1', 'duration_for_peak_b1', 'duration_remedy', 'dwell_quantum',
-    'halve_onto', 'peak_b1_hz', 'require_axis', 'require_count', 'require_pair',
+    'halve_onto', 'peak_b1_hz', 'peak_scales_with_duration', 'require_axis', 'require_count', 'require_pair',
     'require_positive', 'require_range', 'shift_slice',
 ]
 
@@ -104,13 +104,17 @@ def check_peak_b1(rf: Event, opts: Opts, *, described: str, remedies: Iterable[s
     # In hertz throughout; microtesla is for the reader, so it follows this scanner's nucleus
     # rather than a hard-coded proton value.
     gamma = abs(float(getattr(opts, 'gamma', 0.0) or 0.0))
-    detail = {'peak_b1_hz': round(peak, 2), 'max_b1_hz': round(limit, 2)}
+    detail: dict[str, float] = {'peak_b1_hz': round(peak, 2), 'max_b1_hz': limit}
     if gamma > 0.0:
         detail['peak_b1_uT'] = round(peak / gamma * 1e6, 2)
-        detail['max_b1_uT'] = round(limit / gamma * 1e6, 2)
-    headline = (f'{described} peaks at {peak / limit * 100:.0f} % of max_b1.' if limit > 0.0
-                else f'{described} has a non-zero peak and max_b1 is {limit:g}.')
-    fixes = ([*remedies, 'or raise max_b1, if the scanner really does deliver it'] if limit > 0.0
+        detail['max_b1_uT'] = round(limit / gamma * 1e6, 2) if np.isfinite(limit) else limit
+    # `limit > 0.0` is False for zero, for negatives and for NaN alike, which is the point: none
+    # of those is a transmit limit, and none of them is a spelling of "unlimited" -- that is
+    # +inf, which the comparison above already let through.
+    usable = limit > 0.0
+    headline = (f'{described} peaks at {peak / limit * 100:.0f} % of max_b1.' if usable
+                else f'max_b1 is {limit:g}, which is not a transmit limit {described} can meet.')
+    fixes = ([*remedies, 'or raise max_b1, if the scanner really does deliver it'] if usable
              else ['set a real max_b1 -- sc.convert(20, "uT", "Hz") is a common value',
                    'or use max_b1=inf to design without a transmit limit'])
     raise ConfigurationError(format_error(headline, detail, fixes))
@@ -135,6 +139,29 @@ def duration_for_peak_b1(duration_s: float, peak_hz: float, max_b1_hz: float) ->
     strength of the claim.
     """
     return float(np.ceil(duration_s * peak_hz / max_b1_hz * 1e4) / 10.0) / 1e3
+
+
+#: Shapes whose envelope is merely stretched by a longer duration *when the time--bandwidth
+#: product is held fixed*, so peak B1 then scales as ``1 / duration`` exactly.  An SLR filter is
+#: recomputed instead, so it never qualifies.
+_STRETCHED_SHAPES = frozenset({'sinc', 'gauss'})
+
+
+def peak_scales_with_duration(pulse: str, design_opts: dict[str, Any]) -> bool:
+    """
+    Whether lengthening this pulse *stretches* it, so that peak B1 scales as ``1 / duration``.
+
+    Two things have to hold, and the second is why the pulse's name is not enough.  The shape has
+    to be one that stretches at all -- ``'sinc'`` or ``'gauss'``, not an SLR filter, which is
+    recomputed.  And the design has to be pinned by a **time--bandwidth product** rather than by a
+    **bandwidth**: ``make_gauss_pulse`` takes an explicit ``bandwidth``, and with one supplied a
+    longer duration buys almost nothing.  Measured, at a 4 kHz bandwidth and a 90 degree flip, the
+    peak is 1000.0 Hz at 1 ms and 1000.0 Hz at 2 ms.
+
+    So a caller who passes ``pulse_opts={'bandwidth': ...}`` must not be told a duration floor,
+    because rebuilding there would still be over the limit.
+    """
+    return pulse in _STRETCHED_SHAPES and 'bandwidth' not in design_opts
 
 
 def duration_remedy(duration_s: float, peak_hz: float, max_b1_hz: float, *,

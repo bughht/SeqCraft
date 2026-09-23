@@ -62,6 +62,38 @@ def test_infinity_disables_enforcement_cleanly(unbounded_b1) -> None:
     sc.compile(sc.LogicBlock('loud').add(0.0, loud()), unbounded_b1)
 
 
+@pytest.mark.parametrize('limit', [0.0, float('nan'), -np.inf])
+def test_only_positive_infinity_means_unlimited(opts, limit: float) -> None:
+    """
+    Zero, NaN and negative infinity are **not** spellings of "unlimited", at either layer.
+
+    NaN is the dangerous one: every comparison against it is False, so a check written as
+    ``worst > limit`` would pass it silently -- which is exactly the failure this contract exists
+    to prevent.  Both layers therefore test ``limit > 0.0``, which is False for all three.
+    """
+    broken = copy.copy(opts)
+    broken.max_b1 = limit
+
+    with pytest.raises(sc.ConfigurationError, match='not a transmit limit'):
+        sc.modules.Excitation(opts=broken, flip_deg=90.0, thickness_mm=5.0, duration_s=3e-3)
+
+    quiet = pp.make_sinc_pulse(flip_angle=np.pi / 2, duration=4e-3, time_bw_product=4,
+                               system=opts, slice_thickness=5e-3, use='excitation',
+                               return_gz=True)[0]
+    with pytest.raises(sc.HardwareLimitError, match='not a transmit limit'):
+        sc.compile(sc.LogicBlock('raw').add(0.0, quiet), broken)
+
+
+def test_the_backstop_allows_positive_infinity(opts) -> None:
+    """The one non-finite value that does disable enforcement, on the compiler path."""
+    unlimited = copy.copy(opts)
+    unlimited.max_b1 = np.inf
+    loud = pp.make_sinc_pulse(flip_angle=np.pi, duration=2e-3, time_bw_product=4, system=opts,
+                              slice_thickness=5e-3, use='refocusing', return_gz=True)[0]
+
+    sc.compile(sc.LogicBlock('raw').add(0.0, loud), unlimited)
+
+
 def test_zero_is_not_a_disabling_value(opts) -> None:
     """
     Why ``unbounded_b1`` uses ``inf``, recorded as a test rather than as a comment.
@@ -125,6 +157,43 @@ def test_a_quoted_floor_really_does_fit(opts, pulse: str) -> None:
 
     assert _peak(at_the_floor) <= opts.max_b1
     assert _peak(at_the_floor) > 0.8 * opts.max_b1, 'and it is not wastefully conservative'
+
+
+def test_gauss_with_an_explicit_bandwidth_does_not_claim_a_floor(opts) -> None:
+    """
+    The pulse **name** is not enough to know whether lengthening helps.
+
+    ``make_gauss_pulse`` takes either a time--bandwidth product or an explicit ``bandwidth``.  With
+    a bandwidth supplied the design is pinned to it, and a longer duration buys almost nothing:
+    measured at 4 kHz and 90 degrees, the peak is 1000.0 Hz at 1 ms **and** 1000.0 Hz at 2 ms.
+
+    So this configuration must not be told a floor -- rebuilding at the quoted duration would
+    still be over the limit, which is advice that does not work.
+    """
+    fixed_bandwidth = {'bandwidth': 4000.0}
+    with pytest.raises(sc.ConfigurationError) as caught:
+        sc.modules.Excitation(opts=opts, flip_deg=90.0, thickness_mm=5.0, duration_s=1e-3,
+                              pulse='gauss', pulse_opts=fixed_bandwidth)
+
+    message = str(caught.value)
+    assert 'which is where this shape fits' not in message, 'no floor may be claimed here'
+    assert 'starting point rather than a floor' in message
+
+    # And the reason: rebuilding at the number it printed really would still be over.
+    still_over = sc.modules.Excitation(opts=_no_limit(opts), flip_deg=90.0, thickness_mm=5.0,
+                                       duration_s=_quoted_duration_ms(message) / 1e3,
+                                       pulse='gauss', pulse_opts=fixed_bandwidth)
+
+    assert _peak(still_over) > opts.max_b1
+
+
+def test_gauss_without_a_bandwidth_does_claim_a_floor(opts) -> None:
+    """The same shape, pinned by its time--bandwidth product instead, stretches exactly."""
+    with pytest.raises(sc.ConfigurationError) as caught:
+        sc.modules.Excitation(opts=opts, flip_deg=90.0, thickness_mm=5.0, duration_s=0.6e-3,
+                              pulse='gauss')
+
+    assert 'which is where this shape fits' in str(caught.value)
 
 
 def test_slr_does_not_claim_a_floor(opts) -> None:
@@ -194,14 +263,19 @@ def test_ir_prep_shaped_over_the_limit_is_refused(opts) -> None:
 
 
 def test_wurst_remedy_names_bandwidth_because_bandwidth_works(opts) -> None:
-    """WURST's peak scales with the sweep width: 2523 Hz at 40 kHz, 564 at 2 kHz."""
+    """
+    WURST's peak goes as ``sqrt(bandwidth)``: 2523 Hz at 40 kHz and 564 at 2 kHz.
+
+    A factor of 4.47 for a factor of 20, which is ``sqrt(20)`` -- so the remedy is real but the
+    message must not promise a linear one.
+    """
     with pytest.raises(sc.ConfigurationError, match='max_b1') as caught:
         sc.modules.IRPrep(opts=opts, thickness_mm=None, pulse='wurst', duration_s=4e-3,
                           spoil_voxel_mm=5.0)
 
     message = str(caught.value)
     assert 'bandwidth' in message and 'adiabaticity' in message
-    assert 'square root' in message, 'and duration is described honestly'
+    assert 'square root' in message, 'the scaling is not claimed to be linear'
     narrowed = sc.modules.IRPrep(opts=opts, thickness_mm=None, pulse='wurst', duration_s=4e-3,
                                  spoil_voxel_mm=5.0, pulse_opts={'bandwidth': 2000})
 
@@ -302,25 +376,27 @@ def test_a_raw_rf_event_under_the_limit_compiles(opts) -> None:
 
 
 # ------------------------------------------------------------------------------ other nuclei
-def test_the_invariant_is_in_hertz_and_the_reported_microtesla_follow_opts_gamma(opts) -> None:
+def test_the_reported_microtesla_follow_opts_gamma(opts) -> None:
     """
-    The limit is compared in hertz, which is nucleus-independent; microtesla is for the reader.
+    SeqCraft stores and compares ``max_b1`` in hertz; the microtesla it prints follow ``gamma``.
 
-    So the conversion has to use **this scanner's** ``gamma`` rather than a hard-coded proton
-    value, or the number printed beside a sodium or carbon limit is wrong by the ratio of the two.
+    The hertz value is what the caller configured, so it is unchanged by the nucleus.  The **same
+    field strength** in microtesla is a different number of hertz for a different nucleus, which
+    is exactly why the conversion cannot use a hard-coded proton gamma: the µT printed beside a
+    carbon limit would otherwise be wrong by the ratio of the two.
     """
     carbon = copy.copy(opts)
     carbon.gamma = 10.7084e6                          # 13C
-    assert carbon.max_b1 == opts.max_b1, 'the limit itself is in hertz and does not move'
+    assert carbon.max_b1 == opts.max_b1, 'the configured limit is in hertz and is not converted'
 
     with pytest.raises(sc.ConfigurationError) as proton:
         sc.modules.Excitation(opts=opts, flip_deg=90.0, thickness_mm=5.0, duration_s=1e-3)
     with pytest.raises(sc.ConfigurationError) as other:
         sc.modules.Excitation(opts=carbon, flip_deg=90.0, thickness_mm=5.0, duration_s=1e-3)
 
-    # Same hertz on both sides ...
+    # The configured limit and the measured peak are the same hertz on both sides ...
     assert 'peak_b1_hz:  1107.63' in str(proton.value)
     assert 'peak_b1_hz:  1107.63' in str(other.value)
-    # ... and microtesla that follow the nucleus.
+    # ... and the microtesla reported for them follow the nucleus.
     assert 'max_b1_uT :  20.0' in str(proton.value)
     assert 'max_b1_uT :  79.52' in str(other.value)

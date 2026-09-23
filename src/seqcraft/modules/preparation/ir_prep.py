@@ -21,8 +21,9 @@ Peak B1
 -------
 The pulse is refused if its peak exceeds ``opts.max_b1``.  The remedy differs by family: a shaped
 pulse scales as ``1 / duration``, so a longer one fits, while an **adiabatic** pulse's peak is set
-by its frequency sweep and barely moves with duration -- there, narrow the sweep through
-``pulse_opts``.  At pypulseq's defaults ``'wurst'`` asks well over 20 uT; ``'hypsec'`` does not.
+by its frequency sweep and moves only as ``1 / sqrt(duration)`` -- there, narrow the sweep
+through ``pulse_opts``.  At pypulseq's defaults ``'wurst'`` asks well over 20 uT; ``'hypsec'``
+does not.
 
 Why the pulse is adiabatic by default
 -------------------------------------
@@ -56,6 +57,7 @@ from .._support import (
     check_peak_b1,
     duration_remedy,
     peak_b1_hz,
+    peak_scales_with_duration,
     require_axis,
     require_positive,
     shift_slice,
@@ -211,7 +213,8 @@ class IRPrep(Module):
         if self.selective:
             kwargs['slice_thickness'] = self.thickness_mm / 1e3
             kwargs['return_gz'] = True
-        kwargs.update(self._check_pulse_opts(pulse_opts))
+        self._design_opts = self._check_pulse_opts(pulse_opts)
+        kwargs.update(self._design_opts)
 
         factory = getattr(pp, 'make_adiabatic_pulse' if self.pulse in _ADIABATIC
                           else _FACTORIES[self.pulse])
@@ -361,13 +364,15 @@ class IRPrep(Module):
         )
         raise ConfigurationError(msg)
 
-    #: Shapes whose envelope is merely stretched by a longer duration.
-    _STRETCHED = frozenset({'sinc', 'gauss'})
-
-    #: What actually lowers each adiabatic pulse's peak, measured rather than assumed.  A
-    #: hyperbolic secant ignores ``bandwidth`` entirely -- 563.7 Hz at 40, 10 and 2 kHz alike --
-    #: while WURST halves with it.  Both respond to ``adiabaticity``, which is not a free
-    #: parameter: lowering it is what B1 robustness is bought with.
+    #: What actually lowers each adiabatic pulse's peak, measured rather than assumed.
+    #:
+    #: ``make_adiabatic_pulse`` sets the amplitude from the adiabatic condition, so it goes as
+    #: ``sqrt(rate of frequency sweep x adiabaticity)``.  For WURST the sweep rate is
+    #: ``bandwidth / duration``, which makes the peak go as ``sqrt(bandwidth / duration)``:
+    #: measured, 2523 Hz at 40 kHz and 564 Hz at 2 kHz, a factor of 4.47 for a factor of 20.
+    #: A hyperbolic secant ignores ``bandwidth`` entirely -- 563.7 Hz at 40, 10 and 2 kHz alike --
+    #: and takes its sweep from ``beta`` and ``mu`` instead.  Both respond to ``adiabaticity``,
+    #: which is not a free parameter: lowering it is what B1 robustness is bought with.
     _ADIABATIC_REMEDIES: dict[str, tuple[str, ...]] = {
         'hypsec': (
             "narrow the sweep: pulse_opts={'beta': ...} or {'mu': ...}, which set the peak here",
@@ -375,7 +380,8 @@ class IRPrep(Module):
             'bandwidth is not a remedy for this shape, and neither is a longer duration_s',
         ),
         'wurst': (
-            "lower pulse_opts={'bandwidth': ...}, which the peak scales with directly",
+            "lower pulse_opts={'bandwidth': ...}: at fixed duration and adiabaticity the peak "
+            "goes roughly as its square root",
             "or pulse_opts={'adiabaticity': ...}, at the cost of B1 robustness",
             'a longer duration_s helps only as its square root',
         ),
@@ -401,10 +407,10 @@ class IRPrep(Module):
         if self.pulse in self._ADIABATIC_REMEDIES:
             return list(self._ADIABATIC_REMEDIES[self.pulse])
         limit = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
-        if limit <= 0.0:
+        if not limit > 0.0:
             return ['lengthen the pulse']
         return [duration_remedy(self.duration_s, peak_b1_hz(self.rf), limit,
-                                exact=self.pulse in self._STRETCHED)]
+                                exact=peak_scales_with_duration(self.pulse, self._design_opts))]
 
     def _check_pulse_opts(self, pulse_opts: dict[str, Any] | None) -> dict[str, Any]:
         """Return `pulse_opts` having checked every key against the chosen factory."""

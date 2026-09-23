@@ -96,6 +96,7 @@ from .._support import (
     check_peak_b1,
     duration_remedy,
     peak_b1_hz,
+    peak_scales_with_duration,
     require_axis,
     require_positive,
     shift_slice,
@@ -313,7 +314,8 @@ class Refocusing(Module):
         if self.selective:
             kwargs['slice_thickness'] = self.thickness_mm / 1e3
             kwargs['return_gz'] = True
-        kwargs.update(self._check_pulse_opts(pulse_opts))
+        self._design_opts = self._check_pulse_opts(pulse_opts)
+        kwargs.update(self._design_opts)
 
         factory = getattr(pp, _FACTORIES[self.pulse])
         with warnings.catch_warnings():
@@ -581,15 +583,12 @@ class Refocusing(Module):
         return wanted
 
     # -------------------------------------------------------------------- the refusals
-    #: See :attr:`Excitation._STRETCHED`: sinc and gauss stretch, SLR is redesigned.
-    _STRETCHED = frozenset({'sinc', 'gauss'})
-
     def _check_b1(self, rf: Event) -> None:
         """Refuse a pulse over ``opts.max_b1``, with the remedy this shape actually has."""
         limit = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
-        remedies = ['lower flip_deg, or lengthen the pulse'] if limit <= 0.0 else [
+        remedies = ['lower flip_deg, or lengthen the pulse'] if not limit > 0.0 else [
             duration_remedy(self.duration_s, peak_b1_hz(rf), limit,
-                            exact=self.pulse in self._STRETCHED),
+                            exact=peak_scales_with_duration(self.pulse, self._design_opts)),
             'or lower flip_deg: peak B1 scales with the flip angle at a fixed shape',
         ]
         check_peak_b1(

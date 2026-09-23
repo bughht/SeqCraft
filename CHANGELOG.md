@@ -17,11 +17,15 @@ The backstop is what makes it a contract rather than four habits: it catches a r
 `pp.make_sinc_pulse` added straight to a `LogicBlock`, and any future RF module that forgets its
 own check.
 
-The invariant is literal — `peak_b1_hz(rf) <= opts.max_b1` — with no sentinel, so **`max_b1 = inf`
-is how a caller designs without a transmit limit.** Zero is *not* that value: unlike
-`adc_samples_limit`, whose `0` is pypulseq's documented "no limit", `make_sinc_pulse` compares
-`rf_amplitude > system.max_b1` unconditionally, so a zero limit makes pypulseq warn at `inf %` and
-would make this refuse everything. A zero limit is reported as the misconfiguration it is.
+The invariant is literal — `peak_b1_hz(rf) <= opts.max_b1` — with no sentinel, so **`max_b1 = +inf`
+is how a caller designs without a transmit limit, and only `+inf` is.** Zero, a negative and `NaN`
+are each reported as an unusable limit rather than treated as unlimited, at **both** layers. `NaN`
+matters most: every comparison against it is False, so a check written as `worst > limit` would let
+any pulse through silently.
+
+Zero is not pypulseq's convention here either: unlike `adc_samples_limit`, whose `0` is documented
+as "no limit", `make_sinc_pulse` compares `rf_amplitude > system.max_b1` unconditionally, so a zero
+limit makes pypulseq warn at `inf %`.
 
 **The measurement is shared and the remedy is not.** `_support.check_peak_b1` measures
 `max(abs(rf.signal))` against the limit; each module supplies its own fixes, because the right
@@ -30,11 +34,12 @@ at it is proved by a test:
 
 | family | how the peak responds | what the refusal says |
 |---|---|---|
-| sinc, gauss at fixed TBW | envelope stretches, so exactly `1 / duration` | the duration that fits, as a **floor** |
+| sinc, or gauss pinned by a **time–bandwidth product** | envelope stretches, so exactly `1 / duration` | the duration that fits, as a **floor** |
+| gauss pinned by an explicit **`bandwidth`** | held to that bandwidth: 1000.0 Hz at 1 ms *and* at 2 ms | a **starting point** |
 | SLR | the filter is recomputed | the same number, as a **starting point** to re-check |
 | `SaturationPrep` | `bandwidth_hz` is fixed, so TBW moves with duration | likewise a starting point |
 | `hypsec` | set by the sweep — **`bandwidth` does nothing**, 563.7 Hz at 40, 10 and 2 kHz alike, and duration does nothing either | `beta`, `mu` or `adiabaticity` |
-| `wurst` | halves with `bandwidth`; duration helps only as `sqrt` | `bandwidth` or `adiabaticity` |
+| `wurst` | `sqrt(bandwidth / duration)`, so duration helps only as `1/sqrt` | `bandwidth` or `adiabaticity` |
 
 Generalising `Refocusing`'s `1 / duration` estimate to every family would have produced advice
 that does not work. Lowering `adiabaticity` is not free either — it is what B1 robustness is

@@ -614,18 +614,18 @@ sinc peaks at 130 % of it.
 |---|---|
 | **every RF module checks its own pulse** | `Excitation`, `Refocusing`, `IRPrep` and `SaturationPrep` raise `ConfigurationError` at construction, naming what to change |
 | **the compiler checks the emitted sequence** | `HardwareLimitError`, naming the block and its origin. This catches a raw pypulseq RF event added straight to a `LogicBlock` |
-| **`max_b1 = inf` disables both** | and it is the right way to. **Zero does not**: pypulseq's `make_sinc_pulse` compares `rf_amplitude > system.max_b1` unconditionally, so a zero limit warns at `inf %` there and refuses everything here |
+| **`max_b1 = +inf` disables both** | and only `+inf` does. Zero, a negative and `NaN` are each refused as an unusable limit rather than silently treated as unlimited — `NaN` especially, since every comparison against it is False. **Zero is not pypulseq's convention here**: unlike `adc_samples_limit`, `make_sinc_pulse` compares `rf_amplitude > system.max_b1` unconditionally, so a zero limit warns at `inf %` there |
 
 The remedy depends on the pulse family, which is why each module supplies its own rather than
 sharing one.
 
 | family | how the peak responds | what the refusal says |
 |---|---|---|
-| sinc, gauss at fixed TBW | envelope stretches, so exactly `1 / duration` | the duration that fits, as a **floor** |
+| sinc, or gauss pinned by a **time–bandwidth product** | envelope stretches, so exactly `1 / duration` | the duration that fits, as a **floor** |
 | SLR | the filter is recomputed, so scaling is not guaranteed | the same number, as a **starting point** to re-check |
 | `SaturationPrep` | `bandwidth_hz` is fixed, so TBW moves with the duration | likewise a starting point |
 | `hypsec` | set by the sweep; **`bandwidth` does nothing**, and nor does duration | `beta`, `mu` or `adiabaticity` via `pulse_opts` |
-| `wurst` | halves with `bandwidth`; duration helps only as `sqrt` | `bandwidth` or `adiabaticity` via `pulse_opts` |
+| `wurst` | `sqrt(bandwidth / duration)`, so duration helps only as `1/sqrt` | `bandwidth` or `adiabaticity` via `pulse_opts` |
 
 Lowering `adiabaticity` is not free — it is what B1 robustness is bought with — and the messages
 say so.

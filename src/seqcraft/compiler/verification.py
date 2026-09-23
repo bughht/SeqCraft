@@ -263,34 +263,43 @@ def check_rf_amplitude(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] =
     """
     configured = getattr(opts, 'max_b1', None)
     limit = float('inf') if configured is None else float(configured)
-    if not np.isfinite(limit):
+    # **Positive** infinity, and only that, means "design without a transmit limit".  NaN and
+    # -inf are not spellings of it: every comparison against NaN is False, so treating it as
+    # unlimited would let any pulse through silently, which is the failure this check exists to
+    # prevent.
+    if np.isposinf(limit):
         return
     worst = 0.0
     where = ''
+    saw_rf = False
     for index in sorted(seq.block_events):
         block = seq.get_block(index)
         rf = getattr(block, 'rf', None)
         if rf is None:
             continue
+        saw_rf = True
         peak = float(np.abs(np.asarray(rf.signal)).max())
         if peak > worst:
             # Block ids are 1-based; `origins` is a list in emission order, so it is not.
             path = origins[index - 1] if 0 < index <= len(origins) else ()
             worst, where = peak, f'block {index} ({".".join(path) or "?"})'
-    if worst > limit:
-        excess = (f'{worst / limit * 100:.0f} % of max_b1' if limit > 0.0
-                  else f'a non-zero amplitude, and max_b1 is {limit:g}')
-        msg = format_error(
-            f'an RF event peaks at {excess}.',
-            {'from': where, 'peak_b1_hz': round(worst, 2), 'max_b1_hz': round(limit, 2)},
-            [
-                'lengthen the pulse or lower its flip angle -- peak B1 scales with both for a '
-                'fixed shape',
-                'an adiabatic pulse instead needs a narrower frequency sweep',
-                'or raise max_b1, if the scanner really does deliver it',
-            ],
-        )
-        raise HardwareLimitError(msg)
+    if not saw_rf:
+        return
+    usable = limit > 0.0                              # False for 0, negatives and NaN alike
+    if usable and worst <= limit:
+        return
+    headline = (f'an RF event peaks at {worst / limit * 100:.0f} % of max_b1.' if usable
+                else f'max_b1 is {limit:g}, which is not a transmit limit an RF event can meet.')
+    fixes = ([
+        'lengthen the pulse or lower its flip angle -- peak B1 scales with both for a fixed shape',
+        'an adiabatic pulse instead needs a narrower frequency sweep',
+        'or raise max_b1, if the scanner really does deliver it',
+    ] if usable else [
+        'set a real max_b1 -- sc.convert(20, "uT", "Hz") is a common value',
+        'or use max_b1=inf to design without a transmit limit',
+    ])
+    raise HardwareLimitError(format_error(
+        headline, {'from': where, 'peak_b1_hz': round(worst, 2), 'max_b1_hz': limit}, fixes))
 
 
 def check_label_addresses(seq: Any) -> None:
