@@ -20,6 +20,11 @@ minimum-phase SLR pulse whose peak sits three-quarters of the way through is rep
 too.  :meth:`Excitation.time_to_center` reports that centre, and it is the instant every echo time
 in this library is measured from.
 
+Peak B1
+-------
+The pulse is refused if its peak exceeds ``opts.max_b1``, with the duration that would fit.  Note
+that ``pp.Opts()`` defaults that limit to 20 uT, which a 1 ms 90 degree sinc exceeds.
+
 One angular unit
 ----------------
 ``flip_deg``, ``phase_deg``, ``rf_spoil_deg`` -- every angle in this library is in degrees,
@@ -39,7 +44,15 @@ from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
-from .._support import area_until, require_axis, require_positive, shift_slice
+from .._support import (
+    area_until,
+    check_peak_b1,
+    duration_for_peak_b1,
+    peak_b1_hz,
+    require_axis,
+    require_positive,
+    shift_slice,
+)
 
 if TYPE_CHECKING:
     from pypulseq.opts import Opts
@@ -177,6 +190,24 @@ class Excitation(Module):
         else:
             self.rf = factory(**kwargs)
             self.gz = self.gzr = None
+        self._check_b1()
+
+    def _check_b1(self) -> None:
+        """Refuse a pulse over ``opts.max_b1``, naming the duration that fits."""
+        max_b1 = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
+        remedies: list[str] = []
+        if max_b1 > 0.0:
+            floor_s = duration_for_peak_b1(self.duration_s, peak_b1_hz(self.rf), max_b1)
+            remedies = [
+                f'pass duration_s >= {floor_s * 1e3:.1f} ms, which is where this shape fits',
+                'or lower flip_deg: peak B1 scales with the flip angle at a fixed shape',
+            ]
+        check_peak_b1(
+            self.rf, self.opts,
+            described=(f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} '
+                       f'excitation'),
+            remedies=remedies,
+        )
 
     # ------------------------------------------------------------------ what it knows
     def time_to_center(self) -> float:

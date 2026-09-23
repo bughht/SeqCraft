@@ -17,6 +17,13 @@ So the pulse and its crusher are designed and placed together.
 there is a whole inversion time for anything left over to rephase in, and the recovery that follows
 is long enough that a marginal crusher is not marginal by the time it is sampled.
 
+Peak B1
+-------
+The pulse is refused if its peak exceeds ``opts.max_b1``.  The remedy differs by family: a shaped
+pulse scales as ``1 / duration``, so a longer one fits, while an **adiabatic** pulse's peak is set
+by its frequency sweep and barely moves with duration -- there, narrow the sweep through
+``pulse_opts``.  At pypulseq's defaults ``'wurst'`` asks well over 20 uT; ``'hypsec'`` does not.
+
 Why the pulse is adiabatic by default
 -------------------------------------
 B1 insensitivity is the entire reason to use an inversion pulse of any sophistication.  A nominal
@@ -45,7 +52,14 @@ from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
-from .._support import require_axis, require_positive, shift_slice
+from .._support import (
+    check_peak_b1,
+    duration_for_peak_b1,
+    peak_b1_hz,
+    require_axis,
+    require_positive,
+    shift_slice,
+)
 from ..spoiler import spoiler
 
 if TYPE_CHECKING:
@@ -210,6 +224,7 @@ class IRPrep(Module):
             self.rf, self.gz = rf, gz
         else:
             self.rf, self.gz = factory(**kwargs), None
+        self._check_b1()
 
         self.spoil_axis = require_axis(spoil_axis, 'spoil_axis')
         self.spoil_cycles_per_voxel = require_positive(
@@ -345,6 +360,34 @@ class IRPrep(Module):
             ],
         )
         raise ConfigurationError(msg)
+
+    def _check_b1(self) -> None:
+        """
+        Refuse a pulse over ``opts.max_b1``, with the remedy this pulse family actually has.
+
+        The two families differ, and quoting the wrong one is worse than quoting none.  A shaped
+        pulse at a fixed flip angle scales as ``1 / duration``, so a longer one fits.  An
+        **adiabatic** pulse does not: its peak is set by the frequency sweep, so a hyperbolic
+        secant's peak does not move with duration at all, and a WURST's falls only as the square
+        root of it.  There the parameters to reach for are the sweep's, through ``pulse_opts``.
+        """
+        max_b1 = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
+        remedies: list[str] = []
+        if max_b1 > 0.0 and self.pulse in _ADIABATIC:
+            remedies = [
+                "lower the sweep: pulse_opts={'bandwidth': ...} or {'adiabaticity': ...}",
+                'a longer duration_s does not help much here -- an adiabatic pulse peaks at what '
+                'its sweep demands',
+            ]
+        elif max_b1 > 0.0:
+            floor_s = duration_for_peak_b1(self.duration_s, peak_b1_hz(self.rf), max_b1)
+            remedies = [f'pass duration_s >= {floor_s * 1e3:.1f} ms, which is where this shape '
+                        f'fits']
+        check_peak_b1(
+            self.rf, self.opts,
+            described=f'a {self.duration_s * 1e3:g} ms {self.pulse} inversion pulse',
+            remedies=remedies,
+        )
 
     def _check_pulse_opts(self, pulse_opts: dict[str, Any] | None) -> dict[str, Any]:
         """Return `pulse_opts` having checked every key against the chosen factory."""

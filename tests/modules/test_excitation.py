@@ -40,7 +40,7 @@ def _area_after(gz, t_from: float) -> float:
     ('slr', {'filter_type': 'min'}, 90.0),            # minimum phase: centre at the very end
 ])
 def test_the_rephaser_matches_the_area_after_the_effective_centre(
-    opts, pulse, pulse_opts, flip_deg,
+    unbounded_b1, pulse, pulse_opts, flip_deg,
 ) -> None:
     """
     ``gzr.area == -(area of gz after calc_rf_center(rf))``.  Not half the total.
@@ -48,7 +48,7 @@ def test_the_rephaser_matches_the_area_after_the_effective_centre(
     The minimum-phase row is the one that distinguishes the two: for a symmetric sinc they are
     the same number, so a suite that tested only that would pass on the wrong formula.
     """
-    exc = sc.modules.Excitation(opts=opts, flip_deg=flip_deg, thickness_mm=5.0,
+    exc = sc.modules.Excitation(opts=unbounded_b1, flip_deg=flip_deg, thickness_mm=5.0,
                                 pulse=pulse, pulse_opts=pulse_opts)
 
     after = _area_after(exc.gz, exc.time_to_center())
@@ -56,11 +56,11 @@ def test_the_rephaser_matches_the_area_after_the_effective_centre(
     assert float(exc.gzr.area) == pytest.approx(-after, rel=1e-6)
 
 
-def test_the_minimum_phase_case_is_nowhere_near_half_the_area(opts) -> None:
+def test_the_minimum_phase_case_is_nowhere_near_half_the_area(unbounded_b1) -> None:
     """The measurement that makes the previous test worth having, stated as a number."""
-    asymmetric = sc.modules.Excitation(opts=opts, flip_deg=90.0, thickness_mm=5.0,
+    asymmetric = sc.modules.Excitation(opts=unbounded_b1, flip_deg=90.0, thickness_mm=5.0,
                                        pulse='slr', pulse_opts={'filter_type': 'min'})
-    symmetric = sc.modules.Excitation(opts=opts, flip_deg=15.0, thickness_mm=5.0)
+    symmetric = sc.modules.Excitation(opts=unbounded_b1, flip_deg=15.0, thickness_mm=5.0)
 
     assert asymmetric.time_to_center() > symmetric.time_to_center() + 1e-3
     assert abs(float(asymmetric.gzr.area)) < 0.1 * abs(float(symmetric.gzr.area))
@@ -241,7 +241,7 @@ def test_a_slice_offset_carries_the_phase_reference(opts) -> None:
     )
 
 
-def test_an_asymmetric_pulse_gets_a_different_phase_reference(opts) -> None:
+def test_an_asymmetric_pulse_gets_a_different_phase_reference(unbounded_b1) -> None:
     """
     The assertion that proves the correction term is present rather than cancelling.
 
@@ -249,8 +249,8 @@ def test_an_asymmetric_pulse_gets_a_different_phase_reference(opts) -> None:
     pulse at the same position it is a different one, because its effective centre is elsewhere.
     A missing term would give both the same phase (zero).
     """
-    sinc = sc.modules.Excitation(opts=opts, flip_deg=90.0, thickness_mm=5.0)
-    min_phase = sc.modules.Excitation(opts=opts, flip_deg=90.0, thickness_mm=5.0,
+    sinc = sc.modules.Excitation(opts=unbounded_b1, flip_deg=90.0, thickness_mm=5.0)
+    min_phase = sc.modules.Excitation(opts=unbounded_b1, flip_deg=90.0, thickness_mm=5.0,
                                       pulse='slr', pulse_opts={'filter_type': 'min'})
 
     a = sinc(position_mm=20.0).nodes[0].item

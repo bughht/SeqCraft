@@ -112,6 +112,7 @@ from .verification import (
     _sequence_moments,
     check_event_sizes,
     check_label_addresses,
+    check_rf_amplitude,
     require_valid_contract,
     verify_against_tree,
     verify_placed_events,
@@ -369,6 +370,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     # The two questions only a built sequence can answer: does any one event exceed the
     # interpreter's sample limit, and do two imaging ADCs write the same k-space address.
     check_event_sizes(seq, opts, origins)
+    check_rf_amplitude(seq, opts, origins)
     check_label_addresses(seq)
 
     # pypulseq's own timing audit, run here rather than offered as a method: a `.seq` that fails

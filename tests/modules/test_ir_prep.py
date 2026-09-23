@@ -260,14 +260,16 @@ def test_the_carrier_phase_is_a_build_argument_in_degrees(opts, inv) -> None:
 
 
 # ------------------------------------------------------------------- the vocabulary
-@pytest.mark.parametrize(('pulse', 'duration_s'), [
-    ('hypsec', 10e-3),
-    ('wurst', 4e-3),
-    ('sinc', 3e-3),
-    ('block', 1e-3),
+@pytest.mark.parametrize(('pulse', 'duration_s', 'pulse_opts'), [
+    ('hypsec', 10e-3, None),
+    # WURST at pypulseq's default 40 kHz sweep peaks at 296 % of a 20 uT limit, so the sweep is
+    # narrowed rather than the limit lifted -- which is the remedy an adiabatic pulse has.
+    ('wurst', 4e-3, {'bandwidth': 2000}),
+    ('sinc', 3e-3, None),
+    ('block', 1e-3, None),
 ])
-def test_every_shape_builds_an_inversion(opts, pulse, duration_s) -> None:
-    prep = sc.modules.IRPrep(opts=opts, thickness_mm=None, pulse=pulse,
+def test_every_shape_builds_an_inversion(opts, pulse, duration_s, pulse_opts) -> None:
+    prep = sc.modules.IRPrep(opts=opts, thickness_mm=None, pulse=pulse, pulse_opts=pulse_opts,
                              duration_s=duration_s, spoil_voxel_mm=VOXEL_MM)
 
     block = prep()

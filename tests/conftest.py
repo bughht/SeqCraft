@@ -27,6 +27,7 @@ documentation than naming a function because it also explains what the check is 
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -161,3 +162,21 @@ def component_checks() -> Any:
         all=assert_all,
     )
 
+
+
+@pytest.fixture(scope='session')
+def unbounded_b1(opts: Opts) -> Opts:
+    """
+    `opts` with ``max_b1`` cleared, for tests whose subject is not RF amplitude.
+
+    ``pp.Opts()`` defaults ``max_b1`` to 851.52 Hz (20 uT), and SeqCraft enforces it -- both in
+    each RF module and as a backstop on the emitted sequence.  Several tests here use an RF pulse
+    as a **stand-in** for something else: a 1 ms 90 sinc to give the compiler a block to schedule
+    around, or a minimum-phase SLR to give the rephaser an asymmetric envelope to reference.  Those
+    pulses are over the limit and are not the point, so they run with it cleared.
+
+    Zero is pypulseq's "no limit" convention, the same one ``adc_samples_limit`` uses.
+    """
+    relaxed = copy.copy(opts)
+    relaxed.max_b1 = 0.0
+    return relaxed

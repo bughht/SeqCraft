@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased — SeqCraft does not emit RF over `max_b1`
+
+**`pp.Opts()` defaults `max_b1` to 851.52 Hz — 20 µT — so the limit was always live.** Nothing
+enforced it except `Refocusing`, which meant every other RF path could emit a pulse the scanner's
+transmit chain forbids. An ordinary **1 ms 90° sinc peaks at 130 %** of that default.
+
+The contract now has two layers:
+
+| | |
+|---|---|
+| **each RF module checks its own pulse** | at construction, where it still knows what to suggest changing. `ConfigurationError`, with the measured peak in both Hz and µT |
+| **the compiler checks the emitted sequence** | `check_rf_amplitude`, beside `check_event_sizes` and called from the same place. `HardwareLimitError`, naming the worst block and its origin path |
+
+The backstop is what makes it a contract rather than four habits: it catches a raw
+`pp.make_sinc_pulse` added straight to a `LogicBlock`, and any future RF module that forgets its
+own check. `max_b1 = 0` disables both, which is pypulseq's "no limit" convention.
+
+**The measurement is shared and the remedy is not.** `_support.check_peak_b1` measures
+`max(abs(rf.signal))` against the limit; each module supplies its own fixes, because the right
+advice depends on the pulse family:
+
+```text
+sinc / gauss / SLR   peak scales as 1 / duration   -> the refusal quotes the duration that fits
+hypsec               peak set by the frequency sweep, and does NOT move with duration at all
+wurst                falls only as sqrt(duration)  -> narrow the sweep via pulse_opts instead
+```
+
+Generalising `Refocusing`'s `1 / duration` repair estimate to every family would have produced
+advice that does not work: a hyperbolic secant is 563.7 Hz at 5, 10 and 20 ms alike.
+
+Two paths were emitting physically impossible pulses **with no warning from anywhere**:
+
+- `IRPrep(pulse='wurst')` at pypulseq's default 40 kHz sweep asks 187 % of 20 µT at 10 ms and
+  419 % at 2 ms. `make_adiabatic_pulse` does not warn.
+- `Excitation(pulse='slr', pulse_opts={'filter_type': 'min'})` returns a waveform peaking at
+  **33 492 Hz ≈ 790 µT** — 3933 % of the limit — and delivering 84° rather than the requested 90°.
+  `make_slr_pulse`'s min/max-phase branch does not warn either. Both are upstream characteristics;
+  this release is the first thing that refuses them.
+
+Every example notebook still compiles unchanged, so no working protocol was in the way. Eleven
+existing tests used an over-limit pulse as a **stand-in** for something else — a 1 ms 90 to give
+the compiler a block to schedule around, a minimum-phase SLR to give the rephaser an asymmetric
+envelope — and now run with the limit cleared through a new `unbounded_b1` fixture that says why.
+One, `IRPrep`'s WURST case, narrows the sweep instead, because that is the remedy the family has.
+
 ## Unreleased — the examples teach, the docstrings document, and the history lives elsewhere
 
 Editorial only: no behaviour, no API shape, no test behaviour. 27 of 29 example notebooks touched,

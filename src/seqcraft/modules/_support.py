@@ -47,10 +47,79 @@ if TYPE_CHECKING:
 
     from ..design.events import Event
 
+#: Gyromagnetic ratio of the proton, Hz/T, for reporting B1 in microtesla.
+_GAMMA_HZ_T = 42.576e6
+
 __all__ = [
-    'area_until', 'ceil_raster', 'dwell_quantum', 'halve_onto', 'require_axis', 'require_count',
-    'require_pair', 'require_positive', 'require_range', 'shift_slice',
+    'area_until', 'ceil_raster', 'check_peak_b1', 'duration_for_peak_b1', 'dwell_quantum',
+    'halve_onto', 'peak_b1_hz', 'require_axis', 'require_count', 'require_pair',
+    'require_positive', 'require_range', 'shift_slice',
 ]
+
+
+def peak_b1_hz(rf: Event) -> float:
+    """Peak :math:`|B_1|` of an RF event, in hertz -- ``max(abs(rf.signal))`` and nothing else."""
+    return float(np.abs(np.asarray(rf.signal)).max())
+
+
+def check_peak_b1(rf: Event, opts: Opts, *, described: str, remedies: Iterable[str]) -> None:
+    """
+    Refuse an RF event whose peak amplitude exceeds ``opts.max_b1``.
+
+    The **shared invariant** every RF-producing module holds: ``peak_b1_hz(rf) <= opts.max_b1``,
+    measured on the waveform that will be emitted rather than predicted from the pulse's
+    parameters.  What differs between modules is not the measurement but the **remedy**, so that
+    is the caller's to supply: shortening is right for a fixed-shape sinc and meaningless for an
+    adiabatic inversion, whose peak is set by its frequency sweep.
+
+    ``max_b1`` of zero or ``None`` disables the check, matching pypulseq's convention for its
+    other limits -- but note that ``pp.Opts()`` **defaults it to 851.52 Hz (20 uT)**, so the
+    limit is live unless a caller has deliberately cleared it.
+
+    Parameters
+    ----------
+    rf
+        The RF event to measure.
+    opts
+        Supplies ``max_b1``, in hertz.
+    described
+        How to name the pulse in the error, e.g. ``"a 2 ms 180 degree sinc pulse"``.
+    remedies
+        Module-specific fixes, in the order a caller should try them.
+
+    Raises
+    ------
+    ConfigurationError
+        Naming the measured peak as a percentage of the limit, and the remedies given.
+    """
+    max_b1 = float(getattr(opts, 'max_b1', 0.0) or 0.0)
+    peak = peak_b1_hz(rf)
+    if max_b1 <= 0.0 or peak <= max_b1:
+        return
+    msg = format_error(
+        f'{described} peaks at {peak / max_b1 * 100:.0f} % of max_b1.',
+        {'peak_b1_hz': round(peak, 2), 'max_b1_hz': round(max_b1, 2),
+         'peak_b1_uT': round(peak / _GAMMA_HZ_T * 1e6, 2),
+         'max_b1_uT': round(max_b1 / _GAMMA_HZ_T * 1e6, 2)},
+        [*remedies, 'or raise max_b1, if the scanner really does deliver it'],
+    )
+    raise ConfigurationError(msg)
+
+
+def duration_for_peak_b1(duration_s: float, peak_hz: float, max_b1_hz: float) -> float:
+    """
+    Return the shortest duration at which a **fixed-shape** pulse fits ``max_b1``, in seconds.
+
+    Peak :math:`B_1` scales as ``1 / duration`` for a pulse whose shape and flip angle are held
+    fixed -- sinc, gauss and SLR -- so the answer is exact rather than a search.  Rounded up onto
+    a tenth of a millisecond, because a floor quoted to the nanosecond is refused again by its own
+    last digit.
+
+    **It does not hold for adiabatic pulses**, whose peak is set by the frequency sweep: a
+    hyperbolic secant's peak does not move with duration at all.  Those modules quote their own
+    remedy instead.
+    """
+    return float(np.ceil(duration_s * peak_hz / max_b1_hz * 1e4) / 10.0) / 1e3
 
 
 def require_positive(value: float, name: str, *, fixes: Iterable[str] = ()) -> float:

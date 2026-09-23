@@ -72,7 +72,9 @@ Peak B1
 -------
 This module **refuses an RF waveform whose peak exceeds** ``opts.max_b1``, and names the duration
 that would fix it.  Peak B1 scales with flip angle at a fixed shape, so a 180 needs twice a 90's:
-a 2 ms TBW-4 sinc 180 asks 130 % of a 20 uT limit, and 2.7 ms is the floor at that shape.
+a 2 ms TBW-4 sinc 180 asks 130 % of a 20 uT limit, and 2.7 ms is the floor at that shape.  Every
+RF-producing module makes the same check, and :func:`seqcraft.compile` checks the emitted sequence
+as a backstop.
 """
 
 from __future__ import annotations
@@ -88,7 +90,16 @@ from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...design.timing import EPS
 from ...errors import ConfigurationError, SeqCraftWarning, format_error
-from .._support import area_until, ceil_raster, require_axis, require_positive, shift_slice
+from .._support import (
+    area_until,
+    ceil_raster,
+    check_peak_b1,
+    duration_for_peak_b1,
+    peak_b1_hz,
+    require_axis,
+    require_positive,
+    shift_slice,
+)
 
 if TYPE_CHECKING:
     from pypulseq.opts import Opts
@@ -571,33 +582,21 @@ class Refocusing(Module):
 
     # -------------------------------------------------------------------- the refusals
     def _check_b1(self, rf: Event) -> None:
-        """
-        Refuse a pulse over ``opts.max_b1``, naming the duration that fixes it.
-
-        ``sc.compile`` checks gradient amplitude and slew and never looks at RF amplitude, and
-        pypulseq warns and hands the pulse back.  A 180 is where this first bites, because peak B1
-        scales with flip angle at a fixed shape.  It scales as ``1 / duration`` too, which is what
-        makes the fix quotable rather than a search.
-        """
+        """Refuse a pulse over ``opts.max_b1``, naming the duration that fits."""
         max_b1 = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
-        peak = float(np.abs(rf.signal).max())
-        if max_b1 <= 0.0 or peak <= max_b1:
-            return
-        # Rounded up onto a tenth of a millisecond: the relation is exact for a fixed shape, and a
-        # floor quoted to the nanosecond would be refused again by its own last digit.
-        floor_ms = float(np.ceil(self.duration_s * peak / max_b1 * 1e4) / 10.0)
-        msg = format_error(
-            f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} pulse peaks at '
-            f'{peak / max_b1 * 100:.0f} % of max_b1.',
-            {'duration_s': self.duration_s, 'flip_deg': self.flip_deg,
-             'peak_b1_hz': peak, 'max_b1': max_b1},
-            [
-                f'pass duration_s >= {floor_ms:.1f} ms, which is where this shape fits',
+        remedies: list[str] = []
+        if max_b1 > 0.0:
+            floor_s = duration_for_peak_b1(self.duration_s, peak_b1_hz(rf), max_b1)
+            remedies = [
+                f'pass duration_s >= {floor_s * 1e3:.1f} ms, which is where this shape fits',
                 'or lower flip_deg: peak B1 scales with the flip angle at a fixed shape',
-                'sc.compile checks gradients and not RF amplitude, so this is refused here',
-            ],
+            ]
+        check_peak_b1(
+            rf, self.opts,
+            described=(f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} '
+                       f'refocusing pulse'),
+            remedies=remedies,
         )
-        raise ConfigurationError(msg)
 
     def _warn_if_the_plateau_already_carries_it(self, plateau_half: float) -> None:
         """

@@ -51,6 +51,11 @@ Out of scope, and each a different physical contract rather than a mode of this 
 saturation slabs, which play a gradient and select a region; **CEST** saturation trains, with
 their duty-cycle and :math:`B_{1,\\mathrm{rms}}` constraints; and water-selective excitation.
 
+Peak B1
+-------
+The pulse is refused if its peak exceeds ``opts.max_b1``.  A fat-saturation pulse is long and
+low-amplitude, so this rarely binds -- a 110 degree 8 ms gauss is under a fifth of a 20 uT limit.
+
 Protocol values are the caller's
 --------------------------------
 `flip_deg`, `duration_s` and `bandwidth_hz` have **no defaults**, because published fat-saturation
@@ -88,7 +93,7 @@ from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
-from .._support import require_axis, require_positive
+from .._support import check_peak_b1, duration_for_peak_b1, peak_b1_hz, require_axis, require_positive
 from ..spoiler import spoiler
 
 if TYPE_CHECKING:
@@ -202,6 +207,7 @@ class SaturationPrep(Module):
         # No `return_gz`, so no selection gradient and no rephaser to drop.  The absence is the
         # contract, not an omission.
         self.rf = getattr(pp, _FACTORIES[self.pulse])(**kwargs)
+        self._check_b1()
 
         self.spoil_axis = require_axis(spoil_axis, 'spoil_axis')
         self.spoil_cycles_per_voxel = require_positive(
@@ -314,6 +320,24 @@ class SaturationPrep(Module):
             ],
         )
         raise ConfigurationError(msg)
+
+    def _check_b1(self) -> None:
+        """Refuse a pulse over ``opts.max_b1``, naming the duration that fits."""
+        max_b1 = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
+        remedies: list[str] = []
+        if max_b1 > 0.0:
+            floor_s = duration_for_peak_b1(self.duration_s, peak_b1_hz(self.rf), max_b1)
+            remedies = [
+                f'pass duration_s >= {floor_s * 1e3:.1f} ms -- but check that the bandwidth this '
+                f'implies still clears water',
+                'or lower flip_deg, at the cost of leaving more fat signal behind',
+            ]
+        check_peak_b1(
+            self.rf, self.opts,
+            described=(f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} '
+                       f'saturation pulse'),
+            remedies=remedies,
+        )
 
     def _check_pulse_opts(self, pulse_opts: dict[str, Any] | None) -> dict[str, Any]:
         """Return `pulse_opts` having checked every key against the chosen factory."""

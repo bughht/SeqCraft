@@ -604,6 +604,28 @@ the `systems` extra is not installed.
 
 `UnknownFieldError` is defined here and re-exported as `sc.UnknownFieldError`.
 
+### `max_b1`, and why it is required here
+
+**`pp.Opts()` defaults `max_b1` to 851.52 Hz — 20 µT — so the limit is live whether or not anyone
+set it.** SeqCraft enforces it, which makes the default worth knowing about: an ordinary 1 ms 90°
+sinc peaks at 130 % of it.
+
+| | |
+|---|---|
+| **every RF module checks its own pulse** | `Excitation`, `Refocusing`, `IRPrep` and `SaturationPrep` raise `ConfigurationError` at construction, naming what to change |
+| **the compiler checks the emitted sequence** | `HardwareLimitError`, naming the block and its origin. This catches a raw pypulseq RF event added straight to a `LogicBlock` |
+| **`max_b1 = 0` disables both** | pypulseq's "no limit" convention, the same one `adc_samples_limit` uses |
+
+The remedy depends on the pulse family, which is why each module supplies its own. A **fixed-shape**
+pulse — sinc, gauss, SLR — scales as `1 / duration`, so a longer one fits and the refusal quotes the
+duration that does. An **adiabatic** pulse does not: its peak is set by its frequency sweep, so a
+hyperbolic secant's peak does not move with duration at all and WURST's falls only as its square
+root. There the parameters to reach for are the sweep's, through `pulse_opts`.
+
+`from_scanner` requires `max_b1` for the same reason it requires the dead times: it belongs to the
+transmit chain and the coil loading, so no vendor database can supply it. Take it from the
+reference voltage the scanner reports, and keep a margin.
+
 ## 2.3 `sc.hardware` — PNS response models
 
 **A hardware model is not a limit.** `Opts` says how hard the amplifier may be driven; this
@@ -717,7 +739,7 @@ one.
 | Exception | Raised when | Fix |
 |---|---|---|
 | `CompileError` | Two RF or two ADC overlap; an absolute start is negative; a gradient starts off the gradient raster; no boundary can be cut in the gap between two exclusive events; a block boundary would fall inside a gradient an ADC is sampling; two ADCs write the same k-space address; an unsupported or unknown event type; `check_timing` fails | Fix the tree — the message names the event, its provenance path, and usually two concrete remedies |
-| `HardwareLimitError` | The *summed* waveform exceeds `max_grad` or `max_slew` on an axis; an ADC or RF event exceeds the interpreter's per-event sample limit | Lengthen the lobe, derate the design, or split the readout into several ADCs |
+| `HardwareLimitError` | The *summed* waveform exceeds `max_grad` or `max_slew` on an axis; an RF event's peak exceeds `max_b1`; an ADC or RF event exceeds the interpreter's per-event sample limit | Lengthen the lobe or the pulse, derate the design, or split the readout into several ADCs |
 | `DefinitionConflict` | `name=` and `definitions['Name']` disagree | Pass one or the other |
 | `CompilerContractError` | The compiled sequence does not match the tree: total duration, m0, m1 or a label address drifted; or a stage broke an IR contract | **A compiler bug.** Report it with the tree that produced it |
 | `ConfigurationError` | `add()` got something that is not an event or a block; a unit is unknown; an `Opts` is unusable | Fix the call |

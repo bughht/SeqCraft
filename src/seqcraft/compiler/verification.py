@@ -238,6 +238,53 @@ def check_event_sizes(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] = 
             raise HardwareLimitError(msg)
 
 
+def check_rf_amplitude(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] = ()) -> None:
+    """
+    Check every emitted RF event's peak amplitude against ``opts.max_b1``.
+
+    The **backstop** for the peak-B1 contract.  Every RF-producing module checks its own pulse at
+    design time, where it can say what to change; this one measures the waveform that is actually
+    being emitted, so it also catches a raw ``pp.make_sinc_pulse`` added straight to a
+    :class:`~seqcraft.LogicBlock`, a future module that forgets its own check, and any path that
+    reaches a block without passing one.
+
+    ``max_b1`` of zero or ``None`` disables it, as ``adc_samples_limit`` does -- but ``pp.Opts()``
+    **defaults it to 851.52 Hz (20 uT)**, so it is live unless a caller has cleared it.
+
+    Raises
+    ------
+    HardwareLimitError
+        Naming the worst event, where it came from, and the peak as a percentage of the limit.
+    """
+    limit = float(getattr(opts, 'max_b1', 0.0) or 0.0)
+    if limit <= 0.0:
+        return
+    worst = 0.0
+    where = ''
+    for index in sorted(seq.block_events):
+        block = seq.get_block(index)
+        rf = getattr(block, 'rf', None)
+        if rf is None:
+            continue
+        peak = float(np.abs(np.asarray(rf.signal)).max())
+        if peak > worst:
+            # Block ids are 1-based; `origins` is a list in emission order, so it is not.
+            path = origins[index - 1] if 0 < index <= len(origins) else ()
+            worst, where = peak, f'block {index} ({".".join(path) or "?"})'
+    if worst > limit:
+        msg = format_error(
+            f'an RF event peaks at {worst / limit * 100:.0f} % of max_b1.',
+            {'from': where, 'peak_b1_hz': round(worst, 2), 'max_b1_hz': round(limit, 2)},
+            [
+                'lengthen the pulse or lower its flip angle -- peak B1 scales with both for a '
+                'fixed shape',
+                'an adiabatic pulse instead needs a narrower frequency sweep',
+                'or raise max_b1, if the scanner really does deliver it',
+            ],
+        )
+        raise HardwareLimitError(msg)
+
+
 def check_label_addresses(seq: Any) -> None:
     """
     Check that no two imaging ADCs write the same k-space address.
