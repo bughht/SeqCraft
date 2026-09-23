@@ -94,7 +94,7 @@ from .._support import (
     area_until,
     ceil_raster,
     check_peak_b1,
-    duration_for_peak_b1,
+    duration_remedy,
     peak_b1_hz,
     require_axis,
     require_positive,
@@ -581,16 +581,17 @@ class Refocusing(Module):
         return wanted
 
     # -------------------------------------------------------------------- the refusals
+    #: See :attr:`Excitation._STRETCHED`: sinc and gauss stretch, SLR is redesigned.
+    _STRETCHED = frozenset({'sinc', 'gauss'})
+
     def _check_b1(self, rf: Event) -> None:
-        """Refuse a pulse over ``opts.max_b1``, naming the duration that fits."""
-        max_b1 = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
-        remedies: list[str] = []
-        if max_b1 > 0.0:
-            floor_s = duration_for_peak_b1(self.duration_s, peak_b1_hz(rf), max_b1)
-            remedies = [
-                f'pass duration_s >= {floor_s * 1e3:.1f} ms, which is where this shape fits',
-                'or lower flip_deg: peak B1 scales with the flip angle at a fixed shape',
-            ]
+        """Refuse a pulse over ``opts.max_b1``, with the remedy this shape actually has."""
+        limit = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
+        remedies = ['lower flip_deg, or lengthen the pulse'] if limit <= 0.0 else [
+            duration_remedy(self.duration_s, peak_b1_hz(rf), limit,
+                            exact=self.pulse in self._STRETCHED),
+            'or lower flip_deg: peak B1 scales with the flip angle at a fixed shape',
+        ]
         check_peak_b1(
             rf, self.opts,
             described=(f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} '

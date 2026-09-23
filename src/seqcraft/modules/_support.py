@@ -47,11 +47,8 @@ if TYPE_CHECKING:
 
     from ..design.events import Event
 
-#: Gyromagnetic ratio of the proton, Hz/T, for reporting B1 in microtesla.
-_GAMMA_HZ_T = 42.576e6
-
 __all__ = [
-    'area_until', 'ceil_raster', 'check_peak_b1', 'duration_for_peak_b1', 'dwell_quantum',
+    'area_until', 'ceil_raster', 'check_peak_b1', 'duration_for_peak_b1', 'duration_remedy', 'dwell_quantum',
     'halve_onto', 'peak_b1_hz', 'require_axis', 'require_count', 'require_pair',
     'require_positive', 'require_range', 'shift_slice',
 ]
@@ -66,22 +63,29 @@ def check_peak_b1(rf: Event, opts: Opts, *, described: str, remedies: Iterable[s
     """
     Refuse an RF event whose peak amplitude exceeds ``opts.max_b1``.
 
-    The **shared invariant** every RF-producing module holds: ``peak_b1_hz(rf) <= opts.max_b1``,
-    measured on the waveform that will be emitted rather than predicted from the pulse's
-    parameters.  What differs between modules is not the measurement but the **remedy**, so that
-    is the caller's to supply: shortening is right for a fixed-shape sinc and meaningless for an
-    adiabatic inversion, whose peak is set by its frequency sweep.
+    The **shared invariant** every RF-producing module holds, and it is literal::
 
-    ``max_b1`` of zero or ``None`` disables the check, matching pypulseq's convention for its
-    other limits -- but note that ``pp.Opts()`` **defaults it to 851.52 Hz (20 uT)**, so the
-    limit is live unless a caller has deliberately cleared it.
+        peak_b1_hz(rf) <= opts.max_b1
+
+    measured on the waveform that will be emitted rather than predicted from the pulse's
+    parameters.  There is no sentinel: a limit of ``inf`` passes the comparison on its own, which
+    is how a caller disables enforcement.  **Zero is not a disabling value** -- pypulseq's own
+    ``make_sinc_pulse`` compares ``rf_amplitude > system.max_b1`` unconditionally, so a zero limit
+    makes it warn at ``inf %`` rather than fall silent, and it would make this refuse everything.
+
+    Note that ``pp.Opts()`` **defaults ``max_b1`` to 851.52 Hz (20 uT)**, so the limit is live
+    unless a caller has deliberately raised it.
+
+    What differs between modules is not the measurement but the **remedy**, so that is the
+    caller's to supply: lengthening is right for a sinc whose envelope merely stretches, and
+    meaningless for an adiabatic inversion whose peak is set by its frequency sweep.
 
     Parameters
     ----------
     rf
         The RF event to measure.
     opts
-        Supplies ``max_b1``, in hertz.
+        Supplies ``max_b1`` in hertz, and ``gamma`` for reporting the same numbers in microtesla.
     described
         How to name the pulse in the error, e.g. ``"a 2 ms 180 degree sinc pulse"``.
     remedies
@@ -92,34 +96,62 @@ def check_peak_b1(rf: Event, opts: Opts, *, described: str, remedies: Iterable[s
     ConfigurationError
         Naming the measured peak as a percentage of the limit, and the remedies given.
     """
-    max_b1 = float(getattr(opts, 'max_b1', 0.0) or 0.0)
+    configured = getattr(opts, 'max_b1', None)
+    limit = float('inf') if configured is None else float(configured)
     peak = peak_b1_hz(rf)
-    if max_b1 <= 0.0 or peak <= max_b1:
+    if peak <= limit:
         return
-    msg = format_error(
-        f'{described} peaks at {peak / max_b1 * 100:.0f} % of max_b1.',
-        {'peak_b1_hz': round(peak, 2), 'max_b1_hz': round(max_b1, 2),
-         'peak_b1_uT': round(peak / _GAMMA_HZ_T * 1e6, 2),
-         'max_b1_uT': round(max_b1 / _GAMMA_HZ_T * 1e6, 2)},
-        [*remedies, 'or raise max_b1, if the scanner really does deliver it'],
-    )
-    raise ConfigurationError(msg)
+    # In hertz throughout; microtesla is for the reader, so it follows this scanner's nucleus
+    # rather than a hard-coded proton value.
+    gamma = abs(float(getattr(opts, 'gamma', 0.0) or 0.0))
+    detail = {'peak_b1_hz': round(peak, 2), 'max_b1_hz': round(limit, 2)}
+    if gamma > 0.0:
+        detail['peak_b1_uT'] = round(peak / gamma * 1e6, 2)
+        detail['max_b1_uT'] = round(limit / gamma * 1e6, 2)
+    headline = (f'{described} peaks at {peak / limit * 100:.0f} % of max_b1.' if limit > 0.0
+                else f'{described} has a non-zero peak and max_b1 is {limit:g}.')
+    fixes = ([*remedies, 'or raise max_b1, if the scanner really does deliver it'] if limit > 0.0
+             else ['set a real max_b1 -- sc.convert(20, "uT", "Hz") is a common value',
+                   'or use max_b1=inf to design without a transmit limit'])
+    raise ConfigurationError(format_error(headline, detail, fixes))
 
 
 def duration_for_peak_b1(duration_s: float, peak_hz: float, max_b1_hz: float) -> float:
     """
-    Return the shortest duration at which a **fixed-shape** pulse fits ``max_b1``, in seconds.
+    Return the duration at which a pulse of **unchanged envelope** would fit ``max_b1``, seconds.
 
-    Peak :math:`B_1` scales as ``1 / duration`` for a pulse whose shape and flip angle are held
-    fixed -- sinc, gauss and SLR -- so the answer is exact rather than a search.  Rounded up onto
-    a tenth of a millisecond, because a floor quoted to the nanosecond is refused again by its own
-    last digit.
+    Peak :math:`B_1` scales as ``1 / duration`` for a waveform that is merely stretched -- the
+    shape and the flip angle held fixed -- so this inverts that relation.  Rounded up onto a tenth
+    of a millisecond, because a floor quoted to the nanosecond is refused again by its own last
+    digit.
 
-    **It does not hold for adiabatic pulses**, whose peak is set by the frequency sweep: a
-    hyperbolic secant's peak does not move with duration at all.  Those modules quote their own
-    remedy instead.
+    **It is only a floor where that premise holds.**  Changing the duration re-runs the pulse
+    design, and several designs are not a simple stretch: an SLR filter is recomputed, and a
+    module that derives ``time_bw_product`` from a fixed bandwidth changes the design by changing
+    the duration.  It does not hold at all for adiabatic pulses, whose peak is set by the
+    frequency sweep -- a hyperbolic secant's peak does not move with duration.
+
+    Use :func:`duration_remedy` rather than this directly, so that the wording matches the
+    strength of the claim.
     """
     return float(np.ceil(duration_s * peak_hz / max_b1_hz * 1e4) / 10.0) / 1e3
+
+
+def duration_remedy(duration_s: float, peak_hz: float, max_b1_hz: float, *,
+                    exact: bool) -> str:
+    """
+    Return the "make it longer" remedy line, worded to match what is actually guaranteed.
+
+    `exact` says whether the envelope is unchanged by the duration, so that the inverted
+    ``1 / duration`` relation is a **floor** rather than a starting point.  It is true for a sinc
+    or gauss at a fixed time--bandwidth product, and false wherever changing the duration
+    redesigns the pulse.
+    """
+    floor_ms = duration_for_peak_b1(duration_s, peak_hz, max_b1_hz) * 1e3
+    if exact:
+        return f'pass duration_s >= {floor_ms:.1f} ms, which is where this shape fits'
+    return (f'try duration_s >= {floor_ms:.1f} ms and check again -- this pulse is redesigned '
+            f'when the duration changes, so that is a starting point rather than a floor')
 
 
 def require_positive(value: float, name: str, *, fixes: Iterable[str] = ()) -> float:

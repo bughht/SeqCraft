@@ -47,7 +47,7 @@ from ...errors import ConfigurationError, format_error
 from .._support import (
     area_until,
     check_peak_b1,
-    duration_for_peak_b1,
+    duration_remedy,
     peak_b1_hz,
     require_axis,
     require_positive,
@@ -192,22 +192,28 @@ class Excitation(Module):
             self.gz = self.gzr = None
         self._check_b1()
 
+    #: Shapes whose envelope is merely stretched by a longer duration, so peak B1 scales as
+    #: ``1 / duration`` exactly.  An SLR filter is recomputed instead, so its floor is a guide.
+    _STRETCHED = frozenset({'sinc', 'gauss'})
+
     def _check_b1(self) -> None:
-        """Refuse a pulse over ``opts.max_b1``, naming the duration that fits."""
-        max_b1 = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
-        remedies: list[str] = []
-        if max_b1 > 0.0:
-            floor_s = duration_for_peak_b1(self.duration_s, peak_b1_hz(self.rf), max_b1)
-            remedies = [
-                f'pass duration_s >= {floor_s * 1e3:.1f} ms, which is where this shape fits',
-                'or lower flip_deg: peak B1 scales with the flip angle at a fixed shape',
-            ]
+        """Refuse a pulse over ``opts.max_b1``, with the remedy this shape actually has."""
         check_peak_b1(
             self.rf, self.opts,
             described=(f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} '
                        f'excitation'),
-            remedies=remedies,
+            remedies=self._b1_remedies(),
         )
+
+    def _b1_remedies(self) -> list[str]:
+        limit = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
+        if limit <= 0.0:
+            return ['lower flip_deg, or lengthen the pulse']
+        return [
+            duration_remedy(self.duration_s, peak_b1_hz(self.rf), limit,
+                            exact=self.pulse in self._STRETCHED),
+            'or lower flip_deg: peak B1 scales with the flip angle at a fixed shape',
+        ]
 
     # ------------------------------------------------------------------ what it knows
     def time_to_center(self) -> float:

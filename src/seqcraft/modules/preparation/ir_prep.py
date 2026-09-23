@@ -54,7 +54,7 @@ from ...design.module import Module
 from ...errors import ConfigurationError, format_error
 from .._support import (
     check_peak_b1,
-    duration_for_peak_b1,
+    duration_remedy,
     peak_b1_hz,
     require_axis,
     require_positive,
@@ -361,33 +361,50 @@ class IRPrep(Module):
         )
         raise ConfigurationError(msg)
 
+    #: Shapes whose envelope is merely stretched by a longer duration.
+    _STRETCHED = frozenset({'sinc', 'gauss'})
+
+    #: What actually lowers each adiabatic pulse's peak, measured rather than assumed.  A
+    #: hyperbolic secant ignores ``bandwidth`` entirely -- 563.7 Hz at 40, 10 and 2 kHz alike --
+    #: while WURST halves with it.  Both respond to ``adiabaticity``, which is not a free
+    #: parameter: lowering it is what B1 robustness is bought with.
+    _ADIABATIC_REMEDIES: dict[str, tuple[str, ...]] = {
+        'hypsec': (
+            "narrow the sweep: pulse_opts={'beta': ...} or {'mu': ...}, which set the peak here",
+            "or pulse_opts={'adiabaticity': ...}, at the cost of B1 robustness",
+            'bandwidth is not a remedy for this shape, and neither is a longer duration_s',
+        ),
+        'wurst': (
+            "lower pulse_opts={'bandwidth': ...}, which the peak scales with directly",
+            "or pulse_opts={'adiabaticity': ...}, at the cost of B1 robustness",
+            'a longer duration_s helps only as its square root',
+        ),
+    }
+
     def _check_b1(self) -> None:
         """
         Refuse a pulse over ``opts.max_b1``, with the remedy this pulse family actually has.
 
-        The two families differ, and quoting the wrong one is worse than quoting none.  A shaped
-        pulse at a fixed flip angle scales as ``1 / duration``, so a longer one fits.  An
-        **adiabatic** pulse does not: its peak is set by the frequency sweep, so a hyperbolic
-        secant's peak does not move with duration at all, and a WURST's falls only as the square
-        root of it.  There the parameters to reach for are the sweep's, through ``pulse_opts``.
+        The families differ, and quoting the wrong one is worse than quoting none.  A shaped pulse
+        at a fixed flip angle scales as ``1 / duration``, so a longer one fits.  An **adiabatic**
+        pulse's peak is set by its frequency sweep instead, and the two adiabatic shapes do not
+        even share a control: ``bandwidth`` halves a WURST's peak and does nothing at all to a
+        hyperbolic secant's.
         """
-        max_b1 = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
-        remedies: list[str] = []
-        if max_b1 > 0.0 and self.pulse in _ADIABATIC:
-            remedies = [
-                "lower the sweep: pulse_opts={'bandwidth': ...} or {'adiabaticity': ...}",
-                'a longer duration_s does not help much here -- an adiabatic pulse peaks at what '
-                'its sweep demands',
-            ]
-        elif max_b1 > 0.0:
-            floor_s = duration_for_peak_b1(self.duration_s, peak_b1_hz(self.rf), max_b1)
-            remedies = [f'pass duration_s >= {floor_s * 1e3:.1f} ms, which is where this shape '
-                        f'fits']
         check_peak_b1(
             self.rf, self.opts,
             described=f'a {self.duration_s * 1e3:g} ms {self.pulse} inversion pulse',
-            remedies=remedies,
+            remedies=self._b1_remedies(),
         )
+
+    def _b1_remedies(self) -> list[str]:
+        if self.pulse in self._ADIABATIC_REMEDIES:
+            return list(self._ADIABATIC_REMEDIES[self.pulse])
+        limit = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
+        if limit <= 0.0:
+            return ['lengthen the pulse']
+        return [duration_remedy(self.duration_s, peak_b1_hz(self.rf), limit,
+                                exact=self.pulse in self._STRETCHED)]
 
     def _check_pulse_opts(self, pulse_opts: dict[str, Any] | None) -> dict[str, Any]:
         """Return `pulse_opts` having checked every key against the chosen factory."""

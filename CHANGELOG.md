@@ -15,20 +15,33 @@ The contract now has two layers:
 
 The backstop is what makes it a contract rather than four habits: it catches a raw
 `pp.make_sinc_pulse` added straight to a `LogicBlock`, and any future RF module that forgets its
-own check. `max_b1 = 0` disables both, which is pypulseq's "no limit" convention.
+own check.
+
+The invariant is literal — `peak_b1_hz(rf) <= opts.max_b1` — with no sentinel, so **`max_b1 = inf`
+is how a caller designs without a transmit limit.** Zero is *not* that value: unlike
+`adc_samples_limit`, whose `0` is pypulseq's documented "no limit", `make_sinc_pulse` compares
+`rf_amplitude > system.max_b1` unconditionally, so a zero limit makes pypulseq warn at `inf %` and
+would make this refuse everything. A zero limit is reported as the misconfiguration it is.
 
 **The measurement is shared and the remedy is not.** `_support.check_peak_b1` measures
 `max(abs(rf.signal))` against the limit; each module supplies its own fixes, because the right
-advice depends on the pulse family:
+advice depends on the pulse family — and a quoted number is only called a *floor* where rebuilding
+at it is proved by a test:
 
-```text
-sinc / gauss / SLR   peak scales as 1 / duration   -> the refusal quotes the duration that fits
-hypsec               peak set by the frequency sweep, and does NOT move with duration at all
-wurst                falls only as sqrt(duration)  -> narrow the sweep via pulse_opts instead
-```
+| family | how the peak responds | what the refusal says |
+|---|---|---|
+| sinc, gauss at fixed TBW | envelope stretches, so exactly `1 / duration` | the duration that fits, as a **floor** |
+| SLR | the filter is recomputed | the same number, as a **starting point** to re-check |
+| `SaturationPrep` | `bandwidth_hz` is fixed, so TBW moves with duration | likewise a starting point |
+| `hypsec` | set by the sweep — **`bandwidth` does nothing**, 563.7 Hz at 40, 10 and 2 kHz alike, and duration does nothing either | `beta`, `mu` or `adiabaticity` |
+| `wurst` | halves with `bandwidth`; duration helps only as `sqrt` | `bandwidth` or `adiabaticity` |
 
-Generalising `Refocusing`'s `1 / duration` repair estimate to every family would have produced
-advice that does not work: a hyperbolic secant is 563.7 Hz at 5, 10 and 20 ms alike.
+Generalising `Refocusing`'s `1 / duration` estimate to every family would have produced advice
+that does not work. Lowering `adiabaticity` is not free either — it is what B1 robustness is
+bought with — and the messages say so.
+
+Peak amplitudes are reported in microtesla alongside hertz, converted with **`opts.gamma`**, so
+the numbers stay right on a non-proton system.
 
 Two paths were emitting physically impossible pulses **with no warning from anywhere**:
 
@@ -42,7 +55,7 @@ Two paths were emitting physically impossible pulses **with no warning from anyw
 Every example notebook still compiles unchanged, so no working protocol was in the way. Eleven
 existing tests used an over-limit pulse as a **stand-in** for something else — a 1 ms 90 to give
 the compiler a block to schedule around, a minimum-phase SLR to give the rephaser an asymmetric
-envelope — and now run with the limit cleared through a new `unbounded_b1` fixture that says why.
+envelope — and now run with `max_b1 = inf` through a new `unbounded_b1` fixture that says why.
 One, `IRPrep`'s WURST case, narrows the sweep instead, because that is the remedy the family has.
 
 ## Unreleased — the examples teach, the docstrings document, and the history lives elsewhere

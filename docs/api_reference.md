@@ -614,13 +614,21 @@ sinc peaks at 130 % of it.
 |---|---|
 | **every RF module checks its own pulse** | `Excitation`, `Refocusing`, `IRPrep` and `SaturationPrep` raise `ConfigurationError` at construction, naming what to change |
 | **the compiler checks the emitted sequence** | `HardwareLimitError`, naming the block and its origin. This catches a raw pypulseq RF event added straight to a `LogicBlock` |
-| **`max_b1 = 0` disables both** | pypulseq's "no limit" convention, the same one `adc_samples_limit` uses |
+| **`max_b1 = inf` disables both** | and it is the right way to. **Zero does not**: pypulseq's `make_sinc_pulse` compares `rf_amplitude > system.max_b1` unconditionally, so a zero limit warns at `inf %` there and refuses everything here |
 
-The remedy depends on the pulse family, which is why each module supplies its own. A **fixed-shape**
-pulse — sinc, gauss, SLR — scales as `1 / duration`, so a longer one fits and the refusal quotes the
-duration that does. An **adiabatic** pulse does not: its peak is set by its frequency sweep, so a
-hyperbolic secant's peak does not move with duration at all and WURST's falls only as its square
-root. There the parameters to reach for are the sweep's, through `pulse_opts`.
+The remedy depends on the pulse family, which is why each module supplies its own rather than
+sharing one.
+
+| family | how the peak responds | what the refusal says |
+|---|---|---|
+| sinc, gauss at fixed TBW | envelope stretches, so exactly `1 / duration` | the duration that fits, as a **floor** |
+| SLR | the filter is recomputed, so scaling is not guaranteed | the same number, as a **starting point** to re-check |
+| `SaturationPrep` | `bandwidth_hz` is fixed, so TBW moves with the duration | likewise a starting point |
+| `hypsec` | set by the sweep; **`bandwidth` does nothing**, and nor does duration | `beta`, `mu` or `adiabaticity` via `pulse_opts` |
+| `wurst` | halves with `bandwidth`; duration helps only as `sqrt` | `bandwidth` or `adiabaticity` via `pulse_opts` |
+
+Lowering `adiabaticity` is not free — it is what B1 robustness is bought with — and the messages
+say so.
 
 `from_scanner` requires `max_b1` for the same reason it requires the dead times: it belongs to the
 transmit chain and the coil loading, so no vendor database can supply it. Take it from the
@@ -1675,6 +1683,7 @@ access to placed events, boundaries, label targets, the scanner limits, or trans
 | `verify_ready_blocks(blocks, *, expected_first_index=0, expected_start=None)` | Structural contract on the second |
 | `require_valid_contract(name, violations) -> None` | Raise `CompilerContractError` if any |
 | `check_event_sizes(seq, opts, origins=()) -> None` | Raise `HardwareLimitError` above the interpreter's per-event sample limit |
+| `check_rf_amplitude(seq, opts, origins=()) -> None` | Raise `HardwareLimitError` if any RF event's peak exceeds `opts.max_b1` |
 | `check_label_addresses(seq) -> None` | Raise `CompileError` if two imaging ADCs write the same k-space address |
 | `expected_addresses(placed, targets) -> list[dict[str, int]]` | Fold the tree's labels the way the interpreter will |
 | `verify_against_tree(placed, targets, *, duration_s, tree_duration_s, moments, label_states) -> None` | The four semantic invariants |
@@ -1804,6 +1813,7 @@ at import.
 | `check_event_sizes` | `compiler.verification` | function |
 | `check_exclusive` | `compiler.boundaries` | function |
 | `check_label_addresses` | `compiler.verification` | function |
+| `check_rf_amplitude` | `compiler.verification` | function |
 | `check_limits` | `design.events` | function |
 | `check_limits` | `compiler.legalization` | function |
 | `common_path` | `compiler.legalization` | function |

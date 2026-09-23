@@ -30,6 +30,7 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pytest
 from pypulseq.opts import Opts
 
@@ -167,7 +168,7 @@ def component_checks() -> Any:
 @pytest.fixture(scope='session')
 def unbounded_b1(opts: Opts) -> Opts:
     """
-    `opts` with ``max_b1`` cleared, for tests whose subject is not RF amplitude.
+    `opts` with ``max_b1`` set to infinity, for tests whose subject is not RF amplitude.
 
     ``pp.Opts()`` defaults ``max_b1`` to 851.52 Hz (20 uT), and SeqCraft enforces it -- both in
     each RF module and as a backstop on the emitted sequence.  Several tests here use an RF pulse
@@ -175,8 +176,11 @@ def unbounded_b1(opts: Opts) -> Opts:
     around, or a minimum-phase SLR to give the rephaser an asymmetric envelope to reference.  Those
     pulses are over the limit and are not the point, so they run with it cleared.
 
-    Zero is pypulseq's "no limit" convention, the same one ``adc_samples_limit`` uses.
+    **Infinity, not zero.**  ``adc_samples_limit = 0`` is pypulseq's documented "no limit", but
+    ``max_b1`` is not the same: ``make_sinc_pulse`` compares ``rf_amplitude > system.max_b1``
+    unconditionally, so a zero limit makes pypulseq warn at ``inf %`` and would make SeqCraft
+    refuse every pulse.  ``inf`` satisfies the comparison on both sides and needs no sentinel.
     """
     relaxed = copy.copy(opts)
-    relaxed.max_b1 = 0.0
+    relaxed.max_b1 = np.inf
     return relaxed

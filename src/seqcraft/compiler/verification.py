@@ -15,12 +15,13 @@ A failure here is a compiler bug too -- the tree was legal, since every legality
 passed -- so it raises :class:`CompilerContractError` as well.  All four invariants are measured
 before anything is raised, because seeing every affected axis at once beats stopping at the first.
 
-**Finished-sequence checks** (:func:`check_event_sizes`, :func:`check_label_addresses`) ask what
-only a built :class:`pypulseq.Sequence` can answer: does any one event exceed the interpreter's
-sample limit, and do two imaging ADCs write the same k-space address?  Neither is an internal
-invariant -- both are ways a legal-looking tree produces a sequence a scanner refuses -- so they
-raise :class:`~seqcraft.errors.HardwareLimitError` and :class:`~seqcraft.errors.CompileError`
-respectively.
+**Finished-sequence checks** (:func:`check_event_sizes`, :func:`check_rf_amplitude`,
+:func:`check_label_addresses`) ask what only a built :class:`pypulseq.Sequence` can answer: does
+any one event exceed the interpreter's sample limit, does any RF event's peak exceed the transmit
+limit, and do two imaging ADCs write the same k-space address?  None is an internal invariant --
+all three are ways a legal-looking tree produces a sequence a scanner refuses -- so the first two
+raise :class:`~seqcraft.errors.HardwareLimitError` and the third
+:class:`~seqcraft.errors.CompileError`.
 
 They live here rather than on what a compile returns because a check nobody has to call is a
 check nobody calls.  The reference implementation's ``get_report()`` printed and returned
@@ -248,16 +249,21 @@ def check_rf_amplitude(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] =
     :class:`~seqcraft.LogicBlock`, a future module that forgets its own check, and any path that
     reaches a block without passing one.
 
-    ``max_b1`` of zero or ``None`` disables it, as ``adc_samples_limit`` does -- but ``pp.Opts()``
-    **defaults it to 851.52 Hz (20 uT)**, so it is live unless a caller has cleared it.
+    The comparison is literal, so ``max_b1 = inf`` is how a caller designs without a transmit
+    limit.  **Zero is not that value**: unlike ``adc_samples_limit``, whose ``0`` is pypulseq's
+    documented "no limit", ``make_sinc_pulse`` compares ``rf_amplitude > system.max_b1``
+    unconditionally, so a zero limit warns at ``inf %`` there and refuses everything here.
+    ``pp.Opts()`` **defaults it to 851.52 Hz (20 uT)**, so the limit is live unless a caller has
+    deliberately raised it.
 
     Raises
     ------
     HardwareLimitError
         Naming the worst event, where it came from, and the peak as a percentage of the limit.
     """
-    limit = float(getattr(opts, 'max_b1', 0.0) or 0.0)
-    if limit <= 0.0:
+    configured = getattr(opts, 'max_b1', None)
+    limit = float('inf') if configured is None else float(configured)
+    if not np.isfinite(limit):
         return
     worst = 0.0
     where = ''
@@ -272,8 +278,10 @@ def check_rf_amplitude(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] =
             path = origins[index - 1] if 0 < index <= len(origins) else ()
             worst, where = peak, f'block {index} ({".".join(path) or "?"})'
     if worst > limit:
+        excess = (f'{worst / limit * 100:.0f} % of max_b1' if limit > 0.0
+                  else f'a non-zero amplitude, and max_b1 is {limit:g}')
         msg = format_error(
-            f'an RF event peaks at {worst / limit * 100:.0f} % of max_b1.',
+            f'an RF event peaks at {excess}.',
             {'from': where, 'peak_b1_hz': round(worst, 2), 'max_b1_hz': round(limit, 2)},
             [
                 'lengthen the pulse or lower its flip angle -- peak B1 scales with both for a '
@@ -560,6 +568,7 @@ __all__ = [
     'ContractViolation',
     'check_event_sizes',
     'check_label_addresses',
+    'check_rf_amplitude',
     'expected_addresses',
     'require_valid_contract',
     'verify_against_tree',

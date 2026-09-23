@@ -58,7 +58,7 @@ def refocusing(opts: Opts, **kwargs) -> sc.modules.Refocusing:
 
 # ------------------------------------------------------------------------------- the oracle
 def _any_b1(opts: Opts) -> Opts:
-    """`opts` with ``max_b1`` cleared.
+    """`opts` with ``max_b1`` set to infinity.
 
     The reference 180 here is 2 ms, which peaks at 147 % of the 20 uT ``pp.Opts`` default -- and
     lengthening it would change the crusher window these tests measure.  The tests below are about
@@ -66,7 +66,7 @@ def _any_b1(opts: Opts) -> Opts:
     ``test_a_pulse_over_max_b1_is_refused`` is where the limit itself is checked.
     """
     relaxed = copy.copy(opts)
-    relaxed.max_b1 = 0.0
+    relaxed.max_b1 = np.inf
     return relaxed
 
 

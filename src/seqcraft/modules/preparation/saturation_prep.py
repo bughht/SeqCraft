@@ -93,7 +93,7 @@ from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
-from .._support import check_peak_b1, duration_for_peak_b1, peak_b1_hz, require_axis, require_positive
+from .._support import check_peak_b1, duration_remedy, peak_b1_hz, require_axis, require_positive
 from ..spoiler import spoiler
 
 if TYPE_CHECKING:
@@ -322,16 +322,19 @@ class SaturationPrep(Module):
         raise ConfigurationError(msg)
 
     def _check_b1(self) -> None:
-        """Refuse a pulse over ``opts.max_b1``, naming the duration that fits."""
-        max_b1 = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
-        remedies: list[str] = []
-        if max_b1 > 0.0:
-            floor_s = duration_for_peak_b1(self.duration_s, peak_b1_hz(self.rf), max_b1)
-            remedies = [
-                f'pass duration_s >= {floor_s * 1e3:.1f} ms -- but check that the bandwidth this '
-                f'implies still clears water',
-                'or lower flip_deg, at the cost of leaving more fat signal behind',
-            ]
+        """
+        Refuse a pulse over ``opts.max_b1``.
+
+        The duration is never quoted as a floor here.  `bandwidth_hz` is part of this module's
+        public contract and is held fixed, so the time--bandwidth product -- and with it the pulse
+        design -- changes whenever the duration does.  The ``1 / duration`` relation is then a
+        starting point rather than a guarantee, and the wording says so.
+        """
+        limit = float(getattr(self.opts, 'max_b1', 0.0) or 0.0)
+        remedies = ['lengthen the pulse, or lower flip_deg'] if limit <= 0.0 else [
+            duration_remedy(self.duration_s, peak_b1_hz(self.rf), limit, exact=False),
+            'or lower flip_deg, at the cost of leaving more fat signal behind',
+        ]
         check_peak_b1(
             self.rf, self.opts,
             described=(f'a {self.duration_s * 1e3:g} ms {self.flip_deg:g} degree {self.pulse} '

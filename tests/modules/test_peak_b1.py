@@ -10,19 +10,21 @@ Two layers, and the second is what makes it a contract rather than four habits:
 
 The limit is live by default.  ``pp.Opts()`` sets ``max_b1`` to 851.52 Hz -- 20 uT -- so these
 tests do not have to opt in to it; ``tests/conftest.py``'s ``unbounded_b1`` is how a test opts
-*out*, and why.
+*out*, and it uses ``inf`` rather than zero for the reason
+:func:`test_zero_is_not_a_disabling_value` records.
 """
 
 from __future__ import annotations
 
 import copy
+import re
 
 import numpy as np
 import pypulseq as pp
 import pytest
 
 import seqcraft as sc
-from seqcraft.modules._support import duration_for_peak_b1, peak_b1_hz
+from seqcraft.modules._support import peak_b1_hz
 
 #: Pulses are quoted against this throughout, because it is what a bare ``pp.Opts()`` carries.
 DEFAULT_MAX_B1_HZ = 851.52
@@ -45,14 +47,39 @@ def test_the_pypulseq_default_is_a_real_limit(opts) -> None:
     assert sc.convert(opts.max_b1, 'Hz', 'uT') == pytest.approx(20.0, rel=1e-3)
 
 
-def test_zero_disables_the_check_everywhere(unbounded_b1) -> None:
-    """``max_b1 = 0`` is pypulseq's "no limit", the same convention ``adc_samples_limit`` uses."""
-    assert unbounded_b1.max_b1 == 0.0
+def test_infinity_disables_enforcement_cleanly(unbounded_b1) -> None:
+    """
+    ``inf`` is how a caller designs without a transmit limit, and it needs no sentinel branch.
+
+    The invariant stays literal -- ``peak <= opts.max_b1`` -- and an infinite limit satisfies it.
+    Both layers are exercised: the module builds, and the emitted sequence compiles.
+    """
+    assert unbounded_b1.max_b1 == np.inf
     loud = sc.modules.Excitation(opts=unbounded_b1, flip_deg=90.0, thickness_mm=5.0,
                                  duration_s=1e-3)
 
     assert _peak(loud) > DEFAULT_MAX_B1_HZ, 'the pulse really is over the default limit'
     sc.compile(sc.LogicBlock('loud').add(0.0, loud()), unbounded_b1)
+
+
+def test_zero_is_not_a_disabling_value(opts) -> None:
+    """
+    Why ``unbounded_b1`` uses ``inf``, recorded as a test rather than as a comment.
+
+    ``adc_samples_limit = 0`` is pypulseq's documented "no limit"; ``max_b1`` is **not** the same.
+    ``make_sinc_pulse`` compares ``rf_amplitude > system.max_b1`` unconditionally, so at zero it
+    warns at ``inf %``.  SeqCraft therefore does not treat zero as disabling either -- it refuses,
+    and says the limit itself is the thing to set.
+    """
+    zeroed = copy.copy(opts)
+    zeroed.max_b1 = 0.0
+
+    with pytest.raises(sc.ConfigurationError) as caught:
+        sc.modules.Excitation(opts=zeroed, flip_deg=90.0, thickness_mm=5.0, duration_s=3e-3)
+
+    message = str(caught.value)
+    assert 'max_b1 is 0' in message
+    assert 'max_b1=inf' in message, 'it points at the value that does disable it'
 
 
 # ------------------------------------------------------------------------- accepted, and refused
@@ -64,30 +91,68 @@ def test_a_pulse_below_the_limit_is_accepted(opts, duration_s: float) -> None:
     assert _peak(module) < opts.max_b1
 
 
-def test_a_pulse_just_below_the_limit_is_accepted(opts) -> None:
-    """
-    The boundary, approached from the side that must work.
-
-    ``duration_for_peak_b1`` rounds up onto a tenth of a millisecond, so the duration it returns
-    lands just under the limit rather than exactly on it -- and *that* is the number a refusal
-    quotes, so it has to be accepted when a caller uses it.
-    """
-    over = 1.0e-3
-    peak = peak_b1_hz(sc.modules.Excitation(opts=copy.copy(_no_limit(opts)), flip_deg=90.0,
-                                            thickness_mm=5.0, duration_s=over).rf)
-    floor_s = duration_for_peak_b1(over, peak, opts.max_b1)
-
-    module = sc.modules.Excitation(opts=opts, flip_deg=90.0, thickness_mm=5.0,
-                                   duration_s=floor_s)
-
-    assert _peak(module) <= opts.max_b1
-    assert _peak(module) > 0.9 * opts.max_b1, 'the quoted floor is not wastefully conservative'
-
-
 def _no_limit(opts):
     relaxed = copy.copy(opts)
-    relaxed.max_b1 = 0.0
+    relaxed.max_b1 = np.inf
     return relaxed
+
+
+def _quoted_duration_ms(message: str) -> float:
+    """The duration a refusal quotes, in milliseconds, parsed out of the message it printed."""
+    found = re.search(r'duration_s >= ([\d.]+) ms', message)
+    assert found, f'no duration quoted in:\n{message}'
+    return float(found.group(1))
+
+
+@pytest.mark.parametrize('pulse', ['sinc', 'gauss'])
+def test_a_quoted_floor_really_does_fit(opts, pulse: str) -> None:
+    """
+    **The rule for quoting a number: rebuild at it and check.**
+
+    A sinc or gauss at a fixed time--bandwidth product is merely stretched by a longer duration,
+    so the inverted ``1 / duration`` relation is a floor and the message says so.  This rebuilds
+    at exactly the duration the refusal printed, and requires that it passes.
+    """
+    over = 0.6e-3 if pulse == 'gauss' else 1.0e-3
+    with pytest.raises(sc.ConfigurationError) as caught:
+        sc.modules.Excitation(opts=opts, flip_deg=90.0, thickness_mm=5.0, duration_s=over,
+                              pulse=pulse)
+
+    message = str(caught.value)
+    assert 'which is where this shape fits' in message, 'a floor is claimed'
+    at_the_floor = sc.modules.Excitation(opts=opts, flip_deg=90.0, thickness_mm=5.0, pulse=pulse,
+                                         duration_s=_quoted_duration_ms(message) / 1e3)
+
+    assert _peak(at_the_floor) <= opts.max_b1
+    assert _peak(at_the_floor) > 0.8 * opts.max_b1, 'and it is not wastefully conservative'
+
+
+def test_slr_does_not_claim_a_floor(opts) -> None:
+    """
+    An SLR filter is **recomputed** when the duration changes, so the same arithmetic is a guide.
+
+    The number is still worth printing -- it is right for the default filter -- but the wording
+    must not promise what is not guaranteed for every ``filter_type``.
+    """
+    with pytest.raises(sc.ConfigurationError) as caught:
+        sc.modules.Excitation(opts=opts, flip_deg=90.0, thickness_mm=5.0, duration_s=1e-3,
+                              pulse='slr')
+
+    message = str(caught.value)
+    assert 'starting point rather than a floor' in message
+    assert 'which is where this shape fits' not in message
+
+
+def test_saturation_prep_does_not_claim_a_floor(opts) -> None:
+    """
+    `bandwidth_hz` is part of this module's public contract and is held fixed, so changing the
+    duration changes the time--bandwidth product and therefore the design.  No floor is promised.
+    """
+    with pytest.raises(sc.ConfigurationError) as caught:
+        sc.modules.SaturationPrep(opts=opts, shift_ppm=-3.4, flip_deg=110.0, duration_s=0.3e-3,
+                                  bandwidth_hz=200.0, spoil_voxel_mm=5.0)
+
+    assert 'starting point rather than a floor' in str(caught.value)
 
 
 def test_excitation_over_the_limit_is_refused(opts) -> None:
@@ -128,21 +193,50 @@ def test_ir_prep_shaped_over_the_limit_is_refused(opts) -> None:
     assert 'duration_s' in str(caught.value), 'a shaped pulse scales as 1 / duration'
 
 
-def test_ir_prep_adiabatic_is_refused_with_the_remedy_it_actually_has(opts) -> None:
-    """
-    The reason the remedy is the module's and not the shared helper's.
-
-    An adiabatic pulse's peak is set by its frequency sweep, not by its length: a hyperbolic
-    secant's peak does not move with duration at all, and WURST's falls only as its square root.
-    Quoting "make it longer" here would be advice that does not work.
-    """
+def test_wurst_remedy_names_bandwidth_because_bandwidth_works(opts) -> None:
+    """WURST's peak scales with the sweep width: 2523 Hz at 40 kHz, 564 at 2 kHz."""
     with pytest.raises(sc.ConfigurationError, match='max_b1') as caught:
         sc.modules.IRPrep(opts=opts, thickness_mm=None, pulse='wurst', duration_s=4e-3,
                           spoil_voxel_mm=5.0)
 
     message = str(caught.value)
     assert 'bandwidth' in message and 'adiabaticity' in message
-    assert 'does not help much' in message
+    assert 'square root' in message, 'and duration is described honestly'
+    narrowed = sc.modules.IRPrep(opts=opts, thickness_mm=None, pulse='wurst', duration_s=4e-3,
+                                 spoil_voxel_mm=5.0, pulse_opts={'bandwidth': 2000})
+
+    assert _peak(narrowed) <= opts.max_b1, 'the remedy it names actually works'
+
+
+def test_hypsec_remedy_does_not_name_bandwidth_because_bandwidth_does_nothing(opts) -> None:
+    """
+    The reason the two adiabatic shapes do not share a message.
+
+    ``make_adiabatic_pulse`` ignores ``bandwidth`` for a hyperbolic secant -- 563.7 Hz at 40, 10
+    and 2 kHz alike -- so recommending it would be advice that cannot work.  ``beta`` and ``mu``
+    are what set the peak here.
+    """
+    loud = {'beta': 3000.0}
+    with pytest.raises(sc.ConfigurationError, match='max_b1') as caught:
+        sc.modules.IRPrep(opts=opts, thickness_mm=None, pulse='hypsec', duration_s=10e-3,
+                          spoil_voxel_mm=5.0, pulse_opts=loud)
+
+    message = str(caught.value)
+    assert 'beta' in message and 'mu' in message
+    assert 'bandwidth is not a remedy' in message
+    assert 'adiabaticity' in message and 'robustness' in message, 'and it is not free'
+
+
+def test_bandwidth_really_does_nothing_to_a_hyperbolic_secant(unbounded_b1) -> None:
+    """The measurement the previous test's message rests on."""
+    peaks = {
+        bw: _peak(sc.modules.IRPrep(opts=unbounded_b1, thickness_mm=None, pulse='hypsec',
+                                    duration_s=10e-3, spoil_voxel_mm=5.0,
+                                    pulse_opts={'bandwidth': bw}))
+        for bw in (40000, 10000, 2000)
+    }
+
+    assert len({round(v, 6) for v in peaks.values()}) == 1
 
 
 def test_the_hyperbolic_secant_default_fits_and_does_not_move_with_duration(opts) -> None:
@@ -205,3 +299,28 @@ def test_a_raw_rf_event_under_the_limit_compiles(opts) -> None:
                             slice_thickness=5e-3, use='excitation', return_gz=True)[0]
 
     sc.compile(sc.LogicBlock('quiet').add(0.0, rf), opts)
+
+
+# ------------------------------------------------------------------------------ other nuclei
+def test_the_invariant_is_in_hertz_and_the_reported_microtesla_follow_opts_gamma(opts) -> None:
+    """
+    The limit is compared in hertz, which is nucleus-independent; microtesla is for the reader.
+
+    So the conversion has to use **this scanner's** ``gamma`` rather than a hard-coded proton
+    value, or the number printed beside a sodium or carbon limit is wrong by the ratio of the two.
+    """
+    carbon = copy.copy(opts)
+    carbon.gamma = 10.7084e6                          # 13C
+    assert carbon.max_b1 == opts.max_b1, 'the limit itself is in hertz and does not move'
+
+    with pytest.raises(sc.ConfigurationError) as proton:
+        sc.modules.Excitation(opts=opts, flip_deg=90.0, thickness_mm=5.0, duration_s=1e-3)
+    with pytest.raises(sc.ConfigurationError) as other:
+        sc.modules.Excitation(opts=carbon, flip_deg=90.0, thickness_mm=5.0, duration_s=1e-3)
+
+    # Same hertz on both sides ...
+    assert 'peak_b1_hz:  1107.63' in str(proton.value)
+    assert 'peak_b1_hz:  1107.63' in str(other.value)
+    # ... and microtesla that follow the nucleus.
+    assert 'max_b1_uT :  20.0' in str(proton.value)
+    assert 'max_b1_uT :  79.52' in str(other.value)
