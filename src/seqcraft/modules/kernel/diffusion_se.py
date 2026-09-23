@@ -17,10 +17,10 @@ before it, so identical lobes either side of it subtract for stationary spins an
 diffusing ones.  (In a gradient echo, with no refocusing pulse, the pair is bipolar instead; that
 is a different realization and is not this module.)
 
-Gradient-echo, twice-refocused and multi-lobe eddy-current-compensated designs are deliberately
-out of scope -- they differ in polarity, lobe count and cancellation conditions, not in a
-parameter.  So are direction schemes, b-matrices and tensor encoding, which are acquisition and
-analysis policy above this layer.
+Gradient-echo, twice-refocused and multi-lobe eddy-current-compensated designs are out of scope:
+they differ in polarity, lobe count and cancellation conditions rather than in a parameter.
+Direction schedules, b-matrix reporting and tensor-valued encoding are not implemented by this
+class either.
 
 The b-value
 -----------
@@ -37,7 +37,7 @@ The last two terms are the finite-ramp correction; they vanish as :math:`\vareps
 leaving the rectangular-lobe expression :math:`b = \gamma^2 G^2 \delta^2 (\Delta - \delta/3)`.
 The correction is negative, so omitting it over-states `b`.
 
-:func:`b_of_trapezoid_pair` evaluates this expression and is importable on its own.
+:func:`b_of_trapezoid_pair` evaluates this expression.
 
 What this module owns
 ---------------------
@@ -96,15 +96,14 @@ __all__ = ['DiffusionSEPrep']
 #: Gyromagnetic ratio of the proton, Hz/T -- the same value `pypulseq` uses.
 _GAMMA_HZ_T = 42.576e6
 
-#: The slew fraction diffusion lobes are designed at, by default.  The handbook, §9.1 p. 280:
-#: "using the maximum gradient slew rate can also reduce the TE value, [but] the improvement is
-#: usually much less than employing the maximum gradient amplitude because the plateau duration
-#: typically greatly exceeds the ramp width.  In addition, employing the maximum slew rate
-#: contributes to the overall dB/dt value, which may induce unwanted peripheral nerve stimulation
-#: or excessive eddy currents.  For these reasons, maximum slew rate is often not used in
-#: diffusion-weighting gradients, especially for imaging human subjects."
+#: The fraction of ``max_slew`` diffusion lobes are designed at, by default.
 #:
-#: So this is a physical default with a source, not a safety margin someone guessed.
+#: The reasoning is sourced; the number is not.  The handbook (§9.1 p. 280) says that maximum slew
+#: buys much less than maximum amplitude here, because the plateau greatly exceeds the ramp, and
+#: that it "contributes to the overall dB/dt value, which may induce unwanted peripheral nerve
+#: stimulation or excessive eddy currents", so "maximum slew rate is often not used in
+#: diffusion-weighting gradients, especially for imaging human subjects".  It prescribes no
+#: fraction.  0.7 is SeqCraft's default and `slew_fraction` is a constructor argument.
 _SLEW_FRACTION = 0.7
 
 
@@ -113,12 +112,21 @@ def b_of_trapezoid_pair(amplitude_hz_m: float, delta_s: float, separation_s: flo
     r"""
     Return the `b`-value of one trapezoid pair, in s/mm\ :sup:`2`.
 
-`delta_s` is the lobe width **including one ramp**, `separation_s` is the distance between the
-    two lobe centres, and `ramp_s` is the ramp time.  Setting ``ramp_s=0`` recovers the
-    rectangular-lobe expression.
+    Parameters
+    ----------
+    amplitude_hz_m
+        Lobe amplitude, Hz/m.
+    delta_s
+        Lobe width **including one ramp**, seconds.
+    separation_s
+        Distance between the two lobe **centres**, seconds.
+    ramp_s
+        Ramp time of one edge, seconds.  ``0.0`` recovers the rectangular-lobe expression.
 
-    A free function rather than a method: it is the `b`-value of a trapezoid pair and needs
-    nothing from a module instance.
+    Returns
+    -------
+    float
+        The `b`-value of the pair, s/mm\ :sup:`2`.
     """
     gamma_rad = 2.0 * np.pi * _GAMMA_HZ_T
     grad_t_m = float(amplitude_hz_m) / _GAMMA_HZ_T
@@ -149,12 +157,28 @@ class DiffusionSEPrep(Module):
         ``0.0`` is the b = 0 reference image and is built with no diffusion lobes at all rather
         than with zero-amplitude ones.
     axis
-        Which logical axis carries the encoding, or several for an oblique direction.  The
-        handbook notes each axis is treated independently, so a direction is a per-axis amplitude
-        and the `b` of the set is their sum.
+        One logical axis, or several with **equal** per-axis weighting.  Each named axis carries
+        an identical lobe pair and contributes an equal share of the requested `b`, so
+        ``('x', 'y')`` is the equal-component x/y diagonal rather than an arbitrary direction.
+        Arbitrary oblique directions are not expressible through this argument.
     te_s
         ``None`` -- the default -- uses the shortest echo time that reaches `b_s_per_mm2`.  A
         value is used as given and **refused** if it is too short, rather than silently lengthened.
+    flip_deg, refocus_flip_deg
+        Nominal flip angles of the excitation and the refocusing pulse, in degrees.
+    excitation_duration_s, refocus_duration_s
+        Pulse durations.  The refocusing pulse's duration is part of the lobe-centre separation,
+        so lengthening it lengthens the minimum echo time.
+    refocus_thickness_factor
+        The refocusing pulse selects this multiple of `thickness_mm`, so that its slice profile
+        covers the excited slice at its edges.
+    crush_cycles_slice
+        Crusher strength around the refocusing pulse, in cycles of phase across one slice
+        thickness.
+    slew_fraction
+        Fraction of ``max_slew`` the diffusion lobes are designed at.  See ``_SLEW_FRACTION``.
+    tag
+        Optional name for the emitted block, as for any :class:`~seqcraft.Module`.
 
     Attributes
     ----------

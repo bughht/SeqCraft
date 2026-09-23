@@ -98,8 +98,11 @@ def test_the_slice_axis_carries_its_own_small_weighting(opts: pp.Opts) -> None:
     assert 0.0 < delivered['z'] < 5.0
 
 
-def test_an_oblique_direction_splits_the_weighting(opts: pp.Opts) -> None:
-    """Per-axis independence, §9.2's phrasing: the total is the sum over axes."""
+def test_several_axes_split_the_weighting_equally(opts: pp.Opts) -> None:
+    """Per-axis independence: each named axis carries an equal share and the total is the sum.
+
+    ``axis=('x', 'y')`` is therefore the equal-component diagonal, not an arbitrary direction.
+    """
     module = prep(opts, b_s_per_mm2=1000.0, axis=('x', 'y'))
     delivered = sc.b_value(module(), opts, end_s=module.time_to_echo())
     assert delivered['x'] == pytest.approx(delivered['y'], rel=1e-6)

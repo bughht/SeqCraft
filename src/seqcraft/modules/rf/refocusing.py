@@ -76,12 +76,6 @@ The B1 refusal, which lives here rather than in the compiler
 B1 scales with flip angle at a fixed shape, so a 180 needs exactly twice a 90's: measured, a 2 ms
 sinc 180 at TBW 4 asks **130 % of a 20 uT ``max_b1``** and 2.7 ms is the floor.  A 180 is where
 that first bites, so it is refused here, with the duration that fixes it.
-
-**:class:`~seqcraft.modules.Excitation` does not make this check.**  It can exceed ``max_b1`` too
--- a 1 ms 90 at the same shape reaches the same 130 % -- but there pypulseq's own
-``system maximum RF amplitude exceeded`` warning is all that is raised, and the pulse is handed
-back.  Read the warnings, or measure ``max(abs(module.rf.signal))`` against ``opts.max_b1``
-directly -- both are in hertz.
 """
 
 from __future__ import annotations
