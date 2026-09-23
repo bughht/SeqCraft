@@ -284,7 +284,7 @@ def test_ir_prep_shaped_over_the_limit_is_refused(opts) -> None:
         sc.modules.IRPrep(opts=opts, thickness_mm=None, pulse='sinc', duration_s=2e-3,
                           spoil_voxel_mm=5.0)
 
-    assert 'duration_s' in str(caught.value), 'a shaped pulse scales as 1 / duration'
+    assert 'duration_s' in str(caught.value), 'this fixed-TBW sinc scales as 1 / duration'
 
 
 def test_wurst_remedy_names_bandwidth_because_bandwidth_works(opts) -> None:

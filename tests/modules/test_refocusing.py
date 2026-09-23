@@ -262,12 +262,12 @@ def test_a_symmetric_plateau_hides_it(symmetric_opts: Opts) -> None:
 
 
 # ------------------------------------------------------------------------------ the refusals
-def test_a_two_millisecond_180_is_refused_with_the_duration_that_fixes_it(se_opts: Opts) -> None:
+def test_a_two_millisecond_sinc_180_reports_the_duration_floor(se_opts: Opts) -> None:
     """
-    ``sc.compile`` checks gradient amplitude and slew and never looks at RF amplitude, and pypulseq
-    warns and hands the pulse back -- so a 2 ms 180 reaches the console, which refuses it there.
+    A 2 ms TBW-4 sinc 180 exceeds the default 20 uT limit.
 
-    The message has to carry the floor, because "too big" without a number is a search.
+    Because this fixed-envelope sinc scales exactly as ``1 / duration``, the refusal reports the
+    2.7 ms floor -- and it has to carry a number, because "too big" without one is a search.
     """
     with pytest.raises(sc.ConfigurationError, match='max_b1') as caught:
         refocusing(se_opts, duration_s=2e-3)

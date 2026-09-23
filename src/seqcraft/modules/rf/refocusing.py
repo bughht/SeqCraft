@@ -162,8 +162,9 @@ class Refocusing(Module):
         another angle is a different preparation.
     duration_s
         Pulse duration.  ``4e-3`` rather than ``Excitation``'s ``3e-3``, and that is the point: a
-        180 needs exactly twice a 90's peak B1 at the same shape.  Over ``opts.max_b1`` raises,
-        naming the duration that fixes it.
+        180 needs exactly twice a 90's peak B1 at the same shape.  Over ``opts.max_b1`` raises:
+        for a fixed-envelope shape such as the default sinc the refusal reports the **duration
+        floor**, and for a redesigned shape it reports a starting point to rebuild and re-check.
     time_bw_product
         ``None`` defers to the factory's own default, which differs by shape.  Passing it with
         ``pulse='block'`` raises.
@@ -326,8 +327,8 @@ class Refocusing(Module):
         factory = getattr(pp, _FACTORIES[self.pulse])
         with warnings.catch_warnings():
             # pypulseq warns about max_b1 and hands the pulse back anyway.  This module raises
-            # instead, four lines below, with the duration that fixes it -- so the warning would
-            # only be noise ahead of a better message.
+            # below with a shape-appropriate remedy, so the upstream warning would only duplicate
+            # a more useful error.
             warnings.simplefilter('ignore', UserWarning)
             if self.selective:
                 # The third return is a rephaser, dropped on purpose: the crusher pair takes its
