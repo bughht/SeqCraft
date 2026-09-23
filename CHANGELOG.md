@@ -1,5 +1,80 @@
 # Changelog
 
+## Unreleased — the examples teach, the docstrings document, and the history lives elsewhere
+
+Editorial only: no behaviour, no API shape, no test behaviour. 27 of 29 example notebooks touched,
+26 of them markdown-only with code cells and outputs byte-identical; the twenty-seventh re-executed
+to identical numbers.
+
+**Sequence first, subtlety second.** The rule is written down in `examples/README.md` →
+*Writing example notebooks*, and it is what most of this diff is. A reader who has seen only the
+title and the first two paragraphs should know what sequence this is, what it is for, and what the
+notebook is about — before meeting the clever part. Eleven notebooks opened on the clever part
+instead, so their titles moved from conclusions to sequences:
+
+| was | is |
+|---|---|
+| A crossing through k = 0 is not a spin echo | What the refocusing pulse changes in spiral imaging |
+| A spiral pays for its long readout in off-resonance | Off-resonance in spiral imaging |
+| Which instant is the echo aligned to | Spin-echo spiral imaging |
+| A 3D gradient echo, out of one kernel and two `for` loops | 3D Cartesian gradient echo |
+| Three planes, which is where a reversed `kz` stops being a number | Reconstructing a 3D gradient-echo volume |
+| The samples are not on a grid, and that is the whole problem | Reconstructing a non-Cartesian acquisition |
+| Does it produce the image we expect? | Simulating and reconstructing a 2D gradient echo |
+| Does the magnetisation do what the timeline says? | Simulating MPRAGE: the inversion recovery, and what the ordering costs |
+| Two contrasts, one ratio, and no bias field | Reconstructing the MP2RAGE UNI image |
+| Saturating one spectral component, and throwing it away | Fat saturation |
+| The whole of k-space in one shot | Single-shot echo-planar imaging |
+
+None of the catchy sentences was deleted. Each moved to where a reader can already decode it — *a
+crossing through the origin is not, by itself, a spin echo* now closes the section that measures
+0.7 of a cycle of unrefocused phase, instead of standing unexplained at the top.
+
+Also removed from notebooks: openings that defended an abstraction (`gre_3d/01`,
+`gre_radial_2d/01`, `se_spiral_2d/01` all began on why some class does not exist), "the check this
+notebook exists for", "a prediction that turned out to be wrong", reference-repository
+comparisons, and `What this notebook established`. Kept: the physics, and the intentionally wrong
+cases that teach MRI — three echo placements that all compile, an uncentred readout lobe, and the
+demonstration that a spin echo does **not** fix EPI distortion.
+
+**Public docstrings.** `SaturationPrep` was a design record with physics in it and is now API
+documentation with the same physics. `CartesianLine`, `SpiralReadout`, `TSEShot`, `Refocusing`,
+`GRE3DTR`, `IRPrep` and `Excitation` lost their abstraction-selection arguments and kept their
+equations. `sc.b_value`'s docstring now states the contract — integration over the whole tree, the
+excitation as phase origin, conjugation at each refocusing centre, and what `end_s` chooses — and
+its validation history moved to the module-mining findings.
+
+**Corrections found by rewriting**, each verified against the implementation:
+
+| | |
+|---|---|
+| `gre_spiral_2d/02` said time segmentation treats Δf as constant within each interval | it does not: the code applies phase screens at representative times and **interpolates linearly between them**, so the approximation is set by temporal resolution. The "four segments aliases" claim became the measured 0.72 of a cycle between adjacent screens |
+| `analysis.py` said "four answers" | there are five; `b_value` is now in the exactness table, as numerical rather than exact |
+| `b_value` implied universal correctness | it models one excitation and zero or more refocusing pulses. Stimulated echoes and general coherence pathways are now stated as out of scope |
+| `b_value`'s `end_s` said integrating past the echo "reports a number no experiment measures" | later samples do accumulate further weighting; `end_s` chooses *which* instant's `b` |
+| `DiffusionSEPrep` called `axis=('x', 'y')` an oblique direction | it applies **equal** per-axis weighting, so that is the equal-component diagonal. Corrected, and the test renamed |
+| `DiffusionSEPrep` put tensor encoding above this layer | tensor-valued encoding changes the waveform. Now: not implemented by this class |
+| `_SLEW_FRACTION` implied 0.7 was source-backed | the source motivates staying below maximum slew and prescribes no fraction |
+| `dwi_se_epi_2d/01` imported `seqcraft.modules.kernel.diffusion_se` | an internal path in a teaching notebook; the equation is now written out in the notebook |
+| eight constructor parameters of `DiffusionSEPrep` were undocumented | documented |
+
+A final pass took the remaining openings that still leaned on a preceding example:
+`gre_2d/01` → **2D spoiled gradient echo**, `se_2d/01` → **2D spin-echo imaging**, `mprage_2d/01`
+→ **MPRAGE — Magnetization-Prepared Rapid Gradient Echo**, `mp2rage_2d/01` → **MP2RAGE —
+Magnetization-Prepared 2 Rapid Acquisition Gradient Echoes**, `se_epi_2d/01` → **Spin-echo
+echo-planar imaging**. Each now states its own sequence structure before any cross-reference, and
+the guideline gained the corollary: *do not assume the reader has completed a preceding example.*
+Special-purpose documents — API guides, preserved references, migration guides — may still lead
+with their document purpose, which is why `fse_2d/03_module_api` is unchanged.
+
+Two stale factual claims fixed: `01_getting_started` said "seqcraft ships no concrete modules",
+which has not been true for some time, and linked to an `examples/_parked/` that no longer exists;
+`examples/README.md` said every module was extracted from the `gre_2d/` pair, which is no longer
+true of Diffusion, Spiral or Saturation.
+
+`AGENTS.md` added as a four-line pointer, so `examples/README.md` is the single source of the
+notebook rules and `CLAUDE.md`, `AGENTS.md` and the module-mining skill only point at it.
+
 ## Unreleased — a b-value in, and the analyser that had to be corrected to prove it
 
 `DiffusionSEPrep` (`kernel/`): a diffusion-weighted spin echo. `b_s_per_mm2` in; the lobe width,

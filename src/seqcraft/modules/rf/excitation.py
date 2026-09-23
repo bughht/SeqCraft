@@ -5,21 +5,20 @@
 rather than a description: a saturation or preparation pulse is a different ``use`` and belongs
 somewhere else, and MRzero maps the same field onto its ``PulseUsage``.
 
-What this module is, honestly
------------------------------
-**A coordinator, not a calculator.**  It was written expecting to compute its own rephaser,
-because the classic error is to rewind half the selection gradient's *total* area rather than the
-area after the pulse's effective centre -- which is the same number only for a symmetric pulse.
-That expectation was tested rather than assumed, and this pypulseq computes it correctly for all
-three shaped factories: ``make_sinc_pulse`` and ``make_gauss_pulse`` reference ``center_pos``,
-and ``make_slr_pulse`` references ``calc_rf_center`` of the designed waveform, so a minimum-phase
-SLR pulse whose peak sits three-quarters of the way through gets the right rephaser too.
+What this module does
+---------------------
+It chooses among four pulse factories with one vocabulary, refuses the combinations that cannot
+mean anything, and holds the RF, the selection gradient and the rephaser in fixed relationship so
+that a caller places one block instead of three events.
 
-So this module does not recompute it, and ``tests/modules/test_excitation.py`` asserts the
-invariant against an asymmetric pulse rather than trusting the reading.  What is left for the
-module is real but smaller: choosing among four factories with one vocabulary, refusing the
-combinations that cannot mean anything, and holding the RF, the gradient and the rephaser in
-fixed relationship so a caller places one block instead of three events.
+**The rephaser comes from pypulseq and is not recomputed here.**  The classic error is to rewind
+half the selection gradient's *total* area instead of the area after the pulse's **effective
+centre**, and those are the same number only for a symmetric pulse.  pypulseq gets it right for
+all three shaped factories -- ``make_sinc_pulse`` and ``make_gauss_pulse`` reference
+``center_pos``, ``make_slr_pulse`` references ``calc_rf_center`` of the designed waveform -- so a
+minimum-phase SLR pulse whose peak sits three-quarters of the way through is rephased correctly
+too.  :meth:`Excitation.time_to_center` reports that centre, and it is the instant every echo time
+in this library is measured from.
 
 One angular unit
 ----------------

@@ -6,13 +6,12 @@ rule rather than a description, and it is the same field ``rf/`` is read off; MR
 its own ``PulseUsage``, which is what makes the simulation in ``examples/mprage_2d/02`` a check on
 the file rather than on an intention.
 
-The spoiler is why this is a module rather than a wrapper
----------------------------------------------------------
+The spoiler is part of the design
+---------------------------------
 An inversion is never perfect.  B1 inhomogeneity and off-resonance leave transverse magnetisation
 behind, and without a crusher it survives a whole TI of recovery into the first readout, as a
 stripe that *changes with TI* -- which reads as a contrast problem rather than as a spoiling one.
-The pulse and its crusher are one design, and holding two events in fixed relationship is the job
-a module exists for.
+So the pulse and its crusher are designed and placed together.
 
 ``spoil_cycles_per_voxel`` therefore defaults to ``8.0`` rather than the readout spoiler's ``4.0``:
 there is a whole inversion time for anything left over to rephase in, and the recovery that follows

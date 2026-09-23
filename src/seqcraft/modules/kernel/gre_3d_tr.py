@@ -1,15 +1,11 @@
 r"""
 :class:`GRE3DTR` -- one repetition of a 3D Cartesian gradient echo.
 
-A **sibling** of :class:`~seqcraft.modules.GRE2DTR`, not a wrapper around it and not a
-generalisation of it.  ``GRE2DTR`` has already decided its winder timing, its TE and TR, its
-rewinding and its spoiling; a 3D kernel that contained one would have to reach back inside those
-decisions to change the z axis, which is the reverse nesting this library avoids.  Nor is a
-slice-selective 2D acquisition the centre partition of a 3D slab.  Both compose the same leaves,
-independently.
+A sibling of :class:`~seqcraft.modules.GRE2DTR`: the two compose the same leaves independently,
+and a slice-selective 2D acquisition is not the centre partition of a 3D slab.
 
-The z axis is the whole reason this exists
--------------------------------------------
+The z axis
+----------
 On x and y a 3D repetition is a 2D one.  On z it is not, and there are two cases:
 
 **Non-selective excitation** -- what every official Pulseq 3D reference does
@@ -17,18 +13,19 @@ On x and y a 3D repetition is a 2D one.  On z it is not, and there are two cases
 z axis carries a partition encode and nothing else.
 
 **Slab-selective excitation.**  Now two moments land on one axis inside one window: the rephasing
-the slab selection implies, and the partition encoding.  Played in sequence they cost two windows
-of echo time -- ``fmrifrey/lps`` does exactly that, and its own ``te_min`` pays for both.  Played
-as one gradient they cost one.
+the slab selection implies, and the partition encoding.  Played one after the other they cost two
+windows of echo time; added together and played as a single gradient they cost one, which is what
+this module does.
 
 So this module solves
 
 .. math:: A_z(p) = A_{\text{slab}} + A_{\text{partition}}(p)
 
-for every partition and realises it as **one** z winder.  Neither leaf can:
+for every partition and realises it as **one** z winder of fixed duration, which is what keeps TE
+constant across the volume.  It owns that jointly because neither leaf can:
 :class:`~seqcraft.modules.Excitation` knows the rephasing its own slab implies and nothing about
-partitions, :class:`~seqcraft.modules.PhaseEncode` knows the moment a partition index wants and
-nothing about a slab.  This is the first layer holding both, which is what makes it a kernel.
+partitions, and :class:`~seqcraft.modules.PhaseEncode` knows the moment a partition index wants
+and nothing about a slab.
 
 Both terms are signed, and that matters
 ----------------------------------------
@@ -48,25 +45,17 @@ hardware with a contiguous table the extreme is at one of the two edges -- but t
 nothing at real matrix sizes and stops being true for partial ``kz`` or a supplied partition
 table.
 
-One window, and why it is lengthened rather than refused
----------------------------------------------------------
+One winder window, shared by every partition
+--------------------------------------------
 Every partition uses **one** winder duration.  Letting each take its own shortest would make TE a
 function of ``kz``: a contrast gradient across the volume that no k-space check would show and no
 reconstruction expects.
 
-When the worst partition needs longer than x and y do, the window is lengthened.  That is design,
-not legalization::
+So when the limiting partition needs more time, the shared window is lengthened for **every**
+partition, and TE stays constant across the volume.
 
-    kernel      given a physical target and this scanner's limits, what legal waveform
-                and duration implement it?
-    compiler    given already-designed events at already-chosen times, how are they
-                split, summed and emitted as legal pulseq blocks?
-
-This module holds ``opts``, so "this moment needs 420 us rather than 300" is its question to
-answer.  The compiler must not rescue an infeasible module by stretching a gradient or moving a
-readout, because that would change TE.  With ``te_s=None`` and ``tr_s=None`` the result is the
-shortest legal design; an explicit request below that minimum raises, naming the partition
-responsible.
+With ``te_s=None`` and ``tr_s=None`` the result is the shortest legal design.  An explicit request
+below the achievable minimum raises, naming the partition responsible.
 """
 
 from __future__ import annotations

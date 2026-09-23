@@ -1,23 +1,17 @@
 """
 :class:`SaturationPrep` -- a spectrally selective pulse and the spoiler that destroys what it made.
 
-``preparation/`` because the pulse's ``use`` is ``'saturation'``.  That is the folder's membership
-rule, and this module is the sibling :class:`~seqcraft.modules.IRPrep` was always going to have:
-``modules/__init__.py`` defines the folder as ``rf.use in {inversion, saturation, preparation}``
-and only the first seat was taken.
+What it is
+----------
+A shaped RF pulse played with **no gradient**, so it is selective in *frequency* rather than in
+space, followed immediately by a spoiler.  The pulse tips one spectral component -- fat, at about
+-3.4 ppm -- into the transverse plane, and the spoiler destroys it.  What the sequence then reads
+is whatever is left **longitudinally** when the imaging train starts, which for the saturated
+component is as close to nothing as the flip angle and the :math:`B_1` field allow.
 
-Why this is not :class:`~seqcraft.modules.Excitation` with a different label
----------------------------------------------------------------------------
-The two operations are opposites.  An excitation creates transverse magnetisation *to be read*,
-and its selective form owns selection and rephasing so the signal survives to the echo.  A
-saturation creates transverse magnetisation *to be thrown away*: nothing is rephased, a spoiler
-follows immediately, and the point of the pulse is what is left **longitudinally** afterwards --
-which is as close to nothing as the flip angle and the B1 field allow.
-
-So ``Excitation(use='saturation')`` is not the missing API.  Adding a semantic-purpose flag to
-``Excitation`` would turn a module with one physical contract into a generic RF pulse with a label,
-and the label is the part that would then be carrying the meaning.  Reuse of waveform-design
-machinery is not the same thing as reuse of the public physical abstraction.
+That is the opposite of an excitation, and the difference is visible in the contract: nothing is
+rephased, there is no selection gradient and no echo to survive to, and the useful output is an
+absence.
 
 The spectral offset is the physical contract, and its sign is load-bearing
 --------------------------------------------------------------------------
@@ -27,15 +21,11 @@ converts once,
 .. math:: \\Delta f = \\text{shift\\_ppm} \\times 10^{-6} \\times B_0 \\times \\gamma
 
 and emits that number as the pulse's ``freq_offset``.  Nothing else in the module depends on the
-sign, which is exactly why it is dangerous: a sign error produces legal Pulseq, legal timing,
-legal gradients and a correct-looking waveform, and saturates the wrong side of the spectrum.
-The reference implementations reach the same number by different routes -- one carries the sign in
-the ppm constant, the other applies it at the point of use -- and an implementation that mixed the
-two conventions would saturate water and leave fat alone.
+sign, which is exactly why it is worth checking: a sign error produces legal Pulseq, legal timing,
+legal gradients and a correct-looking waveform, and saturates water instead of fat.
 
-:attr:`SaturationPrep.offset_hz` reports the conversion so a caller and a test can check the chain
-end to end, and ``tests/modules/test_saturation_prep.py`` traces it as far as the compiled
-sequence rather than stopping at the constructor.
+:attr:`SaturationPrep.offset_hz` reports the conversion, so the chain can be checked end to end
+against the compiled sequence rather than trusted.
 
 **Where :math:`B_0` comes from, and the trap in it.**  From ``opts.B0``, and nowhere else --
 there is no field strength written into this module.  The chain is
@@ -46,30 +36,31 @@ middle term so it is visible rather than implied.
 That matters because **pypulseq's ``Opts`` defaults ``B0`` to 1.5 T when it is not given**, and
 says nothing.  An ``Opts`` built for a 2.89 T system without passing ``B0=2.89`` puts fat at
 -220 Hz instead of -424 Hz -- a legal sequence, a plausible number, and the wrong one.  This
-module cannot tell an omitted ``B0`` from a deliberate 1.5 T one, so it reports what it used and
-``tests/modules/test_saturation_prep.py`` pins the behaviour rather than leaving it to be
-discovered.
+module cannot tell an omitted ``B0`` from a deliberate 1.5 T one, so it reports what it used in
+:attr:`SaturationPrep.b0_t`.  **Pass ``B0`` explicitly.**
 
-**``freq_ppm`` was considered and rejected for the emitted event.**  pypulseq can carry a ppm
-offset and let the interpreter resolve it against the scanner's own :math:`B_0`, which is in
-principle more portable.  It also moves the conversion off the file, so the sign this module is
-most likely to get wrong would no longer be visible in what we emit.  A number we can inspect is
-worth more here than one the scanner computes.
+The offset is emitted in hertz rather than as pypulseq's ppm field, so the conversion -- and the
+sign -- are visible in the written file rather than resolved by the interpreter.
 
 What it does not do
 -------------------
 No selection gradient, and therefore no rephaser and no ``thickness_mm``: a shaped pulse played
-with no gradient is spectrally selective, which is the whole mechanism.  A *spatial* saturation
-slab plays a gradient and selects a region, and it is deliberately not folded in -- what it shares
-with this is "prepare, then spoil", which is a waveform silhouette rather than a physical solve.
-CEST saturation trains, with their duty-cycle and B1rms constraints, are a different problem again.
+with no gradient is spectrally selective, which is the whole mechanism.
+
+Out of scope, and each a different physical contract rather than a mode of this one: **spatial**
+saturation slabs, which play a gradient and select a region; **CEST** saturation trains, with
+their duty-cycle and :math:`B_{1,\\mathrm{rms}}` constraints; and water-selective excitation.
 
 Protocol values are the caller's
 --------------------------------
-`flip_deg`, `duration_s` and `bandwidth_hz` have **no defaults**.  Two independent references
-disagree on all three -- 110 degrees against 90, 8 ms against 12, a bandwidth derived from the
-offset against a fixed 200 Hz -- and both work.  That is what a protocol parameter looks like, and
-picking one lab's number to use as a default would encode a protocol as physics.
+`flip_deg`, `duration_s` and `bandwidth_hz` have **no defaults**, because published fat-saturation
+protocols differ on all three -- 90 to 110 degrees, 8 to 12 ms, and a bandwidth either derived from
+the offset or fixed at a couple of hundred hertz -- and all of them work.  Choosing one would
+encode a protocol as physics.
+
+A useful starting point: a flip angle at or a little above 90 degrees, a duration long enough that
+the pulse's bandwidth is well inside the water-fat separation at the field being used, and a
+bandwidth narrow enough not to reach water.  The module refuses a band that does.
 
 Examples
 --------

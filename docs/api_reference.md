@@ -291,10 +291,8 @@ assert PhaseEncode(opts=opts, fov_m=0.22, matrix=64,
 never sees the second call, so a module that mutates itself hands it a perfectly legal tree every
 time. The three-line check is in [`writing_a_module.md`](writing_a_module.md).
 
-Three things `Module` deliberately does not do: declare a `duration` (the block measures itself),
-check units, or scrape `__dict__` for provenance. Each was a real feature; none is needed by *every*
-module, and a base class carrying what only some subclasses need is how a small idea becomes a
-framework.
+Three things `Module` does **not** do, so do not look for them: declare a `duration` — the block
+measures itself — check units, or scrape `__dict__` for provenance.
 
 `_finalize(block)` is the private hook `__call__` runs: it type-checks and names. Tests call it
 directly; nothing else should.
@@ -940,21 +938,21 @@ assert set(b) == {'x', 'total'}
 assert round(b['total'], 1) == 16.3
 ```
 
-Three things about it are the whole design:
+The contract, in four parts:
 
 | | |
 |---|---|
-| **it measures the tree, not a module** | `b` is a property of *every* gradient on the axis — slice lobes, crushers and readout prephasers all contribute, so a "b = 0" acquisition is not b = 0 |
-| **the origin is the excitation** | integration runs from the first `use='excitation'` pulse's centre, with `k` measured from its value there, because that is when transverse magnetisation exists |
-| **refocusing pulses conjugate `k`** | every `use='refocusing'` pulse, at its own effective centre — `event.delay` **plus** `pp.calc_rf_center` — which is what makes a spin-echo pair with the same polarity integrate to a large `b` |
+| **it integrates the whole tree** | `b` is a property of *every* gradient on the axis — slice lobes, crushers and readout prephasers all contribute — so a nominally unweighted acquisition generally returns a small non-zero value |
+| **the phase origin is the excitation** | integration runs from the first `use='excitation'` pulse's effective centre, with `k` measured relative to its value there |
+| **refocusing pulses conjugate `k`** | every `use='refocusing'` pulse applies `k → k − 2k(t_ref)` from its effective centre onwards, in time order. Both instants are `event.delay` **plus** `pp.calc_rf_center` |
+| **`end_s` chooses which instant's `b`** | for the nominal centre-echo `b` of a spin-echo DWI, pass the spin echo. A later endpoint includes the weighting accumulated after it |
 
-`end_s` bounds the integration; for a spin echo the physically meaningful endpoint is the echo,
-and integrating past it reports a number no experiment measures.
-
-> **Both instants are the *effective* RF centres** — `event.delay` plus `pp.calc_rf_center`. The
-> last two rows are validated against a Bloch simulation in
-> [`examples/dwi_se_epi_2d/02`](../examples/dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb), and
-> `tools/module_mining/plans/diffusion/findings.md` records what that comparison found.
+**Scope.** Sign handling follows the excitation/refocusing pathway encoded by Pulseq `use` labels:
+one excitation, then zero or more refocusing pulses. Stimulated echoes and more general coherence
+pathways are outside what this models. Cross terms are not computed, so the return is the trace of
+the b-matrix rather than the matrix.
+[`examples/dwi_se_epi_2d/02`](../examples/dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb)
+compares it with a Bloch simulation.
 
 ## 4.6 Which function is exact, and which is not
 
@@ -966,7 +964,7 @@ The single most important thing to get right in this module:
 | `moments` | `knots_of` + `pwl_moment` over `flatten(tree)` | **Yes** — never routed through `sample` |
 | `kspace` | compiled, then `calculate_kspacePP()` | **Yes**, at true ADC sample times |
 | `pns` | compiled, then `calculate_pns()` | pypulseq's validated SAFE model |
-| `b_value` | `sample`, then the running integral on the raster | **No** — a trapezoid sum, ~0.1 % against a Bloch simulation |
+| `b_value` | `sample`, then the running integral on its raster grid | **No** — numerical integration; how close depends on the waveform |
 
 `moments` looks like it could be built on `sample` now that they sit together. It must not be — and
 the reason is subtler than "sampling is lossy". Linear interpolation errs **antisymmetrically** about
@@ -1031,19 +1029,16 @@ composes more than one leaf folder, `imaging/` composes kernels, and the top lev
 not an `sc.Module` subclass. `tests/modules/test_layout.py` asserts all of it, including that
 nothing in `preparation/` emits an excitation or a refocusing.
 
-Classes in `preparation/` end in `Prep` — `IRPrep`, `SaturationPrep`, and after them `T2Prep`,
-`MTPrep`, `CESTPrep`. `DiffusionSEPrep` carries the suffix for the same reason and lives in
-`kernel/` anyway, because it owns an excitation and a refocusing pulse as well as its own
-gradients, and the folder rule is about what a class composes rather than what it is for.
-The rule is that a class is named after its role: for `rf/` the `use` value *is* the role, while
-several distinct physics share one `use` here, so the name carries both parts. It also resolves a
-real collision — a diffusion *preparation* and a diffusion *encoding* are different modules in
-different folders, and without the suffix both would be `Diffusion`.
+Classes in `preparation/` end in `Prep` — `IRPrep` and `SaturationPrep` — because for that folder
+the `rf.use` value alone does not identify the physics, so the name carries both parts.
+`DiffusionSEPrep` carries the suffix too and lives in `kernel/`, because the folder rule is about
+what a class **composes**: it owns an excitation and a refocusing pulse as well as its own
+gradients.
 
-**Nothing here was designed in the abstract.** Every module was extracted from
-[`examples/gre_2d/01_build.ipynb`](../examples/gre_2d/README.md), which builds the same sequence
-out of raw pypulseq beside it — so a module that cannot be extracted without altering the sequence
-is not a module, and one whose extraction does not shorten the notebook is a wrapper.
+Every module here was extracted from a working example rather than designed in the abstract.
+[`examples/gre_2d/01_build.ipynb`](../examples/gre_2d/01_build.ipynb) builds the same sequence
+three ways — raw pypulseq, the leaves composed inline, and the composition as a module — which is
+the shortest route to seeing what each one is for.
 
 ## What each one knows that a block cannot
 

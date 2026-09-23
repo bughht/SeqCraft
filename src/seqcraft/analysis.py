@@ -1,5 +1,5 @@
 """
-Measuring a tree: one entry shape, four answers.
+Measuring a tree: one entry shape, five answers.
 
 **Give it a tree, get numbers back.**  You should not have to know that PNS prediction needs a
 compiled sequence while a moment does not, so none of these ask for one: they take the tree you
@@ -13,14 +13,20 @@ Which of these is exact, and which is not
 -----------------------------------------
 The single most important thing to get right here.
 
-=============  =====================================================  ========
+=============  =====================================================  =========================
 Function       Basis                                                  Exact?
-=============  =====================================================  ========
+=============  =====================================================  =========================
 ``sample``     uniform raster grid, **interpolated**                   **no**
 ``moments``    ``knots_of`` + ``pwl_moment`` over ``flatten(tree)``    **yes**
 ``kspace``     compiled, then ``calculate_kspacePP()``                 yes, at true ADC times
 ``pns``        compiled, then ``calculate_pns()``                      pypulseq's validated SAFE
-=============  =====================================================  ========
+``b_value``    running integral of ``sample``'s raster grid            **no**, numerical
+=============  =====================================================  =========================
+
+:func:`b_value` inherits :func:`sample`'s grid, so it is a numerical integration rather than a
+closed form.  How close it comes depends on the waveform: long flat lobes integrate well, short
+crushers less so.  ``examples/dwi_se_epi_2d/02_simulate_and_reconstruct.ipynb`` compares it with a
+Bloch simulation on both.
 
 :func:`moments` looks like it could be built on :func:`sample` now that they sit in one file.  It
 must not be.  Sampling interpolates onto a uniform grid -- an arbitrary gradient's samples are at
@@ -193,11 +199,9 @@ def b_value(tree: LogicBlock, opts: Opts, *, end_s: float | None = None) -> dict
     SeqCraft gradients are already in Hz/m, so :math:`\int G\,\mathrm{d}t` **is** the handbook's
     :math:`k(t)` in 1/m and no gyromagnetic ratio appears here.
 
-    **This measures the tree, not any module's arithmetic.**  It shares no code with whatever
-    designed the waveform, which is the point: a module that both computes its own `b` and is
-    checked against its own number has tested nothing.  And `b` is a property of *everything* on
-    the axis -- slice-select lobes, crushers and readout prephasers all contribute -- so this
-    integrates the whole tree rather than one component.
+    `b` is a property of **every** gradient on the axis, not only of a diffusion pair:
+    slice-select lobes, crushers and readout prephasers all contribute.  This integrates the whole
+    tree, so a nominally unweighted acquisition generally returns a small non-zero value.
 
     Parameters
     ----------
@@ -206,37 +210,45 @@ def b_value(tree: LogicBlock, opts: Opts, *, end_s: float | None = None) -> dict
     opts
         Supplies the gradient raster, which is the integration grid.
     end_s
-        Integrate to this time from the start of `tree`.  ``None`` integrates to the end.  For a
-        spin echo the physically meaningful endpoint is the echo; integrating past it keeps
-        accumulating and reports a number no experiment measures.
+        Integrate to this time, measured from the start of `tree`.  ``None`` integrates to the end
+        of the tree.  This chooses **which instant's** `b` is being reported: for the nominal
+        centre-echo `b` of a spin-echo DWI, pass the spin echo.  A later endpoint includes
+        whatever weighting is accumulated after that instant, which is a real quantity for the
+        samples acquired there and not the number a protocol means by "the b-value".
 
     Returns
     -------
     dict
-        ``axis -> b`` over the axes actually used, plus ``'total'``, the sum -- which is the
-        scalar `b` of a single-direction experiment.  A full b-matrix would need the cross terms
-        and is deliberately not returned: no candidate has needed one, and the trace is what a
-        b-value means.
+        ``axis -> b`` over the axes actually used, plus ``'total'``, the sum.  For a
+        single-direction experiment that total is the scalar `b`.  Cross terms are not computed,
+        so this is the trace of the b-matrix rather than the matrix itself.
 
     Notes
     -----
-    **Refocusing pulses flip the sign of the accumulated k.**  That is what makes the spin-echo
-    case work at all -- the handbook's §9.1 notes the two lobes "have the same polarity and are
-    placed at either side of a refocusing RF pulse", which only integrates to a large `b` because
-    the 180 conjugates what came before.  Every RF event with ``use='refocusing'`` flips it here,
-    at its own effective centre.
+    **The phase origin is the excitation.**  Integration runs from the first ``use='excitation'``
+    pulse's effective centre, with `k` measured relative to its value there, because that is when
+    transverse magnetisation exists and where its phase starts.  It matters wherever a gradient
+    is playing across that instant: a slice-select rephaser undoes the area *after* the RF centre
+    rather than half the lobe, so measuring from ``t = 0`` would leave the remainder as a constant
+    offset in `k`.  A tree with no excitation in it is measured from its own start.
 
-    **The origin is the excitation, not the start of the tree.**  Integration runs from the first
-    ``use='excitation'`` pulse's centre, with `k` measured from its value there, because that is
-    when transverse magnetisation exists and where its phase starts.  It matters on the slice
-    axis, whose rephaser undoes the slice-select area *after* the RF centre rather than half the
-    lobe: measuring from ``t = 0`` leaves the other half as a constant offset, and a constant `k`
-    integrates without bound -- reporting a `b` that grows with the echo time out of nothing.  A
-    tree with no excitation in it is measured from its own start.
+    **Refocusing pulses conjugate the accumulated k.**  Every ``use='refocusing'`` pulse applies
+    :math:`k \to k - 2k(t_{\mathrm{ref}})` from its effective centre onwards, in time order.
+    That is what makes a spin-echo diffusion pair work: two lobes of the *same* polarity either
+    side of the pulse subtract for stationary spins and add for moving ones.
 
-    Both instants are the *effective* RF centres -- ``event.delay`` plus
-    ``pp.calc_rf_center(event)``.  ``tools/module_mining/plans/diffusion/findings.md`` records how
-    this was validated against a Bloch simulation and what that comparison corrected.
+    Both instants are the **effective** RF centres -- ``event.delay`` plus
+    ``pp.calc_rf_center(event)``.
+
+    **Scope of the RF model.**  Sign handling follows the excitation/refocusing pathway encoded by
+    Pulseq ``use`` labels: one excitation, then zero or more refocusing pulses, each conjugating
+    what came before it.  Stimulated echoes and more general coherence pathways -- where
+    magnetisation is stored longitudinally and recalled, so different pathways see different
+    gradient histories -- are outside what this function models, and it will report the
+    single-pathway answer for such a sequence.
+
+    **It is a numerical integration** on :func:`sample`'s raster grid, not a closed form, and it
+    shares no code with the modules whose waveforms it measures.
 
     Examples
     --------
@@ -250,7 +262,8 @@ def b_value(tree: LogicBlock, opts: Opts, *, end_s: float | None = None) -> dict
     16.3
 
     One lobe on its own is a weak diffusion weighting; the pair straddling a refocusing pulse is
-    what makes a useful `b`.  ``examples/dwi_se_epi_2d/`` shows the difference.
+    what makes a useful `b`.  ``examples/dwi_se_epi_2d/`` builds that pair and compares this
+    function with a Bloch simulation.
     """
     grid, grads, _spans = sample(tree, opts)
     if grid.size < 2:
