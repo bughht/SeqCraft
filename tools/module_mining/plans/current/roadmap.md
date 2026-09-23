@@ -162,14 +162,20 @@ findings **refine the meaning of the Module layer** and require no change to `Lo
 compiler, or the `Module → LogicBlock → Tree → Compiler` architecture. C2's 220 µs stays
 undecided pending one ownership question the synthesis poses.
 
-## The approved queue — designed, reviewed, **deliberately unbuilt**
+## The approved queue
 
-Four designs carry `APPROVED_FOR_IMPLEMENTATION` and none is implemented. That is a decision, not
-a backlog that was forgotten.
+> **Superseded as a plan by
+> [`2026-09-23_post_v0_implementation_to_authoring_roadmap.md`](2026-09-23_post_v0_implementation_to_authoring_roadmap.md)**,
+> which is the current direction: implement the queue in order, then build
+> `sequence-authoring` v0. The reasoning below is why the queue was held, and is kept for that.
+
+Four designs carried `APPROVED_FOR_IMPLEMENTATION` and none was implemented. That was a decision,
+not a backlog that was forgotten. **T2Prep has since shipped**; the other three are next, in the
+order the current roadmap sets.
 
 | | record | status | why it is not built yet |
 |---|---|---|---|
-| **T2Prep** | `plans/t2prep/` | `NEW_LEAF` | **could be built now.** Held because it would not demonstrate the architecture the Phase C work found, and the next PR is about demonstrating it |
+| **T2Prep** | `plans/t2prep/` | **SHIPPED 2026-09-23** | implemented as the first stage of [`current/2026-09-23_post_v0_implementation_to_authoring_roadmap.md`](2026-09-23_post_v0_implementation_to_authoring_roadmap.md). Layer 1/2/3 all GREEN |
 | **VelocityEncode** | `plans/flow_moments/velocity_encoding.yaml` | `NEW_LEAF` | the appended canonical form is implementation-ready; same reason as above |
 | **FlowComp** | `plans/flow_moments/flow_compensation.yaml` | `EXTEND_EXISTING` | depends on how joint realization is finally expressed |
 | **bSSFPTR** | `plans/bssfp/` | `NEW_KERNEL` | same dependency, plus the open question of whether its 220 µs is joint physical design or semantics-preserving compiler fusion |

@@ -372,7 +372,12 @@ acceptance:
       Interval symmetry on the emitted lattice -- the gaps either side of each refocusing pulse,
       measured from the emitted events' own knots, equal to within one raster.  Rule E.
     - >
-      The declared preparation time equals the measured tip-down-end to tip-up-start interval.
+      The declared preparation time equals the measured **effective tip-down rotation instant to
+      effective tip-up rotation instant** interval, which for this mode's hard and composite
+      pulses is RF centre to RF centre.  RECONCILED 2026-09-23: this bullet previously said
+      "tip-down-end to tip-up-start", which is OpenMRF's edge-to-edge bookkeeping and contradicts
+      contract.semantic_timing.definition and the decision summary.  The two differ by one
+      tip-pulse duration, so the disagreement was load-bearing rather than cosmetic.
     - >
       Phase alternation between consecutive refocusing pulses, read off the compiled file.
     - >
@@ -391,11 +396,23 @@ acceptance:
       Agreement with any second independent implementation.
 
 validation:
+  # IMPLEMENTED 2026-09-23.  The scan's acceptance claim is now an implementation's evidence.
   layers:
-    layer_1: NOT_APPLICABLE   # nothing implemented; this record stops at the acceptance claim
-    layer_2: NOT_APPLICABLE
-    layer_3: NOT_APPLICABLE
-    layer_3_reason: >
+    layer_1: GREEN            # 25 tests in tests/modules/test_t2_prep.py, every claim measured on
+                              # the emitted events or on the compiled sequence
+    layer_2: GREEN            # examples/t2prep_gre_2d/01_build.ipynb -- the preparation in front
+                              # of a shipped GRE2D, centrically ordered, four .seq files
+    layer_3: GREEN            # examples/t2prep_gre_2d/02_simulate_and_reconstruct.ipynb
+    layer_3_result: >
+      A known T2 is recovered from the slope of ln S against prep_time_s to within 2 % from 40 to
+      250 ms, with nothing fitted but the slope.  The control is the decisive one- T2* was swept
+      from 80 ms to 16 ms, a factor of five, and the fitted value moved by 3 %.  So the
+      preparation weights by the tissue's T2 and not by the magnet's contribution to T2*, which is
+      the claim the module exists to make.  The residual bias is ONE-SIDED and is T1- +4 % at a
+      500 ms T1, exact at 20 s, because longitudinal magnetisation recovers during the
+      preparation.  That is a property of the sequence rather than of the implementation, and it
+      is why this is a contrast preparation and not a T2 mapping method.
+    layer_3_reason_when_scanned: >
       Not deferred for want of an oracle -- MRzeroCore can simulate a T2 preparation, the
       exp(-tau/T2) weighting is exactly what a Bloch simulation settles, and the shared BrainWeb
       phantom carries T2 and T2' separately.  NOT_APPLICABLE because there is nothing to validate --
@@ -413,7 +430,27 @@ validation:
 coverage_classification: null   # no existing SeqCraft abstraction covers this family
 
 status: NEW_LEAF
-traffic_light: APPROVED_FOR_IMPLEMENTATION
+traffic_light: GREEN          # IMPLEMENTED 2026-09-23; was APPROVED_FOR_IMPLEMENTATION
+
+implementation:
+  shipped: src/seqcraft/modules/preparation/t2_prep.py
+  mode: mlev4-hard, and only that -- every deferred mode in mode_contract.differentials is still
+    deferred, and none of them was added to make the first one fit.
+  spec_consistency_pass: >
+    RECONCILED before any code was written.  acceptance.establishes carried the older
+    "tip-down-end to tip-up-start" wording, which is OpenMRF's edge-to-edge bookkeeping and
+    contradicts contract.semantic_timing.definition and the decision summary.  The two differ by
+    one tip-pulse duration, so the disagreement was load-bearing.  The record was made
+    self-consistent on the semantic definition first, and the test encodes that.
+  one_thing_the_record_did_not_decide: >
+    A composite has no single instant at which it rotates, and the record's reduction to "RF
+    centre to RF centre" does not say which centre an ASYMMETRIC composite has -- the tip-up is
+    270 then 360 and its two pulses are of different lengths.  The implementation states the rule
+    rather than leaving it inferred- the amplitude-weighted centre of the group, which reduces to
+    the pulse centre for one hard pulse and to the 180's centre for the symmetric refocusing
+    composite.  Recorded here because it is a bookkeeping choice inside the approved semantics,
+    not a new physical claim, and because a Layer 3 slope fit is insensitive to a constant offset
+    and therefore does NOT settle it.
 
 decision_summary: >
   A T2 preparation is a self-contained preparation leaf, and the boundary is settled by domain

@@ -1,5 +1,62 @@
 # Changelog
 
+## Unreleased — T2 contrast for a sequence that has none of its own
+
+`T2Prep` (`preparation/`): a T2-weighting preparation. Tip down, refocus while the magnetisation
+decays at **T2 rather than T2\***, tip back up, spoil what is left. What the imaging train then
+reads is longitudinal magnetisation already scaled by `exp(-prep_time_s / T2)`, and the readout
+can be anything at all, because the contrast is no longer its job.
+
+Fifteen hard pulses at **one B1 amplitude**: a 90 tip-down, four `90x 180y 90x` composites at 1/8,
+3/8, 5/8 and 7/8 of the preparation in the MLEV-4 pattern `+ + − −`, and a `270x` / `360(−x)`
+composite tip-up. At a fixed amplitude a flip angle is a duration, which is what lets three pulses
+be one composite — and it makes the peak-B1 contract one number for the whole block.
+
+**`prep_time_s` is the transverse period**, between the effective tip-down and tip-up rotation
+instants. Implementations differ here: booking the interval edge to edge instead differs by one
+tip-pulse duration, a few per cent of the quantity being measured. Every RF group starts on the
+gradient raster — the seam between two pulses is where a block boundary has to be cut — so the
+placement is quantised first and `prep_time_s` is **measured off it**, within half a raster of the
+request.
+
+A composite has no single instant at which it rotates, and the approved record's reduction to "RF
+centre to RF centre" does not say which centre an *asymmetric* one has. The module states the
+rule: the **amplitude-weighted centre** of the group, which reduces to the pulse centre for one
+hard pulse and to the 180's centre for the symmetric refocusing composite.
+
+Validated in three layers. **Layer 1**, 25 tests, every claim read back out of the emitted events
+or the compiled blocks rather than from an attribute: fifteen pulses, MLEV-4 phases, the gaps
+either side of every refocusing pulse equal to the raster, no gradient at all while the
+magnetisation is transverse, the spoiler outside the interval, and the short-preparation refusal.
+**Layer 2**, `examples/t2prep_gre_2d/01_build.ipynb`, in front of a shipped `GRE2D`. **Layer 3**,
+`02_simulate_and_reconstruct.ipynb`:
+
+```text
+a known T2 recovered from the slope of ln S against prep_time_s   within 2 %, 40 to 250 ms
+T2* swept 80 -> 16 ms, a factor of five, moves the answer by        3 %
+the residual bias is T1     +4 % at a 500 ms T1, exact at 20 s
+```
+
+The second line is the one the module exists for: the weighting follows the tissue's T2 and not
+the magnet's contribution to T2*. The third is a property of the sequence rather than of the
+implementation, and it is why this is a contrast preparation and not a T2 mapping method.
+
+**The line ordering is the caller's, and it matters.** What the preparation stores is longitudinal
+magnetisation, which recovers at T1, so every millisecond before k = 0 is acquired erodes the
+contrast. Linear ordering reaches k = 0 after 315 ms of a 618 ms train; centric reaches it after
+6, and the example uses centric.
+
+Shipped as **`mlev4-hard` only**. Adiabatic BIR-4/AHP tip pairs and the B1-robustness claim that
+lives with them, a two-composite train, an arbitrary refocusing count, the B1-robust variant whose
+rephasing lobe lands inside the *imaging* sequence, and diffusion preparation are all still
+deferred, and none was added to make the first mode fit. This mode makes no quantitative B0 or B1
+robustness claim.
+
+The plan records were reconciled before any code was written: one acceptance bullet still carried
+the older edge-to-edge timing wording, which contradicts the semantic definition by one tip-pulse
+duration. Direction for the phase after this is
+`tools/module_mining/plans/current/2026-09-23_post_v0_implementation_to_authoring_roadmap.md`.
+
 ## Unreleased — SeqCraft does not emit RF over `max_b1`
 
 **`pp.Opts()` defaults `max_b1` to 851.52 Hz — 20 µT — so the limit was always live.** Nothing

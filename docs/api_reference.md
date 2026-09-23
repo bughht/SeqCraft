@@ -1045,6 +1045,7 @@ Re-exported **flat**, so no import path names a folder:
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
 | `SaturationPrep` | a spectrally selective pulse and the spoiler that destroys what it made — the chemical-shift offset is the contract, and its sign is the failure that looks fine |
+| `T2Prep` | a T2-weighting preparation: tip down, an MLEV-4 composite refocusing train, tip up, spoil. `prep_time_s` is the transverse interval, and what survives is scaled by `exp(-prep_time_s / T2)` |
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
 | `GRE2D` | the complete scan |
 | `GRE3DTR` | one repetition of a 3D Cartesian gradient echo — a sibling of `GRE2DTR`, owning the z axis where a slab's rephasing and a partition's encoding become one gradient |
@@ -1059,8 +1060,9 @@ composes more than one leaf folder, `imaging/` composes kernels, and the top lev
 not an `sc.Module` subclass. `tests/modules/test_layout.py` asserts all of it, including that
 nothing in `preparation/` emits an excitation or a refocusing.
 
-Classes in `preparation/` end in `Prep` — `IRPrep` and `SaturationPrep` — because for that folder
-the `rf.use` value alone does not identify the physics, so the name carries both parts.
+Classes in `preparation/` end in `Prep` — `IRPrep`, `SaturationPrep` and `T2Prep` — because for
+that folder the `rf.use` value alone does not identify the physics, so the name carries both
+parts.
 `DiffusionSEPrep` carries the suffix too and lives in `kernel/`, because the folder rule is about
 what a class **composes**: it owns an excitation and a refocusing pulse as well as its own
 gradients.
@@ -1800,6 +1802,7 @@ at import.
 | `RasterError` | `design.timing` | exception |
 | `Refocusing` | `modules` | class |
 | `SaturationPrep` | `modules` | class |
+| `T2Prep` | `modules` | class |
 | `SpiralReadout` | `modules` | class |
 | `TSEShot` | `modules` | class |
 | `SeqCraftError` | `errors` | exception |
