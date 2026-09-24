@@ -60,8 +60,13 @@ __all__ = [
     'JointProblem',
     'Realisation',
     'Schedule',
+    'attempt',
     'claimed_axis',
     'design',
+    'group_by_axis',
+    'placed',
+    'refuse_infeasible',
+    'utilisation',
     'events_for',
     'measure_moment',
     'resolve_claims',
@@ -124,6 +129,25 @@ class CommonModeClaim:
     axis: str
     order: int
     value: float = 0.0
+
+
+def group_by_axis(claims: Iterable[object]) -> dict[str, tuple[object, ...]]:
+    """Claims grouped by the axis they constrain.  One physical problem per axis."""
+    grouped: dict[str, list[object]] = {}
+    for claim in claims:
+        grouped.setdefault(str(getattr(claim, 'axis')), []).append(claim)
+    return {axis: tuple(group) for axis, group in grouped.items()}
+
+
+def placed(event: Event, at_s: float) -> LogicBlock:
+    """One event in a block at `at_s` -- for measuring a fixed contribution where it will play."""
+    from ..design.logic import LogicBlock as _LogicBlock
+    return _LogicBlock().add(at_s, event)
+
+
+def refuse_infeasible(problem: JointProblem) -> None:
+    """Public spelling of the refusal, for a kernel that ran out of candidate schedules."""
+    _refuse_infeasible(problem)
 
 
 def claimed_axis(claims: Sequence[object]) -> str:
@@ -441,6 +465,74 @@ def events_for(designed: JointDesign, state: object) -> tuple[tuple[float, Event
         placed.append((at, event))
         at += float(pp.calc_duration(event))
     return tuple(placed)
+
+
+# ----------------------------------------------------------------------- the diagnostics
+def _lobe_utilisation(area: float, duration_s: float, opts: Opts, *,
+                      steps: int = 64) -> tuple[float, float]:
+    """
+    The best ``(G / G_limit, S / S_limit)`` a symmetric trapezoid of this area and duration can do.
+
+    Parameterised by the ramp time `r`, which is the shape's only freedom once the area and the
+    duration are fixed: ``g = A / (T - r)`` and ``slew = g / r``.  A short ramp lowers the peak
+    amplitude and raises the slew; a long one does the reverse.  Scanning `r` and keeping the best
+    ``max`` of the two fractions is what turns "pypulseq refused" into "it needed 5.5x the slew" --
+    which is the difference between a family that nearly fits and one that is nowhere near.
+
+    Not a design path: nothing here is emitted.
+    """
+    if abs(area) <= _NEGLIGIBLE:
+        return 0.0, 0.0
+    best = (float('inf'), float('inf'))
+    for step in range(1, steps + 1):
+        rise_s = duration_s * 0.5 * step / steps
+        flat_s = duration_s - rise_s
+        if flat_s <= 0.0:
+            continue
+        amplitude = abs(area) / flat_s
+        fractions = (amplitude / float(opts.max_grad),
+                     amplitude / rise_s / float(opts.max_slew))
+        if max(fractions) < max(best):
+            best = fractions
+    return best
+
+
+def utilisation(axis: str, target: tuple[float, float | None], fixed: tuple[float, float],
+                schedule: Schedule, opts: Opts, *, splits: int = 48) -> dict[str, float]:
+    """
+    How close the best shape comes at this schedule, **even when it does not fit**.
+
+    ``pp.make_trapezoid`` refuses an over-limit design, so a feasibility search reads as
+    ``None, None, None, success`` and cannot say whether a candidate missed by two per cent or by
+    a factor of ten.  This reports
+
+    .. code-block:: text
+
+        u(T) = min over allowed shapes  max(G_required / G_limit, S_required / S_limit)
+
+    over the two-lobe family's split and each lobe's ramp.  Diagnostic only; the emitter never
+    takes this path, so no illegal waveform can reach a sequence through it.
+    """
+    best = {'utilisation': float('inf'), 'grad': float('inf'), 'slew': float('inf'),
+            'split': float('nan')}
+    if target[1] is None:
+        return best
+    for step in range(1, splits):
+        split = step / splits
+        first_s = schedule.window_s * split
+        second_s = schedule.window_s - first_s
+        if min(first_s, second_s) <= 0.0:
+            continue
+        centres = (schedule.window_start_s + first_s / 2.0 - schedule.origin_s,
+                   schedule.window_start_s + first_s + second_s / 2.0 - schedule.origin_s)
+        areas = _two_lobe_areas((target[0], target[1]), fixed, centres)
+        grad = slew = 0.0
+        for area, duration_s in zip(areas, (first_s, second_s)):
+            lobe_grad, lobe_slew = _lobe_utilisation(area, duration_s, opts)
+            grad, slew = max(grad, lobe_grad), max(slew, lobe_slew)
+        if max(grad, slew) < best['utilisation']:
+            best = {'utilisation': max(grad, slew), 'grad': grad, 'slew': slew, 'split': split}
+    return best
 
 
 # -------------------------------------------------------------------------------- the refusals

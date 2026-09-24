@@ -67,6 +67,7 @@ import pypulseq as pp
 from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
+from ...design.timing import EPS
 from ...errors import ConfigurationError, format_error
 from .. import _joint
 from .._support import ceil_raster, require_positive
@@ -260,17 +261,27 @@ class GRE3DTR(Module):
         # the slab rephasing and the partition encoding -- which is why this module owns it
         # rather than either leaf.  A claimed first moment is a third, and it is handed to the
         # shared designer for the same reason: no one leaf can see all of them.
+        self._pe_axis, self._par_axis = 'y', 'z'
         self.encoding_states = tuple(encoding_states)
-        self._joint = (
-            self._design_joint(tuple(joint_claims), probe_ro, opts) if joint_claims else None
-        )
+        self._joint: dict[str, _joint.JointDesign] = {}
+        self._joint_claims = tuple(joint_claims)
         self.winder_s = ceil_raster(
             max(probe_ro.prephaser_duration_s, self.pe.min_duration_s,
                 self.exc.rephaser_duration_s if not self.selective else 0.0,
-                z_worst_s,
-                self._joint.schedule.window_s if self._joint is not None else 0.0),
+                z_worst_s),
             opts.grad_raster_time,
         )
+        if self._joint_claims:
+            # AUTO first, so the minimum is known before an explicit TE is judged
+            # against it -- and so the refusal for a too-short TE stays this module's,
+            # naming `te_s`, rather than the designer's naming an axis.
+            window, self._joint = self._design_joint(
+                self._joint_claims, probe_ro, self.winder_s, None, opts)
+            self.winder_s = ceil_raster(window, opts.grad_raster_time)
+            if te_s is not None and te_s >= self._reachable_te_s(probe_ro) - EPS:
+                window, self._joint = self._design_joint(
+                self._joint_claims, probe_ro, self.winder_s, te_s, opts)
+                self.winder_s = ceil_raster(window, opts.grad_raster_time)
 
         self.ro = CartesianLine(opts=opts, fov_mm=self.fov_mm[0], matrix=nx, axis='x',
                                 bandwidth_hz_px=bandwidth_hz_px,
@@ -431,7 +442,8 @@ class GRE3DTR(Module):
         out = (
             LogicBlock()
             .add(0.0, self.exc(phase_deg=phase_deg, position_mm=z, rephase=not self.selective))
-            .add(start, self.pe(line=line))
+            .add(start, self._joint_block(self._pe_axis, (line, encoding_state))
+                 or self.pe(line=line))
             .add(start, self.ro(acquire=acquire, phase_deg=phase_deg, offset_mm=x))
             .add(tail, self.pe(line=line, rewind=True))
             # Only the partition encoding is unwound: the slab rephasing was a one-way
@@ -453,81 +465,115 @@ class GRE3DTR(Module):
 
     def _z_winder(self, partition: int, encoding_state: object = None):
         """The one z gradient carrying ``A_slab + A_partition(p)``, or ``None`` when it is zero."""
-        if self._joint is not None:
-            out = LogicBlock('joint_z')
-            for at, event in _joint.events_for(self._joint, (partition, encoding_state)):
-                out.add(at - self._joint.schedule.window_start_s, event)
-            return out
+        designed = self._joint_block(self._par_axis, (partition, encoding_state))
+        if designed is not None:
+            return designed
         area = self.combined_z_area_per_m(partition)
         if self._gz_combined is None or abs(area) <= _NEGLIGIBLE_PER_M:
             return None
         scale = area / self._gz_reference_area_per_m
         return derive(pp.scale_grad(self._gz_combined, scale))
 
+    def _reachable_te_s(self, probe_ro: CartesianLine) -> float:
+        """The echo time the current winder reaches, before any explicit-TE fill."""
+        raster = float(self.opts.grad_raster_time)
+        start = ceil_raster(
+            max(self.exc.time_to_rephaser(), float(pp.calc_duration(self.exc.rf))), raster)
+        return (start + self.winder_s + probe_ro.time_to_echo()
+                - probe_ro.prephaser_duration_s - self.exc.time_to_center())
+
     # ------------------------------------------------------------- the coupled design
     def _design_joint(self, claims: Sequence[object], probe_ro: CartesianLine,
-                      opts: Opts) -> _joint.JointDesign:
+                      local_min_s: float, te_request: float | None,
+                      opts: Opts) -> tuple[float, dict[str, _joint.JointDesign]]:
         """
-        Hand the z axis' coupled degrees of freedom to the shared designer.
+        Design every claimed axis against **one common candidate schedule**.
 
-        The base requirement is already this module's own: ``combined_z_area_per_m(p)``, the slab
-        rephasing plus the partition encoding, signed.  A claim adds a first moment to it.  Every
-        partition is enumerated, as it is for the m0-only solve, because the limiting state is a
-        result of the coupling rather than a property of the index.
+        Both `y` and `z` are winder axes here, so a claim on each is two physical problems sharing
+        one window and one echo -- which is the case the single-axis spike could not reach.  A
+        candidate is accepted only when every claimed axis is feasible at it, and the candidate
+        carries the fill an explicit ``te_s`` would insert, because translating a solved waveform
+        changes its first moment whenever ``m0`` is non-zero.
         """
         raster = float(opts.grad_raster_time)
-        axis = _joint.claimed_axis(claims)
-        # An order nobody claims is left UNCONSTRAINED rather than targeted at zero -- the two
-        # are different requirements, and conflating them would force a first moment onto an
-        # ordinary encode that never asked for one.
-        claimed = {getattr(claim, 'order', None) for claim in claims}
-        targets = {}
-        for partition in range(self.matrix[2]):
-            # The partition's own k, NOT `combined_z_area_per_m` -- that already contains the
-            # slab rephasing, which `fixed` supplies below.  Adding both would count the slab
-            # twice, which whole-repetition validation catches and a per-lobe check would not.
-            area = self.pe_z.k_per_m(partition)
+        origin = self.exc.time_to_center()
+        start = ceil_raster(
+            max(self.exc.time_to_rephaser(), float(pp.calc_duration(self.exc.rf))), raster)
+        echo_in_lobe = probe_ro.time_to_echo() - probe_ro.prephaser_duration_s
+        excitation = self.exc(rephase=not self.selective)
+        problems = {
+            axis: self._axis_problem(axis, group, excitation, opts)
+            for axis, group in _joint.group_by_axis(claims).items()
+        }
+
+        for steps in range(int(round(local_min_s / raster)), 4000):
+            window = steps * raster
+            fill = 0.0 if te_request is None else (
+                te_request - (start + window + echo_in_lobe - origin))
+            if fill < -EPS:
+                break
+            schedule = _joint.Schedule(
+                origin_s=origin,
+                endpoint_s=start + max(fill, 0.0) + window + echo_in_lobe,
+                window_start_s=start + max(fill, 0.0),
+                window_s=window,
+            )
+            designs = {}
+            for axis, problem in problems.items():
+                found = _joint.attempt(problem, schedule, opts)
+                if found is None:
+                    break
+                designs[axis] = found
+            if len(designs) == len(problems):
+                return window, designs
+        return _joint.refuse_infeasible(next(iter(problems.values())))
+
+    def _axis_problem(self, axis: str, group: Sequence[object], excitation: LogicBlock,
+                      opts: Opts) -> _joint.JointProblem:
+        """
+        One axis' physical problem.  **No augmentation is named here.**
+
+        The `z` base requirement is the partition's own k -- *not* ``combined_z_area_per_m``,
+        which already contains the slab rephasing that `fixed` supplies below.  Adding both would
+        count the slab twice, which whole-repetition validation catches and a per-lobe check
+        would not.
+        """
+        claimed = {getattr(claim, 'order', None) for claim in group}
+        encode = {self._pe_axis: self.pe, self._par_axis: self.pe_z}.get(axis)
+        count = self.matrix[1] if axis == self._pe_axis else (
+            self.matrix[2] if axis == self._par_axis else 1)
+        targets: dict[object, tuple[float, float | None]] = {}
+        for index in range(count):
+            area = float(encode.k_per_m(index)) if encode is not None else 0.0
             resolved = {
                 order: _joint.resolve_claims(
-                    claims, self.encoding_states, axis=axis, order=order,
+                    group, self.encoding_states, axis=axis, order=order,
                     base={key: (area if order == 0 else 0.0) for key in self.encoding_states})
                 for order in _joint.ORDERS
             }
             for key in self.encoding_states:
-                targets[(partition, key)] = (
+                targets[(index, key)] = (
                     resolved[0][key], resolved[1][key] if 1 in claimed else None)
 
-        start = ceil_raster(
-            max(self.exc.time_to_rephaser(), float(pp.calc_duration(self.exc.rf))), raster)
-        echo_in_lobe = probe_ro.time_to_echo() - probe_ro.prephaser_duration_s
-
-        def schedules():
-            for n in range(1, 4000):
-                window = n * raster
-                yield _joint.Schedule(
-                    origin_s=self.exc.time_to_center(),
-                    endpoint_s=start + window + echo_in_lobe,
-                    window_start_s=start,
-                    window_s=window,
-                )
-
-        # What already plays on this axis between the two instants: a selective slab's own lobe plays on z and carries a first moment from the excitation's
-        # effective instant -- the fine scan's `ms`.  Integrated from events this module
-        # already places, so no leaf publishes a moment.
-        # **As this module actually emits it.**  A selective slab is played with `rephase=False`
-        # because the rephasing is folded into the z winder, so integrating the default build
-        # would count a rephaser the repetition never plays.
-        excitation = self.exc(rephase=not self.selective)
-
         def fixed(state: object, schedule: _joint.Schedule) -> tuple[float, float]:
+            """A selective slab's own lobe carries the fine scan's ``ms`` on `z`."""
             return tuple(  # type: ignore[return-value]
                 _joint.measure_moment(excitation, order, axis, origin_s=schedule.origin_s,
                                       start_s=0.0, end_s=schedule.endpoint_s)
                 for order in _joint.ORDERS
             )
 
-        problem = _joint.JointProblem(axis=axis, targets=targets, fixed=fixed)
-        return _joint.design(problem, schedules(), opts)
+        return _joint.JointProblem(axis=axis, targets=targets, fixed=fixed)
+
+    def _joint_block(self, axis: str, state: object):
+        """One axis' jointly designed waveform, or ``None`` when nothing claimed that axis."""
+        designed = self._joint.get(axis)
+        if designed is None:
+            return None
+        out = LogicBlock('joint')
+        for at, event in _joint.events_for(designed, state):
+            out.add(at - designed.schedule.window_start_s, event)
+        return out
 
     # --------------------------------------------------------------------------- design
     def _solve_z(self) -> tuple[int, float]:

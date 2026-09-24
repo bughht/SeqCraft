@@ -70,11 +70,13 @@ The limiting state is `(ky = -32, polarity = +1)` — neither an extreme of `ky`
 polarity, which is `GRE3DTR`'s own "the limiting partition is a result of the coupling, never a
 property of the index" reappearing in a larger state space.
 
-**The basis need not be one unit shape times one scalar.** `wave-gre-flow-comp` uses a decoupled
-pair — a base lobe carrying the area, plus a *zero-area* bipolar carrying pure first moment — and
-searches a raster-aligned internal shape parameter inside a fixed total duration to improve
-gradient and slew utilisation. That is a realisation-family detail beneath the shared physical
-problem, not augmentation semantics.
+**Representation and shape family are different things.** The adjacent two-lobe basis and the
+decoupled base-plus-zero-area-bipolar basis span the **same** `(m0, m1)` set in the same window and
+report identical utilisation -- they are two coordinate systems for one two-dimensional space, so
+the decoupled one is better conditioned and more readable, not more capable. The first family that
+adds genuine waveform freedom is the **raster-aligned split search**, which is 8 to 13 per cent
+shorter at the same target (650 us against 710 at nominal limits, 910 against 1040 at the weakest
+system tried).
 
 ## 3. Composition: augmentations resolve state, the designer sees absolutes
 
@@ -175,12 +177,43 @@ HarmonizedMRI. Nothing is adapted from it.
 origin/endpoint + adjustable basis/window + target)`; everything left over is either
 wave-specific physics or timing policy that belongs to the kernel.
 
-## 8. No case needs a numerical optimizer
+## 8. The cliff question is **not** closed, and the optimizer question is not either
 
-Every case examined — readout, PE, partition, slab rephasing, inter-echo correction — is a square
-linear solve plus a monotone search for a duration. `wave-gre-flow-comp`'s own minimum-duration
-routine is the same upward search. An optimizer becomes interesting only with inequality
-constraints (PNS, eddy currents) or several free durations at once, and neither is here.
+An earlier draft of this note concluded "the window grows smoothly, there is no artificial cliff,
+GrOpt is not needed". **That is withdrawn.** What the sweeps establish is narrower.
+
+With the schedule free (AUTO), the minimum winder grows smoothly as the system is derated -- a
+factor of 1.12 to 1.24 per step from 40 mT/m / 150 T/m/s down to 8/40, with no jump. Below that
+the kernel refuses, and the refusal is **not** the joint design: the plain kernel refuses
+identically at 6/30 with the same pypulseq amplitude violation, so that boundary belongs to the
+base sequence.
+
+With the schedule **pinned** at the nominal minimum TE and then derated, the same target degrades
+smoothly too, and the diagnostic says by how much:
+
+```text
+ G      S        u = max(G_req/G_lim, S_req/S_lim)     fits
+40    150                 0.32                         yes
+20    100                 0.55                         yes
+15     80                 0.72                         yes
+10     60                 1.05                         no     <- misses by 5 %
+ 8     40                 1.39                         no
+ 2      8                 6.25                         no
+```
+
+So at 10/60 the fixed schedule misses by five per cent while AUTO finds a feasible design at a
+24 per cent longer winder. That is the two-level design earning its keep, measured.
+
+**What this does not establish.** It does not reproduce `wave-gre-flow-comp`'s pathology, which
+needs fixed TE *and* fixed echo spacing, a multi-echo train, and the wave gradients occupying the
+inter-echo windows -- none of which these single-echo GRE probes have. Until that is reproduced:
+
+```text
+optimizer required      NOT established
+optimizer unnecessary   ALSO NOT established
+```
+
+No GrOpt comparison has been run. The right place for one is beside a reproduced cliff, not here.
 
 ## 9. The prototype
 
