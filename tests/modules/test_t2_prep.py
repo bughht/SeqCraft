@@ -407,6 +407,37 @@ def test_the_quoted_floor_is_accepted(opts, tip_up: str) -> None:
 
 
 @pytest.mark.parametrize('tip_up', list(REALISATIONS))
+def test_the_quoted_floor_is_the_true_one_under_unequal_dead_and_ringdown(opts,
+                                                                         tip_up: str) -> None:
+    """
+    **`min_prep_time_s` is a public number, so it must be the real floor.**
+
+    The floor is set by how close the outer composites can come to the tip pulses, and that is
+    measured from the composite's refocusing instant -- the centre of its 180 -- to each end of
+    the group.  Those two distances are not equal: a group is a run of raster-ceiled slots and
+    every pulse carries a dead time in front and a ringdown behind, so the refocusing instant is
+    the midpoint only by coincidence.  At 300 us dead and 20 us ringdown the two differ by 280 us,
+    and solving from half the group quotes a floor about 1.1 ms too long.
+
+    The check is that the binding seam has almost no slack left at the quoted floor -- which is
+    what "true minimum" means, and what half a group would not give.
+    """
+    lopsided = copy.copy(opts)
+    lopsided.rf_dead_time = 300e-6
+    lopsided.rf_ringdown_time = 20e-6
+    raster = sc.Raster(float(lopsided.grad_raster_time))
+
+    floor = prep(lopsided, tip_up=tip_up).min_prep_time_s
+    events = _rf_events(prep(lopsided, tip_up=tip_up, prep_time_s=floor)())
+    ends = [start + float(raster.ceil(float(pp.calc_duration(rf)))) for start, rf in events]
+
+    seams = [events[index + 1][0] - ends[index] for index in range(len(events) - 1)]
+    assert min(seams) > -1e-12, 'nothing overlaps at the floor'
+    outer = (seams[0], seams[TIP_UP_INDEX - 1])
+    assert min(outer) < 2.0 * float(lopsided.grad_raster_time), 'the floor is tight, not padded'
+
+
+@pytest.mark.parametrize('tip_up', list(REALISATIONS))
 def test_a_pulse_over_max_b1_is_refused(opts, tip_up: str) -> None:
     """
     `T2Prep` is an RF-producing path, so it holds the same peak-B1 contract as every other.

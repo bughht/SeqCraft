@@ -930,20 +930,37 @@ A fine scan reads a small number of implementations, and one of them is usually 
 licence lets us look closely. Everything that implementation does is then in front of us in
 detail, and the temptation is to write all of it down as the contract.
 
-> **A realisation detail observed in an implementation witness must not be promoted into the
-> reusable contract merely because the chosen witness uses it.**
->
-> Before it becomes an invariant, establish one of:
->
-> * **domain evidence makes it invariant** — a handbook, review or primary paper states it as part
->   of what the family *is*, not as one way to build it;
-> * **independent implementations agree** — and independent means what the registry's
->   `independence_note` means, not two ports of one original;
-> * **it solves a separately named physical problem** — it is there for a reason the family itself
->   does not supply, and that reason can be stated.
->
-> Otherwise it is a **realisation variant**: support it if it is established, name it in the API,
-> and leave the contract at the canonical form.
+> **Implementation witnesses tell us how someone realised the physics. They do not define the
+> reusable physical contract.**
+
+Do not go looking for a reason to keep the detail. **Classify it**, and let the classification say
+where it goes:
+
+```text
+Does domain evidence define this detail as part of the family itself?
+    yes  ->  contract invariant
+
+Do independent implementations converge on it because it is intrinsic
+to the same physical claim?
+    yes  ->  evidence for a contract invariant
+
+Does the detail instead solve an additional, separately named physical problem?
+    yes  ->  realisation / mode / option, carrying its own claim
+
+otherwise
+         ->  implementation detail; do not promote it
+```
+
+The third branch is the one that is easy to get backwards, because it is the branch where the
+detail has an obvious good reason behind it. **That reason is not a promotion.** A detail that
+exists to solve a *separate* named problem is evidence that it belongs in a realisation, a mode or
+an option with a claim of its own — not evidence that it belongs in the parent family's contract.
+"It is there for a good reason" is a reason to name it and to state what it claims; it is not a
+reason to make it an invariant of a family that does not make that claim.
+
+The second branch has a narrower catch: convergence counts only when it is convergence on the
+*same* physical claim, and only between witnesses that are actually independent. Two ports of one
+original are one witness, and the registry's `independence_note` is what decides that.
 
 ### What it looked like in practice
 
@@ -951,26 +968,40 @@ The T2Prep scan's only permissively licensed executable witness realises the tip
 `+270x` then `−360x`. The scan recorded that as part of the `mlev4-hard` mode, and the first
 implementation shipped it as the only behaviour.
 
-It does not survive the three tests. The domain reference describes the family as `+90`, one or
-more refocusing pulses, `−90`, spoiler — the composite is not part of the definition. MLEV-4
-defines the *refocusing* train's phase cycling and says nothing about the tip-up. And the second,
-copyleft witness uses adiabatic tip pulses instead, so the implementations do not agree on this
-point at all. The composite is an established realisation used in some designs, and that is
-exactly what it should have been recorded as.
+Walk the branches and it never reaches the first two.
+
+**Does domain evidence define it as part of the family?** No. The domain reference describes the
+family as `+90`, one or more refocusing pulses, `−90`, spoiler, and names composite pulses
+separately as an *optional* robustness choice. MLEV-4 defines the *refocusing* train's phase
+cycling and says nothing about the tip-up at all.
+
+**Do independent implementations converge on it?** No. The second, copyleft witness uses adiabatic
+tip pulses instead, so on this point the witnesses do not agree.
+
+**Does it solve an additional, separately named problem?** Yes — reduced sensitivity to B0 and B1
+error is exactly what a composite pulse is reached for, and the domain reference names it in those
+terms. So the detail lands in the third branch: a realisation with a claim of its own. And that is
+the part the first implementation got backwards. Having a good reason behind it is what makes it a
+*named option*, not what makes it an invariant — especially here, where the claim that reason
+refers to is one this module does not make.
 
 The cost of getting it the wrong way round is not academic: the composite is longer in RF, so it
 pays more relaxation and more RF energy, and it carried a timing convention — "the centre of a
 composite" — that the domain evidence does not define and that no measurement we had could settle.
 
-And when the two realisations were finally measured against each other under a B1 error, they
-failed **together**: the twelve-pulse refocusing train is what decides B1 tolerance, and a
-two-pulse tip-up is one rotation out of fourteen. The robustness intuition that made the composite
-look contract-worthy was not there to find.
+And when the two realisations were finally measured against each other under a B1 error, **no
+consistent advantage for the composite appeared** — at one point in the sweep it was the worse of
+the two. The robustness intuition that made the composite look contract-worthy was not there to
+find. That is not a finding about which part of the preparation dominates B1 sensitivity, and the
+record does not claim one; it is only enough to say that the option must not be presented as a
+robustness feature.
 
 ### The smell
 
-Ask of any invariant in a candidate record: **which of the three tests did this pass?** If the
-answer is "the witness did it", it is a realisation variant that has not been labelled as one yet.
+Ask of any invariant in a candidate record: **which branch put this here?** If the answer is "the
+witness did it", it is an implementation detail that has not been labelled as one yet. If the
+answer is "it is there for a good reason", that is the third branch, and the record owes a name
+for the option and a statement of what it claims.
 
 The corollary is about evidence classes rather than rules. The canonical form of a family is a
 *domain* question, and the registry now carries an `educational-synthesis` role for sources that

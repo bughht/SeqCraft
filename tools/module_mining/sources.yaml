@@ -302,6 +302,13 @@ sources:
   - id: mriquestions
     repo: n/a -- a website; see `url`
     url: https://mriquestions.com
+    pages_cited:
+      # Exactly the pages that have been read and cited.  The rest of the site is NOT scanned,
+      # and this entry is not a licence to ingest it.
+      - title: Driven Equilibrium
+        url: https://mriquestions.com/driven-equilibrium.html
+        author: A. D. Elster
+        cited_by: plans/t2prep/candidate.yaml (E1)
     commit_scanned: n/a
     license: >
       Copyrighted educational site, all rights reserved.  CITED ONLY -- no text, figure or
@@ -313,8 +320,9 @@ sources:
     language: n/a
     executable: no
     covers: >
-      Canonical definitions and mental models across the field: driven equilibrium and T2
-      preparation, composite and adiabatic pulses, phase cycling, steady states, artefacts.
+      Canonical definitions and mental models, one page at a time and only where a candidate
+      needs one -- see `pages_cited`.  The site covers much more than that; scanning it broadly
+      is deliberately not what this entry authorises.
     why_registered: >
       It answers one question the code corpus answers badly and the handbook answers slowly-
       "what does a practitioner consider the CANONICAL form of this family?".  That is exactly

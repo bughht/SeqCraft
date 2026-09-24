@@ -25,6 +25,13 @@ named `robust` or `b1_robust`: it is a choice of realisation, and a future adiab
 change what `prep_time_s` *means* rather than how one pulse is built, so it is not a third value
 of this parameter either.
 
+`min_prep_time_s` is the true floor, not a convenient one. It is solved from the real distances
+between a composite's refocusing instant -- the centre of its 180 -- and each end of its group,
+which are not equal: a group is a run of raster-ceiled slots and every pulse carries a dead time
+in front and a ringdown behind, so that instant is the group's midpoint only by coincidence. Half
+the group quoted a floor 0.3 ms long on the default scanner and 1.1 ms long at a 300 us dead time
+with a 20 us ringdown, and a test at those lopsided times now holds the binding seam tight.
+
 **`prep_time_s` is the transverse period**, and both of its ends are plain RF centres — nothing
 weighted and nothing derived. It runs from the centre of the `+90` to the centre of the `-90`
 under `'simple'`, and to the centre of the **270** under `'composite_270_360'`, which is the
@@ -54,9 +61,11 @@ the magnet's contribution to T2*. The third is a property of the sequence rather
 implementation, and it is why this is a contrast preparation and not a T2 mapping method.
 
 Layer 3 also sweeps B1 and off-resonance across both realisations, as a measurement rather than a
-claim, and finds them failing **together**: the twelve-pulse refocusing train is what decides B1
-tolerance, and a two-pulse tip-up cannot repair an error every pulse shares. That sweep needed a
-different instrument. MRzero's phase-distribution graph estimates which coherence pathways matter
+claim, and finds **no consistent advantage for the composite**: both become unreliable away from
+nominal B1, their errors are not identical, and at B1 = 0.8 the composite is the worse of the two.
+That is enough for the only conclusion drawn from it — the composite realisation is not a
+robustness feature — and it establishes nothing about which part of the preparation dominates B1
+sensitivity, which shipping the module does not need. That sweep needed a different instrument. MRzero's phase-distribution graph estimates which coherence pathways matter
 from the *nominal* flip angles, and a 360 is the identity only at nominal B1 — so the sweep uses
 `mr0.isochromat_sim`, and the notebook shows the two instruments disagreeing before it does.
 

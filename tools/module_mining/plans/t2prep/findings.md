@@ -189,8 +189,13 @@ realisation, adopted rather than replaced by a rule of ours. The amplitude-weigh
 removed: neither the domain evidence nor the witness establishes it, and a Layer 3 slope fit
 cannot adjudicate it, because a constant offset does not change a slope.
 
-Layer 3 then measured the two under B1 error, and they **fail together** — the twelve-pulse
-refocusing train is what decides B1 tolerance, not the tip-up. Had the composite been promoted
+Layer 3 then measured the two under B1 error and found **no consistent advantage for the
+composite** — both become unreliable away from nominal B1, their errors are not identical, and at
+B1 = 0.8 the composite is notably the worse of the two. That is enough for the one conclusion this
+record needs: the composite must not be presented as a robustness feature. It is *not* a finding
+about which part of the preparation dominates B1 sensitivity, and none was sought — the two
+tip-ups are equivalent as ideal rotations, and the emitted sequence, with finite pulse durations
+and real gaps between them, is not obliged to agree with that. Had the composite been promoted
 into the contract as a robustness feature, the measurement would not have backed it.
 
 ### Where the lesson lives

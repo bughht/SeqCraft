@@ -77,8 +77,8 @@ The simple form is shorter in RF, so it pays less relaxation and less RF energy,
 the domain reference describes.  The composite form costs about 2.6 ms more here and is offered
 because it is established, not because this module measures it to be better.
 ``examples/t2prep_gre_2d/02`` compares the two under :math:`B_1` and :math:`B_0` error and finds
-that the **refocusing train**, not the tip-up, is what decides the answer: the two realisations
-fail together.
+**no consistent advantage for either**, which is why neither carries a robustness claim and why
+the sweep settles nothing beyond that.
 
 Every pulse is a hard block pulse at **one** :math:`B_1`, and every duration is a whole number of
 base durations -- 1 : 2 : 3 : 4 for 90 : 180 : 270 : 360.  The base is quantised onto the RF
@@ -216,7 +216,9 @@ class T2Prep(Module):
     refocus_duration_s, requested_refocus_duration_s : float
         The realised 180 duration and the request it came from.
     min_prep_time_s : float
-        The shortest preparation the pulses themselves leave room for.
+        The shortest preparation the pulses themselves leave room for, solved from the real
+        distances between a composite's refocusing instant and each end of its group rather than
+        from half the group -- so it is the true floor, and a request at it is accepted.
     b1_hz : float
         The single amplitude every pulse in the block is played at.
     pulses : tuple
@@ -458,15 +460,23 @@ class T2Prep(Module):
         * the first composite must start after the tip-down ends;
         * consecutive composites are ``prep_time_s / 4`` apart and must not overlap;
         * the last composite must end before the tip-up begins.
+
+        The two outer constraints are measured from the composite's **refocusing instant** -- the
+        centre of its 180 -- to each end of the group, and those two distances are **not equal**.
+        A group is a run of raster-ceiled slots and every pulse carries a dead time in front and a
+        ringdown behind, so the refocusing instant is the group's midpoint only when those times
+        happen to make it one.  Solving from half the group would quote a floor that is merely
+        convenient, and this is a public attribute.
         """
         tip_down = self._duration_of(self._tip_down)
         composite = self._duration_of(self._composites[0])
-        first = _REFOCUS_FRACTIONS[0]
-        after_tip_down = (tip_down - self.time_to_tip_down() + composite / 2.0) / first
-        between = 4.0 * composite
-        before_tip_up = (composite / 2.0
-                         + self._offset_to_centre(self._tip_up, self._tip_up_index)
-                         ) / (1.0 - _REFOCUS_FRACTIONS[-1])
+        lead = self._offset_to_centre(self._composites[0], _REFOCUS_CENTRE_INDEX)
+        trail = composite - lead
+        first, last = _REFOCUS_FRACTIONS[0], _REFOCUS_FRACTIONS[-1]
+        after_tip_down = (tip_down - self.time_to_tip_down() + lead) / first
+        between = composite / (_REFOCUS_FRACTIONS[1] - first)
+        before_tip_up = (trail + self._offset_to_centre(self._tip_up, self._tip_up_index)
+                         ) / (1.0 - last)
         return float(self._grad_raster.ceil(max(after_tip_down, between, before_tip_up) / 8.0)
                      * 8.0)
 
