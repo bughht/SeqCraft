@@ -40,7 +40,7 @@ capability:
     (2) The interval symmetry.  If the gaps around each refocusing pulse are not equal, the echoes
     do not coincide with the pulse centres, static dephasing is NOT refocused, and the result is
     T2*-weighted while still looking like a T2 preparation.
-    (3) The refocusing phase alternation.  Both witnessed designs alternate the composite pulses'
+    (3) The refocusing phase alternation.  Every witnessed design cycles the composite pulses'
     phase; with a single phase, B1 error accumulates instead of cancelling.
     (4) The crusher placement.  It must follow the tip-up.  Before it, it destroys the
     magnetisation the preparation exists to store.
@@ -215,24 +215,27 @@ evidence:
       already depends on, and IRPrep is the consumer that proves the adiabatic path works for
       inversions.
     what_it_establishes: >
-      A NEGATIVE result, and the blocking one.  Both witnessed designs tip down and tip up with an
-      adiabatic 90 -- BIR-4 or AHP -- and pypulseq's make_adiabatic_pulse is documented "Make an
-      adiabatic inversion pulse" and offers only hypsec and wurst.  Those invert; they cannot
-      perform a 90 degree rotation.  So SeqCraft can build an adiabatic INVERSION, as IRPrep
-      already does, and cannot build the adiabatic ROTATION this candidate's witnesses use.
+      A NEGATIVE result, and the blocking one when it was written -- R3 later discharged it.
+      Both OpenMRF designs tip down and tip up with an adiabatic 90 -- BIR-4 or AHP -- and
+      pypulseq's make_adiabatic_pulse is documented "Make an adiabatic inversion pulse" and offers
+      only hypsec and wurst.  Those invert; they cannot perform a 90 degree rotation.  So SeqCraft
+      can build an adiabatic INVERSION, as IRPrep already does, and cannot build the adiabatic
+      ROTATION those two designs use.
     measured: >
       Verified rather than assumed, and the first guess was wrong -- IRPrep already routes hypsec
       and wurst to make_adiabatic_pulse, so adiabatic support exists.  What is absent is
       specifically the 90-degree adiabatic family.
 
 reference_situation:
-  independent_witnesses: 1
-  designs_examined: 2
+  independent_witnesses: 2       # R1 and R3.  R2 is the same corpus and author as R1
+  designs_examined: 3            # OpenMRF T2/ and MLEV/, and `mrseq`
   note: >
     Searched all nine registered corpora for T2-preparation evidence.  pypulseq, pulseq-matlab,
     pulseq-cest, PulseqDiffusion and Open4DFlow have none.  The MRzero playground appeared to
     match on "MLEV" and did not -- the hits were case-insensitive fragments of base64 image data,
-    checked and discarded.  So the family is witnessed by OpenMRF alone.
+    checked and discarded.  The first pass therefore found the family witnessed by OpenMRF alone;
+    the 2026-09-22 revision added R3 (PTB-MR/mrseq, Apache-2.0), which is independent of OpenMRF
+    and is the witness for the non-adiabatic variant SeqCraft can build.
   oracle_available: >
     Yes in principle -- MRzeroCore can simulate a T2 preparation and the exp(-tau/T2) weighting is
     exactly the kind of claim a Bloch simulation settles.  Not used at this stage, because Layer 3
@@ -296,8 +299,8 @@ contract:
 
 ownership:
   refocusing_train: >
-    **Intrinsic to the leaf.**  Both designs keep the train entirely inside the preparation and
-    never expose it; the count and spacing are determined by the preparation time and the leaf's
+    **Intrinsic to the leaf.**  Every witnessed design keeps the train entirely inside the
+    preparation and never exposes it; the count and spacing are determined by the preparation time and the leaf's
     own pulse durations, and nothing outside the preparation influences either.  That is the v0
     ownership test answered in the affirmative.
   why_refocusing_is_not_reused: >
@@ -444,7 +447,9 @@ acceptance:
       exp(-tau/T2) weighting.  That is a Layer 3 claim needing a simulator, and it is the claim a
       user actually cares about.
     - >
-      B1 or B0 robustness, which is the entire reason both witnesses use adiabatic pulses.
+      B1 or B0 robustness.  The OpenMRF adiabatic variants target that separately named physical
+      problem; the shipped hard-pulse mode makes no quantitative robustness claim, and neither
+      tip-up realisation adds one.
     - >
       Agreement with any second independent implementation.
 
