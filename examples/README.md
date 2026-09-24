@@ -16,6 +16,7 @@
 | [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. Then what a 21.7 ms readout pays in off-resonance. |
 | [`se_spiral_2d/`](se_spiral_2d/) | A spin echo in front of a spiral, and the alignment it needs: the trajectory's origin crossing has to land on the physical echo. Three placements that all compile and only one of which is right, and then what refocusing is actually worth. |
 | [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | Diffusion-weighted imaging: a Stejskal–Tanner gradient pair around a 180°, a single-shot EPI readout, and an ADC map recovered from a phantom whose diffusion coefficient is known. Introduces `DiffusionSEPrep` and `sc.b_value`. |
+| [`t2prep_gre_2d/`](t2prep_gre_2d/) | A T2 preparation in front of a spoiled gradient echo: how a sequence with no T2 contrast of its own is given some, and the measurement that the weighting really is T2 rather than T2\*. Introduces `T2Prep`. |
 
 ## `gre_2d/`
 
@@ -292,6 +293,34 @@ It is what shows that a nominally unweighted acquisition is not unweighted, whic
 diffusion lobes alone could see.
 
 This directory is the pilot for **Writing example notebooks** below.
+
+`01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
+
+## `t2prep_gre_2d/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](t2prep_gre_2d/01_build.ipynb) | What a T2 preparation is made of — fourteen hard pulses at one B1, an MLEV-4 composite refocusing train, a single `-90` tip-up — the two instants `prep_time_s` is measured between, and why the tip-up is a *realisation* rather than part of the contract. Then the emitted block checked for interval symmetry and for the absence of any gradient while the magnetisation is transverse, and a composition with a shipped `GRE2D`. `.seq` files in both realisations. **Needs nothing but `seqcraft`.** |
+| [`02_simulate_and_reconstruct.ipynb`](t2prep_gre_2d/02_simulate_and_reconstruct.ipynb) | A known T2 recovered from the slope of `ln S` against `prep_time_s`, within 1 % from 40 to 250 ms — and the control that matters: T2\* swept by a factor of five moves the answer by 3 %. Then where the residual bias comes from, and a B1 / off-resonance sweep across both tip-up realisations that finds no consistent advantage for either. **Needs `MRzeroCore` and `torch`.** |
+
+A spoiled gradient echo has no T2 contrast: its signal decays at T2\*, and at the short echo times
+a fast scan needs there is hardly any decay at all. A **preparation** puts the contrast in before
+the imaging train, as a factor on the longitudinal magnetisation:
+
+```text
+90x  ->  refocusing train  ->  -90x  ->  spoiler  ->  any readout at all
+     |<------ prep_time_s ---->|
+```
+
+```text
+T2Prep           owns  the pulses, the train, the timing solve and the spoiler
+the acquisition  owns  the line ordering, and it matters
+```
+
+The second line is the part worth reading twice. What the preparation stores is *longitudinal*
+magnetisation, which recovers at T1 — so every millisecond between the tip-up and the acquisition
+of the centre of k-space erodes the contrast. A linear ordering reaches k = 0 after 315 ms of a
+618 ms train; a **centric** one reaches it after 6. `01` measures both.
 
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
 

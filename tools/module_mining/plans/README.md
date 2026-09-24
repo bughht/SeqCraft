@@ -8,7 +8,13 @@
 ```text
 plans/
     current/
-        roadmap.md                              the only active forward plan
+        2026-09-23_post_v0_implementation_to_authoring_roadmap.md
+                                                THE CURRENT DIRECTION.  Implement the approved
+                                                queue -- T2Prep, VelocityEncode, flow
+                                                compensation, bSSFPTR -- then build
+                                                sequence-authoring v0
+        roadmap.md                              the post-v0 roadmap it continues.  Still current
+                                                for everything before the queue
 
     process/
         fine_scan_playbook.md                   how a candidate is scanned, in depth
@@ -52,7 +58,8 @@ are in [`../skill_v0/`](../skill_v0/).
 
 | document | class | note |
 |---|---|---|
-| `current/roadmap.md` | **CURRENT** | the only forward roadmap. Everything else that points forward is superseded by it |
+| `current/2026-09-23_post_v0_implementation_to_authoring_roadmap.md` | **CURRENT** | the active direction: cash out the approved queue, then `sequence-authoring` v0. Not a replacement for the candidate records, which stay the detailed physical specs |
+| `current/roadmap.md` | **CURRENT** | the post-v0 roadmap. Its *approved queue* section is superseded by the document above; everything before it still holds |
 | `archive/2026-09-22_skill_v1_synthesis.md` | **CURRENT** | the Phase E synthesis across C1, C2 and C3. Its five recommendations were applied in Skill v1; the document stands as the reasoning behind them, and every change it proposed is still costed here |
 | `archive/2026-09-21_batch_corpus_scan.md` | **CURRENT** | the phase B scan: what the corpus holds after PR #31 and #32, what SeqCraft already covers, and the candidate backlog. Current *evidence*, not a second roadmap — it recommends a Phase C shortlist and the roadmap records the decision |
 | `process/fine_scan_playbook.md` | **DURABLE_REFERENCE** | the process in depth; the Skill is the operational layer over it |

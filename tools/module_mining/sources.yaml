@@ -10,12 +10,17 @@
 #   discovery       tells us a family exists and is worth looking at
 #   design-witness  an implementation whose construction can corroborate another's
 #   oracle          an independent measurement path, for validating rather than designing
+#   educational-synthesis
+#                   a curated secondary account of established physics -- not code, and not a
+#                   primary source.  Good for the canonical definition of a family and for the
+#                   mental model a practitioner is taught; it does NOT outrank a handbook, a
+#                   review or a primary paper, and it settles nothing those disagree with.
 #
 # A corpus may be more than one.  It is never automatically a design-witness just because it
 # contains working sequences.
 
-registry_version: 3
-updated: 2026-09-22
+registry_version: 4
+updated: 2026-09-23
 
 sources:
 
@@ -292,6 +297,45 @@ sources:
       COPYLEFT.  Extract the problem formulation, the constraint vocabulary and the physics only.
       No implementation text, and no dependency: adding a GPL solver to SeqCraft's compile path is
       a licensing decision, not a design one, and is out of scope for any fine scan.
+
+  # ------------------------------------------------------------- educational domain synthesis
+  - id: mriquestions
+    repo: n/a -- a website; see `url`
+    url: https://mriquestions.com
+    pages_cited:
+      # Exactly the pages that have been read and cited.  The rest of the site is NOT scanned,
+      # and this entry is not a licence to ingest it.
+      - title: Driven Equilibrium
+        url: https://mriquestions.com/driven-equilibrium.html
+        author: A. D. Elster
+        cited_by: plans/t2prep/candidate.yaml (E1)
+    commit_scanned: n/a
+    license: >
+      Copyrighted educational site, all rights reserved.  CITED ONLY -- no text, figure or
+      equation is reproduced, and nothing is derived from it that is not independently in the
+      handbook literature.
+    compatible_with_seqcraft_mit: not applicable -- nothing is copied
+    roles: [educational-synthesis]
+    explicitly_not: [design-witness, oracle]
+    language: n/a
+    executable: no
+    covers: >
+      Canonical definitions and mental models, one page at a time and only where a candidate
+      needs one -- see `pages_cited`.  The site covers much more than that; scanning it broadly
+      is deliberately not what this entry authorises.
+    why_registered: >
+      It answers one question the code corpus answers badly and the handbook answers slowly-
+      "what does a practitioner consider the CANONICAL form of this family?".  That is exactly
+      the question a fine scan has to separate from "what did this one implementation do".  Added
+      2026-09-23, when a T2Prep realisation detail from a single implementation witness had been
+      promoted into the reusable contract and the canonical picture was the simpler one.
+    role_note: >
+      **Weaker than the domain-reference class, and it must not be used to overrule it.**  It is a
+      secondary account: it cites rather than establishes, and where it and a handbook or a
+      primary paper differ, the stronger source wins and the disagreement is recorded.  It is
+      never a design-witness -- it contains no construction to corroborate -- and never an oracle.
+      Use it to identify the canonical form of a family and the vocabulary practitioners use for
+      it, and then cite the primary source for the physics.
 
 # ---------------------------------------------------------------------------------------------
 # Per-candidate questions.  A corpus's registry entry does NOT answer these; they are re-asked

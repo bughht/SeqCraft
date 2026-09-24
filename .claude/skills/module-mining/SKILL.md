@@ -330,6 +330,15 @@ Layer 3  simulate + reconstruct                   review evidence
 State status **per layer**. A GREEN that covers Layers 1 and 2 does not license an end-to-end
 claim, and the difference must be written where a reader will hit it.
 
+**Realisation is not contract.** Implementation witnesses tell us how someone realised the
+physics; they do not define the reusable physical contract. Classify each detail rather than
+looking for a reason to keep it: domain evidence defining it as part of the family, or independent
+witnesses converging on it as intrinsic to the same claim, makes it an **invariant**; solving an
+additional, separately named physical problem makes it a **realisation, mode or option carrying
+its own claim** -- not an invariant of a family that does not make that claim; anything else is an
+implementation detail and is not promoted. `plans/process/fine_scan_playbook.md` §20 has the
+decision and the worked case.
+
 Layer 2 and Layer 3 notebooks are **user-facing examples**, so they follow the repository rule in
 `examples/README.md` -> *Writing example notebooks*. The scan record is where the evidence
 argument goes; the notebook is a tutorial.

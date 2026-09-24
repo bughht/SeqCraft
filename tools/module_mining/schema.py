@@ -83,7 +83,7 @@ _REASON_CODES = frozenset({
 
 _ROLES = frozenset({
     'primary', 'authoritative-external', 'independent-formulation', 'independent-implementation',
-    'supporting', 'architecture-evidence', 'deferred',
+    'supporting', 'architecture-evidence', 'educational-synthesis', 'deferred',
 })
 
 #: What KIND of evidence a reference is, which `role` does not say.  Every `role` value describes a
@@ -109,6 +109,11 @@ _EVIDENCE_CLASSES = frozenset({
                           # convention, a mode
     'oracle',             # analytic calculation, simulation, independent measurement -- tests
                           # whether OUR realisation produces the claimed physics
+    'educational-synthesis',  # a curated teaching account -- what the field considers the
+                          # CANONICAL form of a family.  Weaker than `domain-reference` and it
+                          # must not be used to overrule one; added 2026-09-23 with the
+                          # mriquestions registry entry, after a realisation detail from a single
+                          # implementation witness had been promoted into a reusable contract.
 })
 
 _LAYER_STATES = frozenset({'GREEN', 'YELLOW', 'RED', 'DEFERRED', 'NOT_APPLICABLE'})
@@ -174,10 +179,10 @@ def _check_evidence(record: dict[str, Any], errors: list[str], warnings: list[st
             # A domain reference is a book or a paper, so `repo` is a category error for it --
             # but say so rather than silently exempting it, because "no repo" and "a book" are
             # different situations and only one of them is fine.
-            if kind == 'domain-reference':
+            if kind in ('domain-reference', 'educational-synthesis'):
                 if not item.get('citation'):
-                    errors.append(f'{where}: a domain-reference needs a `citation`')
-                if not item.get('curated_card'):
+                    errors.append(f'{where}: a {kind} needs a `citation`')
+                if kind == 'domain-reference' and not item.get('curated_card'):
                     warnings.append(
                         f'{where}: a domain-reference with no `curated_card` makes the next '
                         f'reader re-read the source -- see tools/module_mining/domain_evidence/'
