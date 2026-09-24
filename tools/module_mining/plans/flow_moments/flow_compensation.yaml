@@ -146,8 +146,19 @@ acceptance:
       The compensated waveform meets the same hardware limits as the uncompensated one, and its
       cost in time is reported rather than hidden.
     - >
-      Metamorphic- with the target set to zero and the neighbour's moment set to zero, the
-      construction reduces to the canonical binomial pattern.
+      WITHDRAWN 2026-09-24, during the CartesianLine implementation.  This bullet asked for a
+      metamorphic check that the construction reduces to the canonical binomial 1,-2,1 pattern
+      when the target and the neighbour's moment are both zero.  It does not apply to this
+      realisation- the third contribution is the READOUT's own pre-echo waveform, which is not a
+      symmetric lobe of matching duration, so the binomial ratio is not an invariant of the
+      construction and asserting it would be asserting something false.  The two moment
+      conditions are asserted directly instead, on the full emitted waveform, which is what the
+      binomial pattern is a special case of.  The acceptance conditions that DO hold are the
+      other bullets in this list-
+        full emitted m0 at the echo = 0
+        full emitted m1 at the echo = 0
+        hardware and raster legality of the reshaped waveform
+        the cost in time reported rather than hidden
   does_not_establish:
     - >
       Artefact reduction in an image.  D1's own justification is ghosting and signal loss from

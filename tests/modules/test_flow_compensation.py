@@ -32,18 +32,18 @@ def line(opts, **overrides):
     return sc.modules.CartesianLine(**kwargs)
 
 
-def moment_to_echo(module, order: int, tree=None) -> float:
+def moment_to_echo(module, order: int, echo_index: int = 0) -> float:
     """
-    The `order`-th moment of **every** gradient event on the module's axis, at the echo.
+    The `order`-th moment of **every** gradient event on the module's axis, at an echo.
 
-    Truncated at ``time_to_echo`` and referenced to it, integrated from each event's own
+    Truncated at that echo's time and referenced to it, integrated from each event's own
     piecewise-linear knots.  Summed across events, which is the part no per-event check reaches:
     the prephaser lobes and the readout's own ramp-up are three separate events whose moments only
     cancel together.
     """
-    echo = module.time_to_echo()
+    echo = module.te_s[echo_index]
     total = 0.0
-    for start, event, _ in flatten(tree if tree is not None else module()):
+    for start, event, _ in flatten(module()):
         if getattr(event, 'type', None) not in ('trap', 'grad'):
             continue
         if getattr(event, 'channel', None) != module.axis:
@@ -59,9 +59,16 @@ def moment_to_echo(module, order: int, tree=None) -> float:
     return float(total)
 
 
-def _scale(module) -> float:
-    """What "zero" means here: moments are areas, so they are compared against the lobe scale."""
-    return abs(module.area_to_echo_per_m) * module.time_to_echo() ** 2
+def tolerance(module, order: int) -> float:
+    """
+    What "zero" means for an `order`-th moment on this readout.
+
+    Dimensioned rather than absolute: ``m0`` is an area in 1/m, ``m1`` an area times a time in
+    s/m, so the scale each is compared against carries the same units it does.  The readout's own
+    area to the echo and its echo time are the two quantities of the construction, so the natural
+    scale is ``|area| * echo**order``, and the tolerance is a small fraction of it.
+    """
+    return abs(module.area_to_echo_per_m) * module.time_to_echo() ** order * 1e-9
 
 
 # ------------------------------------------------------------------------ the moment conditions
@@ -70,13 +77,14 @@ def test_the_first_moment_is_null_at_the_echo(opts, matrix: int, bandwidth: floa
     """
     **The condition the option exists to meet**, measured on the complete emitted waveform.
 
-    Velocity compensation is ``m1 = 0`` at the echo for everything that plays on the axis.  A
-    spin moving at constant velocity then arrives at the echo with the phase it would have had
-    standing still, which is what stops flow from writing a ghost into the phase-encode direction.
+    A spin at ``x(t) = x0 + v t`` accumulates ``phi = 2 pi (m0 x0 + m1 v)`` over a gradient
+    waveform, so ``m1 = 0`` at the echo removes the constant-velocity phase term there, just as
+    ``m0 = 0`` removes the constant-position one.  Whether that reduces an artefact in an image is
+    a separate question this does not reach.
     """
     module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
 
-    assert moment_to_echo(module, 1) == pytest.approx(0.0, abs=_scale(module) * 1e-9)
+    assert moment_to_echo(module, 1) == pytest.approx(0.0, abs=tolerance(module, 1))
 
 
 @pytest.mark.parametrize(('matrix', 'bandwidth'), PROTOCOLS)
@@ -90,8 +98,7 @@ def test_the_zeroth_moment_is_still_null_at_the_echo(opts, matrix: int,
     """
     module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
 
-    assert moment_to_echo(module, 0) == pytest.approx(
-        0.0, abs=abs(module.area_to_echo_per_m) * 1e-9)
+    assert moment_to_echo(module, 0) == pytest.approx(0.0, abs=tolerance(module, 0))
 
 
 @pytest.mark.parametrize(('matrix', 'bandwidth'), PROTOCOLS)
@@ -106,9 +113,8 @@ def test_an_uncompensated_readout_has_a_first_moment_to_null(opts, matrix: int,
     """
     module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth)
 
-    assert abs(moment_to_echo(module, 1)) > _scale(module) * 1e-3
-    assert moment_to_echo(module, 0) == pytest.approx(
-        0.0, abs=abs(module.area_to_echo_per_m) * 1e-9)
+    assert abs(moment_to_echo(module, 1)) > tolerance(module, 1) * 1e6
+    assert moment_to_echo(module, 0) == pytest.approx(0.0, abs=tolerance(module, 0))
 
 
 # ------------------------------------------------------------------------------ the construction
@@ -188,7 +194,54 @@ def test_the_shortest_pair_is_the_shortest_on_the_raster(opts, matrix: int,
     half = module.prephaser_duration_s / 2.0
 
     assert module._compensated_pair_fits(half)
-    assert not module._fits(half - raster)
+    assert not module._compensated_pair_fits(half - raster)
+
+
+@pytest.mark.parametrize(('matrix', 'bandwidth'), PROTOCOLS)
+def test_the_feasibility_predicate_is_monotone_in_the_lobe_duration(opts, matrix: int,
+                                                                    bandwidth: float) -> None:
+    """
+    **What licenses the bisection**, and the reason the predicate carries the limit areas.
+
+    Each winder area is ``A_i(D) = L_i + K_i / D``, so it moves monotonically towards a finite
+    limit ``L_i`` and never past it.  Requiring the limits to fit as well as the current areas
+    makes the predicate an up-set: once the pair fits, every longer pair fits.  Bisection on a
+    predicate that was not monotone could return a feasible duration that is not the shortest.
+
+    Asserted here as one transition across a swept range rather than argued only in a docstring.
+
+    The limit condition itself does not bind on any readout geometry measured -- the solved areas
+    dominate their limits throughout the feasible range -- so removing it changes no duration
+    this suite computes.  It is carried for the geometries that have not been tried, and that is
+    why this test asserts the *property* rather than the mechanism.
+    """
+    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
+    raster = float(opts.grad_raster_time)
+    half = module.prephaser_duration_s / 2.0
+
+    steps = [module._compensated_pair_fits(n * raster)
+             for n in range(1, int(round(half / raster)) + 60)]
+    transitions = sum(1 for a, b in zip(steps, steps[1:]) if a != b)
+    assert transitions == 1, 'infeasible then feasible, once'
+    assert steps[-1], 'the long end is the feasible one'
+
+
+@pytest.mark.parametrize(('matrix', 'bandwidth'), PROTOCOLS)
+def test_the_winder_areas_tend_to_the_limits_the_predicate_assumes(opts, matrix: int,
+                                                                   bandwidth: float) -> None:
+    """
+    The other half of the monotonicity argument: ``A_i(D) -> L_i`` with ``L = (-S/2, 3S/2)``.
+
+    If the limits were wrong the predicate would be guarding the wrong quantity, and the up-set
+    property would not follow -- so they are measured against the solve at a long duration rather
+    than trusted.
+    """
+    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
+    target_area = -module._readout_moment_to_echo(0)
+
+    assert module._limit_areas() == pytest.approx((-0.5 * target_area, 1.5 * target_area))
+    far = module._compensated_areas(module.prephaser_duration_s * 500.0)
+    assert far == pytest.approx(module._limit_areas(), rel=1e-2)
 
 
 def test_the_compiler_accepts_a_compensated_readout(opts) -> None:
@@ -213,22 +266,64 @@ def test_a_requested_duration_is_honoured_and_still_nulls_the_moment(opts, echoe
                      prephaser_duration_s=shortest.prephaser_duration_s + 200e-6)
 
     assert stretched.prephaser_duration_s > shortest.prephaser_duration_s
-    assert moment_to_echo(stretched, 1) == pytest.approx(0.0, abs=_scale(stretched) * 1e-9)
-    assert moment_to_echo(stretched, 0) == pytest.approx(
-        0.0, abs=abs(stretched.area_to_echo_per_m) * 1e-9)
+    assert moment_to_echo(stretched, 1) == pytest.approx(0.0, abs=tolerance(stretched, 1))
+    assert moment_to_echo(stretched, 0) == pytest.approx(0.0, abs=tolerance(stretched, 0))
 
 
-def test_compensation_holds_for_every_echo_of_a_train(opts) -> None:
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_the_first_echo_is_compensated_and_later_echoes_are_not(opts, polarity: str) -> None:
     """
-    The prephaser is compensated for the **first** echo, which is the one it is solved against.
+    **The documented limitation, measured on both later echoes.**
 
-    Recorded as a measurement rather than assumed: later echoes of a monopolar train accumulate
-    their own first moment from the lobes between them, and this module compensates the winder,
-    not the train. A protocol needing every echo compensated needs more than this option.
+    The winder is solved against the first echo, and later echoes of a train accumulate their own
+    first moment from the lobes between them. So this option compensates the first echo and does
+    not promise the rest of the train -- which is worth locking down, because a multi-echo
+    protocol that assumed otherwise would look fine and be uncompensated everywhere but the
+    start.
     """
-    module = line(opts, echoes=3, polarity='monopolar', null_moment_order=1)
+    module = line(opts, echoes=3, polarity=polarity, null_moment_order=1)
 
-    assert moment_to_echo(module, 1) == pytest.approx(0.0, abs=_scale(module) * 1e-9)
+    assert moment_to_echo(module, 1, 0) == pytest.approx(0.0, abs=tolerance(module, 1))
+    for echo in (1, 2):
+        assert abs(moment_to_echo(module, 1, echo)) > tolerance(module, 1) * 1e6
+
+
+#: The readout geometries the option is offered for.  The solve reads the lobe's measured
+#: pre-echo shape, so each of these reaches it differently: partial Fourier moves the echo off
+#: centre, and a train's first lobe is the one the winder is solved against.
+GEOMETRIES = {
+    'full echo': {},
+    'partial fourier': {'partial_fourier': 0.75},
+    'monopolar train': {'echoes': 4, 'polarity': 'monopolar'},
+    'bipolar train': {'echoes': 4, 'polarity': 'bipolar'},
+}
+
+
+@pytest.mark.parametrize('geometry', list(GEOMETRIES))
+def test_the_first_echo_is_compensated_in_every_supported_geometry(opts, geometry: str) -> None:
+    """
+    **The contract holds wherever the option is accepted, not only for a centred single echo.**
+
+    The solve uses the readout lobe's *measured* moments up to the echo, so partial Fourier --
+    which moves the echo away from the lobe's midpoint -- and a reversed first lobe are handled
+    by the same arithmetic rather than by a case each.  Worth asserting because "it is measured,
+    so it must be right" is exactly the reasoning that hides a geometry nobody tried.
+    """
+    module = line(opts, null_moment_order=1, **GEOMETRIES[geometry])
+
+    assert moment_to_echo(module, 1, 0) == pytest.approx(0.0, abs=tolerance(module, 1))
+    assert moment_to_echo(module, 0, 0) == pytest.approx(0.0, abs=tolerance(module, 0))
+
+
+@pytest.mark.parametrize('geometry', list(GEOMETRIES))
+def test_every_supported_geometry_stays_inside_the_gradient_system(opts, geometry: str) -> None:
+    """A geometry that met the moment condition by exceeding the amplifier would not count."""
+    module = line(opts, null_moment_order=1, **GEOMETRIES[geometry])
+
+    for lobe in module.prephaser_lobes:
+        amplitude = abs(float(lobe.amplitude))
+        assert amplitude <= float(opts.max_grad) * (1.0 + 1e-9)
+        assert amplitude / float(lobe.rise_time) <= float(opts.max_slew) * (1.0 + 1e-9)
 
 
 # ------------------------------------------------------------------------------ the refusals
