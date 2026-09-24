@@ -329,6 +329,13 @@ infrastructure for the next stage, without becoming the definition of the module
 
 # Stage C — implement flow compensation without assuming a `FlowComp` class
 
+> **Partly superseded, 2026-09-24.** The readout-axis case below is implemented
+> (`CartesianLine(null_moment_order=1)`, PR #39). The rest of this stage is being revisited by
+> [`2026-09-24_repetition_level_joint_waveform_design.md`](2026-09-24_repetition_level_joint_waveform_design.md),
+> because a second real consumer arrived: a per-leaf option repeated for every augmentation and
+> every sequence family is the `N x M` shape that design exists to avoid. **Stage C is not
+> complete**, and bSSFPTR waits on the same boundary.
+
 ## Governing decision
 
 The fine scan deliberately did **not** approve a new leaf named `FlowComp`.

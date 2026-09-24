@@ -8,11 +8,18 @@
 ```text
 plans/
     current/
+        2026-09-24_repetition_level_joint_waveform_design.md
+                                                THE CURRENT DIRECTION.  Base requirements plus
+                                                augmentation requirements, solved together at the
+                                                repetition level, so that velocity encoding and
+                                                flow compensation are each defined once instead
+                                                of per sequence family.  Opened the revisit that
+                                                process/repetition_augmentation_design_note.md
+                                                asked for
         2026-09-23_post_v0_implementation_to_authoring_roadmap.md
-                                                THE CURRENT DIRECTION.  Implement the approved
-                                                queue -- T2Prep, VelocityEncode, flow
-                                                compensation, bSSFPTR -- then build
-                                                sequence-authoring v0
+                                                the implementation roadmap it interrupts.  Still
+                                                current for T2Prep, VelocityEncode and bSSFPTR;
+                                                its Stage C is what the design above revisits
         roadmap.md                              the post-v0 roadmap it continues.  Still current
                                                 for everything before the queue
 
