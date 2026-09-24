@@ -1,32 +1,35 @@
 r"""
-**Provisional, internal.** Repetition-level joint moment design -- requirements, then realisation.
+**Provisional, internal.** Repetition-level joint moment design: requirements, then realisation.
 
-Nothing here is public and nothing here is final.  It exists to test one boundary:
+Nothing here is public.  It is the shared part of the architecture in
+``plans/current/2026-09-24_repetition_physical_design_architecture.md`` -- the boundary and the
+orchestration, **not** one solver that grows to cover every MRI design problem.
 
-.. code-block:: text
-
-    fixed physical contribution
-    + adjustable waveform family in a window
-    + a target at a semantic instant
-            -> one linear solve
-            -> areas
-
-A requirement is a **moment at an instant, measured from a named origin**.  Both instants are
-required, because under a shift of origin :math:`m_1' = m_1 - \Delta t\, m_0` -- so a first moment
-is not a number until the origin is named.  ``order == 0`` does not read the origin; that is not a
-reason to leave it out of the semantics.
-
-Two layers, deliberately separated:
+The stages, composed as functions rather than as a class hierarchy:
 
 .. code-block:: text
 
-    resolve()   turns per-augmentation claims into ONE absolute target per repetition state
-    solve()     realises one state's absolute target, and never learns where it came from
+    claims + states        resolve_claims   -> one absolute target per state
+    targets + fixed        JointProblem     -> what must be true, and what is already there
+    a candidate schedule   Schedule         -> semantic origin, endpoint, and the free window
+    a realisation family   realise_*        -> events, or None, plus utilisation
+    the cascade            design           -> the first feasible schedule and family
 
-That separation is what keeps velocity encoding's state semantics -- a *difference* between
-encoding states -- out of the waveform solve, which only ever sees a number.
+Two separations matter.
 
-What this is not: a plugin bus, a constraint language, a compiler change, or an optimiser.
+**The realisation layer never learns where a target came from.**  It sees a number.  That is what
+keeps velocity encoding's state semantics -- a *difference* between encoding states -- out of the
+waveform arithmetic.
+
+**Timing is part of the physical design, not a fixed frame around it.**  A longer window moves the
+echo, which moves every fixed contribution measured to it, so a candidate schedule is re-evaluated
+in full rather than patched.  :class:`JointProblem` therefore takes `fixed` as a **callable** of
+state and schedule.
+
+Scope of the moment arithmetic here: **orders 0 and 1 only**.  For a symmetric lobe ``m0`` is its
+area and ``m1`` is its area times its centroid, exactly; that shortcut does not extend to ``m2``,
+where the lobe's own internal shape contributes.  A second-order family would have to compute its
+own exact response and carry enough independent degrees of freedom.
 """
 
 from __future__ import annotations
@@ -40,10 +43,9 @@ import pypulseq as pp
 from ..design.events import knots_of, pwl_moment
 from ..design.logic import flatten
 from ..errors import ConfigurationError, format_error
-from ._support import ceil_raster
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from pypulseq.opts import Opts
 
@@ -51,17 +53,25 @@ if TYPE_CHECKING:
     from ..design.logic import LogicBlock
 
 __all__ = [
+    'ORDERS',
     'CommonModeClaim',
     'DifferenceClaim',
+    'JointDesign',
     'JointProblem',
-    'JointSolution',
+    'Realisation',
+    'Schedule',
+    'claimed_axis',
+    'design',
+    'events_for',
     'measure_moment',
-    'resolve',
-    'solve',
+    'resolve_claims',
 ]
 
 #: Moments below this are zero for the purpose of choosing a lobe, in the axis's own units.
 _NEGLIGIBLE = 1e-9
+
+#: The orders this module's realisation families compute exactly.  See the module docstring.
+ORDERS = (0, 1)
 
 
 # ------------------------------------------------------------------ the independent validator
@@ -72,8 +82,8 @@ def measure_moment(tree: LogicBlock, order: int, axis: str, *,
     `origin_s`.
 
     Integrated from each event's own piecewise-linear knots and summed across events, which is the
-    part no per-event check reaches.  Used by tests rather than by the solve: the validator must
-    not ask the designer what it thinks it built.
+    part no per-event check reaches.  For tests, not for the design: a validator that asked the
+    designer for its own residual would be checking arithmetic rather than physics.
     """
     total = 0.0
     for at, event, _ in flatten(tree):
@@ -89,11 +99,9 @@ def measure_moment(tree: LogicBlock, order: int, axis: str, *,
             continue
         if low > times[0] or high < times[-1]:
             inside = (times > low) & (times < high)
+            edges = (float(np.interp(low, times, amps)), float(np.interp(high, times, amps)))
             times = np.concatenate(([low], times[inside], [high]))
-            amps = np.concatenate((
-                [np.interp(low, *knots_of(event, at))], amps[inside],
-                [np.interp(high, *knots_of(event, at))],
-            ))
+            amps = np.concatenate(([edges[0]], amps[inside], [edges[1]]))
         total += pwl_moment(times - origin_s, amps, order)
     return float(total)
 
@@ -118,8 +126,22 @@ class CommonModeClaim:
     value: float = 0.0
 
 
-def resolve(claims: Iterable[object], states: Sequence[object], *,
-            axis: str, order: int, base: Mapping[object, float]) -> dict[object, float]:
+def claimed_axis(claims: Sequence[object]) -> str:
+    """The single axis a set of claims refers to, or a refusal."""
+    axes = {getattr(claim, 'axis', None) for claim in claims}
+    if len(axes) == 1:
+        return str(next(iter(axes)))
+    msg = format_error(
+        f'these claims name {len(axes)} axes, and one coupled design serves one axis.',
+        {'axes': sorted(str(a) for a in axes)},
+        ['claim one axis per design -- each logical axis is encoded independently'],
+    )
+    raise ConfigurationError(msg)
+
+
+def resolve_claims(claims: Iterable[object], states: Sequence[object], *,
+                   axis: str, order: int,
+                   base: Mapping[object, float]) -> dict[object, float]:
     """
     Turn claims into one **absolute** target per state, or refuse.
 
@@ -128,14 +150,12 @@ def resolve(claims: Iterable[object], states: Sequence[object], *,
     different components of the same state-indexed vector, so they compose without a precedence
     rule; two claims on the *same* component do not, and raise.
 
-    Composing the two for a two-state acquisition gives the symmetric pair, which is therefore
-    derived rather than assumed:
-
-    >>> resolve([DifferenceClaim('y', 1, 0.5, (1, -1)), CommonModeClaim('y', 1)],
-    ...         [1, -1], axis='y', order=1, base={1: 0.0, -1: 0.0})
+    >>> resolve_claims([DifferenceClaim('y', 1, 0.5, (1, -1)), CommonModeClaim('y', 1)],
+    ...                [1, -1], axis='y', order=1, base={1: 0.0, -1: 0.0})
     {1: 0.25, -1: -0.25}
     """
-    mine = [c for c in claims if getattr(c, 'axis', None) == axis and getattr(c, 'order', None) == order]
+    mine = [c for c in claims
+            if getattr(c, 'axis', None) == axis and getattr(c, 'order', None) == order]
     difference = [c for c in mine if isinstance(c, DifferenceClaim)]
     common = [c for c in mine if isinstance(c, CommonModeClaim)]
     for kind, found in (('difference', difference), ('common mode', common)):
@@ -148,17 +168,293 @@ def resolve(claims: Iterable[object], states: Sequence[object], *,
         out = {state: value + shift for state, value in out.items()}
     if difference:
         claim = difference[0]
-        a, b = claim.states
-        if a not in out or b not in out:
+        first, second = claim.states
+        if first not in out or second not in out:
             _refuse_missing_state(claim, states)
-        half = (claim.value - (out[a] - out[b])) / 2.0
-        out[a] += half
-        out[b] -= half
+        half = (claim.value - (out[first] - out[second])) / 2.0
+        out[first] += half
+        out[second] -= half
     return out
 
 
+# ---------------------------------------------------------------------- the physical problem
+@dataclass(frozen=True)
+class Schedule:
+    """
+    One candidate repetition schedule for one axis.
+
+    The window and the endpoint move together, which is the point: lengthening a winder pushes
+    the echo out, and every fixed contribution is measured *to* the echo.
+    """
+
+    origin_s: float
+    endpoint_s: float
+    window_start_s: float
+    window_s: float
+
+
+@dataclass(frozen=True)
+class JointProblem:
+    """
+    What must be true on one axis, and what is already there.
+
+    `fixed` is a callable rather than a tuple because the contributions depend on both the state
+    and the schedule -- a wave gradient's moment about the echo changes when the echo moves.  It
+    returns ``(m0, m1)`` already accumulated over the schedule's interval.
+    """
+
+    axis: str
+    targets: Mapping[object, tuple[float, float | None]]
+    fixed: Callable[[object, Schedule], tuple[float, float]]
+
+
+@dataclass(frozen=True)
+class Realisation:
+    """One state's waveform at one schedule, with why it did or did not fit."""
+
+    events: tuple[Event, ...]
+    family: str
+    peak_grad: float
+    peak_slew: float
+    limiting: str = ''
+
+    @property
+    def feasible(self) -> bool:
+        return not self.limiting
+
+
+@dataclass(frozen=True)
+class JointDesign:
+    """The chosen schedule and family, and one realisation per state."""
+
+    schedule: Schedule
+    family: str
+    realisations: Mapping[object, Realisation]
+
+    @property
+    def peak_grad(self) -> float:
+        return max(r.peak_grad for r in self.realisations.values())
+
+    @property
+    def peak_slew(self) -> float:
+        return max(r.peak_slew for r in self.realisations.values())
+
+
+# ------------------------------------------------------------------- the realisation families
+def _lobe(axis: str, area: float, duration_s: float, opts: Opts) -> Event | None:
+    """One trapezoid, or ``None`` when the area is negligible or it will not fit."""
+    if abs(area) <= _NEGLIGIBLE:
+        return None
+    try:
+        return pp.make_trapezoid(channel=axis, area=area, duration=duration_s, system=opts)
+    except (ValueError, ZeroDivisionError):
+        return _UNFITTABLE
+
+
+#: Sentinel: pypulseq refused to build this lobe at this duration.
+_UNFITTABLE: Event = object()  # type: ignore[assignment]
+
+
+def _assemble(axis: str, pieces: Sequence[tuple[float, float]], opts: Opts,
+              family: str) -> Realisation | None:
+    """
+    Build ``(area, duration)`` pieces in order and report utilisation, or ``None`` if impossible.
+
+    Utilisation is reported rather than only feasibility, because a family that fails everywhere
+    over a wide interval and one that fails by two per cent are different problems -- section 20
+    of the architecture document.
+    """
+    events: list[Event] = []
+    peak_grad = peak_slew = 0.0
+    limiting = ''
+    for area, duration_s in pieces:
+        lobe = _lobe(axis, area, duration_s, opts)
+        if lobe is _UNFITTABLE:
+            return None
+        if lobe is None:
+            continue
+        amplitude = abs(float(lobe.amplitude))
+        peak_grad = max(peak_grad, amplitude / float(opts.max_grad))
+        peak_slew = max(peak_slew, amplitude / float(lobe.rise_time) / float(opts.max_slew))
+        events.append(lobe)
+    if peak_grad > 1.0 + 1e-9:
+        limiting = 'gradient'
+    elif peak_slew > 1.0 + 1e-9:
+        limiting = 'slew'
+    return Realisation(tuple(events), family, peak_grad, peak_slew, limiting)
+
+
+def realise_single_lobe(axis: str, target: tuple[float, float | None],
+                        fixed: tuple[float, float], schedule: Schedule,
+                        opts: Opts) -> Realisation | None:
+    """
+    One lobe filling the window -- the shape every kernel already uses, written as a family.
+
+    **It serves an m0 target only.**  One degree of freedom cannot satisfy two conditions, so it
+    declines unless the first moment is either unconstrained (``None``) or happens to equal the
+    ``area * centroid`` this lobe would produce anyway.  Checking what it *would* produce rather
+    than only whether a target was supplied is the difference between declining and being quietly
+    wrong: a target of zero is not the same as no target.
+    """
+    area = target[0] - fixed[0]
+    if target[1] is not None:
+        centre = schedule.window_start_s + schedule.window_s / 2.0 - schedule.origin_s
+        if abs(fixed[1] + area * centre - target[1]) > _NEGLIGIBLE:
+            return None
+    return _assemble(axis, [(area, schedule.window_s)], opts, 'single-lobe')
+
+
+def _two_lobe_areas(target: tuple[float, float], fixed: tuple[float, float],
+                    centres: tuple[float, float]) -> tuple[float, float]:
+    """Solve ``[[1, 1], [c0, c1]] a = target - fixed`` -- exact for symmetric lobes at m0/m1."""
+    wanted = np.asarray(target, dtype=float) - np.asarray(fixed, dtype=float)
+    matrix = np.array([[1.0, 1.0], list(centres)], dtype=float)
+    return tuple(float(v) for v in np.linalg.solve(matrix, wanted))  # type: ignore[return-value]
+
+
+def realise_two_lobes(axis: str, target: tuple[float, float], fixed: tuple[float, float],
+                      schedule: Schedule, opts: Opts, *,
+                      split: float = 0.5) -> Realisation | None:
+    """
+    Two adjacent lobes filling the window, the first taking `split` of it.
+
+    ``split = 0.5`` is PR #39's equal-duration shape.  Letting the split move is one extra degree
+    of freedom and costs nothing but a search over a raster-aligned fraction -- which is what
+    :func:`realise_split_search` does with it.
+    """
+    if target[1] is None:
+        return None       # under-determined: nothing constrains the second degree of freedom
+    first_s = schedule.window_s * split
+    second_s = schedule.window_s - first_s
+    if min(first_s, second_s) <= 0.0:
+        return None
+    centres = (schedule.window_start_s + first_s / 2.0 - schedule.origin_s,
+               schedule.window_start_s + first_s + second_s / 2.0 - schedule.origin_s)
+    areas = _two_lobe_areas(target, fixed, centres)
+    return _assemble(axis, [(areas[0], first_s), (areas[1], second_s)], opts,
+                     'two-lobe' if split == 0.5 else f'two-lobe/{split:.3f}')
+
+
+def realise_base_plus_bipolar(axis: str, target: tuple[float, float],
+                              fixed: tuple[float, float], schedule: Schedule,
+                              opts: Opts) -> Realisation | None:
+    """
+    A base lobe carrying the area, plus a **zero-area** bipolar carrying pure first moment.
+
+    The decoupled basis `wave-gre-flow-comp` uses.  Same span as :func:`realise_two_lobes` and the
+    same two degrees of freedom, but the columns are orthogonal in what they do, which changes
+    which target values push a lobe over the limit first.
+    """
+    if target[1] is None:
+        return None       # under-determined: nothing constrains the second degree of freedom
+    half = schedule.window_s / 2.0
+    if half <= 0.0:
+        return None
+    area = target[0] - fixed[0]
+    base_centre = schedule.window_start_s + schedule.window_s / 2.0 - schedule.origin_s
+    # A zero-area bipolar of lobes +-b over the window has m1 = -b * half.
+    residual = target[1] - fixed[1] - area * base_centre
+    bipolar = -residual / half
+    return _assemble(axis, [(area / 2.0 + bipolar, half), (area / 2.0 - bipolar, half)],
+                     opts, 'base+bipolar')
+
+
+def realise_split_search(axis: str, target: tuple[float, float], fixed: tuple[float, float],
+                         schedule: Schedule, opts: Opts) -> Realisation | None:
+    """
+    The two-lobe family with its split searched on the gradient raster.
+
+    A small, low-dimensional shape family -- the same kind of freedom `wave-gre-flow-comp` searches
+    inside a fixed duration.  It returns the feasible split with the most headroom, so that a
+    schedule which only just fits is not chosen over one that fits comfortably.
+    """
+    raster = float(opts.grad_raster_time)
+    steps = int(round(schedule.window_s / raster))
+    best: Realisation | None = None
+    for first in range(1, steps):
+        found = realise_two_lobes(axis, target, fixed, schedule, opts, split=first / steps)
+        if found is None or not found.feasible:
+            continue
+        if best is None or max(found.peak_grad, found.peak_slew) < max(best.peak_grad,
+                                                                      best.peak_slew):
+            best = found
+    return best
+
+
+#: The cascade: cheapest first, then richer.  Order is the policy; each entry owns its own maths.
+FAMILIES: tuple[Callable[..., Realisation | None], ...] = (
+    realise_single_lobe,
+    realise_two_lobes,
+    realise_base_plus_bipolar,
+    realise_split_search,
+)
+
+
+# ------------------------------------------------------------------------- the orchestration
+def attempt(problem: JointProblem, schedule: Schedule, opts: Opts, *,
+            families: Sequence[Callable[..., Realisation | None]] = FAMILIES,
+            ) -> JointDesign | None:
+    """
+    Try each family at one candidate schedule, and return the first that serves **every** state.
+
+    Every state, because a window that served only some would put TE on a k-space axis.
+    """
+    for family in families:
+        realisations = {}
+        for state, target in problem.targets.items():
+            found = family(problem.axis, target, problem.fixed(state, schedule), schedule, opts)
+            if found is None or not found.feasible:
+                realisations = {}
+                break
+            realisations[state] = found
+        if realisations:
+            name = next(iter(realisations.values())).family
+            return JointDesign(schedule, name, realisations)
+    return None
+
+
+def design(problem: JointProblem, schedules: Iterable[Schedule], opts: Opts, *,
+           families: Sequence[Callable[..., Realisation | None]] = FAMILIES,
+           ) -> JointDesign:
+    """
+    Walk candidate schedules in order and return the first that any family can serve.
+
+    **The schedule search is the caller's**, supplied as an iterable, because what may move -- the
+    window, TE, the echo spacing -- and in what order is repetition timing policy, which belongs
+    to the kernel.  This function owns only "try them in the order given".
+
+    No duration-search algorithm is baked in here.  A family may bisect where it has a
+    monotonicity proof, enumerate a shape, or scan; the generic layer does not assume which.
+    """
+    for schedule in schedules:
+        found = attempt(problem, schedule, opts, families=families)
+        if found is not None:
+            return found
+    _refuse_infeasible(problem)
+
+
+def events_for(designed: JointDesign, state: object) -> tuple[tuple[float, Event], ...]:
+    """The state's events with the instants they start at, ready to place in a block."""
+    at = designed.schedule.window_start_s
+    placed = []
+    for event in designed.realisations[state].events:
+        placed.append((at, event))
+        at += float(pp.calc_duration(event))
+    return tuple(placed)
+
+
+# -------------------------------------------------------------------------------- the refusals
+def _refuse_duplicate(component: str, axis: str, order: int, count: int) -> None:
+    msg = format_error(
+        f'{count} augmentations claim the {component} of moment {order} on {axis}.',
+        {'axis': axis, 'order': order, 'component': component, 'claims': count},
+        ['one augmentation owns one component of one moment on one axis',
+         'a second claim is a disagreement about physics, not something to order by precedence'],
+    )
+    raise ConfigurationError(msg)
+
+
 def _refuse_missing_state(claim: DifferenceClaim, states: Sequence[object]) -> None:
-    """A difference is between two states, so both have to be acquired."""
     msg = format_error(
         f'a difference claim on moment {claim.order} of {claim.axis} needs states '
         f'{claim.states}, and this acquisition has {tuple(states)}.',
@@ -170,141 +466,12 @@ def _refuse_missing_state(claim: DifferenceClaim, states: Sequence[object]) -> N
     raise ConfigurationError(msg)
 
 
-def _refuse_duplicate(component: str, axis: str, order: int, count: int) -> None:
+def _refuse_infeasible(problem: JointProblem) -> None:
     msg = format_error(
-        f'{count} augmentations claim the {component} of moment {order} on {axis}.',
-        {'axis': axis, 'order': order, 'component': component, 'claims': count},
-        ['one augmentation owns one component of one moment on one axis',
-         'a second claim is a disagreement about physics, not something to order by precedence'],
-    )
-    raise ConfigurationError(msg)
-
-
-# ------------------------------------------------------------------------ the realisation layer
-@dataclass(frozen=True)
-class JointProblem:
-    """
-    One axis of one repetition: what is already there, what is wanted, and where it may be built.
-
-    Every field is a number the repetition already knows.  No gradient event crosses this
-    boundary in either direction.
-    """
-
-    axis: str
-    origin_s: float
-    endpoint_s: float
-    window_start_s: float
-    fixed: tuple[float, ...]
-    targets: Mapping[object, tuple[float, ...]]
-
-    @property
-    def orders(self) -> tuple[int, ...]:
-        return tuple(range(len(self.fixed)))
-
-
-@dataclass(frozen=True)
-class JointSolution:
-    """The shared window, and one set of lobe areas per state."""
-
-    half_s: float
-    areas: Mapping[object, tuple[float, ...]]
-
-    @property
-    def duration_s(self) -> float:
-        return 2.0 * self.half_s
-
-
-def response(problem: JointProblem, half_s: float) -> np.ndarray:
-    """
-    The moment response of the basis: column `j` is lobe `j`'s moments about the origin.
-
-    Two lobes of duration `half_s` played back to back from the window start.  A symmetric
-    trapezoid's `order`-th moment about an external origin is its area times its centroid to that
-    power, exactly, so the matrix needs no waveform -- which is what makes the solve independent
-    of how the lobe is later realised.
-    """
-    centres = [problem.window_start_s + (0.5 + n) * half_s - problem.origin_s for n in range(2)]
-    return np.array([[c ** order for c in centres] for order in problem.orders], dtype=float)
-
-
-def solve(problem: JointProblem, opts: Opts, *, half_s: float | None = None) -> JointSolution:
-    """
-    Solve every state in one shared window, and return the areas.
-
-    The window is shared because a repetition whose TE moved with the state would put a contrast
-    gradient across the acquisition that no k-space check would show.  Its length is the shortest
-    that serves the **limiting** state, found by enumeration -- never assumed to be an extreme of
-    any index, because the limit is a result of the coupling.
-    """
-    raster = float(opts.grad_raster_time)
-    shortest = half_s if half_s is not None else _shortest_half_s(problem, opts, raster)
-    return JointSolution(
-        half_s=shortest,
-        areas={state: _areas_for(problem, state, shortest) for state in problem.targets},
-    )
-
-
-def realise(problem: JointProblem, solution: JointSolution, state: object,
-            opts: Opts) -> list[Event]:
-    """Build one state's lobes.  Zero-area lobes are dropped rather than handed to pypulseq."""
-    return [
-        pp.make_trapezoid(channel=problem.axis, area=area, duration=solution.half_s, system=opts)
-        for area in solution.areas[state] if abs(area) > _NEGLIGIBLE
-    ]
-
-
-def _areas_for(problem: JointProblem, state: object, half_s: float) -> tuple[float, ...]:
-    """The lobe areas for one state: ``M a = target - fixed``."""
-    wanted = np.asarray(problem.targets[state], dtype=float) - np.asarray(problem.fixed, dtype=float)
-    return tuple(float(a) for a in np.linalg.solve(response(problem, half_s), wanted))
-
-
-def _fits(problem: JointProblem, opts: Opts, half_s: float) -> bool:
-    """Whether every state's lobes fit a window of this length, inside the gradient limits."""
-    if half_s <= 0.0:
-        return False
-    for state in problem.targets:
-        for area in _areas_for(problem, state, half_s):
-            if abs(area) <= _NEGLIGIBLE:
-                continue
-            try:
-                lobe = pp.make_trapezoid(
-                    channel=problem.axis, area=area, duration=half_s, system=opts)
-            except (ValueError, ZeroDivisionError):
-                return False
-            peak = abs(float(lobe.amplitude))
-            if peak > float(opts.max_grad) * (1.0 + 1e-9):
-                return False
-            if peak > float(opts.max_slew) * float(lobe.rise_time) * (1.0 + 1e-9):
-                return False
-    return True
-
-
-def _shortest_half_s(problem: JointProblem, opts: Opts, raster: float) -> float:
-    """Bracket by doubling, then bisect, then confirm the step below does not fit."""
-    high = raster
-    for _ in range(40):
-        if _fits(problem, opts, high):
-            break
-        high *= 2.0
-    else:  # pragma: no cover - unreachable on any real gradient system
-        _refuse_infeasible(problem)
-    low = high / 2.0
-    while high - low > raster:
-        middle = ceil_raster((low + high) / 2.0, raster)
-        if middle >= high:
-            break
-        if _fits(problem, opts, middle):
-            high = middle
-        else:
-            low = middle
-    return float(high)
-
-
-def _refuse_infeasible(problem: JointProblem) -> None:  # pragma: no cover - unreachable
-    msg = format_error(
-        f'no window on {problem.axis} carries these moments.',
-        {'axis': problem.axis, 'targets': dict(problem.targets)},
-        ['relax the target', 'or widen the gradient limits if the scanner allows it'],
+        f'no candidate schedule realises these moments on {problem.axis}.',
+        {'axis': problem.axis, 'states': len(problem.targets)},
+        ['allow a longer window, which is what a longer TE buys',
+         'or relax the target -- a larger venc needs less first moment',
+         'or widen the gradient limits if the scanner allows it'],
     )
     raise ConfigurationError(msg)

@@ -79,6 +79,7 @@ from ...design.events import AXES
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...errors import ConfigurationError, format_error
+from .. import _joint
 from .._support import ceil_raster, require_axis, require_pair, require_positive
 from ..encoding.phase_encoding import PhaseEncode
 from ..readout.cartesian_line import CartesianLine
@@ -86,7 +87,7 @@ from ..rf.excitation import Excitation
 from ..spoiler import spoiler
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
     from pypulseq.opts import Opts
 
@@ -213,6 +214,8 @@ class GRE2DTR(Module):
         echo_spacing_s: float | None = None,
         spoil_cycles_per_voxel: float = 4.0,
         spoil_axis: str | Iterable[str] = ('x', 'z'),
+        joint_claims: Sequence[object] = (),
+        encoding_states: Sequence[object] = (),
         tag: str | None = None,
     ) -> None:
         super().__init__(opts=opts, tag=tag)
@@ -256,6 +259,20 @@ class GRE2DTR(Module):
                 self.exc.rephaser_duration_s),
             opts.grad_raster_time,
         )
+        # **Provisional, internal.**  When an augmentation claims a moment on the phase-encode
+        # axis, that axis' winder stops being a blip this module can design alone: the encode
+        # area and the claimed first moment constrain the same window, and the window's length
+        # moves the echo every fixed moment is measured to.  So the coupled part is handed to
+        # `_joint`, and what comes back is a window length folded into this module's own -- the
+        # same way three local minima are already folded together above.
+        self.encoding_states = tuple(encoding_states)
+        self._joint = (
+            self._design_joint(tuple(joint_claims), probe_ro, fov_y, opts)
+            if joint_claims else None
+        )
+        if self._joint is not None:
+            self.winder_s = ceil_raster(
+                max(self.winder_s, self._joint.schedule.window_s), opts.grad_raster_time)
 
         self.ro = CartesianLine(opts=opts, fov_mm=fov_x, matrix=self.matrix[0], axis='x',
                                 bandwidth_hz_px=bandwidth_hz_px, partial_fourier=partial_fourier,
@@ -353,6 +370,7 @@ class GRE2DTR(Module):
         phase_deg: float = 0.0,
         acquire: bool = True,
         center_mm: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        encoding_state: object = None,
     ) -> LogicBlock:
         """
         Return one repetition.
@@ -389,7 +407,7 @@ class GRE2DTR(Module):
         out = (
             LogicBlock()
             .add(0.0, self.exc(phase_deg=phase_deg, position_mm=z))
-            .add(start, self.pe(line=line))
+            .add(start, self._encode(line, encoding_state))
             # The same phase to both: the receiver is phase-locked to the transmitter, so an
             # RF-spoiling schedule that moves one and not the other writes its quadratic phase
             # into ky.  This is the layer that holds both events, so this is where they agree.
@@ -411,6 +429,84 @@ class GRE2DTR(Module):
         if fill > 1e-9:
             out.add(tail + self._tail_s, pp.make_delay(fill))
         return out
+
+    def _encode(self, line: int, encoding_state: object) -> LogicBlock:
+        """The phase-encode waveform: the ordinary blip, or the jointly designed one."""
+        if self._joint is None:
+            return self.pe(line=line)
+        out = LogicBlock('joint')
+        for at, event in _joint.events_for(self._joint, (line, encoding_state)):
+            out.add(at - self._joint.schedule.window_start_s, event)
+        return out
+
+    # ------------------------------------------------------------- the coupled design
+    def _design_joint(self, claims: Sequence[object], probe_ro: CartesianLine,
+                      fov_y: float, opts: Opts) -> _joint.JointDesign:
+        """
+        Hand the phase-encode axis' coupled degrees of freedom to the shared designer.
+
+        What this module supplies is what it already knows: the semantic origin, where the window
+        starts, what the encode area is for each line, and how the echo moves when the window
+        grows.  What it gets back is a window length and one waveform per state.
+
+        **No augmentation is named here.**  The claims arrive resolved into absolute targets by
+        :func:`~seqcraft.modules._joint.resolve_claims`, so adding a third augmentation needs no
+        change to this method -- which is the whole point of the boundary.
+        """
+        raster = float(opts.grad_raster_time)
+        axis = _joint.claimed_axis(claims)
+        lines = tuple(range(self.matrix[1]))
+        encode = PhaseEncode(opts=opts, fov_mm=fov_y, matrix=self.matrix[1], axis=axis)
+
+        # An order nobody claims is left UNCONSTRAINED rather than targeted at zero -- the two
+        # are different requirements, and conflating them would force a first moment onto an
+        # ordinary encode that never asked for one.
+        claimed = {getattr(claim, 'order', None) for claim in claims}
+        targets = {}
+        for line in lines:
+            area = float(encode.k_per_m(line))
+            resolved = {
+                order: _joint.resolve_claims(
+                    claims, self.encoding_states, axis=axis, order=order,
+                    base={key: (area if order == 0 else 0.0) for key in self.encoding_states})
+                for order in _joint.ORDERS
+            }
+            for key in self.encoding_states:
+                targets[(line, key)] = (
+                    resolved[0][key], resolved[1][key] if 1 in claimed else None)
+
+        # The echo moves with the window, so a candidate schedule is a window length and the
+        # endpoint that follows from it -- never the old endpoint with a longer winder.
+        # The winder starts where the excitation is finished.  Computed here rather than read
+        # off `_winder_start_s`, which is not set until after the window length is known.
+        start = ceil_raster(
+            max(self.exc.time_to_rephaser(), float(pp.calc_duration(self.exc.rf))), raster)
+        echo_in_lobe = probe_ro.time_to_echo() - probe_ro.prephaser_duration_s
+
+        def schedules():
+            step = max(1, int(round(raster / raster)))
+            for n in range(int(round(self.winder_s / raster)), 4000, step):
+                window = n * raster
+                yield _joint.Schedule(
+                    origin_s=self.exc.time_to_center(),
+                    endpoint_s=start + window + echo_in_lobe,
+                    window_start_s=start,
+                    window_s=window,
+                )
+
+        # What already plays on this axis between the two instants: the slice-select lobe and its rephaser play on z, not on the encode axis, so this is zero
+        # today -- but it is computed rather than assumed, because a claim on z would need it.
+        excitation = self.exc()
+
+        def fixed(state: object, schedule: _joint.Schedule) -> tuple[float, float]:
+            return tuple(  # type: ignore[return-value]
+                _joint.measure_moment(excitation, order, axis, origin_s=schedule.origin_s,
+                                      start_s=0.0, end_s=schedule.endpoint_s)
+                for order in _joint.ORDERS
+            )
+
+        problem = _joint.JointProblem(axis=axis, targets=targets, fixed=fixed)
+        return _joint.design(problem, schedules(), opts)
 
     # ------------------------------------------------------------------------ timing
     @property

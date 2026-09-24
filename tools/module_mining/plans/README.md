@@ -8,8 +8,13 @@
 ```text
 plans/
     current/
+        2026-09-24_repetition_physical_design_architecture.md
+                                                THE GOVERNING ARCHITECTURE for the rest of
+                                                Stage C.  Where MRI timing design lives, what
+                                                stays local, what becomes shared, and the
+                                                schedule-outside / realization-inside split
         2026-09-24_repetition_level_joint_waveform_design.md
-                                                THE CURRENT DIRECTION.  Base requirements plus
+                                                the direction it settles.  Base requirements plus
                                                 augmentation requirements, solved together at the
                                                 repetition level, so that velocity encoding and
                                                 flow compensation are each defined once instead
