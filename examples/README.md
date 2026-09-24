@@ -16,7 +16,8 @@
 | [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. Then what a 21.7 ms readout pays in off-resonance. |
 | [`se_spiral_2d/`](se_spiral_2d/) | A spin echo in front of a spiral, and the alignment it needs: the trajectory's origin crossing has to land on the physical echo. Three placements that all compile and only one of which is right, and then what refocusing is actually worth. |
 | [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | Diffusion-weighted imaging: a Stejskal–Tanner gradient pair around a 180°, a single-shot EPI readout, and an ADC map recovered from a phantom whose diffusion coefficient is known. Introduces `DiffusionSEPrep` and `sc.b_value`. |
-| [`t2prep_gre_2d/`](t2prep_gre_2d/) | A T2 preparation in front of a spoiled gradient echo: how a sequence with no T2 contrast of its own is given some, and the measurement that the weighting really is T2 rather than T2\*. Introduces `T2Prep`. |
+| [`t2prep_gre_2d/`](t2prep_gre_2d/) | A T2 preparation in front of a spoiled gradient echo: adding controlled T2 weighting before a readout that would otherwise follow T2\*, and the measurement that the weighting really is T2 rather than T2\*. Introduces `T2Prep`. |
+| [`pc_gre_2d/`](pc_gre_2d/) | Phase contrast: a bipolar pair that leaves still spins alone and gives moving ones a phase proportional to their velocity, and the two acquisitions whose difference is a velocity map. Introduces `VelocityEncode`. |
 
 ## `gre_2d/`
 
@@ -31,11 +32,6 @@ the answer would teach nothing.
 [`tests/modules/test_notebook_matches_the_package.py`](../tests/modules/test_notebook_matches_the_package.py)
 asserts that what the notebook writes and what the package ships produce identical events, so the
 tutorial cannot drift from the library without CI noticing.
-
-This pair established the extraction pattern the library uses: start from a working acquisition,
-find the reusable physical boundary in it, and then compare the extracted module against the
-reference implementation event for event. A module that cannot be extracted without altering the
-sequence is not a module, and one whose extraction does not shorten the notebook is a wrapper.
 
 ## `mprage_2d/` and `mp2rage_2d/`
 
@@ -89,12 +85,11 @@ only so the comparison has both halves at one common TR.
 recommended way to use them. `SE2D` is still **defined in its notebook and does not ship**, for
 the reason `MPRAGE2D` and `MP2RAGE2D` do not: one consumer each.
 
-`fse_2d/01_build.ipynb` keeps its **own** `FSE2D` on purpose, and it should not be replaced with
-an import. It is the working implementation the package classes were extracted from, and
+`fse_2d/01_build.ipynb` keeps its **own** `FSE2D` on purpose and should not be replaced with an
+import. It is the working implementation the package classes were extracted from, and
 [`tests/modules/test_fse_notebook_matches_the_package.py`](../tests/modules/test_fse_notebook_matches_the_package.py)
-compares the two event for event at turbo 1, 8, 16 and HASTE. A reference that is rewritten
-whenever the package changes cannot detect a regression in the package — so this one is
-deliberately **able to disagree**.
+compares the two event for event at turbo 1, 8, 16 and HASTE. Editing it: see
+[*Preserved reference notebooks*](../docs/writing_examples.md).
 
 [`tests/modules/test_se_notebooks.py`](../tests/modules/test_se_notebooks.py) runs both build
 notebooks, asserts k at every echo of every train length, and pins `FSE2D(echoes=1)` against what
@@ -292,20 +287,19 @@ every b-value has to be acquired at the same echo time or the ratio carries `T2`
 It is what shows that a nominally unweighted acquisition is not unweighted, which no check on the
 diffusion lobes alone could see.
 
-This directory is the pilot for **Writing example notebooks** below.
-
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
 
 ## `t2prep_gre_2d/`
 
 | | |
 |---|---|
-| [`01_build.ipynb`](t2prep_gre_2d/01_build.ipynb) | What a T2 preparation is made of — fourteen hard pulses at one B1, an MLEV-4 composite refocusing train, a single `-90` tip-up — the two instants `prep_time_s` is measured between, and why the tip-up is a *realisation* rather than part of the contract. Then the emitted block checked for interval symmetry and for the absence of any gradient while the magnetisation is transverse, and a composition with a shipped `GRE2D`. `.seq` files in both realisations. **Needs nothing but `seqcraft`.** |
-| [`02_simulate_and_reconstruct.ipynb`](t2prep_gre_2d/02_simulate_and_reconstruct.ipynb) | A known T2 recovered from the slope of `ln S` against `prep_time_s`, within 1 % from 40 to 250 ms — and the control that matters: T2\* swept by a factor of five moves the answer by 3 %. Then where the residual bias comes from, and a B1 / off-resonance sweep across both tip-up realisations that finds no consistent advantage for either. **Needs `MRzeroCore` and `torch`.** |
+| [`01_build.ipynb`](t2prep_gre_2d/01_build.ipynb) | What a T2 preparation is made of — fourteen hard pulses at one B1, an MLEV-4 composite refocusing train, a single `-90` tip-up — the two instants `prep_time_s` is measured between, and the simple and composite tip-up choices with their `prep_time_s` endpoints and their RF cost. Then the emitted block checked for interval symmetry and for the absence of any gradient while the magnetisation is transverse, and a composition with a shipped `GRE2D`. `.seq` files with both tip-ups. **Needs nothing but `seqcraft`.** |
+| [`02_simulate_and_reconstruct.ipynb`](t2prep_gre_2d/02_simulate_and_reconstruct.ipynb) | A known T2 recovered from the slope of `ln S` against `prep_time_s`, within 1 % from 40 to 250 ms — and the control that matters: T2\* swept by a factor of five moves the answer by 3 %. Then where the residual bias comes from, and a B1 / off-resonance sweep across both tip-ups that finds no consistent advantage for either. **Needs `MRzeroCore` and `torch`.** |
 
-A spoiled gradient echo has no T2 contrast: its signal decays at T2\*, and at the short echo times
-a fast scan needs there is hardly any decay at all. A **preparation** puts the contrast in before
-the imaging train, as a factor on the longitudinal magnetisation:
+A conventional gradient echo does not refocus static dephasing, so it follows T2\* rather than
+refocused T2 decay — and at the short echo times a fast scan needs there is hardly any decay at
+all. A **preparation** adds controlled T2 weighting before the imaging train, as a factor on the
+longitudinal magnetisation:
 
 ```text
 90x  ->  refocusing train  ->  -90x  ->  spoiler  ->  any readout at all
@@ -324,112 +318,48 @@ of the centre of k-space erodes the contrast. A linear ordering reaches k = 0 af
 
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
 
-## Writing example notebooks
-
-**Examples are tutorials and runnable demonstrations, not pull-request records, design reviews or
-development postmortems.** A reader arrives knowing some MRI and no project history, wanting to
-build something. Write for them.
-
-The shape that works:
-
-```text
-concept  ->  physics  ->  SeqCraft API  ->  composition  ->  measurement
-         ->  interpretation  ->  limitations  ->  references
-```
-
-**Sequence first, subtlety second.** An opening should normally establish, in this order: what
-sequence or acquisition family this is; its basic physical structure — RF, gradients, encoding,
-readout; what it is used to measure; and only then the particular question this notebook explores.
-A reader who has seen only the **title and the first two paragraphs** should be able to answer the
-first three. Keep the interesting sentence — put it where it lands on a reader who now knows what
-it refers to, as a section heading or a conclusion.
-
-**Do not assume the reader has completed a preceding example.** Cross-links may deepen context,
-but an ordinary build or simulation notebook should establish its sequence or acquisition family,
-its physical purpose and its main components **on its own**. A cross-link extends an explanation;
-it does not supply the missing introduction.
-
-Both rules are about ordinary **build** and **simulation/reconstruction** notebooks.
-Special-purpose documents — API guides, preserved reference implementations, migration guides,
-explicit validation notebooks — may lead with their document purpose instead, and should say what
-that purpose is in the first paragraph. [`fse_2d/03_module_api.ipynb`](fse_2d/03_module_api.ipynb)
-is the example: it opens by relating itself to the reference notebook beside it, which is exactly
-what it is for.
+## `pc_gre_2d/`
 
 | | |
 |---|---|
-| **start from the MRI concept and the user's goal** | title the notebook after the sequence or the problem, not after a conclusion about it. `# Off-resonance in spiral imaging`, not `# A spiral pays for its long readout in off-resonance` |
-| **define domain terms before using them** | if b-value, VENC or turbo factor is the organising idea, say what it is first |
-| **explain formulas directly** | write the equation and define every symbol; a citation supports the explanation, it is not the explanation |
-| **keep the depth** | measurements, closed forms, tolerances and honest negative results are the value. Only the framing changes |
-| **state limitations plainly** | what the example demonstrates, and what it does not |
-| **end with `Summary` and `References`** | not "What this notebook established" |
+| [`01_build.ipynb`](pc_gre_2d/01_build.ipynb) | What a velocity encoding is made of — two lobes of equal area and opposite polarity, solved in closed form from the gradient limits — the factor of two between `delta_m1` and one toggle's first moment, and what `polarity` means. Then the emitted waveform checked for net area zero, for the first moment `venc_m_s` implies, and for independence of where the pair is placed; then a phase-contrast repetition composed by hand from leaves. Two `.seq` files, one per polarity. **Needs nothing but `seqcraft`.** |
+| [`02_simulate_and_reconstruct.ipynb`](pc_gre_2d/02_simulate_and_reconstruct.ipynb) | A moving spin simulated through both toggles: the phase difference is `pi * v / venc` to five decimal places. Then a static control that shows the leftover sign is the simulator's phase convention rather than the encoding's, what happens above VENC, and a velocity map of three voxels moving at three speeds. **Needs `MRzeroCore`, `torch` and `seqcraft`.** |
 
-Do **not** organise a notebook around:
+A gradient echo measures how much signal a voxel has, not how fast it is moving. A bipolar pair
+adds the second:
 
 ```text
-abstraction-selection history      why this is a kernel and not a leaf
-rejected alternatives              what a different design would have cost
-previous implementation bugs       what an earlier version of this module got wrong
-reference-repository shortcomings  what some other project leaves out
-licence and evidence arguments     which corpus witnessed what
-solver / compiler avoidance        that no new layer was needed
+-A          +A            net area zero      -> stationary spins untouched
+____        ####          first moment != 0  -> moving spins phase-shifted
+    \      /
+     \____/
 ```
 
-All of that is real and worth recording — in `CHANGELOG.md`, in the pull request, or in
-`tools/module_mining/plans/<candidate>/`. Page-level source provenance belongs in
-`tools/module_mining/domain_evidence/`.
+One acquisition is not enough, because a voxel's phase also holds coil phase, off-resonance and
+susceptibility. So the pair is played twice with opposite sign and the two are subtracted:
 
-Avoid raising an imagined objection in order to answer it — "why this is not a defect", "the
-check this notebook exists for", "three pieces, none of them new". State what the sequence does
-and what the reader is about to build. The exception is a genuine **MRI** misconception, which is
-worth confronting directly: `se_epi_2d/02` exists because most readers expect a spin echo to fix
-EPI distortion, and it does not.
+```text
+VelocityEncode   owns  the waveform, the closed-form design, and both toggles
+the acquisition  owns  which polarity is played when, and the phase subtraction
+```
 
-**Deliberately wrong cases earn their place when they teach physics or protocol design** — a
-mismatched echo time that contaminates an ADC, a readout aligned to the wrong instant. Replaying a
-historical *software* bug because it was instructive during development does not.
+`venc_m_s` is the velocity that gives exactly `pi` of phase *difference*. The quantity behind it
+is `delta_m1 = 1 / (2 * venc)`, the **change** in first moment across the toggles — each toggle
+carries half, and a caller who confuses the two is out by a factor of two. `polarity` is defined
+as the sign of the emitted first moment, which is something `sc.moments` can read off the events;
+which sign of flow a reconstruction calls forward is its own choice.
 
-> `dwi_se_epi_2d/` was the pilot for these rules and the rest of this directory has since been
-> brought across. New examples are expected to follow them from the start.
+`01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
 
 ## Requirements
 
 Building needs only `seqcraft`. Simulating and reconstructing need `MRzeroCore`, `torch` and
 `sigpy` — `pip install "seqcraft[sim,recon]"`.
 
-### What a simulation notebook is allowed to cost
-
-MRzero's inner loop is dense complex linear algebra and it takes every core it is offered — sixteen
-threads by default on a 32-core machine. A draft of [`fse_2d/02`](fse_2d/02_simulate_and_reconstruct.ipynb)
-ran several 16-echo, 9-shot acquisitions in a single cell, minutes of saturated CPU with no output
-until it finished, and took a workstation down.
-
-So the spin-echo and EPI `02` notebooks each set `SIM_THREADS` **before importing torch**, print
-their budget in the first cell, and keep anything expensive behind a named switch that is off by
-default. `se_2d/02` is 38 s. `fse_2d/02` is 15 s of measurement plus 4 minutes of images, and the
-images are the part behind the switch — every *number* in it is measured on a single spin, because a
-ghost is a modulation of `ky` and a point object's k-space is that modulation.
-
-`megre_2d/02` is three acquisitions and 24 SENSE reconstructions, and it has no switch because it
-does not need one: it **picks up a GPU when there is one**, and the MRzero simulation — which is
-essentially all of its cost — is a torch computation that moves there wholesale. Both `DEVICE` and
-sigpy's `RECON_DEVICE` are chosen by *probing* rather than by asking, because
-`torch.cuda.is_available()` reports the driver and comes back true on a machine whose devices are
-all hidden, and because cupy needs a toolkit to compile against where torch needs only a driver to
-talk to — so the two can disagree, and a machine can simulate on its GPU with no working cupy at
-all. Either way the notebook is the same notebook, and every step prints what it cost.
-
-The two EPI `02`s take the same bargain at a different scale: about a minute of one-voxel
-measurement each, then `BRAIN_IMAGES` for the slab. `gre_epi_2d/02`'s switch also covers §7, which
-is the one section that **cannot** be measured on a single spin — parallel imaging is a statement
-about receive sensitivity, so it needs coils and an object or it needs nothing.
-
-If you add a simulation to an example, price it first: the cost is voxels × repetitions × states, and
-a 16-echo train has all three. Two of the three are not negotiable — the repetitions are the
-sequence, and dropping `max_state_count` from 200 to 32 is 5 % wrong because a CPMG train's
-stimulated pathways *are* the physics. The slab thickness was the one that turned out to be free, and
-only because it was measured rather than assumed.
+Build notebooks run in seconds. Simulation notebooks vary from about 15 s to a few minutes; the
+expensive parts sit behind a named switch that is off by default, and each one prints its budget
+in the first cell. Writing a new one: see
+[*What a simulation notebook is allowed to cost*](../docs/writing_examples.md).
 
 ## `phantom.py`
 
@@ -486,3 +416,7 @@ plain functions. Two of the three have since been written as modules, in
 `mr0_bridge.py` went with them: every `02` uses `mr0.Sequence.import_file` on the written `.seq`,
 which is a stronger check than converting the tree, because it tests the file a scanner would
 actually play.
+
+## Contributing
+
+Writing or editing an example? See [`docs/writing_examples.md`](../docs/writing_examples.md).

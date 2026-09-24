@@ -7,6 +7,9 @@
 # DIFFERENT OWNERS, so the scan produced two records.  See findings.md for the split and
 # gap_note.md for what v0 could not express.
 #
+# IMPLEMENTED 2026-09-24.  See `implementation` for the spec-consistency pass, the API question
+# this record left open and how it was answered, and the three validation layers.
+#
 #   python tools/module_mining/schema.py tools/module_mining/plans/flow_moments/velocity_encoding.yaml
 
 id: velocity-encoding
@@ -88,11 +91,19 @@ contract:
     name: venc_m_s
     relation: >
       delta_m1 = pi / (gamma * venc), and the module emits the two toggles whose first moments
-      differ by delta_m1.
+      differ by delta_m1.  IN SEQCRAFT'S UNITS this is gamma-free- gradients are in Hz/m, a moving
+      spin accumulates phi = 2 pi (m0 x0 + m1 v), and so delta_m1 = 1 / (2 * venc) s/m for any
+      nucleus.  D1's pi / (gamma VENC) is the same number in T/m; the gamma is the unit
+      conversion rather than physics the module has to know.
   invariants:
     - net gradient area zero over the pair, so stationary spins accumulate no phase
     - >
-      the two toggles differ in first moment by exactly delta_m1, and in nothing else
+      the two toggles are EXACT WAVEFORM NEGATIONS of one another- both have zeroth moment zero,
+      and their first moments differ by exactly delta_m1.  CORRECTED 2026-09-24- this invariant
+      previously ended "and in nothing else", which is false and disagreed with the (also
+      corrected) acceptance bullet.  Negating a waveform negates every moment it has, so m2, m3
+      and the rest come back equal and opposite; the zeroth is the only one the two share, and
+      they share it because it is zero.
     - >
       first moment is origin-independent once the zeroth is zero (D1 section 10.4 p. 343, citing
       Simonetti 1991), so the module need not be told a time origin
@@ -131,8 +142,12 @@ acceptance:
       the two toggles' first moments differ by the delta_m1 that the requested venc implies, to
       within a stated tolerance, computed from the emitted knots rather than from the design
     - >
-      the two toggles are identical in every other respect -- duration, zeroth moment, and
-      moments above the first
+      the two toggles are ONE WAVEFORM PLAYED AT OPPOSITE POLARITY- equal duration, zeroth moment
+      zero for both, and every moment negating with the sign.  CORRECTED 2026-09-24- this bullet
+      previously said the toggles are identical "in moments above the first", which is false.
+      Negating a waveform negates its second moment too, so the only moment the two share is the
+      zeroth, and it is shared because it is zero.  Measured- m2 comes back equal and opposite,
+      not equal.
     - >
       metamorphic- halving venc doubles delta_m1 and leaves m0 at zero
     - >
@@ -142,6 +157,14 @@ acceptance:
     - >
       Any merged or minimum-TE design, and therefore any claim about achievable minimum TE.
     - >
+      That the emitted pair is the SHORTEST legal one.  ADDED 2026-09-24 during implementation.
+      The closed form solves the continuous hardware-limited problem and the times are then
+      rounded up onto the gradient raster; rounding an optimum up is not searching the lattice,
+      and a shorter legal raster point can exist.  Measured on the nominal 40 mT/m / 150 T/m/s
+      system at venc = 1.0 m/s- the design is 1.100 ms and a lattice search finds a legal
+      1.080 ms.  What IS claimed is that the pair is hardware-legal, raster-legal and hits
+      delta_m1 exactly.  No discrete search was added; the module publishes no min_duration_s.
+    - >
       Agreement with Open4DFlow, whose licence forbids it and whose realisation is numerical.
     - >
       Concomitant-field phase behaviour.  D1 notes the merged form breaks the automatic
@@ -150,14 +173,36 @@ acceptance:
     - Anything about flow quantification accuracy, which needs a phantom and a scanner.
 
 validation:
+  # IMPLEMENTED 2026-09-24.  The scan's acceptance claim is now an implementation's evidence.
   layers:
-    layer_1: NOT_APPLICABLE
-    layer_2: NOT_APPLICABLE
-    layer_3: NOT_APPLICABLE
-    layer_3_reason: >
-      NOT_APPLICABLE because nothing is implemented -- the scan stops at the acceptance claim.
-      Layer 3 would be unusually direct here- MRzeroCore can move spins, so a simulated flowing
-      phantom tests the pi-at-venc claim end to end.  Recorded as available rather than done.
+    layer_1: GREEN            # 64 tests in tests/modules/test_velocity_encode.py, every moment
+                              # integrated off the emitted events by sc.moments
+    layer_2: GREEN            # examples/pc_gre_2d/01_build.ipynb -- the pair inside a
+                              # phase-contrast gradient-echo repetition composed from leaves
+    layer_3: GREEN            # examples/pc_gre_2d/02_simulate_and_reconstruct.ipynb
+    layer_1_note: >
+      Seven deliberate mutations of the module were each checked to fail the suite- the factor of
+      two, the lobe order, the venc relation, the amplitude solve against the realised times, both
+      lobes the same sign, and the raster rounded down instead of up.  Recorded because a suite
+      that passes on first writing is not yet evidence that it would fail on a defect.
+    layer_3_result: >
+      Against a phantom whose spins move at constant velocity along the encoding axis-
+      |dphi| / pi tracks v / venc to 1e-5 or better from 0 to 0.9 m/s; a velocity map of three
+      voxels at three speeds recovers each to 2e-4 m/s; and above venc the answer wraps, as an
+      angle must.  So the pi-at-venc claim is measured rather than restated.
+    layer_3_sign_control: >
+      The measured phase difference is NEGATIVE where the textbook relation is positive.  That is
+      either the module emitting the wrong sign or the simulator reporting the opposite phase
+      convention, and the flow measurement alone cannot tell them apart.  A STATIC CONTROL
+      separates them- a stationary spin at a known offset under a deliberately un-nulled zeroth
+      moment shows the same -1 ratio, so the convention is the simulator's throughout and not
+      something the encoding did.  This is why polarity is defined on the emitted first moment-
+      that definition never has to take part in the argument.
+    layer_3_checked_the_instrument_too: >
+      sc.moments(..., 1) is what every Layer 1 assertion measures with, and its first-moment path
+      had little independent exercise before this candidate.  A moving-spin simulation reaches the
+      same number by a different route, so the agreement checks the analyser as well as the
+      module -- the rule the b_value correction produced.
   planned: >
     Layer 1 from acceptance.establishes, on the emitted lattice.  Layer 2 as a complete
     acquisition- a phase-contrast pair, since a single toggle is not an acquisition.  Layer 3
@@ -166,7 +211,38 @@ validation:
 coverage_classification: null
 
 status: NEW_LEAF
-traffic_light: APPROVED_FOR_IMPLEMENTATION
+traffic_light: GREEN          # IMPLEMENTED 2026-09-24; was APPROVED_FOR_IMPLEMENTATION
+
+implementation:
+  shipped: src/seqcraft/modules/encoding/velocity_encode.py
+  scope: >
+    The appended bipolar form on one axis, and only that.  Every deferred item in
+    evidence_state.deferred is still deferred and none was added to make the first form fit.
+  spec_consistency_pass: >
+    RECONCILED before the acceptance tests were written, per the implementation roadmap's rule.
+    acceptance.establishes claimed the two toggles are identical "in moments above the first".
+    They are not- one toggle is the other's negation, so the second moment negates with it, and
+    the zeroth is the only moment they share.  The claim was corrected in place rather than
+    quietly reinterpreted by the test, and the test now asserts the true invariant AND asserts
+    that m2 is NOT equal, so the false version cannot come back unnoticed.
+  api_question_answered: >
+    open_questions asked whether to emit one toggle per call with a sign argument or both toggles
+    as a pair, and said no evidence decides it.  Answered by the project owner- ONE instance holds
+    venc, the waveform design and the pair invariant, and `build(polarity=...)` selects the
+    encoding state, which is PhaseEncode's design-once / build-per-acquisition idiom.  The
+    argument is named `polarity` rather than `sign`, and it is defined explicitly as THE SIGN OF
+    THE EMITTED FIRST MOMENT -- not the sign of a velocity and not the sign of a reconstructed
+    phase.  The caller owns which polarity is scheduled on each acquisition.
+  closed_form: >
+    The CONTINUOUS hardware-limited problem is solved in closed form, in two regimes decided
+    rather than tried.  With A = g (f + r) and a centre-to-centre separation dT = 2r + f, the
+    requirement A dT = delta_m1 / 2 is a cubic in g when f = 0 and a quadratic in f when g is
+    pinned at max_grad.  Both times are then rounded UP onto the gradient raster and the amplitude
+    is solved again against the realised times, which keeps delta_m1 exact and keeps the gradient
+    and slew inside their limits -- rounding up can only lower the amplitude the target needs.
+    That is the whole of the guarantee.  The rounded pair is NOT the shortest legal pair the
+    raster admits; see acceptance.does_not_establish.  A discrete search would be a different
+    design decision and was deliberately not made here.
 
 decision_summary: >
   Velocity encoding, in its appended bipolar form, is an ordinary encoding leaf.  Its public
@@ -201,9 +277,10 @@ decision_summary: >
 
 open_questions:
   - >
-    Should the module emit one toggle per call with a sign argument, or both toggles as a pair?
-    A pair states the delta_m1 invariant in one object and makes it checkable; a single toggle
-    composes more simply.  No evidence decides it -- an API question for a human.
+    RESOLVED 2026-09-24 by the project owner, which is what this record asked for- it is an API
+    question and no evidence decides it.  One instance owns venc, the design and the pair
+    invariant; `build(polarity=+1|-1)` selects the encoding state; and `polarity` is defined as
+    the sign of the emitted first moment.  See implementation.api_question_answered.
   - >
     Higher-order encoding -- acceleration and above.  D1 says FE gradients "can encode information
     about velocity, acceleration, or higher derivatives" and this candidate covers velocity only.

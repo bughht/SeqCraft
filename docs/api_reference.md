@@ -1038,6 +1038,7 @@ Re-exported **flat**, so no import path names a folder:
 | `Excitation` | an RF pulse and, when selective, its selection gradient and rephaser |
 | `Refocusing` | a 180 and its crusher pair, as one waveform symmetric about the pulse's effective centre in time *and* area |
 | `PhaseEncode` | one Cartesian phase-encode blip, designed once and scaled per line |
+| `VelocityEncode` | a bipolar pair that encodes velocity along one axis: net area zero, so stationary spins are untouched, and a first moment set by `venc_m_s`. Emitted one toggle at a time — `polarity` is the sign of the **first moment**, and the phase difference between the two toggles is what a reconstruction subtracts |
 | `CartesianLine` | prephaser, readout gradient and ADC as one design — `prephase=False` drops the prephaser, which is the spin-echo readout, and `echoes`/`polarity` read the same line more than once, which is a multi-echo gradient echo |
 | `RadialReadout` | one radial spoke: prephaser, readout gradient and ADC, already oriented, with the trajectory geometry a caller would otherwise reverse-engineer |
 | `SpiralReadout` | one reversible spiral arm and the four ways to traverse it — `out`, `in`, `in-out`, `out-in`. The arm is at rest at both ends, which is what makes them one family |
@@ -1795,6 +1796,7 @@ at import.
 | `POINT_KINDS` | `design.events` | constant |
 | `PYPULSEQ_VERSION` | `_compat` | constant |
 | `PhaseEncode` | `modules` | class |
+| `VelocityEncode` | `modules` | class |
 | `RadialReadout` | `modules` | class |
 | `PlacedEvent` | `compiler.model` | class |
 | `PulseqReadyBlock` | `compiler.model` | class |

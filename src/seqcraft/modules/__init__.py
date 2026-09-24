@@ -26,6 +26,7 @@ The folders, and what each one means
       preparation/ ir_prep.py          IRPrep
                    saturation_prep.py  SaturationPrep
       encoding/    phase_encoding.py   PhaseEncode
+                   velocity_encode.py  VelocityEncode
       readout/     cartesian_line.py   CartesianLine
                    epi_2d.py           EPI2D
                    radial_readout.py   RadialReadout
@@ -92,6 +93,7 @@ The provenance path is the tree, and not one tag string was written:
 from __future__ import annotations
 
 from .encoding.phase_encoding import PhaseEncode
+from .encoding.velocity_encode import VelocityEncode
 from .imaging.fse_2d import FSE2D
 from .imaging.gre_2d import GRE2D
 from .kernel.diffusion_se import DiffusionSEPrep
@@ -113,6 +115,7 @@ __all__ = [
     'CartesianLine', 'DiffusionSEPrep', 'EPI2D', 'Excitation', 'FSE2D', 'GRE2D', 'GRE2DTR',
     'GRE3DTR', 'IRPrep',
     'PhaseEncode',
+    'VelocityEncode',
     'RadialReadout', 'Refocusing', 'SaturationPrep', 'SpiralReadout', 'T2Prep', 'TSEShot',
     'spoiler',
 ]

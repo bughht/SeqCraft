@@ -3,11 +3,20 @@
 ## Examples
 
 When creating or editing anything under `examples/`, follow the notebook-writing rules in
-[`examples/README.md`](examples/README.md) — see **Writing example notebooks**.
+[`docs/writing_examples.md`](docs/writing_examples.md).
 
-Examples are user-facing teaching material, not pull-request or design records. Development
-history, evidence arguments and architecture rationale belong in `CHANGELOG.md`, the pull request,
-or `tools/module_mining/plans/`.
+## Modules and public docstrings
 
-`examples/README.md` is the single source for those rules. This file, `AGENTS.md` and the
-module-mining skill only point at it.
+When writing or documenting a reusable component, follow
+[`docs/writing_a_module.md`](docs/writing_a_module.md) — including **Public API prose**, which
+covers what a public docstring documents and what belongs elsewhere.
+
+## Where the rest goes
+
+Examples are user-facing teaching material and docstrings are API documentation; neither is a
+pull-request or design record. Development history, evidence arguments, rejected alternatives and
+architecture rationale belong in `CHANGELOG.md`, the pull request, or
+`tools/module_mining/plans/`.
+
+Those two documents are the single source for those rules. This file, `AGENTS.md` and the
+module-mining skill only point at them.

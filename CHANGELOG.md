@@ -1,5 +1,82 @@
 # Changelog
 
+## Unreleased — velocity, written into the phase
+
+`VelocityEncode` (`encoding/`): a bipolar pair on one logical axis. Two lobes of equal area and
+opposite polarity, so the net area is zero and a stationary spin comes out with the phase it went
+in with, while a moving one is somewhere else for the second lobe than it was for the first and
+comes out ahead. Beside `PhaseEncode`, whose folder contract — gradients, no ADC, imposing a phase
+you intend to sample — describes it exactly.
+
+**`venc_m_s` in, and never a moment.** The public quantity is the velocity that accumulates `pi`
+of phase *difference between the toggles*, and the quantity behind it is the **change** in first
+moment, `delta_m1 = 1 / (2 * venc)`. Each toggle carries half of that. A caller who sets one
+toggle's first moment to `delta_m1` is out by a factor of two and gets a plausible velocity map at
+half the VENC they asked for, so the module takes `venc_m_s` and the mistake has nowhere to
+happen.
+
+No gamma appears in that relation. SeqCraft's gradients are in Hz/m, so a moving spin accumulates
+`phi = 2 pi (m0 x0 + m1 v)` and `delta_m1 = 1 / (2 venc)` holds for any nucleus. The Handbook's
+`pi / (gamma VENC)` is the same number in T/m units.
+
+**`polarity` is the sign of the emitted first moment** — not of a velocity, and not of a
+reconstructed phase. That is the candidate record's one open API question, answered: one module
+holds the design and both toggles, and `build(polarity=...)` emits one, which is `PhaseEncode`'s
+design-once/build-per-acquisition idiom. Defining the sign on the waveform is what makes it
+checkable, because `sc.moments` reads it straight back off the events and nothing has to agree a
+convention with a reconstruction to assert it.
+
+The **continuous** hardware-limited design is closed form rather than a search. With lobe area
+`A`, rise `r` and flat `f`, the two lobe centres are `2r + f` apart and `A (2r + f) = delta_m1 / 2`:
+a cubic in the amplitude when the lobes are triangular, a quadratic in the flat time when the
+amplitude pins at `max_grad`. Both times are then rounded **up** onto the gradient raster and the
+amplitude is solved again against the realised ones, which keeps `delta_m1` exact and keeps the
+gradient and slew inside their limits — rounding up can only lower the amplitude the target needs.
+
+**That is the whole of the guarantee, and it is worth being exact about.** Rounding a continuous
+optimum up is not searching the discrete lattice, so the emitted pair is legal and exact but
+**not** the shortest legal pair the raster admits — on the nominal system at `venc = 1.0 m/s` it is
+1.100 ms where a lattice search finds a legal 1.080 ms. No search was added, no `min_duration_s` is
+published, and a test asserts the gap so the claim cannot become true by accident.
+
+Once `m0 = 0` the first moment is independent of the time origin, so the pair can be placed
+anywhere in a repetition and still deliver what it promised. That is what makes this a leaf: it
+never has to be told where the echo is.
+
+Validated in three layers. **Layer 1**, 64 tests, every moment integrated off the emitted events
+by `sc.moments` rather than asked of the module: `m0 = 0`, the change in first moment across the
+toggles, the half each one carries, `polarity` as the sign of `m1`, origin independence, the
+hardware and raster behaviour, and the refusals. Seven deliberate mutations of the module — the
+factor of two, the lobe order, the amplitude solve, the raster direction — were each checked to
+fail the suite. **Layer 2**, `examples/pc_gre_2d/01_build.ipynb`, the pair inside a phase-contrast
+gradient-echo repetition composed by hand from leaves, which is where its cost in echo time is
+visible. **Layer 3**, `02_simulate_and_reconstruct.ipynb`, against a phantom whose spins move:
+
+```text
+|dphi| / pi against v / venc, 0 to 0.9 m/s     agrees to 1e-5 or better
+a velocity map of three voxels at three speeds recovered to 2e-4 m/s
+above VENC                                     wraps, as an angle must
+```
+
+Layer 3 also settled a sign. The measured phase difference is *negative* where the textbook
+relation is positive, which could have been the module emitting the wrong sign or the simulator
+reporting the opposite phase convention. A **static control** — a stationary spin at a known
+offset under a deliberately un-nulled zeroth moment — shows the same `-1` ratio, so it is the
+simulator's convention throughout and not something the encoding did. The notebook establishes
+that before it divides by anything.
+
+That check was worth running for a second reason: `sc.moments(..., 1)` is the instrument Layer 1
+measures everything with, and its first-moment path had little independent exercise before this.
+A moving-spin simulation is a different route to the same number, so the agreement checks the
+analyser as much as the module.
+
+Scope is the approved **appended bipolar** form and nothing else. The merged designs, where the
+encoding lobe and an already-compensated imaging lobe become one shorter waveform, reshape
+gradients this module does not own and are the next stage's problem; acceleration and higher-order
+encoding, concomitant-field phase, and any claim about achievable minimum TE are all still
+deferred. No compiler or `LogicBlock` change, and no moment-requirement IR or numerical optimiser
+— the canonical case is algebra, which is the finding the candidate record rests on.
+
 ## Unreleased — T2 contrast for a sequence that has none of its own
 
 `T2Prep` (`preparation/`): a T2-weighting preparation. Tip down, refocus while the magnetisation

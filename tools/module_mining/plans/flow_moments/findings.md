@@ -5,6 +5,9 @@
 > The two copies are identical today and there is nothing keeping them that way.
 
 **Date:** 2026-09-22 · **Skill:** v0, frozen and unmodified
+**`VelocityEncode` implemented** 2026-09-24; `flow_compensation.yaml` is still unbuilt and is the
+next stage. The scan record below is left as it was written and
+[§8](#8-what-implementing-velocityencode-added-2026-09-24) records what it added.
 **Result:** one requirement model, **two owners** — so two records:
 
 ```text
@@ -179,3 +182,39 @@ merged-waveform problem, which is what actually blocks both C2 and C3.
 
 That is the strongest case yet for `evidence_class: domain-reference`, and it is still recorded by
 hand rather than in the schema.
+
+## 8. What implementing `VelocityEncode` added, 2026-09-24
+
+The scan's physics held. Three things came out of building it that the record could not have.
+
+**One acceptance bullet was false, and the spec-consistency pass caught it.** The record said the
+two toggles are identical "in duration, zeroth moment, and moments above the first". They are not:
+one toggle is the other's negation, so the second moment negates with it. The only moment the two
+share is the zeroth, and they share it because it is zero. The bullet is corrected in place, and
+the test now asserts both the true invariant *and* that `m2` is not equal, so the false version
+cannot return unnoticed.
+
+**The open API question was for a human, and it was answered as one.** A single instance owns
+`venc_m_s`, the waveform design and the pair invariant; `build(polarity=+1|-1)` selects the
+encoding state, matching `PhaseEncode`'s design-once/build-per-acquisition idiom. The name is
+`polarity` rather than `sign`, and it means **the sign of the emitted first moment** — not of a
+velocity, and not of a reconstructed phase.
+
+That definition earned itself immediately. In Layer 3 the measured phase difference comes back
+*negative* where the textbook relation is positive, which is either a sign error in the module or
+the simulator's phase convention — and the flow measurement alone cannot distinguish them. A
+**static control**, a stationary spin at a known offset under a deliberately un-nulled zeroth
+moment, shows the same `−1` ratio. So it is the simulator's convention throughout. Had `polarity`
+been defined on velocity or on reconstructed phase, the module would have had to take a position
+in that argument; defined on the first moment, it never does.
+
+**Layer 3 was also a check on the instrument.** Every Layer 1 assertion here is made with
+`sc.moments(..., 1)`, whose first-moment path had little independent exercise before this
+candidate. A simulation that moves spins reaches `delta_m1` by a completely different route, and
+the two agree to 1e-5 — so the analyser is corroborated along with the module. That is the rule
+the `b_value` correction produced, applied prospectively for the first time rather than after a
+defect.
+
+Unchanged: the closed form is algebra, exactly as §4 argued. No moment-requirement IR and no
+numerical optimiser were needed or added, and `flow_compensation.yaml` is still the record that
+carries the hard part.
