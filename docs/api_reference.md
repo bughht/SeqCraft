@@ -1045,7 +1045,7 @@ Re-exported **flat**, so no import path names a folder:
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
 | `SaturationPrep` | a spectrally selective pulse and the spoiler that destroys what it made — the chemical-shift offset is the contract, and its sign is the failure that looks fine |
-| `T2Prep` | a T2-weighting preparation: tip down, an MLEV-4 composite refocusing train, tip up, spoil. `prep_time_s` is the transverse interval, and what survives is scaled by `exp(-prep_time_s / T2)` |
+| `T2Prep` | a T2-weighting preparation: tip down, an MLEV-4 composite refocusing train, tip up, spoil. `prep_time_s` is the transverse interval between two RF centres, and what survives is scaled by `exp(-prep_time_s / T2)`. `tip_up` names which **realisation** of the tip-up to build — `'simple'` by default — and changes none of that |
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
 | `GRE2D` | the complete scan |
 | `GRE3DTR` | one repetition of a 3D Cartesian gradient echo — a sibling of `GRE2DTR`, owning the z axis where a slab's rephasing and a partition's encoding become one gradient |

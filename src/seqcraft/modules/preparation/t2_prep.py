@@ -10,8 +10,8 @@ declared time while a train of refocusing pulses reverses static dephasing, tipp
 
 .. code-block:: text
 
-    90x  ->  composite 180 x4  ->  composite tip-up  ->  spoiler
-         |<------ prep_time_s ------>|
+    +90  ->  refocusing train  ->  -90  ->  spoiler
+         |<--- prep_time_s --->|
 
 What survives is weighted by :math:`e^{-\tau/T_2}` rather than by :math:`e^{-\tau/T_2^*}`, and
 that distinction is the whole module: without the refocusing train the same interval would decay
@@ -22,14 +22,32 @@ longitudinal magnetisation that arrives -- which under a steady state is not the
 value, and is not something this module can know.  The claim here is the exponential, not the
 absolute signal.
 
+What the contract is, and what is a realisation of it
+-----------------------------------------------------
+The **physical contract** is the four-line structure above, and nothing more: tip into the
+transverse plane, refocus while it decays there, tip back, spoil.  Everything else -- how many
+refocusing pulses, what shape they are, how the tip-up is built -- is a **realisation** of it.
+
+Keeping those apart matters, because a realisation detail is easy to mistake for the contract when
+only one implementation is in front of you.  The composite tip-up below is exactly that case: it
+is an established way to build the tip-up, used in some designs, and it is **not** part of what a
+T2 preparation is.  MLEV-4 governs the refocusing train's phase cycling and says nothing about the
+tip-up either.
+
 ``prep_time_s``, and where it is measured from
 ----------------------------------------------
-The public quantity is the **transverse period**: from the effective tip-down rotation instant to
-the effective tip-up rotation instant.  For this mode's hard and composite pulses that reduces to
-RF centre to RF centre, and a composite is booked at the midpoint of the group -- symmetric for
-the refocusing composites by construction, and stated for the asymmetric tip-up rather than left
-to be inferred.  :meth:`T2Prep.time_to_tip_down` and :meth:`T2Prep.time_to_tip_up` report both
-ends, so the interval can be measured rather than trusted.
+The public quantity is the **transverse period**, and both of its ends are plain RF centres:
+
+==================================  ===========================================================
+from                                the centre of the ``+90`` tip-down
+to, ``tip_up='simple'``             the centre of the ``-90`` tip-up
+to, ``tip_up='composite_270_360'``  the centre of the **270**, which is the convention the
+                                    implementation that uses this realisation defines its own
+                                    preparation time by
+==================================  ===========================================================
+
+Nothing here is a weighted or derived instant.  An interval between two RF centres is something a
+compiled sequence can be measured for, which is what makes the claim checkable.
 
 Implementations differ on this bookkeeping -- some book edge to edge, tip-down end to tip-up start
 -- and the two differ by one tip-pulse duration, which is milliseconds against a preparation of
@@ -37,41 +55,55 @@ tens.  This module takes the physical definition: the period the magnetisation i
 
 Every RF group starts on the gradient raster, because the seam between two consecutive pulses is
 where a block boundary has to be cut and only raster instants can be cut.  So the placement is
-quantised first and ``prep_time_s`` is **measured off it** -- it is what the emitted sequence
-delivers, within half a raster of what was asked for.  :attr:`T2Prep.requested_prep_time_s` keeps
-the request.
+quantised first and ``prep_time_s`` is **measured off it**;
+:attr:`T2Prep.requested_prep_time_s` keeps the request.
 
-The one mode
-------------
-``mlev4-hard``, and deliberately only that:
+The realisations
+----------------
+Hard, non-adiabatic pulses throughout, non-selective, with an MLEV-4 refocusing train:
 
-============================  ==================================================================
-tip-down                      hard 90 about +x
-refocusing train              four composites, each 90x-180y-90x, at 1/8, 3/8, 5/8 and 7/8 of
-                              ``prep_time_s``
-phase pattern                 MLEV-4, ``+ + - -`` across the four composites
-tip-up                        composite: 270 about +x, then 360 about -x.  Net -90
-selection                     none.  The family is non-selective
-spoiler                       after the tip-up, entirely outside ``prep_time_s``
-============================  ==================================================================
+==============================  ===============================================================
+tip-down                        hard 90 about +x
+refocusing train                four composites, each 90x-180y-90x, at 1/8, 3/8, 5/8 and 7/8 of
+                                ``prep_time_s``
+phase pattern                   MLEV-4, ``+ + - -`` across the four composites
+``tip_up='simple'``             a single hard -90.  **The default**, and the canonical form
+``tip_up='composite_270_360'``  270 about +x then 360 about -x, also a net -90
+selection                       none.  The family is non-selective
+spoiler                         after the tip-up, entirely outside ``prep_time_s``
+==============================  ===============================================================
 
-Every pulse is a hard block pulse at **one** :math:`B_1` amplitude, set by the 180's duration, so
-a flip angle is a duration: a 90 is half a 180 and a 360 is twice one.  That is what makes the
-composites composites, and it makes the peak-:math:`B_1` question a single number for the whole
-block.
+The simple form is shorter in RF, so it pays less relaxation and less RF energy, and it is what
+the domain reference describes.  The composite form costs about 2.6 ms more here and is offered
+because it is established, not because this module measures it to be better.
+``examples/t2prep_gre_2d/02`` compares the two under :math:`B_1` and :math:`B_0` error and finds
+that the **refocusing train**, not the tip-up, is what decides the answer: the two realisations
+fail together.
+
+Every pulse is a hard block pulse at **one** :math:`B_1`, and every duration is a whole number of
+base durations -- 1 : 2 : 3 : 4 for 90 : 180 : 270 : 360.  The base is quantised onto the RF
+raster, so the shared amplitude is exact for any requested ``refocus_duration_s`` rather than only
+for convenient ones; :attr:`T2Prep.refocus_duration_s` reports what was realised.
+
+A future **adiabatic** realisation is deliberately not a third ``tip_up`` value.  An adiabatic
+pulse does not rotate at its centre, so it changes what ``prep_time_s`` *means* -- which is a
+change to the contract's bookkeeping rather than to how one pulse is built, and it belongs to a
+pulse-family choice rather than to this parameter.
 
 Out of scope, each a different physical claim rather than a parameter of this one: adiabatic
 BIR-4/AHP tip pairs and the :math:`B_1`-robustness claim that lives with them; a two-composite
-``mlev2-hard`` train; an arbitrary refocusing count; the :math:`B_1`-robust variant whose
-rephasing lobe lands inside the *imaging* sequence, which no single module can hold; and a
-diffusion preparation, which is the same silhouette making a different claim.
+train; an arbitrary refocusing count; the :math:`B_1`-robust variant whose rephasing lobe lands
+inside the *imaging* sequence, which no single module can hold; and a diffusion preparation, which
+is the same silhouette making a different claim.
 
-This mode makes **no** quantitative :math:`B_0` or :math:`B_1` robustness claim.
+**No quantitative** :math:`B_0` **or** :math:`B_1` **robustness claim is made by either
+realisation**, and choosing the composite one does not add it.
 
 References
 ----------
-Bernstein, King & Zhou, *Handbook of MRI Pulse Sequences*, Elsevier 2004, §17.4.
-Levitt & Freeman, *J. Magn. Reson.* **43**, 65 (1981) -- the composite pulse.
+Bernstein, King & Zhou, *Handbook of MRI Pulse Sequences*, Elsevier 2004, §17.4 -- the family,
+its non-selectivity, and the ``+90`` / refocusing / ``-90`` / spoiler structure.
+Levitt & Freeman, *J. Magn. Reson.* **43**, 65 (1981) -- composite pulses and the MLEV cycles.
 Brittain et al., *Magn. Reson. Med.* **33**, 689 (1995) -- the preparation in use.
 """
 
@@ -110,30 +142,61 @@ _MLEV4_INVERTED: tuple[bool, ...] = (False, False, True, True)
 #: composite's own reference.  Levitt & Freeman's 90x-180y-90x.
 _COMPOSITE_REFOCUS: tuple[tuple[float, float], ...] = ((90.0, 0.0), (180.0, 90.0), (90.0, 0.0))
 
-#: The tip-up: 270 about +x, then 360 about -x.  Net -90, which returns what the tip-down sent.
-_COMPOSITE_TIP_UP: tuple[tuple[float, float], ...] = ((270.0, 0.0), (360.0, 180.0))
+#: The pulse whose centre is the composite's refocusing instant: the 180 it is built around.
+_REFOCUS_CENTRE_INDEX = 1
 
 #: The tip-down.  A single hard 90 about +x.
 _TIP_DOWN: tuple[tuple[float, float], ...] = ((90.0, 0.0),)
 
+#: The tip-up realisations, and for each the pulse whose centre ends ``prep_time_s``.
+#:
+#: ``'simple'`` is the canonical form the domain reference describes: a single hard -90, which is
+#: the tip-down undone.  ``'composite_270_360'`` is an established realisation used in some
+#: designs -- 270 about +x then 360 about -x, also a net -90 -- and it is a **realisation
+#: variant**, not part of what a T2 preparation is.  MLEV-4 governs the refocusing train's phase
+#: cycling and says nothing about the tip-up.
+#:
+#: The index is where the preparation ends.  For the simple form that is the only pulse.  For the
+#: composite it is the **270**, which is the convention the implementation witness that uses this
+#: realisation defines its preparation time by.
+_TIP_UPS: dict[str, tuple[tuple[tuple[float, float], ...], int]] = {
+    'simple': (((90.0, 180.0),), 0),
+    'composite_270_360': (((270.0, 0.0), (360.0, 180.0)), 0),
+}
+
 
 class T2Prep(Module):
     r"""
-    A T2-weighting preparation: 90, a refocusing train, a tip-up, and a spoiler.
+    A T2-weighting preparation: ``+90``, a refocusing train, a tip-up, and a spoiler.
 
     Parameters
     ----------
     opts
         The scanner.
     prep_time_s
-        **The physical target.**  The interval the magnetisation spends transverse, measured
-        between the effective tip-down and tip-up rotation instants.  Rounded up onto eight
-        gradient rasters so that the four refocusing centres land exactly;
-        :attr:`requested_prep_time_s` keeps the request.
+        **The physical target.**  The interval the magnetisation spends transverse, between the
+        tip-down's RF centre and the tip-up's.  Every pulse group starts on the gradient raster,
+        so the realised value is quantised; :attr:`prep_time_s` reports it.
+    tip_up
+        Which realisation of the tip-up to build.
+
+        ``'simple'``
+            A single hard ``-90``.  **The default**, and the canonical form: it follows the
+            physical contract directly, it is the shortest, and it pays the least relaxation and
+            RF energy.
+        ``'composite_270_360'``
+            ``270`` about +x then ``360`` about -x, also a net ``-90``.  An established
+            realisation used in some designs.  It is **not** a stronger claim -- no quantitative
+            robustness is measured or promised for it -- and it is not part of what MLEV-4 or a
+            T2 preparation is.
+
+        The choice moves ``prep_time_s``'s second endpoint, which is why it is a named
+        realisation rather than a boolean: see the module docstring's table.
     refocus_duration_s
         Duration of the 180 in each composite.  It sets the :math:`B_1` amplitude every pulse in
         the block shares, so a shorter one is a stronger pulse: halve it and peak :math:`B_1`
-        doubles.
+        doubles.  Rounded up so that half of it lands on the RF raster, which is what keeps the
+        1 : 2 : 3 : 4 duration ratios -- and therefore the single :math:`B_1` -- exact.
     spoil_cycles_per_voxel, spoil_axis, spoil_voxel_mm
         The crusher that destroys what the tip-up left transverse.  It lies entirely **after**
         ``prep_time_s``.  `spoil_voxel_mm` is required: the preparation is non-selective, so
@@ -148,13 +211,17 @@ class T2Prep(Module):
         declared, so it is exactly what the emitted sequence delivers.
     requested_prep_time_s : float
         What the caller asked for, before rounding onto the raster.
+    tip_up : str
+        The realisation in use.
+    refocus_duration_s, requested_refocus_duration_s : float
+        The realised 180 duration and the request it came from.
     min_prep_time_s : float
         The shortest preparation the pulses themselves leave room for.
     b1_hz : float
         The single amplitude every pulse in the block is played at.
     pulses : tuple
-        Every RF event, in time order: the tip-down, then four composites of three, then the
-        two-pulse tip-up.  Fifteen in all.
+        Every RF event, in time order: the tip-down, four composites of three, then the tip-up --
+        fourteen with the simple tip-up and fifteen with the composite one.
     spoiler : LogicBlock
         The crusher, placed after the tip-up.
 
@@ -165,12 +232,23 @@ class T2Prep(Module):
     >>> opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
     ...                rf_dead_time=100e-6, rf_ringdown_time=30e-6)
     >>> prep = sc.modules.T2Prep(opts=opts, prep_time_s=50e-3, spoil_voxel_mm=4.0)
+    >>> prep.tip_up
+    'simple'
     >>> len(prep.pulses)
-    15
+    14
     >>> prep.time_to_tip_up() - prep.time_to_tip_down() == prep.prep_time_s
     True
-    >>> round(prep.prep_time_s * 1e3, 3)
-    50.004
+    >>> round(prep.prep_time_s * 1e3, 6)
+    50.0
+
+    The other realisation is one argument, and it is longer:
+
+    >>> composite = sc.modules.T2Prep(opts=opts, prep_time_s=50e-3, spoil_voxel_mm=4.0,
+    ...                               tip_up='composite_270_360')
+    >>> len(composite.pulses)
+    15
+    >>> composite().duration > prep().duration
+    True
     """
 
     def __init__(
@@ -178,6 +256,7 @@ class T2Prep(Module):
         *,
         opts: Opts,
         prep_time_s: float,
+        tip_up: str = 'simple',
         refocus_duration_s: float = 1e-3,
         spoil_cycles_per_voxel: float = 4.0,
         spoil_axis: str = 'z',
@@ -186,20 +265,27 @@ class T2Prep(Module):
     ) -> None:
         super().__init__(opts=opts, tag=tag)
         self.requested_prep_time_s = require_positive(prep_time_s, 'prep_time_s')
-        self.refocus_duration_s = require_positive(refocus_duration_s, 'refocus_duration_s')
-
-        # One B1 for the whole block, set by the 180.  A hard pulse's flip angle is
-        # 2 pi B1 tau, so at a fixed B1 the duration is proportional to the angle -- which is what
-        # lets a 90, a 270 and a 360 belong to the same composite.
-        self.b1_hz = 0.5 / self.refocus_duration_s
+        self.tip_up = self._check_tip_up(tip_up)
+        require_positive(refocus_duration_s, 'refocus_duration_s')
         self._rf_raster = Raster(float(opts.rf_raster_time), 'rf_raster_time')
         self._grad_raster = Raster(float(opts.grad_raster_time), 'grad_raster_time')
+
+        # **Every duration is a whole number of base durations**, and the base is a 90.  A hard
+        # pulse's flip angle is 2 pi B1 tau, so at one B1 the durations are in the ratio of the
+        # angles: 1 : 2 : 3 : 4 for 90 : 180 : 270 : 360.  Quantising the *base* onto the RF
+        # raster keeps every one of them exact; quantising each pulse separately would not, and
+        # the shared B1 would then hold only for durations that happen to divide evenly.
+        self._base_duration_s = float(self._rf_raster.ceil(refocus_duration_s / 2.0))
+        self.refocus_duration_s = 2.0 * self._base_duration_s
+        self.requested_refocus_duration_s = float(refocus_duration_s)
+        self.b1_hz = 0.25 / self._base_duration_s
 
         require_usable_max_b1(self.opts, described=self._described())
         self._tip_down = self._group(_TIP_DOWN)
         self._composites = tuple(self._group(_COMPOSITE_REFOCUS, inverted=flip)
                                  for flip in _MLEV4_INVERTED)
-        self._tip_up = self._group(_COMPOSITE_TIP_UP)
+        angles, self._tip_up_index = _TIP_UPS[self.tip_up]
+        self._tip_up = self._group(angles)
         self.pulses = tuple(rf for group in (self._tip_down, *self._composites, self._tip_up)
                             for rf in group)
         self._check_b1()
@@ -213,12 +299,12 @@ class T2Prep(Module):
         # off it, rather than declared and then approximated.
         self._tip_up_start = float(self._grad_raster.nearest(
             self.time_to_tip_down() + self.requested_prep_time_s
-            - self._effective_centre(self._tip_up, start_s=0.0)))
+            - self._offset_to_centre(self._tip_up, self._tip_up_index)))
         self.prep_time_s = self.time_to_tip_up() - self.time_to_tip_down()
         self._composite_starts = tuple(
             float(self._grad_raster.nearest(
                 self.time_to_tip_down() + fraction * self.prep_time_s
-                - self._effective_centre(group, start_s=0.0)))
+                - self._offset_to_centre(group, _REFOCUS_CENTRE_INDEX)))
             for fraction, group in zip(_REFOCUS_FRACTIONS, self._composites))
 
         self.spoil_axis = require_axis(spoil_axis, 'spoil_axis')
@@ -231,22 +317,24 @@ class T2Prep(Module):
     # ------------------------------------------------------------------ what it knows
     def time_to_tip_down(self) -> float:
         """Seconds from the block's start to the **effective tip-down rotation instant**."""
-        return self._effective_centre(self._tip_down, start_s=0.0)
+        return self._offset_to_centre(self._tip_down, 0)
 
     def time_to_tip_up(self) -> float:
         """
         Seconds from the block's start to the **effective tip-up rotation instant**.
 
-        A composite has no single instant at which it rotates, so the convention has to be stated
-        rather than assumed.  This module books the **amplitude-weighted centre** of the group:
-        each pulse contributes its own centre, weighted by its flip angle, which at a fixed
-        :math:`B_1` is the area under its envelope.
+        Which pulse's centre that is depends on the realisation, and both are plain RF centres:
 
-        It reduces correctly at both ends of the family.  For one hard pulse it is that pulse's
-        centre.  For the symmetric 90-180-90 refocusing composite it is the centre of the 180, by
-        symmetry.  For the asymmetric 270/-360 tip-up it is a number, which is the point.
+        ==============================  =========================================
+        ``tip_up='simple'``             the centre of the single -90
+        ``tip_up='composite_270_360'``  the centre of the **270**
+        ==============================  =========================================
+
+        The second is the convention the implementation witness that uses this realisation
+        defines its own preparation time by.  Neither is a derived or weighted instant: an
+        interval between two RF centres is something a compiled sequence can be measured for.
         """
-        return self._effective_centre(self._tip_up, start_s=self._tip_up_start)
+        return self._tip_up_start + self._offset_to_centre(self._tip_up, self._tip_up_index)
 
     def time_to_refocus(self, index: int) -> float:
         """
@@ -257,8 +345,8 @@ class T2Prep(Module):
         refocusing condition is that the gaps either side of each pulse are **equal**, which
         survives that quantisation, and :attr:`interval_gaps_s` is how it is checked.
         """
-        return self._effective_centre(self._composites[index],
-                                      start_s=self._composite_starts[index])
+        return self._composite_starts[index] + self._offset_to_centre(
+            self._composites[index], _REFOCUS_CENTRE_INDEX)
 
     @property
     def interval_gaps_s(self) -> tuple[float, ...]:
@@ -294,7 +382,7 @@ class T2Prep(Module):
     # ----------------------------------------------------------------------- assembly
     def build(self, *, phase_deg: float = 0.0) -> LogicBlock:
         """
-        Return the preparation: fifteen pulses, then the spoiler.
+        Return the preparation: every pulse of the chosen realisation, then the spoiler.
 
         Parameters
         ----------
@@ -327,8 +415,8 @@ class T2Prep(Module):
         return tuple(self._hard(flip_deg, phase_deg + turn) for flip_deg, phase_deg in angles)
 
     def _hard(self, flip_deg: float, phase_deg: float) -> Event:
-        """One hard block pulse: the duration follows the flip angle at a fixed B1."""
-        duration_s = self._rf_raster.ceil(flip_deg / 360.0 / self.b1_hz)
+        """One hard block pulse.  Its duration is a whole number of base durations."""
+        duration_s = round(flip_deg / 90.0) * self._base_duration_s
         return pp.make_block_pulse(
             flip_angle=float(np.deg2rad(flip_deg)),
             duration=float(duration_s),
@@ -354,20 +442,11 @@ class T2Prep(Module):
         """The wall time a whole group occupies."""
         return float(sum(self._slot_of(rf) for rf in group))
 
-    def _effective_centre(self, group: tuple[Event, ...], *, start_s: float) -> float:
-        """The group's amplitude-weighted rotation instant -- see :meth:`time_to_tip_up`."""
-        weighted, total, at = 0.0, 0.0, start_s
-        for rf in group:
-            centre = at + float(rf.delay) + float(pp.calc_rf_center(rf)[0])
-            # The integral of the envelope, which is the flip angle -- NOT the sum of the
-            # samples.  `make_block_pulse` emits two samples whatever the duration, so a sum
-            # would weight a 360 and a 90 equally and put the centre in the wrong place.
-            weight = abs(float(np.trapezoid(np.abs(np.asarray(rf.signal)),
-                                            np.asarray(rf.t))))
-            weighted += weight * centre
-            total += weight
-            at += self._slot_of(rf)
-        return weighted / total
+    def _offset_to_centre(self, group: tuple[Event, ...], index: int) -> float:
+        """Seconds from a group's start to the RF centre of the pulse at `index`."""
+        at = sum(self._slot_of(rf) for rf in group[:index])
+        rf = group[index]
+        return at + float(rf.delay) + float(pp.calc_rf_center(rf)[0])
 
     def _shortest_preparation(self) -> float:
         """
@@ -385,7 +464,8 @@ class T2Prep(Module):
         first = _REFOCUS_FRACTIONS[0]
         after_tip_down = (tip_down - self.time_to_tip_down() + composite / 2.0) / first
         between = 4.0 * composite
-        before_tip_up = (composite / 2.0 + self._effective_centre(self._tip_up, start_s=0.0)
+        before_tip_up = (composite / 2.0
+                         + self._offset_to_centre(self._tip_up, self._tip_up_index)
                          ) / (1.0 - _REFOCUS_FRACTIONS[-1])
         return float(self._grad_raster.ceil(max(after_tip_down, between, before_tip_up) / 8.0)
                      * 8.0)
@@ -408,6 +488,19 @@ class T2Prep(Module):
         ]
         for rf in self.pulses:
             check_peak_b1(rf, self.opts, described=self._described(), remedies=remedies)
+
+    def _check_tip_up(self, tip_up: str) -> str:
+        """Return `tip_up` having checked it names a realisation this module has."""
+        if tip_up in _TIP_UPS:
+            return tip_up
+        listed = ', '.join(repr(name) for name in _TIP_UPS)
+        msg = format_error(
+            f'tip_up must be one of {listed}, got {tip_up!r}.',
+            {'tip_up': tip_up},
+            ["'simple' is the canonical -90 and the default",
+             "'composite_270_360' is an established realisation variant, not a stronger claim"],
+        )
+        raise ConfigurationError(msg)
 
     def _refuse_short_preparation(self) -> None:
         msg = format_error(

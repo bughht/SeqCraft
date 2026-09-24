@@ -8,6 +8,14 @@
 # mature physical abstraction exists.  This revision adds a DOMAIN REFERENCE as a distinct
 # evidence class and a second, permissively licensed implementation witness.
 #
+# REVISED 2026-09-23 after implementation review.  The composite 270/-360 tip-up had been carried
+# from R3 into the mode contract as if it were part of what a T2 preparation IS.  It is not: it is
+# R3's realisation of the tip-up, and R3 is the permissively licensed executable witness rather
+# than the authority on the abstraction.  D1 gives the physical contract and describes the simple
+# -90; E1 gives the canonical educational picture and agrees.  The contract now carries the
+# four-part structure alone, the simple -90 is the default realisation, and the composite is a
+# named alternative.  See the fine-scan playbook, "Realisation is not contract".
+#
 # Run with the merged v0 Skill, unmodified.  Evidence -> contract -> ownership -> acceptance
 # claim, and it stops there: nothing was implemented.
 #
@@ -133,6 +141,31 @@ evidence:
       or the bookkeeping of Tprep against real pulse durations.  Its physics is stated for ideal
       instantaneous pulses, where "the time between the DE 90 degree pulses" is unambiguous.
       Those are precisely the questions the mode contract must fix.
+  - id: E1
+    source: mriquestions
+    repo: n/a -- a teaching website, not a repository; see `citation`
+    license: >
+      Copyrighted educational material.  CITED ONLY.  Registered in sources.yaml with roles
+      [educational-synthesis] and explicitly_not [design-witness, oracle].
+    citation: >
+      Elster, A. D.  "T2 Preparation" and neighbouring pages, questionsandanswers.in.
+    role: educational-synthesis
+    evidence_class: educational-synthesis
+    independence: >
+      Not an implementation and not a primary source.  It is a curated synthesis of the standard
+      account, and its value is that it shows what the FIELD teaches as the canonical form rather
+      than what any one design happens to build.
+    what_it_establishes: >
+      That the canonical picture taught for a T2 preparation is 90x -- refocusing -- -90x --
+      spoil, with the tip-up as the tip-down undone.  It corroborates D1 on the base structure
+      and on composite or adiabatic pulses being an optional robustness choice rather than part
+      of the definition.
+    what_it_does_not_establish: >
+      Anything that could overrule D1 or a measurement.  Its registered role is explicit- an
+      educational synthesis must not override stronger domain evidence, and it is not a
+      design-witness and not an oracle.  It is cited here because it is the second independent
+      statement that the SIMPLE tip-up is the canonical form, which is what makes the composite a
+      realisation rather than the contract.
   - id: R3
     source: ptb-mrseq
     repo: PTB-MR/mrseq
@@ -221,10 +254,19 @@ contract:
   semantic_timing:
     public_quantity: prep_time_s
     definition: >
-      The interval from the **effective tip-down rotation instant** to the **effective tip-up
-      rotation instant** -- the period during which the magnetisation this module prepares is
-      transverse.  For the hard and composite pulses of the initial mode that reduces to RF centre
-      to RF centre, which is `mrseq`'s convention and which it realises to 0.00 us.
+      The interval during which the magnetisation this module prepares is transverse, measured
+      between two plain RF centres- the centre of the +90 tip-down, and the centre of the tip-up
+      pulse that ends the period.  Which pulse that is depends on the tip-up REALISATION, and both
+      choices are ordinary pulse centres rather than derived or weighted instants-
+        tip_up='simple'             the centre of the -90.  The default.
+        tip_up='composite_270_360'  the centre of the 270, which is R3's own convention for its
+                                    own realisation and which R3 realises to 0.00 us.
+      REVISED 2026-09-23.  The earlier wording said "effective rotation instant", which invited an
+      amplitude-weighted rule for asymmetric composites.  That rule was introduced during
+      implementation and has now been REMOVED- it is not established by D1, not established by R3
+      (which books the 270's centre), and a Layer 3 slope fit cannot adjudicate it because a
+      constant offset does not change a slope.  An interval between two pulse centres is
+      measurable on a compiled file, which is what a public quantity has to be.
     why_not_block_edges: >
       Because the physics is about the transverse period, not about block boundaries.  The
       Handbook states the weighting as exp(-Tprep/T2) for "the time between the DE 90 degree
@@ -307,8 +349,18 @@ mode_contract:
         Four composite refocusing pulses, each a 90x-180y-90x block composite, at 1/8, 3/8, 5/8
         and 7/8 of prep_time_s, with the MLEV-4 phase pattern + + - -.
       tip_up: >
-        Composite, 270 about +x followed by -360 about +x, net -90 -- `mrseq`'s realisation.  A
-        simple -90 is the Handbook's base form and is NOT this mode; see the differential.
+        A REALISATION, not an invariant, and therefore a named parameter.
+          'simple'             a single hard -90.  THE DEFAULT- it is what D1 describes and what
+                               E1 teaches as canonical, it is the tip-down undone, and it is the
+                               shortest, so it pays the least relaxation and RF energy.
+          'composite_270_360'  270 about +x then 360 about -x, net -90.  R3's realisation,
+                               offered because it is established, not because it is measured to
+                               be better.
+        Deliberately not a boolean, because the choice moves prep_time_s's second endpoint; and
+        deliberately not named `robust`, `b1_robust` or `cardiac`, because no quantitative
+        robustness claim is made for either.  A future adiabatic family is NOT a third value-
+        an adiabatic pulse does not rotate at its centre, so it changes what prep_time_s MEANS,
+        which belongs to a pulse-family choice rather than to this parameter.
       selection_gradient: none.  The family is nonselective (Handbook p. 888)
       intrinsic_rephasing: not applicable -- no selection gradient to rephase
       encoding_role: none.  It imposes no phase intended to be sampled
@@ -321,7 +373,7 @@ mode_contract:
         R3 (`mrseq`, Apache-2.0) implements this mode and we measured it.  D1 establishes the
         family, the nonselectivity, the composite-pulse rationale and the spoiler placement.  R2
         (OpenMRF MLEV) uses the same + + - - pattern in groups of four.
-      user_overridable: prep_time_s, the 180 duration, the spoiler moment and axes
+      user_overridable: prep_time_s, tip_up, the 180 duration, the spoiler moment and axes
   differentials:
     - from: mlev4-hard
       to: mlev2-hard
@@ -398,20 +450,38 @@ acceptance:
 validation:
   # IMPLEMENTED 2026-09-23.  The scan's acceptance claim is now an implementation's evidence.
   layers:
-    layer_1: GREEN            # 25 tests in tests/modules/test_t2_prep.py, every claim measured on
-                              # the emitted events or on the compiled sequence
+    layer_1: GREEN            # 60 tests in tests/modules/test_t2_prep.py, every claim measured on
+                              # the emitted events or on the compiled sequence, and BOTH tip-up
+                              # realisations asserted rather than the default trusted for both
     layer_2: GREEN            # examples/t2prep_gre_2d/01_build.ipynb -- the preparation in front
-                              # of a shipped GRE2D, centrically ordered, four .seq files
+                              # of a shipped GRE2D, centrically ordered, .seq files in both
+                              # realisations
     layer_3: GREEN            # examples/t2prep_gre_2d/02_simulate_and_reconstruct.ipynb
     layer_3_result: >
-      A known T2 is recovered from the slope of ln S against prep_time_s to within 2 % from 40 to
+      A known T2 is recovered from the slope of ln S against prep_time_s to within 1 % from 40 to
       250 ms, with nothing fitted but the slope.  The control is the decisive one- T2* was swept
       from 80 ms to 16 ms, a factor of five, and the fitted value moved by 3 %.  So the
       preparation weights by the tissue's T2 and not by the magnet's contribution to T2*, which is
-      the claim the module exists to make.  The residual bias is ONE-SIDED and is T1- +4 % at a
-      500 ms T1, exact at 20 s, because longitudinal magnetisation recovers during the
+      the claim the module exists to make.  The residual bias is ONE-SIDED and is T1- +2 % at a
+      500 ms T1, 0.1 % at 20 s, because longitudinal magnetisation recovers during the
       preparation.  That is a property of the sequence rather than of the implementation, and it
       is why this is a contrast preparation and not a T2 mapping method.
+    layer_3_realisation_sweep: >
+      NON-BLOCKING, and a measurement rather than a claim.  B1 was scaled from 0.8 to 1.2 and
+      off-resonance swept to 200 Hz across BOTH realisations.  They fail TOGETHER under B1 error-
+      the fitted T2 wanders (81 ms at B1 = 0.8, 29 ms at 0.9, 2048 ms at 1.2) and the composite
+      tip-up tracks the simple one rather than rescuing it.  The twelve-pulse refocusing train is
+      what decides B1 tolerance; a two-pulse tip-up is one rotation out of fourteen.  Off-resonance
+      to 200 Hz the train absorbs.  This SUPPORTS the revision- had the composite been promoted
+      into the contract as a robustness feature, the measurement would not have backed it.
+    layer_3_instrument_note: >
+      The sweep needed a different instrument, and the notebook shows why before it uses it.
+      MRzeroCore's phase-distribution graph runs a pre-pass that decides which coherence pathways
+      to simulate from the NOMINAL flip angles; a 360 is the identity only at nominal B1, so off
+      nominal the graph prunes exactly the pathways the sweep is about.  It is wrong for the
+      simple realisation too (+49 % at B1 = 0.8) and worst for the composite (-73 %).  The sweep
+      uses mr0.isochromat_sim, MRzero's documented ground truth, for both.  Sections 1 to 4 run at
+      nominal B1 where the two instruments agree to 2 %, and keep the fast path.
     layer_3_reason_when_scanned: >
       Not deferred for want of an oracle -- MRzeroCore can simulate a T2 preparation, the
       exp(-tau/T2) weighting is exactly what a Bloch simulation settles, and the shared BrainWeb
@@ -442,15 +512,34 @@ implementation:
     contradicts contract.semantic_timing.definition and the decision summary.  The two differ by
     one tip-pulse duration, so the disagreement was load-bearing.  The record was made
     self-consistent on the semantic definition first, and the test encodes that.
+  realisation_correction: >
+    REVISED 2026-09-23, and this is the substantive change to the record.
+    The first implementation carried R3's composite 270/-360 tip-up as the mode's only form, and
+    then, because that composite is ASYMMETRIC and has no obvious single rotation instant,
+    introduced an amplitude-weighted-centre rule to say where prep_time_s ended.  Both were
+    mistakes of the same kind- a special realisation from one corpus implementation promoted into
+    the reusable physical contract because it was the permissively licensed executable witness.
+    The implementation corpus tells us "someone implemented it this way"; domain evidence tells us
+    "this is what the abstraction actually requires".  D1 and E1 describe the simple -90.
+    What changed.  The default realisation is now the canonical +90 -> MLEV-4 -> -90 -> spoiler,
+    with prep_time_s from the +90's centre to the -90's centre.  The composite is available as
+    tip_up='composite_270_360', with prep_time_s from the +90's centre to the 270's centre --
+    R3's own convention for R3's own realisation, adopted rather than replaced by a rule of ours.
+    The amplitude-weighted-centre rule is REMOVED: it is established by neither the domain
+    evidence nor the witness, and Layer 3 slope fitting cannot adjudicate it because a constant
+    offset does not change a slope.
+    The durable lesson is recorded in the fine-scan playbook as "Realisation is not contract", not
+    as a rule local to this candidate, and sources.yaml gained an `educational-synthesis` role so
+    that a canonical teaching account can be cited without it being able to overrule a domain
+    reference.
   one_thing_the_record_did_not_decide: >
-    A composite has no single instant at which it rotates, and the record's reduction to "RF
-    centre to RF centre" does not say which centre an ASYMMETRIC composite has -- the tip-up is
-    270 then 360 and its two pulses are of different lengths.  The implementation states the rule
-    rather than leaving it inferred- the amplitude-weighted centre of the group, which reduces to
-    the pulse centre for one hard pulse and to the 180's centre for the symmetric refocusing
-    composite.  Recorded here because it is a bookkeeping choice inside the approved semantics,
-    not a new physical claim, and because a Layer 3 slope fit is insensitive to a constant offset
-    and therefore does NOT settle it.
+    Whether every pulse in the block really shares one B1 for a `refocus_duration_s` that is not a
+    convenient number.  At one amplitude a flip angle IS a duration, so 90 : 180 : 270 : 360 must
+    be exactly 1 : 2 : 3 : 4 and each must land on the RF raster -- which rounding each pulse
+    separately does not give.  The implementation rounds the BASE 90 onto the raster and reports
+    the 180 it realised, so the single amplitude is exact for any request.  Recorded because the
+    "one B1" claim is public, and a public claim that holds only for default numbers is a defect
+    rather than a simplification.
 
 decision_summary: >
   A T2 preparation is a self-contained preparation leaf, and the boundary is settled by domain
@@ -486,10 +575,12 @@ decision_summary: >
 
 open_questions:
   - >
-    Is the composite tip-up's effective rotation instant really the centre of its 270 component,
-    as `mrseq` assumes, or somewhere inside the 270/-360 pair?  This is a sub-pulse detail inside
-    one mode, not a boundary question, and Layer 3 will show it as a small systematic error in the
-    fitted T2 if it is wrong.  RESOLVE BY the simulation, not by more reading.
+    RESOLVED 2026-09-23, by decision rather than by measurement.  The question was whether the
+    composite tip-up's effective rotation instant is the centre of its 270 or somewhere inside the
+    270/-360 pair.  Layer 3 cannot answer it -- a constant offset does not change a fitted slope --
+    so it was never going to be settled by simulation.  It is answered by ownership instead- the
+    composite is R3's realisation, so prep_time_s under it takes R3's convention, the centre of the
+    270.  The default realisation has no composite tip-up and so has no such question.
   - >
     Should the spoiler be one axis or three?  D1 says "one or more axes", `mrseq` uses z alone,
     OpenMRF uses all three with each derated to 1/sqrt(3).  The initial mode follows `mrseq` and

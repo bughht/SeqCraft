@@ -921,3 +921,58 @@ directions.
 
 A green suite is necessary and is not this. The suite says nothing broke; the map says who could
 have.
+
+# 20. Realisation is not contract
+
+**Added 2026-09-23, from the T2Prep implementation.**
+
+A fine scan reads a small number of implementations, and one of them is usually the one whose
+licence lets us look closely. Everything that implementation does is then in front of us in
+detail, and the temptation is to write all of it down as the contract.
+
+> **A realisation detail observed in an implementation witness must not be promoted into the
+> reusable contract merely because the chosen witness uses it.**
+>
+> Before it becomes an invariant, establish one of:
+>
+> * **domain evidence makes it invariant** — a handbook, review or primary paper states it as part
+>   of what the family *is*, not as one way to build it;
+> * **independent implementations agree** — and independent means what the registry's
+>   `independence_note` means, not two ports of one original;
+> * **it solves a separately named physical problem** — it is there for a reason the family itself
+>   does not supply, and that reason can be stated.
+>
+> Otherwise it is a **realisation variant**: support it if it is established, name it in the API,
+> and leave the contract at the canonical form.
+
+### What it looked like in practice
+
+The T2Prep scan's only permissively licensed executable witness realises the tip-up as a composite
+`+270x` then `−360x`. The scan recorded that as part of the `mlev4-hard` mode, and the first
+implementation shipped it as the only behaviour.
+
+It does not survive the three tests. The domain reference describes the family as `+90`, one or
+more refocusing pulses, `−90`, spoiler — the composite is not part of the definition. MLEV-4
+defines the *refocusing* train's phase cycling and says nothing about the tip-up. And the second,
+copyleft witness uses adiabatic tip pulses instead, so the implementations do not agree on this
+point at all. The composite is an established realisation used in some designs, and that is
+exactly what it should have been recorded as.
+
+The cost of getting it the wrong way round is not academic: the composite is longer in RF, so it
+pays more relaxation and more RF energy, and it carried a timing convention — "the centre of a
+composite" — that the domain evidence does not define and that no measurement we had could settle.
+
+And when the two realisations were finally measured against each other under a B1 error, they
+failed **together**: the twelve-pulse refocusing train is what decides B1 tolerance, and a
+two-pulse tip-up is one rotation out of fourteen. The robustness intuition that made the composite
+look contract-worthy was not there to find.
+
+### The smell
+
+Ask of any invariant in a candidate record: **which of the three tests did this pass?** If the
+answer is "the witness did it", it is a realisation variant that has not been labelled as one yet.
+
+The corollary is about evidence classes rather than rules. The canonical form of a family is a
+*domain* question, and the registry now carries an `educational-synthesis` role for sources that
+answer it well — a curated secondary account is often the fastest way to see what practitioners
+consider canonical, and it never outranks a handbook or a primary paper.

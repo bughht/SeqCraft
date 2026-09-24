@@ -2,6 +2,9 @@
 
 **Date:** 2026-09-22 (revised) · **Skill:** v0, frozen and unmodified
 **Result:** `NEW_LEAF / APPROVED_FOR_IMPLEMENTATION`, for one mode
+**Implemented** 2026-09-23. A design correction followed the first implementation review; the scan
+record below is left as it was written and [§7](#7-the-correction-2026-09-23--realisation-is-not-contract)
+records what it got wrong.
 
 The conventional-control candidate, chosen to answer *"does the ordinary reusable-leaf path still
 work cleanly?"* — and it does. Nothing has been implemented; the record is
@@ -144,3 +147,60 @@ v0's implementation-only lens gave YELLOW, and read with a domain class gives
 mode and the timing convention.
 
 **Whether it earns formalisation depends on C2 and C3.** One case is not enough.
+
+## 7. The correction, 2026-09-23 — realisation is not contract
+
+The scan above is accurate about what each witness *does*. It is wrong about what that makes
+**ours**. The mode contract it wrote carried `mrseq`'s composite `270x / −360x` tip-up as the
+mode's only form, and the first implementation then had to invent a rule — an amplitude-weighted
+group centre — to say where `prep_time_s` ended inside an asymmetric composite. Both are the same
+error, made once and then compounded:
+
+```text
+the implementation corpus tells us    "someone implemented it this way"
+domain evidence tells us              "this is what the abstraction actually requires"
+```
+
+A special realisation from one corpus implementation must not be promoted into the reusable
+physical contract merely because it is the permissively licensed executable witness. That is
+exactly what happened here, and the reason it was easy to miss is that `mrseq` was the *only*
+buildable witness, so its choices arrived looking like the only choices there were.
+
+### The evidence, reclassified
+
+| | what it is | what it therefore settles |
+|---|---|---|
+| **D1** Handbook §17.4 | domain reference | the **physical contract**: tip in, refocus, tip back, spoil — and nothing more |
+| **E1** MRIquestions | educational synthesis *(new class)* | the **canonical picture** the field teaches: `90x → refocus → −90x → spoil` |
+| **R1/R2** OpenMRF MLEV | design witness | the **refocusing structure**: MLEV-4, `+ + − −`, which says nothing about the tip-up |
+| **R3** `mrseq` | design witness | an **established realisation variant** of the tip-up, and its own timing convention for it |
+
+E1 is registered with `roles: [educational-synthesis]` and `explicitly_not: [design-witness,
+oracle]`: it identifies the canonical form of a family, and **it must not override stronger domain
+evidence**. It is cited here because it is the second independent statement that the simple `−90`
+is the canonical tip-up, which is what makes the composite a realisation rather than the contract.
+
+### What shipped instead
+
+The default is the canonical `+90 → MLEV-4 → −90 → spoiler`, with `prep_time_s` from the `+90`'s
+centre to the `−90`'s centre. The composite is `tip_up='composite_270_360'`, with `prep_time_s`
+from the `+90`'s centre to the **270**'s centre — `mrseq`'s own convention for `mrseq`'s own
+realisation, adopted rather than replaced by a rule of ours. The amplitude-weighted-centre rule is
+removed: neither the domain evidence nor the witness establishes it, and a Layer 3 slope fit
+cannot adjudicate it, because a constant offset does not change a slope.
+
+Layer 3 then measured the two under B1 error, and they **fail together** — the twelve-pulse
+refocusing train is what decides B1 tolerance, not the tip-up. Had the composite been promoted
+into the contract as a robustness feature, the measurement would not have backed it.
+
+### Where the lesson lives
+
+In the fine-scan playbook, as *"Realisation is not contract"*, with the three questions to ask of
+any detail before it becomes an invariant — not as a rule local to this candidate. `sources.yaml`
+gained the `educational-synthesis` role and the `mriquestions` entry at the same time, and
+`schema.py` gained the class.
+
+The timing convention in §2 was reconciled *before* any code was written. This one was not caught
+until the module existed and its docstring had to explain itself — and the corrective evidence was
+in the record all along: §1 records D1's simple `−90` and then treats it as a base form the mode
+had departed from, rather than as the contract the mode should have kept.
