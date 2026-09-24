@@ -215,7 +215,10 @@ class CartesianLine(Module):
 
         Needs ``prephase=True``, because the winder is the waveform being reshaped.  It costs
         time -- three lobes before the echo rather than two -- and :attr:`prephaser_duration_s`
-        and :meth:`time_to_echo` report what it came to.
+        and :meth:`time_to_echo` report what it came to.  That duration is the shortest for the
+        realisation used here, which gives the two winder lobes the **same** duration; it is not
+        claimed to be the shortest compensated prephaser that exists, and no minimum-TE property
+        is claimed.
 
         The moment is nulled at the **first** echo.  Later echoes of a train accumulate their own
         first moment from the lobes between them, which this does not compensate.  Nulling the
@@ -1107,66 +1110,62 @@ class CartesianLine(Module):
         times = np.append(times[:cut], self._echo_in_gx) - self._echo_in_gx
         return float(pwl_moment(times, np.append(amps[:cut], edge), order))
 
-    def _limit_areas(self) -> tuple[float, float]:
-        """
-        What the two winder areas tend to as the lobes are made longer, 1/m.
-
-        Writing ``S = -m0_ro`` and ``C = S t_rs - M``, the solve in
-        :meth:`_design_velocity_compensated` is ``A1(D) = C/D - S/2`` and ``A2(D) = 3S/2 - C/D``.
-        So each area is a constant plus a term in ``1/D``, and these are those constants.
-        """
-        target_area = -self._readout_moment_to_echo(0)
-        return -0.5 * target_area, 1.5 * target_area
-
-    def _largest_trapezoid_area(self, duration_s: float) -> float:
-        """
-        The largest area a symmetric trapezoid of `duration_s` can carry, 1/m.
-
-        Triangular while the ramps have not reached ``max_grad``, trapezoidal after.  Strictly
-        increasing in the duration, which is half of why :meth:`_compensated_pair_fits` is
-        monotone.
-        """
-        amplitude = min(float(self.opts.max_grad), float(self.opts.max_slew) * duration_s / 2.0)
-        return amplitude * (duration_s - amplitude / float(self.opts.max_slew))
-
     def _compensated_pair_fits(self, half_s: float) -> bool:
         """
         Whether a pair of lobes `half_s` long can carry the areas the solve asks of them.
 
         **This predicate is monotone in `half_s`, and that is what licenses the bisection in
-        :meth:`_shortest_compensated_half_s`.**  Each area is ``A_i(D) = L_i + K_i / D``, so as
-        `D` grows ``A_i`` moves monotonically from where it is towards its limit ``L_i`` and never
-        past it -- which puts every later value inside the closed interval between the two, and
-        therefore bounds ``|A_i(D')| <= max(|A_i(D)|, |L_i|)`` for every ``D' >= D``.  Requiring
-        the **limit** areas to fit as well as the current ones makes that bound a statement about
-        this predicate: if it holds at `D` it holds at every longer duration, because
-        :meth:`_largest_trapezoid_area` only grows.
+        :meth:`_shortest_compensated_half_s`.**  The argument is specific to this construction
+        rather than general, and it rests on the readout gradient having one sign before the
+        first echo -- which it does, because that echo is read off :attr:`gx` itself.
 
-        Without the limit condition the predicate would not be monotone in general, because
-        ``A_i`` may cross zero on its way to ``L_i`` and come back out larger.  On every readout
-        geometry measured it does **not** bind -- the solved areas dominate their limits
-        throughout the feasible range -- so it changes no answer here and is carried to make the
-        up-set property hold without assuming a sign relationship between ``A_i`` and ``L_i``
-        that a geometry nobody has tried might not have.
+        Write ``m0_ro > 0`` for the readout's area up to the echo, ``e`` for the echo's offset
+        inside the lobe, and ``M = -m1_ro`` for minus its first moment about the echo, so that
+        ``M > 0`` because the pre-echo interval lies entirely before the origin.  Then::
+
+            C = m0_ro e - M = integral of g(t) t dt over [0, e]   >= 0
+
+        because `g` and `t` are both non-negative there.  With ``S = -m0_ro < 0`` the solve gives::
+
+            A1(D) = C/D - S/2 = C/D + |S|/2      > 0
+            A2(D) = 3S/2 - C/D = -(3|S|/2 + C/D) < 0
+
+        so ``|A1|`` and ``|A2|`` are each a positive constant plus ``C/D``, and both **decrease
+        monotonically** as `D` grows.  The area a trapezoid of duration `D` can carry inside the
+        gradient limits only grows with `D`.  A decreasing requirement against an increasing
+        capacity is monotone: once the pair fits, every longer pair fits.
+
+        The test is the lobes pypulseq actually builds, not a smooth largest-area curve, so what
+        the bisection converges on is a duration whose **emitted** trapezoids are legal.  On the
+        geometries measured it is pypulseq's own refusal that binds one raster step below the
+        minimum; the explicit limit checks are for the case where it returns a lobe outside them
+        rather than raising, and they can only ever lengthen the answer.
         """
-        largest = self._largest_trapezoid_area(half_s)
-        if largest <= 0.0:
-            return False
-        areas = self._compensated_areas(half_s) + self._limit_areas()
-        return all(abs(area) <= largest for area in areas)
+        for area in self._compensated_areas(half_s):
+            try:
+                lobe = pp.make_trapezoid(
+                    channel=self.axis, area=area, duration=half_s, system=self.opts,
+                )
+            except (ValueError, ZeroDivisionError):
+                return False
+            amplitude = abs(float(lobe.amplitude))
+            if amplitude > float(self.opts.max_grad) * (1.0 + 1e-9):
+                return False
+            if amplitude > float(self.opts.max_slew) * float(lobe.rise_time) * (1.0 + 1e-9):
+                return False
+        return True
 
     def _shortest_compensated_half_s(self, raster: float) -> float:
         """
-        The shortest legal lobe duration for the pair, on the raster.
+        The shortest lobe duration this realisation can use, on the raster.
 
         Bracketed by doubling and then bisected, which is valid because
-        :meth:`_compensated_pair_fits` is monotone -- see its docstring for why.  The answer is
-        then checked against the raster step below it, so it is the minimum on the lattice rather
-        than merely a feasible point.
+        :meth:`_compensated_pair_fits` is monotone -- see its docstring for why.
 
-        A final loop widens it if the trapezoid pypulseq actually builds at that duration lands
-        outside the limits: the predicate works from the smooth largest-area curve, and a rise
-        time rounded onto the raster can cost a little of it at the boundary.
+        **Shortest for this realisation**, which fixes the two winders to the *same* duration.
+        Whether letting them differ could give a shorter total prephaser is not established here
+        and no such search is done; equal durations are the construction, and this is its
+        minimum on the raster.
         """
         high = raster
         for _ in range(40):
@@ -1184,25 +1183,7 @@ class CartesianLine(Module):
                 high = middle
             else:
                 low = middle
-        while not self._built_pair_is_legal(high):  # pragma: no cover - raster boundary only
-            high += raster
         return float(high)
-
-    def _built_pair_is_legal(self, half_s: float) -> bool:
-        """Whether the lobes pypulseq builds at `half_s` are inside the gradient limits."""
-        for area in self._compensated_areas(half_s):
-            try:
-                lobe = pp.make_trapezoid(
-                    channel=self.axis, area=area, duration=half_s, system=self.opts,
-                )
-            except (ValueError, ZeroDivisionError):
-                return False
-            amplitude = abs(float(lobe.amplitude))
-            if amplitude > float(self.opts.max_grad) * (1.0 + 1e-9):
-                return False
-            if amplitude > float(self.opts.max_slew) * float(lobe.rise_time) * (1.0 + 1e-9):
-                return False
-        return True
 
     # -------------------------------------------------------------------- the refusals
     def _echo_in_lobe_s(self, echo: int) -> float:
@@ -1370,8 +1351,8 @@ class CartesianLine(Module):
     def _refuse_short_compensated_prephaser(self, requested_s: float) -> None:
         """Refuse a compensated prephaser too short for the areas it has to carry."""
         msg = format_error(
-            f'prephaser_duration_s = {requested_s * 1e6:.1f} us is shorter than the minimum a '
-            f'velocity-compensated prephaser needs for this readout.',
+            f'prephaser_duration_s = {requested_s * 1e6:.1f} us is shorter than the minimum this '
+            f'readout\'s equal-duration compensated winder pair needs.',
             {'prephaser_duration_s': requested_s,
              'min_prephaser_duration_s': self._min_prephaser_duration_s,
              'null_moment_order': self.null_moment_order,

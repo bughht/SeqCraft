@@ -25,6 +25,16 @@ from seqcraft.design.logic import flatten
 #: Three protocols that put very different areas and durations through the same construction.
 PROTOCOLS = ((64, 500.0), (128, 250.0), (32, 1000.0))
 
+#: The readout geometries the option is offered for.  The solve reads the lobe's measured
+#: pre-echo shape, so each of these reaches it differently: partial Fourier moves the echo off
+#: centre, and a train's first lobe is the one the winder is solved against.
+GEOMETRIES = {
+    'full echo': {},
+    'partial fourier': {'partial_fourier': 0.75},
+    'monopolar train': {'echoes': 4, 'polarity': 'monopolar'},
+    'bipolar train': {'echoes': 4, 'polarity': 'bipolar'},
+}
+
 
 def line(opts, **overrides):
     kwargs = {'opts': opts, 'fov_mm': 220.0, 'matrix': 64, 'bandwidth_hz_px': 500.0}
@@ -180,14 +190,20 @@ def test_the_compensated_prephaser_stays_inside_the_gradient_system(opts, matrix
 
 
 @pytest.mark.parametrize(('matrix', 'bandwidth'), PROTOCOLS)
-def test_the_shortest_pair_is_the_shortest_on_the_raster(opts, matrix: int,
-                                                         bandwidth: float) -> None:
+def test_the_pair_is_the_shortest_this_realisation_can_build(opts, matrix: int,
+                                                             bandwidth: float) -> None:
     """
-    The duration is found by bisection, so this checks it is minimal rather than merely feasible.
+    Minimal **for this realisation**, tested on the lobes pypulseq actually builds.
 
-    One raster step shorter must fail to fit, which is what makes the quoted
-    `prephaser_duration_s` the real floor.  The areas are closed form at any duration; only the
-    duration is searched, and a search that stopped early would quietly cost every repetition.
+    The realisation gives the two winders the same duration; whether letting them differ could
+    be shorter is not established and is not searched for. What is checked is what the public
+    number means: at `prephaser_duration_s` the built pair is legal, and one raster step shorter
+    it is not -- so a bisection that stopped early, which would cost every repetition, fails
+    here.
+
+    The predicate is itself the built pair -- the lobes pypulseq emits, checked against the
+    gradient and slew limits -- so there is one authority for legality rather than a smooth
+    estimate and a correction after it.
     """
     module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
     raster = float(opts.grad_raster_time)
@@ -203,17 +219,12 @@ def test_the_feasibility_predicate_is_monotone_in_the_lobe_duration(opts, matrix
     """
     **What licenses the bisection**, and the reason the predicate carries the limit areas.
 
-    Each winder area is ``A_i(D) = L_i + K_i / D``, so it moves monotonically towards a finite
-    limit ``L_i`` and never past it.  Requiring the limits to fit as well as the current areas
-    makes the predicate an up-set: once the pair fits, every longer pair fits.  Bisection on a
-    predicate that was not monotone could return a feasible duration that is not the shortest.
+    ``|A1|`` and ``|A2|`` each fall as `D` grows while the area a trapezoid of duration `D` can
+    carry rises, so once the pair fits every longer pair fits.  Bisection on a predicate that was
+    not monotone could return a feasible duration that is not the shortest one.
 
-    Asserted here as one transition across a swept range rather than argued only in a docstring.
-
-    The limit condition itself does not bind on any readout geometry measured -- the solved areas
-    dominate their limits throughout the feasible range -- so removing it changes no duration
-    this suite computes.  It is carried for the geometries that have not been tried, and that is
-    why this test asserts the *property* rather than the mechanism.
+    Asserted here as one transition across a swept range, which is the property itself; the
+    signs it follows from are checked separately.
     """
     module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
     raster = float(opts.grad_raster_time)
@@ -226,22 +237,35 @@ def test_the_feasibility_predicate_is_monotone_in_the_lobe_duration(opts, matrix
     assert steps[-1], 'the long end is the feasible one'
 
 
-@pytest.mark.parametrize(('matrix', 'bandwidth'), PROTOCOLS)
-def test_the_winder_areas_tend_to_the_limits_the_predicate_assumes(opts, matrix: int,
-                                                                   bandwidth: float) -> None:
+@pytest.mark.parametrize('geometry', list(GEOMETRIES))
+def test_the_premises_the_monotonicity_argument_rests_on(opts, geometry: str) -> None:
     """
-    The other half of the monotonicity argument: ``A_i(D) -> L_i`` with ``L = (-S/2, 3S/2)``.
+    The signs that make the real predicate monotone, checked rather than assumed.
 
-    If the limits were wrong the predicate would be guarding the wrong quantity, and the up-set
-    property would not follow -- so they are measured against the solve at a long duration rather
-    than trusted.
+    The argument is that ``|A1|`` and ``|A2|`` are each a positive constant plus ``C/D``, so both
+    decrease as `D` grows while the area a trapezoid can carry increases.  That needs three
+    things to be true of this construction, and each is measured here:
+
+    * the readout has one sign before the first echo, so its area to the echo is positive;
+    * ``C = m0_ro e - M`` is non-negative, because it is ``integral of g(t) t dt`` over an
+      interval where both factors are;
+    * and therefore ``A1 > 0`` and ``A2 < 0``, with both magnitudes falling as `D` grows.
+
+    If a future geometry broke any of them the bisection would no longer be licensed, and this
+    is where that would show.
     """
-    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
-    target_area = -module._readout_moment_to_echo(0)
+    module = line(opts, null_moment_order=1, **GEOMETRIES[geometry])
+    area, moment = (module._readout_moment_to_echo(order) for order in (0, 1))
+    constant = area * module._echo_in_gx - -moment
 
-    assert module._limit_areas() == pytest.approx((-0.5 * target_area, 1.5 * target_area))
-    far = module._compensated_areas(module.prephaser_duration_s * 500.0)
-    assert far == pytest.approx(module._limit_areas(), rel=1e-2)
+    assert area > 0.0, 'one sign before the first echo'
+    assert constant >= 0.0, 'C is the integral of a non-negative product'
+
+    half = module.prephaser_duration_s / 2.0
+    first, second = module._compensated_areas(half)
+    assert first > 0.0 and second < 0.0
+    longer = module._compensated_areas(half * 2.0)
+    assert abs(longer[0]) < abs(first) and abs(longer[1]) < abs(second)
 
 
 def test_the_compiler_accepts_a_compensated_readout(opts) -> None:
@@ -286,17 +310,6 @@ def test_the_first_echo_is_compensated_and_later_echoes_are_not(opts, polarity: 
     assert moment_to_echo(module, 1, 0) == pytest.approx(0.0, abs=tolerance(module, 1))
     for echo in (1, 2):
         assert abs(moment_to_echo(module, 1, echo)) > tolerance(module, 1) * 1e6
-
-
-#: The readout geometries the option is offered for.  The solve reads the lobe's measured
-#: pre-echo shape, so each of these reaches it differently: partial Fourier moves the echo off
-#: centre, and a train's first lobe is the one the winder is solved against.
-GEOMETRIES = {
-    'full echo': {},
-    'partial fourier': {'partial_fourier': 0.75},
-    'monopolar train': {'echoes': 4, 'polarity': 'monopolar'},
-    'bipolar train': {'echoes': 4, 'polarity': 'bipolar'},
-}
 
 
 @pytest.mark.parametrize('geometry', list(GEOMETRIES))
