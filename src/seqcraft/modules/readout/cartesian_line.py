@@ -118,7 +118,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pypulseq as pp
 
-from ...design.events import derive
+from ...design.events import derive, knots_of, pwl_moment
 from ...design.logic import LogicBlock, barrier
 from ...design.module import Module
 from ...design.timing import EPS, from_ticks, to_ticks
@@ -200,7 +200,26 @@ class CartesianLine(Module):
         Lengthen the prephaser beyond its own minimum.  ``None`` is the minimum.  A composite
         passes the winder maximum here; see :class:`~seqcraft.modules.GRE2DTR`.  Passing it with
         ``prephase=False`` raises, in the shape this library already uses for an argument that
-        cannot take effect.
+        cannot take effect.  At ``null_moment_order=1`` it is the **total** across the two
+        winder lobes, and the areas are re-solved against it rather than scaled.
+    null_moment_order
+        The highest gradient moment nulled at the echo on this axis.
+
+        ``0``
+            The ordinary prephaser: one lobe, ``m0 = 0`` at the echo, which is what puts
+            ``k = 0`` there.  **The default**, and unchanged behaviour.
+        ``1``
+            Velocity compensation: two winder lobes of opposite sign instead of one, nulling
+            ``m0`` **and** ``m1`` at the echo, so a spin moving at constant velocity along `axis`
+            arrives with the phase it would have had standing still.
+
+        Needs ``prephase=True``, because the winder is the waveform being reshaped.  It costs
+        time -- three lobes before the echo rather than two -- and :attr:`prephaser_duration_s`
+        and :meth:`time_to_echo` report what it came to.
+
+        The moment is nulled at the **first** echo.  Later echoes of a train accumulate their own
+        first moment from the lobes between them, which this does not compensate.  Nulling the
+        second moment as well needs a fourth lobe and is not implemented.
     axis
         Logical gradient channel.
     tag
@@ -325,6 +344,7 @@ class CartesianLine(Module):
         echo_spacing_s: float | None = None,
         prephase: bool = True,
         prephaser_duration_s: float | None = None,
+        null_moment_order: int = 0,
         axis: str = 'x',
         tag: str | None = None,
     ) -> None:
@@ -372,7 +392,9 @@ class CartesianLine(Module):
         if self.polarity == 'monopolar':
             self._flyback = self._design_flyback(echo_spacing_s)
         self._refuse_echo_spacing(echo_spacing_s)
-        self._prephaser = (
+        #: The highest gradient moment nulled at the echo on this axis.
+        self.null_moment_order = self._check_null_moment_order(null_moment_order)
+        self._prephasers: tuple[Event, ...] = (
             self._design_prephaser(prephaser_duration_s) if self.prephase
             else self._refuse_prephaser_duration(prephaser_duration_s)
         )
@@ -439,17 +461,39 @@ class CartesianLine(Module):
 
     @property
     def prephaser_duration_s(self) -> float:
-        """Seconds the prephaser occupies -- its own minimum unless one was requested."""
-        return float(pp.calc_duration(self._require_prephaser()))
+        """
+        Seconds the prephaser occupies -- its own minimum unless one was requested.
+
+        At ``null_moment_order=1`` the prephaser is two lobes played back to back and this is the
+        pair's total, which is what the readout is placed after.
+        """
+        return float(sum(pp.calc_duration(lobe) for lobe in self._require_prephasers()))
 
     @property
     def prephaser_area_per_m(self) -> float:
         """
-        The prephaser's area, 1/m -- negative, and exactly minus :attr:`area_to_echo_per_m`.
+        The prephaser's area, 1/m -- exactly minus :attr:`area_to_echo_per_m`.
+
+        The **total** across its lobes, which is what puts ``k = 0`` at the echo.  At
+        ``null_moment_order=1`` the two lobes have opposite signs and individually are neither of
+        these; :attr:`prephaser_lobe_areas_per_m` is where to read them.
 
         Exposed so a test can assert that identity without reaching into the block.
         """
-        return float(self._require_prephaser().area)
+        return float(sum(float(lobe.area) for lobe in self._require_prephasers()))
+
+    @property
+    def prephaser_lobes(self) -> tuple[Event, ...]:
+        """
+        The prephaser's own gradient events, in the order they play.
+
+        One at ``null_moment_order=0``.  Two at ``1``, of opposite sign, whose areas sum to
+        :attr:`prephaser_area_per_m` and whose first moments about the echo cancel the readout's.
+
+        A leaf exposing its events, which is what lets a composing module measure what it needs
+        over the interval it cares about rather than trusting a cached number.
+        """
+        return self._require_prephasers()
 
     @property
     def echo_spacing_s(self) -> float:
@@ -590,8 +634,11 @@ class CartesianLine(Module):
         out = LogicBlock()
         start = 0.0
         if self.prephase:
-            start = self.prephaser_duration_s
-            out.add(0.0, self._prephaser)
+            at = 0.0
+            for lobe in self._prephasers:
+                out.add(at, lobe)
+                at += float(pp.calc_duration(lobe))
+            start = at
         adc = (
             self._adc_for(float(offset_mm) / 1e3, float(np.deg2rad(phase_deg))) if acquire
             else None
@@ -959,7 +1006,13 @@ class CartesianLine(Module):
             raise ConfigurationError(msg)
         return wanted
 
-    def _design_prephaser(self, requested_s: float | None) -> Event:
+    def _design_prephaser(self, requested_s: float | None) -> tuple[Event, ...]:
+        """Return the prephaser lobes, in play order."""
+        if self.null_moment_order >= 1:
+            return self._design_velocity_compensated(requested_s)
+        return (self._design_prephaser_m0(requested_s),)
+
+    def _design_prephaser_m0(self, requested_s: float | None) -> Event:
         """Return the prephaser that puts k = 0 at the echo, stretched if one was requested."""
         area = -self.area_to_echo_per_m
         shortest = pp.make_trapezoid(channel=self.axis, area=area, system=self.opts)
@@ -988,6 +1041,118 @@ class CartesianLine(Module):
         return pp.make_trapezoid(
             channel=self.axis, area=area, duration=wanted, system=self.opts,
         )
+
+    def _design_velocity_compensated(self, requested_s: float | None) -> tuple[Event, Event]:
+        """
+        Return the two prephaser lobes that null ``m0`` **and** ``m1`` at the echo.
+
+        The construction is D1's velocity-compensated readout: three lobes before the echo rather
+        than two, here the two winders plus the readout's own ramp-up and half flat top.  The
+        readout lobe is fixed, so what is solved for is the pair of winder areas.
+
+        Taking the echo as the time origin and writing the readout's own contribution up to it as
+        ``m0_ro`` and ``m1_ro``, two lobes of equal duration `D` played back to back and ending
+        where the readout begins have centroids at ``t_rs - 3D/2`` and ``t_rs - D/2``.  A
+        symmetric trapezoid's first moment about an external origin is its area times its
+        centroid, exactly, so the two conditions are **linear** in the areas::
+
+            A1 + A2                                  = -m0_ro
+            A1 (t_rs - 3D/2) + A2 (t_rs - D/2)       = -m1_ro
+
+        which solves to ``A1 = (S t_rs - M - D S / 2) / D`` with ``S = -m0_ro`` and
+        ``M = -m1_ro``, and ``A2 = S - A1``.  Both ``m0_ro``, ``m1_ro`` and ``t_rs`` are
+        properties of the readout lobe alone, so they are computed once.
+
+        `D` itself is not closed form: the areas depend on it and the largest area a trapezoid of
+        duration `D` can carry depends on it too, so the shortest legal pair is found by
+        bisection on the gradient raster and then checked to be minimal.  The **physics** is the
+        linear solve above; the search only picks the shortest duration that fits it.
+        """
+        raster = float(self.opts.grad_raster_time)
+        shortest = self._shortest_compensated_half_s(raster)
+        self._min_prephaser_duration_s = 2.0 * shortest
+        half = shortest
+        if requested_s is not None:
+            wanted = ceil_raster(
+                require_positive(requested_s, 'prephaser_duration_s'), 2.0 * raster,
+            )
+            if wanted < self._min_prephaser_duration_s - EPS:
+                self._refuse_short_compensated_prephaser(requested_s)
+            half = wanted / 2.0
+        return tuple(  # type: ignore[return-value]
+            pp.make_trapezoid(channel=self.axis, area=area, duration=half, system=self.opts)
+            for area in self._compensated_areas(half)
+        )
+
+    def _compensated_areas(self, half_s: float) -> tuple[float, float]:
+        """The two winder areas, in play order, for a pair of lobes `half_s` long each."""
+        m0_ro, m1_ro = (self._readout_moment_to_echo(order) for order in (0, 1))
+        target_area, target_moment = -m0_ro, -m1_ro
+        first = (target_area * -self._echo_in_gx - target_moment
+                 - 0.5 * half_s * target_area) / half_s
+        return first, target_area - first
+
+    def _readout_moment_to_echo(self, order: int) -> float:
+        """
+        The readout lobe's own `order`-th moment up to the echo, about the echo.
+
+        Integrated from the lobe's knots, so ramp sampling, partial Fourier and the half-dwell
+        sample offset are all already in it -- the same reason :attr:`area_to_echo_per_m` is
+        measured rather than derived.  It does not depend on where the lobe is placed, because
+        the origin travels with it.
+        """
+        times, amps = knots_of(self.gx)
+        cut = int(np.searchsorted(times, self._echo_in_gx))
+        edge = float(np.interp(self._echo_in_gx, times, amps))
+        times = np.append(times[:cut], self._echo_in_gx) - self._echo_in_gx
+        return float(pwl_moment(times, np.append(amps[:cut], edge), order))
+
+    def _compensated_pair_fits(self, half_s: float) -> bool:
+        """Whether both winder areas fit into a lobe `half_s` long, inside the gradient limits."""
+        for area in self._compensated_areas(half_s):
+            lobe = pp.make_trapezoid(
+                channel=self.axis, area=area, duration=half_s, system=self.opts,
+            )
+            if abs(float(lobe.amplitude)) > float(self.opts.max_grad) * (1.0 + 1e-9):
+                return False
+            if abs(float(lobe.amplitude)) > float(self.opts.max_slew) * float(lobe.rise_time) * (
+                1.0 + 1e-9
+            ):
+                return False
+        return True
+
+    def _shortest_compensated_half_s(self, raster: float) -> float:
+        """
+        The shortest legal lobe duration for the pair, on the raster.
+
+        Bracketed by doubling and then bisected, which needs no assumption about how the two
+        areas trade off against each other; the answer is checked against the raster step below
+        it, so it is the minimum on the lattice rather than merely a feasible point.
+        """
+        high = raster
+        for _ in range(40):
+            if self._fits(high):
+                break
+            high *= 2.0
+        else:  # pragma: no cover - 2^40 rasters is not a reachable gradient system
+            self._refuse_impossible_compensation()
+        low = high / 2.0
+        while high - low > raster:
+            middle = ceil_raster((low + high) / 2.0, raster)
+            if middle >= high:
+                break
+            if self._fits(middle):
+                high = middle
+            else:
+                low = middle
+        return float(high)
+
+    def _fits(self, half_s: float) -> bool:
+        """`_compensated_pair_fits`, but reporting False for a duration pypulseq refuses."""
+        try:
+            return self._compensated_pair_fits(half_s)
+        except (ValueError, ZeroDivisionError):
+            return False
 
     # -------------------------------------------------------------------- the refusals
     def _echo_in_lobe_s(self, echo: int) -> float:
@@ -1113,9 +1278,9 @@ class CartesianLine(Module):
             raise ConfigurationError(msg)
         return self._flyback
 
-    def _require_prephaser(self) -> Event:
-        """Return the prephaser, or refuse a question about an event that was not designed."""
-        if self._prephaser is None:
+    def _require_prephasers(self) -> tuple[Event, ...]:
+        """Return the prephaser lobes, or refuse a question about events not designed."""
+        if not self._prephasers:
             msg = format_error(
                 'this readout has no prephaser, because prephase=False.',
                 {'prephase': False, 'area_to_echo_per_m': self.area_to_echo_per_m},
@@ -1126,9 +1291,60 @@ class CartesianLine(Module):
                 ],
             )
             raise ConfigurationError(msg)
-        return self._prephaser
+        return self._prephasers
 
-    def _refuse_prephaser_duration(self, requested_s: float | None) -> None:
+    def _check_null_moment_order(self, order: int) -> int:
+        """Return `order` having checked this readout can null moments up to it."""
+        order = int(order)
+        if order == 0:
+            return order
+        if order == 1 and self.prephase:
+            return order
+        if order == 1:
+            msg = format_error(
+                'null_moment_order=1 needs a prephaser to reshape, and prephase=False.',
+                {'null_moment_order': order, 'prephase': self.prephase},
+                ['pass prephase=True, whose winder is what carries the compensation',
+                 'a readout with no prephaser has no waveform here to null a moment with'],
+            )
+            raise ConfigurationError(msg)
+        msg = format_error(
+            f'null_moment_order={order} is out of range: 0 or 1.',
+            {'null_moment_order': order},
+            ['0 nulls the zeroth moment at the echo, which is the ordinary prephaser',
+             '1 also nulls the first, which is velocity compensation',
+             'nulling the second needs a fourth lobe and is not implemented'],
+        )
+        raise ConfigurationError(msg)
+
+    def _refuse_short_compensated_prephaser(self, requested_s: float) -> None:
+        """Refuse a compensated prephaser too short for the areas it has to carry."""
+        msg = format_error(
+            f'prephaser_duration_s = {requested_s * 1e6:.1f} us is shorter than the minimum a '
+            f'velocity-compensated prephaser needs for this readout.',
+            {'prephaser_duration_s': requested_s,
+             'min_prephaser_duration_s': self._min_prephaser_duration_s,
+             'null_moment_order': self.null_moment_order,
+             'prephaser_area_per_m': -self.area_to_echo_per_m},
+            [
+                f'pass prephaser_duration_s >= {self._min_prephaser_duration_s:.6g}',
+                'or pass None for the shortest legal pair',
+                'compensation costs time: two winders carry more area than the one that only '
+                'nulls the zeroth moment',
+            ],
+        )
+        raise ConfigurationError(msg)
+
+    def _refuse_impossible_compensation(self) -> None:  # pragma: no cover - unreachable
+        msg = format_error(
+            'no velocity-compensated prephaser fits this gradient system.',
+            {'null_moment_order': self.null_moment_order,
+             'area_to_echo_per_m': self.area_to_echo_per_m},
+            ['pass null_moment_order=0', 'or widen the readout, which lowers the area to cancel'],
+        )
+        raise ConfigurationError(msg)
+
+    def _refuse_prephaser_duration(self, requested_s: float | None) -> tuple[Event, ...]:
         """Refuse a prephaser duration for a prephaser that will not exist, and return no event."""
         if requested_s is not None:
             msg = format_error(
@@ -1142,4 +1358,4 @@ class CartesianLine(Module):
                 ],
             )
             raise ConfigurationError(msg)
-        return None
+        return ()
