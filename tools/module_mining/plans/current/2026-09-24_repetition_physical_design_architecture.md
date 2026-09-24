@@ -12,6 +12,39 @@
 
 ---
 
+## 0. Project scope
+
+> SeqCraft is a high-level MRI sequence authoring framework that converts physical acquisition
+> intent into hardware-aware, fully timed Pulseq sequences. It owns reusable MRI physical design
+> needed to make that translation practical — including coupled waveform realization, minimum
+> timing, and whole-sequence validation — while scanner-specific safety models remain optional
+> evaluators rather than core sequence semantics.
+>
+> SeqCraft aims to produce realistic scanner-ready research sequences, but does not replace vendor
+> safety validation or certify scan safety.
+
+```text
+scanner-runnable / physically realistic     a goal
+scanner-certified / guaranteed safe         NOT a SeqCraft claim
+```
+
+**Hide complexity; do not deny complexity.** MRI sequence design is intrinsically complicated. A
+framework that refuses to handle timing coupling, hardware feasibility or flow compensation does
+not remove that work — it returns it to every user's script. A framework that exposes all of it
+becomes harder to use than Pulseq.
+
+So the internal physical-design machinery may become sophisticated, provided ordinary authoring
+stays close to
+
+```python
+GRE3D(..., flow_comp=..., velocity_encode=..., te_s=None, tr_s=None)
+```
+
+and never requires `DifferenceClaim`, `CommonModeClaim`, `JointProblem`, `Schedule`, waveform
+families, PNS internals or solver selection.
+
+---
+
 ## 1. Decision summary
 
 SeqCraft should separate three responsibilities that all involve time but are not the same problem:
@@ -731,6 +764,104 @@ The evidence increasingly suggests the solve is useful as an internal realizatio
 Do not remove or preserve the public API until the real-kernel integration demonstrates the final user-facing path.
 
 ---
+
+## 22b. Sequence envelope versus constituent design profile
+
+One `Opts` conflates two different things, and the stress case separates them:
+
+```text
+physical scanner capability
+        ↓  operational margin
+sequence admissibility envelope      the final summed waveform must fit this
+        ↓
+constituent design profiles          what a given component is designed under
+```
+
+The reference implementation declares a broad sequence envelope and then designs different
+constituents under different, tighter policies — gentle readouts may use a larger fraction of the
+envelope, while short aggressive transitions (blips, ramps, prephasers, spoilers, flow-compensation
+lobes) are held well below it to limit PNS and gradient stress.
+
+Measured from the admitted stress case at `0e1ec51`:
+
+```text
+physical                       80 mT/m     200 T/m/s
+sequence envelope   x0.90/x0.70   72         140
+lowPNS  (most parts) x0.90/x0.41  72          82
+lowPNS2 (FC module)  x0.60/x0.35  48          70
+```
+
+**The durable concepts are the envelope and the profile.** Names like `sys`, `sys_lowPNS`,
+`sys_lowPNS2` are that implementation's spelling, not an abstraction to reuse.
+
+Ownership:
+
+```text
+compiler                validates the final summed waveform against the sequence envelope
+Module / repetition     chooses and satisfies the design profile for what it realizes
+```
+
+For Stage C this separation stays **internal**. No public scanner/profile framework yet.
+
+## 22c. Safety evaluation is a separate whole-waveform concern
+
+```text
+Design envelopes are policies.
+Safety evaluation is a separate whole-waveform concern.
+```
+
+A design profile is a static heuristic. A real PNS model has **temporal memory**, so it is not an
+instantaneous slew check and it cannot be satisfied by a per-lobe rule. The long-term seam:
+
+```text
+initial repetition design
+        ↓ assemble the complete gradient waveform
+optional whole-waveform PNS evaluation
+        ↓ acceptable?  yes -> accept
+          no -> identify the dominant regions / axes
+                redesign those degrees of freedom
+                (lower slew, wider window, different shape family,
+                 or a longer AUTO TE / ESP / TR)
+                and re-evaluate the complete waveform
+```
+
+Iterative feedback, not two fixed passes, and **not implemented in Stage C** — only the seam and
+the ownership are being settled here.
+
+### The parameter interface, and what it is not
+
+A SAFE-style model needs a compact per-axis parameter set, not a confidential vendor file:
+
+```text
+tau1, tau2, tau3      a1, a2, a3      stim_limit      g_scale
+```
+
+so an eventual interface can support either a **local importer** (parse the vendor file privately,
+keep only the compact parameters, never commit the file) or **user-supplied parameters directly**.
+Derived parameters are not automatically non-confidential; users remain responsible for their own
+vendor restrictions.
+
+Three modes, each labelled honestly:
+
+```text
+no model              static conservative profiles; no scanner-specific number reported
+synthetic reference   development, CI and waveform comparison; NOT scanner-specific
+user parameters       a scanner-specific estimate; still NOT a certification
+```
+
+**Any such integration is a prediction, never a guarantee.**
+
+## 22d. RF scope: peak B1 is a hard limit, and is not SAR
+
+```text
+peak B1               a hard instantaneous RF/hardware constraint -- already enforced,
+                      per RF path, with a compiler backstop
+RF energy proxy       a possible future reporting metric, e.g. integral |B1(t)|^2 dt,
+                      for comparing candidate designs.  A burden proxy, not SAR
+SAR                   no claim, unless and until a real SAR model exists
+```
+
+Stage C does not extend into SAR modelling.
 
 ## 23. Pathway-aware moments
 
