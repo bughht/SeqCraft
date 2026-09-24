@@ -98,7 +98,12 @@ contract:
   invariants:
     - net gradient area zero over the pair, so stationary spins accumulate no phase
     - >
-      the two toggles differ in first moment by exactly delta_m1, and in nothing else
+      the two toggles are EXACT WAVEFORM NEGATIONS of one another- both have zeroth moment zero,
+      and their first moments differ by exactly delta_m1.  CORRECTED 2026-09-24- this invariant
+      previously ended "and in nothing else", which is false and disagreed with the (also
+      corrected) acceptance bullet.  Negating a waveform negates every moment it has, so m2, m3
+      and the rest come back equal and opposite; the zeroth is the only one the two share, and
+      they share it because it is zero.
     - >
       first moment is origin-independent once the zeroth is zero (D1 section 10.4 p. 343, citing
       Simonetti 1991), so the module need not be told a time origin
@@ -151,6 +156,14 @@ acceptance:
   does_not_establish:
     - >
       Any merged or minimum-TE design, and therefore any claim about achievable minimum TE.
+    - >
+      That the emitted pair is the SHORTEST legal one.  ADDED 2026-09-24 during implementation.
+      The closed form solves the continuous hardware-limited problem and the times are then
+      rounded up onto the gradient raster; rounding an optimum up is not searching the lattice,
+      and a shorter legal raster point can exist.  Measured on the nominal 40 mT/m / 150 T/m/s
+      system at venc = 1.0 m/s- the design is 1.100 ms and a lattice search finds a legal
+      1.080 ms.  What IS claimed is that the pair is hardware-legal, raster-legal and hits
+      delta_m1 exactly.  No discrete search was added; the module publishes no min_duration_s.
     - >
       Agreement with Open4DFlow, whose licence forbids it and whose realisation is numerical.
     - >
@@ -221,11 +234,15 @@ implementation:
     THE EMITTED FIRST MOMENT -- not the sign of a velocity and not the sign of a reconstructed
     phase.  The caller owns which polarity is scheduled on each acquisition.
   closed_form: >
-    Two regimes, decided rather than searched.  With A = g (f + r) and a centre-to-centre
-    separation dT = 2r + f, the requirement A dT = delta_m1 / 2 is a cubic in g when f = 0 and a
-    quadratic in f when g is pinned at max_grad.  Both times are then rounded UP onto the gradient
-    raster and the amplitude is solved again against the realised times, which lands it below the
-    limit rather than above it and makes delta_m1 exact rather than approximately right.
+    The CONTINUOUS hardware-limited problem is solved in closed form, in two regimes decided
+    rather than tried.  With A = g (f + r) and a centre-to-centre separation dT = 2r + f, the
+    requirement A dT = delta_m1 / 2 is a cubic in g when f = 0 and a quadratic in f when g is
+    pinned at max_grad.  Both times are then rounded UP onto the gradient raster and the amplitude
+    is solved again against the realised times, which keeps delta_m1 exact and keeps the gradient
+    and slew inside their limits -- rounding up can only lower the amplitude the target needs.
+    That is the whole of the guarantee.  The rounded pair is NOT the shortest legal pair the
+    raster admits; see acceptance.does_not_establish.  A discrete search would be a different
+    design decision and was deliberately not made here.
 
 decision_summary: >
   Velocity encoding, in its appended bipolar form, is an ordinary encoding leaf.  Its public

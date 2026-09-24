@@ -181,7 +181,14 @@ def test_halving_venc_doubles_the_change_and_leaves_the_area_at_zero(opts) -> No
 
 
 def test_a_larger_venc_is_a_shorter_pair(opts) -> None:
-    """Less first moment is less gradient-time area, and the design is shortest-first."""
+    """
+    Less first moment is less gradient-time area, so a larger VENC is a shorter pair.
+
+    A monotonic relation, and deliberately not a minimality claim: the design rounds the
+    continuous solution onto the raster rather than searching the lattice, so it is legal and
+    exact but not necessarily the shortest legal pair -- see
+    `test_the_design_is_not_claimed_to_be_the_shortest_on_the_raster`.
+    """
     durations = [encode(opts, venc_m_s=v).duration_s for v in VENCS]
 
     assert durations == sorted(durations, reverse=True)
@@ -256,3 +263,52 @@ def test_a_venc_that_is_not_a_speed_is_refused(opts, venc_m_s: float) -> None:
 def test_an_unknown_axis_is_refused(opts) -> None:
     with pytest.raises(sc.ConfigurationError, match='axis'):
         encode(opts, axis='q')
+
+
+def test_polarity_has_no_default_and_must_be_chosen(opts) -> None:
+    """
+    **A toggle nobody selected is how a velocity map gets made from two copies of one encoding.**
+
+    One instance owns `venc_m_s`, the design and the pair invariant; which toggle a given
+    acquisition plays is the caller's, and the pair is only a pair because someone chose both.
+    So `polarity` is a required keyword, exactly as `line` is for `PhaseEncode` -- and this is the
+    regression guard against a default quietly coming back.
+    """
+    module = encode(opts)
+
+    with pytest.raises(TypeError, match='polarity'):
+        module()
+    with pytest.raises(TypeError, match='polarity'):
+        module.build()
+    with pytest.raises(TypeError, match='polarity'):
+        module.first_moment_s_per_m()
+
+    assert module(polarity=+1).duration > 0.0, 'chosen explicitly, it still builds'
+
+
+def test_the_design_is_not_claimed_to_be_the_shortest_on_the_raster(opts) -> None:
+    """
+    **The design rounds the continuous optimum up; it does not search the discrete lattice.**
+
+    Written as a test because the distinction is easy to lose in a docstring, and because the gap
+    is real rather than theoretical: at `venc_m_s = 1.0` on the fixture's gradient system this
+    design is 1.100 ms, and a legal raster point exists at 1.080 ms.  What the module *does*
+    guarantee is asserted alongside it -- exact first moment, inside the hardware limits.
+
+    If a later change ever adds a lattice search, this test is the one that should fail and be
+    deleted deliberately, rather than a claim silently becoming true by accident.
+    """
+    module = encode(opts, venc_m_s=1.0)
+    raster = float(opts.grad_raster_time)
+    target = module.delta_m1_s_per_m / 2.0
+
+    shortest = min(
+        2.0 * (2.0 * rise + flat)
+        for rise, flat in ((n * raster, m * raster) for n in range(1, 60) for m in range(200))
+        if (amplitude := target / ((flat + rise) * (2.0 * rise + flat))) <= float(opts.max_grad)
+        and amplitude / rise <= float(opts.max_slew)
+    )
+
+    assert shortest < module.duration_s, 'the lattice admits a shorter legal pair'
+    assert _delta_m1(module) == pytest.approx(1.0 / (2.0 * 1.0), rel=1e-12)
+    assert module.amplitude_hz_per_m <= float(opts.max_grad)

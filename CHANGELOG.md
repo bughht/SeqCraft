@@ -26,12 +26,18 @@ design-once/build-per-acquisition idiom. Defining the sign on the waveform is wh
 checkable, because `sc.moments` reads it straight back off the events and nothing has to agree a
 convention with a reconstruction to assert it.
 
-Designed in closed form rather than searched. With lobe area `A`, rise `r` and flat `f`, the two
-lobe centres are `2r + f` apart and `A (2r + f) = delta_m1 / 2`: a cubic in the amplitude when the
-lobes are triangular, a quadratic in the flat time when the amplitude pins at `max_grad`. Both
-times are then rounded **up** onto the gradient raster and the amplitude is solved again against
-the realised ones, which lands it below the limit rather than above it and makes `delta_m1` exact
-instead of approximately right.
+The **continuous** hardware-limited design is closed form rather than a search. With lobe area
+`A`, rise `r` and flat `f`, the two lobe centres are `2r + f` apart and `A (2r + f) = delta_m1 / 2`:
+a cubic in the amplitude when the lobes are triangular, a quadratic in the flat time when the
+amplitude pins at `max_grad`. Both times are then rounded **up** onto the gradient raster and the
+amplitude is solved again against the realised ones, which keeps `delta_m1` exact and keeps the
+gradient and slew inside their limits — rounding up can only lower the amplitude the target needs.
+
+**That is the whole of the guarantee, and it is worth being exact about.** Rounding a continuous
+optimum up is not searching the discrete lattice, so the emitted pair is legal and exact but
+**not** the shortest legal pair the raster admits — on the nominal system at `venc = 1.0 m/s` it is
+1.100 ms where a lattice search finds a legal 1.080 ms. No search was added, no `min_duration_s` is
+published, and a test asserts the gap so the claim cannot become true by accident.
 
 Once `m0 = 0` the first moment is independent of the time origin, so the pair can be placed
 anywhere in a repetition and still deliver what it promised. That is what makes this a leaf: it

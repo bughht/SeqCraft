@@ -68,9 +68,9 @@ than something that needs to negotiate with its neighbours.
 
 How the pair is designed
 ------------------------
-Shortest first, in closed form rather than by search.  Each lobe is a trapezoid of area `A` with
-rise time `r` and flat time `f`, and the two are played back to back, so their centres are
-:math:`\Delta T = 2r + f` apart and
+In closed form rather than by search, and then rounded onto the raster.  Each lobe is a trapezoid
+of area `A` with rise time `r` and flat time `f`, and the two are played back to back, so their
+centres are :math:`\Delta T = 2r + f` apart and
 
 .. math::
 
@@ -85,10 +85,19 @@ trapezoidal, ``g = max_grad`` otherwise.  `f` is the positive root of
                               :math:`f^2 + 3 r f + 2 r^2 - A\Delta T / g = 0`
 ============================  =================================================================
 
-Both times are then **rounded up** onto the gradient raster and the amplitude is solved again
-against those realised times, which lands it below the maximum rather than above it and makes
-:math:`\Delta m_1` exact instead of approximately right.  :attr:`VelocityEncode.amplitude_hz_per_m`
-reports what that came to.
+Those two expressions solve the **continuous** hardware-limited problem.  Both times are then
+rounded **up** onto the gradient raster and the amplitude is solved again against the realised
+times, which keeps :math:`\Delta m_1` exact and keeps the gradient and slew inside their limits --
+rounding up can only lower the amplitude the target needs.
+:attr:`VelocityEncode.amplitude_hz_per_m` reports what that came to.
+
+**What that does not claim.**  The rounded pair is legal and hits the target exactly; it is *not*
+guaranteed to be the shortest legal pair on the discrete raster lattice.  Rounding the continuous
+optimum up is not the same as searching the lattice, and on the nominal 40 mT/m / 150 T/m/s system
+at ``venc_m_s = 1.0`` this design is 1.100 ms where a lattice search finds a legal 1.080 ms.  No
+such search is done here, and no minimum-duration or minimum-TE claim is made -- the module does
+not even publish a ``min_duration_s``.  Echo-time minimisation is the business of the merged
+designs, which are out of scope below.
 
 Ramping down through zero and back up at the seam costs exactly as much as ramping straight from
 :math:`+g` to :math:`-g` would -- two rise times either way -- so the two-lobe form is not paying
@@ -217,7 +226,7 @@ class VelocityEncode(Module):
         self.duration_s = 2.0 * self._lobe_s
 
     # ------------------------------------------------------------------ what it knows
-    def first_moment_s_per_m(self, polarity: int = 1) -> float:
+    def first_moment_s_per_m(self, polarity: int) -> float:
         """
         The first moment one toggle carries, in s/m -- ``polarity * delta_m1_s_per_m / 2``.
 
@@ -232,9 +241,9 @@ class VelocityEncode(Module):
         return self._lobe_s
 
     # ----------------------------------------------------------------------- assembly
-    def build(self, *, polarity: int = 1) -> LogicBlock:
+    def build(self, *, polarity: int) -> LogicBlock:
         """
-        Return one toggle of the pair.
+        Return one toggle of the pair.  **`polarity` is required.**
 
         Parameters
         ----------
@@ -242,6 +251,13 @@ class VelocityEncode(Module):
             ``+1`` or ``-1``, **the sign of the emitted first moment**.  ``+1`` plays the negative
             lobe first, because a negative lobe followed by a positive one is what puts a moving
             spin ahead rather than behind.
+
+            There is deliberately **no default**.  One instance owns ``venc_m_s``, the waveform
+            design and the pair invariant; which toggle a given acquisition plays is the caller's,
+            and a phase-contrast pair is only a pair because someone chose both.  A default would
+            let ``ve()`` emit a toggle nobody selected, which is how a velocity map ends up
+            reconstructed from two copies of the same encoding.  Required for the same reason
+            :meth:`~seqcraft.modules.PhaseEncode.build` requires ``line``.
         """
         sign = self._check_polarity(polarity)
         out = LogicBlock()
@@ -267,11 +283,15 @@ class VelocityEncode(Module):
         """
         Return the rise and flat times of one lobe, rounded up onto the gradient raster.
 
-        Shortest first, and the regime is decided rather than searched.  With ``A = g (f + r)``
-        and a centre-to-centre separation of ``dT = 2r + f``, the requirement ``A dT = target``
-        is a cubic in `g` when ``f == 0`` and a quadratic in `f` when `g` is pinned at the
-        maximum.  The triangular form is enough exactly when a full-amplitude triangle already
-        overshoots the target.
+        The **continuous** hardware-limited problem is solved in closed form, and which of its two
+        regimes applies is decided rather than tried.  With ``A = g (f + r)`` and a centre-to-
+        centre separation of ``dT = 2r + f``, the requirement ``A dT = target`` is a cubic in `g`
+        when ``f == 0`` and a quadratic in `f` when `g` is pinned at the maximum.  The triangular
+        form is enough exactly when a full-amplitude triangle already overshoots the target.
+
+        Rounding that solution up onto the raster keeps it legal and lets the amplitude re-solve
+        exactly, but it does **not** search the lattice, so the result is not the shortest legal
+        pair the raster admits.  See the module docstring.
         """
         g_max, s_max = float(self.opts.max_grad), float(self.opts.max_slew)
         if self._target <= 2.0 * g_max ** 3 / s_max ** 2:
