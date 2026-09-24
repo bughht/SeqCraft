@@ -17,6 +17,7 @@
 | [`se_spiral_2d/`](se_spiral_2d/) | A spin echo in front of a spiral, and the alignment it needs: the trajectory's origin crossing has to land on the physical echo. Three placements that all compile and only one of which is right, and then what refocusing is actually worth. |
 | [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | Diffusion-weighted imaging: a Stejskal–Tanner gradient pair around a 180°, a single-shot EPI readout, and an ADC map recovered from a phantom whose diffusion coefficient is known. Introduces `DiffusionSEPrep` and `sc.b_value`. |
 | [`t2prep_gre_2d/`](t2prep_gre_2d/) | A T2 preparation in front of a spoiled gradient echo: how a sequence with no T2 contrast of its own is given some, and the measurement that the weighting really is T2 rather than T2\*. Introduces `T2Prep`. |
+| [`pc_gre_2d/`](pc_gre_2d/) | Phase contrast: a bipolar pair that leaves still spins alone and gives moving ones a phase proportional to their velocity, and the two acquisitions whose difference is a velocity map. Introduces `VelocityEncode`. |
 
 ## `gre_2d/`
 
@@ -321,6 +322,39 @@ The second line is the part worth reading twice. What the preparation stores is 
 magnetisation, which recovers at T1 — so every millisecond between the tip-up and the acquisition
 of the centre of k-space erodes the contrast. A linear ordering reaches k = 0 after 315 ms of a
 618 ms train; a **centric** one reaches it after 6. `01` measures both.
+
+`01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
+
+## `pc_gre_2d/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](pc_gre_2d/01_build.ipynb) | What a velocity encoding is made of — two lobes of equal area and opposite polarity, solved in closed form from the gradient limits — the factor of two between `delta_m1` and one toggle's first moment, and what `polarity` means. Then the emitted waveform checked for net area zero, for the first moment `venc_m_s` implies, and for independence of where the pair is placed; then a phase-contrast repetition composed by hand from leaves. Two `.seq` files, one per polarity. **Needs nothing but `seqcraft`.** |
+| [`02_simulate_and_reconstruct.ipynb`](pc_gre_2d/02_simulate_and_reconstruct.ipynb) | A moving spin simulated through both toggles: the phase difference is `pi * v / venc` to five decimal places. Then a static control that shows the leftover sign is the simulator's phase convention rather than the encoding's, what happens above VENC, and a velocity map of three voxels moving at three speeds. **Needs `MRzeroCore`, `torch` and `seqcraft`.** |
+
+A gradient echo measures how much signal a voxel has, not how fast it is moving. A bipolar pair
+adds the second:
+
+```text
+-A          +A            net area zero      -> stationary spins untouched
+____        ####          first moment != 0  -> moving spins phase-shifted
+    \      /
+     \____/
+```
+
+One acquisition is not enough, because a voxel's phase also holds coil phase, off-resonance and
+susceptibility. So the pair is played twice with opposite sign and the two are subtracted:
+
+```text
+VelocityEncode   owns  the waveform, the closed-form design, and both toggles
+the acquisition  owns  which polarity is played when, and the phase subtraction
+```
+
+`venc_m_s` is the velocity that gives exactly `pi` of phase *difference*. The quantity behind it
+is `delta_m1 = 1 / (2 * venc)`, the **change** in first moment across the toggles — each toggle
+carries half, and a caller who confuses the two is out by a factor of two. `polarity` is defined
+as the sign of the emitted first moment, which is something `sc.moments` can read off the events;
+which sign of flow a reconstruction calls forward is its own choice.
 
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
 
