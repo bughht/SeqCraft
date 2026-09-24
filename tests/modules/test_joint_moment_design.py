@@ -27,6 +27,7 @@ from seqcraft.modules._joint import (
     realise_split_search,
     realise_two_lobes,
     resolve_claims,
+    utilisation,
 )
 
 #: The two encoding states of a phase-contrast acquisition.
@@ -171,6 +172,58 @@ def test_the_shape_search_finds_more_headroom_than_a_fixed_split(opts) -> None:
     assert searched is not None and searched.feasible
     assert max(searched.peak_grad, searched.peak_slew) <= max(fixed.peak_grad, fixed.peak_slew)
     assert searched.family != fixed.family, 'the searched split is reported, not hidden'
+
+
+def test_the_diagnostic_agrees_with_what_the_emitter_can_actually_do(opts) -> None:
+    """
+    `u <= 1` has to mean the same thing as "a family fitted", or it is not a diagnostic.
+
+    It reports the best the two-lobe family can do, and that family emits on the gradient
+    raster -- so the split has to be searched on the raster too.  A coarser fixed grid is wrong
+    in both directions: it proposes splits nothing can emit, and it steps over the narrow minima
+    where `m1 / m0` lands on a lobe centre and the solve degenerates to one comfortable lobe.
+    A stress sweep measured the old fixed grid overstating `u` by up to x1.82 -- a diagnostic
+    reporting a cliff that the emitter walks straight past.
+
+    The residual disagreement is the boundary itself: `_lobe_utilisation` scans ramp times
+    analytically while `make_trapezoid` picks one shape, so the two differ by a fraction of a
+    per cent at `u == 1`.  Anything further apart than that is a real divergence.
+    """
+    target = (31 * 1e3 / 220.0, +delta() / 2.0)
+    disagreements = []
+    for steps in range(30, 140, 3):
+        schedule = a_schedule(steps * 10e-6)
+        fitted = realise_split_search('y', target, (0.0, 0.0), schedule, opts) is not None
+        u = utilisation('y', target, (0.0, 0.0), schedule, opts)['utilisation']
+        if fitted != (u <= 1.0):
+            disagreements.append((steps * 10e-6, u))
+
+    assert all(abs(u - 1.0) < 0.05 for _, u in disagreements), (
+        f'the diagnostic and the emitter disagree away from the boundary: {disagreements}'
+    )
+
+
+def test_the_coarse_grid_the_diagnostic_used_to_sample_gets_the_boundary_wrong(opts) -> None:
+    """
+    The concrete window where the old fixed grid disagreed with the emitter, kept as the reason.
+
+    At a 40 1/m, 0.197 s/m target the split search fits a 930 us window.  Sampling 48 fixed
+    fractions reports `u = 1.014` there -- infeasible -- while the raster lattice reports 0.994.
+    One window is all it takes: a schedule search that trusts `u` walks past a window the
+    emitter would have accepted, and the next one it takes is longer TE bought for nothing.
+    Sweeping this schedule found 148 such windows.
+
+    The gap widens when the endpoint moves with the window, as it does in a real repetition,
+    because then the lobe centres sweep too and the narrow minima move between samples; there
+    the old grid was measured overstating `u` by up to x1.82.
+    """
+    target = (40.0, 0.1971)
+    schedule = a_schedule(930e-6)
+
+    assert realise_split_search('y', target, (0.0, 0.0), schedule, opts) is not None
+    assert utilisation('y', target, (0.0, 0.0), schedule, opts)['utilisation'] <= 1.0
+    assert utilisation('y', target, (0.0, 0.0), schedule, opts,
+                       splits=48)['utilisation'] > 1.0
 
 
 def test_a_family_reports_utilisation_and_what_limits_it(opts) -> None:

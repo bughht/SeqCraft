@@ -711,6 +711,39 @@ chosen realization family/shape
 
 rather than only a boolean.
 
+### 20.1 What the adversarial stress matrix found
+
+A deliberate search for a cliff over the current architecture — gradient and slew limits, M0 and
+M1 targets, fixed contributions, the origin-to-window lead, window duration, explicit and AUTO TE,
+fixed and AUTO echo spacing, acquisition state, axis and echo count — with local refinement at
+every large coarse transition. The evidence is in the spike findings, §7.
+
+**Extensive stress testing did not reveal an artificial feasibility cliff.** This is not a claim
+that cliffs are impossible; the families here are low-dimensional by design, and a richer
+requirement could produce one. It is a statement about what a deliberate search found.
+
+Three things it did find, all worth carrying into the design:
+
+```text
+a bounded family artefact       a raster-aligned two-lobe split does not exist for every
+                                window, so the feasible set has holes -- 1.6 % of cells,
+                                at most 110 us wide.  Mechanism 2 is present and bounded.
+
+a turning point in the lead     pushing the origin further before the window helps until the
+                                M0 target pins the area and its own M1 overshoots.  A smooth V.
+                                "A longer TE fill always helps" is false.
+
+a diagnostic on the wrong       `utilisation` sampled 48 fixed fractions while the emitter
+lattice                         searches the gradient raster, overstating u by up to x1.82.
+                                Corrected.  The metric and the emitter must search the same
+                                lattice, or the diagnostic manufactures the cliff it exists
+                                to rule out.
+```
+
+The third is the second time a measurement rather than a design produced a false cliff, which is
+the argument for reporting the five fields above rather than a boolean: a boolean cannot be caught
+being wrong by 82 per cent.
+
 ---
 
 ## 21. Baseline sequences do not need immediate migration
@@ -782,7 +815,9 @@ constituents under different, tighter policies — gentle readouts may use a lar
 envelope, while short aggressive transitions (blips, ramps, prephasers, spoilers, flow-compensation
 lobes) are held well below it to limit PNS and gradient stress.
 
-Measured from the admitted stress case at `0e1ec51`:
+Measured from the admitted stress case at `0e1ec51`. **These numbers are test input, not a
+proposed API** — they are one author's derating choices for one sequence, recorded so the stress
+harness can reproduce the conditions that motivated this section:
 
 ```text
 physical                       80 mT/m     200 T/m/s
@@ -792,7 +827,10 @@ lowPNS2 (FC module)  x0.60/x0.35  48          70
 ```
 
 **The durable concepts are the envelope and the profile.** Names like `sys`, `sys_lowPNS`,
-`sys_lowPNS2` are that implementation's spelling, not an abstraction to reuse.
+`sys_lowPNS2` are that implementation's spelling, not an abstraction to reuse. SeqCraft ships no
+named profile set, no derating factors and no table like the one above; a profile is whatever
+`Opts` a component is designed under, and the envelope is whatever the compiler validates
+against.
 
 Ownership:
 
@@ -833,8 +871,12 @@ the ownership are being settled here.
 A SAFE-style model needs a compact per-axis parameter set, not a confidential vendor file:
 
 ```text
-tau1, tau2, tau3      a1, a2, a3      stim_limit      g_scale
+per axis    tau1, tau2, tau3    a1, a2, a3    stim_limit    stim_thresh    g_scale
 ```
+
+The core model uses `tau1..3`, `a1..3`, `stim_limit` and `g_scale`; `stim_thresh` rides along
+because a vendor file carries it and a caller supplying parameters by hand will have it, not
+because the model needs it.
 
 so an eventual interface can support either a **local importer** (parse the vendor file privately,
 keep only the compact parameters, never commit the file) or **user-supplied parameters directly**.

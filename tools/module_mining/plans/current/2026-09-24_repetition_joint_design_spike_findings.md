@@ -108,11 +108,176 @@ the *same* `(m0, m1)` set and report identical utilisation — two coordinate sy
 two-dimensional space, so the decoupled one is better conditioned, not more capable. The split
 search is 8 to 13 per cent shorter at the same target.
 
-## 7. The faithful stress harness
+## 7. Stress evidence
 
-Built from the admitted stress case at `0e1ec51`: **fixed echo spacing**, the inter-echo
-first-moment recurrence `m1 = -m0 * ESP`, and the mixed design profiles the reference actually
-declares.
+Two separate things, and the second is the gate.
+
+### 7a. The adversarial stress matrix
+
+Not a handful of mild derating points: a broad sweep over the current architecture, searching
+deliberately for a region where a small input change produces a disproportionate jump in the
+minimum feasible window. Behaviour like `1.8 ms, 1.9 ms, 2.0 ms -> 18 ms` is what it was looking
+for.
+
+```text
+gradient limit        72  48  32  20  12  8 mT/m        (and 3 to 72 in the venc pass)
+slew limit           140 100  70  45  28 18 11 T/m/s    (and 6 to 200 in the venc pass)
+m0 target              0  40  145  400 1/m
+m1 target              0  0.05  0.167  0.44  1.2 s/m
+fixed contribution    (0,0)  (0,-0.43)  (120,-0.03)  (-200,0.25)   -- slab and wave-like tails
+origin-to-window lead  0  1.5  5.0 ms                   -- what an explicit TE fill inserts
+window duration        every gradient raster step
+```
+
+```text
+10 080   coarse matrix cells, 9 897 feasible under 6 ms
+ 1 920   whole-kernel GRE2DTR builds over venc, matrix, bandwidth, echo count
+   972   multi-echo builds over 1..8 echoes, polarity, AUTO and explicit ESP
+   648   standalone VelocityEncode systems, 3-72 mT/m x 6-200 T/m/s x venc 5.0-0.01
+ 3 072   cells for the hole census, 100 raster steps above each first feasible window
+37 440   points comparing the continuous diagnostic against the emitter
+   243   two-state joint designs with a schedule-dependent wave-like fixed contribution
+```
+
+plus fine 1-D refinements at 2 % steps in the hardware limits, and 20 us steps in the lead.
+
+**Minimum feasible window is monotone in the hardware limits, and the steps are proportionate.**
+Refined locally at the five largest coarse transitions:
+
+```text
+refined step                          steepest adjacent jump
+slew, 1 T/m/s steps, 30 -> 16              x1.140
+max_grad, 0.5 mT/m steps, 13 -> 7          x1.175
+fixed m0, 20 1/m steps, +130 -> -210       x1.531
+m0 target, 15 1/m steps, 130 -> 420        x1.745
+origin lead, 20 us steps, 1.40 -> 1.80 ms  x1.154
+```
+
+The three above `x1.1` are all the same thing and it is not a cliff: they sit where the **net**
+requirement passes near zero, so the ratio is large because the denominator is small. At
+`m0 = 145` against a fixed `+120` the net is 25 1/m and the window is 470 us; one step later the
+net is 40 and the window is 820. The window tracks the net requirement, which is what it should
+do.
+
+End to end through `GRE2DTR`, the same statement in TE:
+
+```text
+adjacent step        min TE ratio  median   p99     max
+slew limit                          1.059   1.251   1.258
+gradient limit                      1.049   1.192   1.214
+venc                                1.076   1.310   1.341
+matrix 128 -> 256                   1.134   1.301   1.303
+```
+
+**No jump above `x1.35` in minimum TE anywhere in the kernel sweep.**
+
+### 7b. What the search did find
+
+**A turning point in the lead, not a cliff.** Pushing the semantic origin further before the
+window helps until it does not. At `G = 8 mT/m`, `m0 = 400`, `m1 = 0.44`, fixed `(0, -0.43)`:
+
+```text
+lead ms    1.40  1.46  1.50  1.54  1.56  1.58  1.60  1.70  1.80
+window us  1390  1340  1300  1260  1360  1570  1690  2070  2310
+```
+
+Longer lead gives each unit of area more `m1` leverage, until the `m0` target pins the area and
+its own `m1 = area x centroid` overshoots, so a growing opposing correction is needed. The curve
+is a smooth V with its minimum at about 1.54 ms; at 20 us resolution the steepest step is
+`x1.154`. **"A longer TE fill always helps" is false**, and a schedule search that assumes it
+will walk the wrong way past the optimum.
+
+**Bounded holes in the feasible set.** Over 3 072 cells, scanning 100 raster steps above each
+cell's first feasible window:
+
+```text
+cells with at least one hole      48  (1.6 %)
+hole width                        median 3, p95 11, max 11 raster steps = 110 us
+```
+
+A window can refuse where a shorter one succeeded. The two-lobe split must land on the gradient
+raster, and for some window lengths no raster-aligned split solves the 2x2 system inside the
+limits while both neighbours do. This is mechanism 2 -- an artificial realisation-family effect --
+and the honest statement is that it **exists and is bounded at 110 us**, two orders of magnitude
+away from the pathology being looked for. The kernel walks windows upward and takes the first that
+fits, so the worst cost is ~110 us of TE.
+
+**The continuous diagnostic was measuring the wrong lattice.** `utilisation` sampled 48 fixed
+fractions of the window while `realise_split_search` emits on the gradient raster. `u(T)` is not
+smooth -- where `m1 / m0` equals a lobe centre the two-lobe solve degenerates to one comfortable
+lobe, a narrow minimum -- and a coarse fixed grid steps over those minima:
+
+```text
+window us   u(48 fractions)   u(raster lattice)
+   710            0.919             0.694
+   720            1.171             0.653
+   730            0.805             0.636
+   800            0.953             0.525
+```
+
+Overstated by up to **x1.82**, reporting `u = 1.171` where the lattice reaches 0.653. Against the
+emitter over 37 440 points, `u <= 1` agreed 99.82 % of the time before and 99.93 % after; the
+aggregate rate understates it, because what matters is the **size** of the error away from the
+boundary, and that is what manufactures a cliff. Fixed, and pinned by two tests.
+
+This is the second time a diagnostic rather than the design produced a false cliff. A validator is
+only independent of what it saw: the metric and the emitter must search the same lattice.
+
+**Multi-echo costs the winder nothing, and that is correct rather than a gap.** 972 kernel builds
+over 1 to 8 echoes, bipolar and monopolar, AUTO and two explicit echo spacings, three gradient and
+four slew limits, flow compensation and two vencs: **all 972 built, none refused**, and the winder
+ratio across every echo-count step was exactly `1.000` over 756 pairs.
+
+The reason is the reference the requirement is stated in. A maintained phase encode is silent after
+the winder, and `m1` about a **fixed origin** stops accruing when the gradient stops — so once it
+is nulled from the excitation it stays nulled, at every echo of the train:
+
+```text
+m1 on y about the excitation centre      echo 1   0.000000   echo 2   0.000000   echo 3   0.000000
+m1 on y about each echo                 -0.739636          -1.171636          -1.603636
+                                                   drift    -0.432000  -0.432000  per echo
+                                        -m0 * ESP = -163.6364 * 2.640 ms = -0.432000
+```
+
+The recurrence `m1 += -m0 * ESP` is real and reproduces to six digits — **in the echo-referenced
+frame**. It is not a correction the phase-encode axis owes, because the velocity-dependent phase a
+spin accumulates is `m1` about the **excitation**, which is the one already nulled. This is the
+concrete reason a moment target carries an origin as well as an endpoint: the same waveform is
+compensated in one frame and off by 0.74 s/m in the other, and only naming the origin distinguishes
+them.
+
+### 7c. The narrow conclusion
+
+**Extensive stress testing did not reveal an artificial feasibility cliff.** It did reveal a
+bounded family artefact of at most 110 us, a smooth turning point in the lead, and a diagnostic
+that overstated utilisation by up to x1.82 until it was corrected.
+
+This is not a claim that cliffs are impossible. The families here are low-dimensional by design,
+and a richer requirement -- a second-order moment, a third coupled axis, a fixed contribution with
+structure the two-lobe solve cannot oppose -- could produce one. The claim is only that a
+deliberate search over the dimensions above did not find one.
+
+### 7d. Which of the four mechanisms
+
+```text
+1  genuine physical frontier         observed and correct -- the window tracks the net
+                                     requirement, proportionately, in every refinement
+2  waveform-family artificial cliff  PRESENT but bounded: raster-aligned split holes,
+                                     max 110 us, 1.6 % of cells
+3  fixed-schedule artifact           present and mild: AUTO timing removes it for +9 % ESP
+4  profile-assignment artifact       dominant in the historical case: 0.85 under the envelope
+                                     and 1.71 under the FC profile, for the same waveform
+```
+
+Mechanism 4 is a policy question, not a physics one, which is why it belongs to the
+envelope/profile split rather than to the realisation layer.
+
+### 7e. The historical fixed-ESP harness
+
+Kept because it is where mechanism 4 was measured, **not as a gate** -- reproducing
+`wave-gre-flow-comp` is not a success criterion. Built from the admitted stress case at `0e1ec51`:
+fixed echo spacing, the inter-echo recurrence `m1 = -m0 * ESP`, and the mixed design profiles that
+implementation declares.
 
 ```text
 physical                        80 mT/m    200 T/m/s
@@ -142,33 +307,30 @@ echo spacing it implies:
 
 ```text
 slew fraction   window us   implied ESP   vs fixed ESP
-0.70                 1330      2.930 ms         0.98x
-0.41                 1590      3.190 ms         1.06x
+0.70                 1340      2.940 ms         0.98x
+0.41                 1600      3.200 ms         1.07x
 0.35                 1680      3.280 ms         1.09x
+0.25                 1880      3.480 ms         1.16x
 0.15                 2220      3.820 ms         1.27x
 0.10                 2550      4.150 ms         1.38x
 ```
 
 **At the FC module's own profile a 9 per cent longer echo spacing restores feasibility.**
 
-### Which of the four mechanisms
-
-```text
-1  genuine physical frontier            NOT the explanation -- it fits the envelope
-2  waveform-family artificial cliff     NOT observed -- u degrades smoothly everywhere
-3  fixed-schedule artifact              YES, and mild: +9 % ESP removes it
-4  profile-assignment artifact          YES, and dominant: 0.85 under the envelope, 1.71 under
-                                        the FC profile, for the same waveform
-```
-
-**The large-duration pathology is not reproduced.** No GrOpt comparison was run, because no cliff
-was found to compare at.
-
-### What this harness does not model
+These numbers are re-derived against the corrected diagnostic; two windows moved by one raster
+step and nothing else changed, because this target has `m0 = 0` and so never reaches the
+degenerate branch the old grid was missing.
 
 The recurrence target and the mixed profiles are faithful; the wave gradients' own fixed
 contributions and the real readout geometry are not — `fixed` is zero here. So it is faithful in
-structure rather than in every term, and a full reproduction would need the wave waveform itself.
+structure rather than in every term.
+
+### 7f. No GrOpt comparison was run
+
+Per the governing decision, a numerical-backend comparison is warranted only if the **current**
+stress matrix exposes a suspicious gap — not because the historical sequence once showed one. It
+did not, so none was run. The bounded 110 us holes are the one candidate, and they are a raster
+quantisation effect that a different optimiser would meet too.
 
 ## 8. Corrections discovered during the spike
 
@@ -182,6 +344,7 @@ Each was found by measuring the emitted waveform, and none would have shown in a
 | **zero target vs unconstrained** | the single-lobe family asked *whether* an m1 was requested, not what it would emit | flow compensation reported success while emitting `m1 = -0.066` |
 | **explicit-TE translation** | designed at the minimum schedule, then fill shifted the waveform | m1 wrong by **0.264 s/m** against a 0.167 target at TE + 2 ms |
 | **bad cliff diagnostic** | utilisation designed against a permissive system, so `make_trapezoid` chose near-rectangular shapes | slew inflated 5x, manufacturing a cliff that is not there |
+| **diagnostic on the wrong lattice** | utilisation sampled 48 fixed fractions of the window; the emitter searches the gradient raster | `u` overstated by up to **x1.82** -- 1.171 reported where the lattice reaches 0.653 |
 
 A seventh is a hazard rather than a failure: solving one axis at its own minimum and letting
 another axis widen the winder afterwards is the same staleness as the explicit-TE bug. **I could
@@ -193,7 +356,10 @@ the kernel emits.
 
 - The public augmentation API. `joint_claims` and `encoding_states` are the spike's internal
   representation and must not ship.
-- `VelocityEncode` designs its standalone bipolar eagerly; a joint realisation may be feasible
-  where that standalone one is not.
+- `VelocityEncode` designs its standalone bipolar eagerly. That is a **cost, not a capability
+  gap**: over 648 extreme systems (3-72 mT/m x 6-200 T/m/s x venc 5.0-0.01 m/s) the standalone
+  pair never refused -- its closed-form solve grows the lobe until it fits -- so there is no case
+  in which the joint path reaches a venc the standalone one cannot. An earlier record here said
+  the opposite; it was a guess, and the search for a counterexample found none.
 - A whole-waveform safety evaluator: seam and ownership settled, nothing implemented.
 - Pathway-aware moments, deferred: pathway-aware `m0` first, `m1` later, neither now.

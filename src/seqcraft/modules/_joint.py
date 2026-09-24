@@ -498,7 +498,7 @@ def _lobe_utilisation(area: float, duration_s: float, opts: Opts, *,
 
 
 def utilisation(axis: str, target: tuple[float, float | None], fixed: tuple[float, float],
-                schedule: Schedule, opts: Opts, *, splits: int = 48) -> dict[str, float]:
+                schedule: Schedule, opts: Opts, *, splits: int | None = None) -> dict[str, float]:
     """
     How close the best shape comes at this schedule, **even when it does not fit**.
 
@@ -512,13 +512,25 @@ def utilisation(axis: str, target: tuple[float, float | None], fixed: tuple[floa
 
     over the two-lobe family's split and each lobe's ramp.  Diagnostic only; the emitter never
     takes this path, so no illegal waveform can reach a sequence through it.
+
+    **The split is searched on the gradient raster**, which is the lattice
+    :func:`realise_split_search` can actually emit on.  It used to be a fixed 48 fractions of the
+    window, and that is the wrong lattice in both directions: it proposes splits no raster can
+    hold, and it misses the ones that fit.  ``u(T)`` is not smooth -- when ``m1 / m0`` happens to
+    equal a lobe centre the two-lobe solve degenerates to a single comfortable lobe, so the curve
+    has narrow minima -- and a coarse fixed grid steps over them.  Measured against the raster
+    lattice on a 145 1/m, 0.055 s/m target at 20 mT/m and 45 T/m/s, the old grid overstated ``u``
+    by up to **x1.82**, reporting 1.171 where the lattice reaches 0.653.  That is a diagnostic
+    that manufactures a cliff, which is the one thing this function exists to rule out.
     """
     best = {'utilisation': float('inf'), 'grad': float('inf'), 'slew': float('inf'),
             'split': float('nan')}
     if target[1] is None:
         return best
-    for step in range(1, splits):
-        split = step / splits
+    steps = splits if splits is not None else int(round(schedule.window_s /
+                                                        float(opts.grad_raster_time)))
+    for step in range(1, max(steps, 2)):
+        split = step / max(steps, 2)
         first_s = schedule.window_s * split
         second_s = schedule.window_s - first_s
         if min(first_s, second_s) <= 0.0:
