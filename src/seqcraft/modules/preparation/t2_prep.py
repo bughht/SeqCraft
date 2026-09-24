@@ -18,9 +18,9 @@ that distinction is the whole module: without the refocusing train the same inte
 at :math:`T_2^*`, which is a property of the magnet rather than of the tissue.
 
 The weighting is a **factor**.  The signal is :math:`M_z\,e^{-\tau/T_2}`, where :math:`M_z` is the
-longitudinal magnetisation that arrives -- which under a steady state is not the equilibrium
-value, and is not something this module can know.  The claim here is the exponential, not the
-absolute signal.
+longitudinal magnetisation present when the preparation begins -- which under a steady state is
+not the equilibrium value.  The preparation contributes the exponential; the absolute signal also
+depends on that :math:`M_z`, which this module does not set.
 
 The pulses
 ----------

@@ -16,7 +16,7 @@
 | [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. Then what a 21.7 ms readout pays in off-resonance. |
 | [`se_spiral_2d/`](se_spiral_2d/) | A spin echo in front of a spiral, and the alignment it needs: the trajectory's origin crossing has to land on the physical echo. Three placements that all compile and only one of which is right, and then what refocusing is actually worth. |
 | [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | Diffusion-weighted imaging: a Stejskal–Tanner gradient pair around a 180°, a single-shot EPI readout, and an ADC map recovered from a phantom whose diffusion coefficient is known. Introduces `DiffusionSEPrep` and `sc.b_value`. |
-| [`t2prep_gre_2d/`](t2prep_gre_2d/) | A T2 preparation in front of a spoiled gradient echo: how a sequence with no T2 contrast of its own is given some, and the measurement that the weighting really is T2 rather than T2\*. Introduces `T2Prep`. |
+| [`t2prep_gre_2d/`](t2prep_gre_2d/) | A T2 preparation in front of a spoiled gradient echo: adding controlled T2 weighting before a readout that would otherwise follow T2\*, and the measurement that the weighting really is T2 rather than T2\*. Introduces `T2Prep`. |
 | [`pc_gre_2d/`](pc_gre_2d/) | Phase contrast: a bipolar pair that leaves still spins alone and gives moving ones a phase proportional to their velocity, and the two acquisitions whose difference is a velocity map. Introduces `VelocityEncode`. |
 
 ## `gre_2d/`
@@ -287,20 +287,19 @@ every b-value has to be acquired at the same echo time or the ratio carries `T2`
 It is what shows that a nominally unweighted acquisition is not unweighted, which no check on the
 diffusion lobes alone could see.
 
-This directory is the pilot for **Writing example notebooks** below.
-
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
 
 ## `t2prep_gre_2d/`
 
 | | |
 |---|---|
-| [`01_build.ipynb`](t2prep_gre_2d/01_build.ipynb) | What a T2 preparation is made of — fourteen hard pulses at one B1, an MLEV-4 composite refocusing train, a single `-90` tip-up — the two instants `prep_time_s` is measured between, and why the tip-up is a *realisation* rather than part of the contract. Then the emitted block checked for interval symmetry and for the absence of any gradient while the magnetisation is transverse, and a composition with a shipped `GRE2D`. `.seq` files in both realisations. **Needs nothing but `seqcraft`.** |
-| [`02_simulate_and_reconstruct.ipynb`](t2prep_gre_2d/02_simulate_and_reconstruct.ipynb) | A known T2 recovered from the slope of `ln S` against `prep_time_s`, within 1 % from 40 to 250 ms — and the control that matters: T2\* swept by a factor of five moves the answer by 3 %. Then where the residual bias comes from, and a B1 / off-resonance sweep across both tip-up realisations that finds no consistent advantage for either. **Needs `MRzeroCore` and `torch`.** |
+| [`01_build.ipynb`](t2prep_gre_2d/01_build.ipynb) | What a T2 preparation is made of — fourteen hard pulses at one B1, an MLEV-4 composite refocusing train, a single `-90` tip-up — the two instants `prep_time_s` is measured between, and the simple and composite tip-up choices with their `prep_time_s` endpoints and their RF cost. Then the emitted block checked for interval symmetry and for the absence of any gradient while the magnetisation is transverse, and a composition with a shipped `GRE2D`. `.seq` files with both tip-ups. **Needs nothing but `seqcraft`.** |
+| [`02_simulate_and_reconstruct.ipynb`](t2prep_gre_2d/02_simulate_and_reconstruct.ipynb) | A known T2 recovered from the slope of `ln S` against `prep_time_s`, within 1 % from 40 to 250 ms — and the control that matters: T2\* swept by a factor of five moves the answer by 3 %. Then where the residual bias comes from, and a B1 / off-resonance sweep across both tip-ups that finds no consistent advantage for either. **Needs `MRzeroCore` and `torch`.** |
 
-A spoiled gradient echo has no T2 contrast: its signal decays at T2\*, and at the short echo times
-a fast scan needs there is hardly any decay at all. A **preparation** puts the contrast in before
-the imaging train, as a factor on the longitudinal magnetisation:
+A conventional gradient echo does not refocus static dephasing, so it follows T2\* rather than
+refocused T2 decay — and at the short echo times a fast scan needs there is hardly any decay at
+all. A **preparation** adds controlled T2 weighting before the imaging train, as a factor on the
+longitudinal magnetisation:
 
 ```text
 90x  ->  refocusing train  ->  -90x  ->  spoiler  ->  any readout at all
