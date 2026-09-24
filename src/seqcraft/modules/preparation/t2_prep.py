@@ -3,19 +3,20 @@ r"""
 
 What it is
 ----------
-A preparation period that converts :math:`T_2` into longitudinal contrast before an imaging train
-that has none of its own.  Magnetisation is tipped into the transverse plane, held there for a
-declared time while a train of refocusing pulses reverses static dephasing, tipped back to
-:math:`+z`, and whatever is left transverse is crushed:
+A preparation period that converts :math:`T_2` into longitudinal contrast before a gradient-echo
+imaging train that would otherwise follow :math:`T_2^*` decay.  Magnetisation is tipped into the
+transverse plane, held there for a declared time while a train of refocusing pulses reverses
+static dephasing, tipped back to :math:`+z`, and whatever is left transverse is crushed:
 
 .. code-block:: text
 
     +90  ->  refocusing train  ->  tip-up  ->  spoiler
          |<---- prep_time_s ---->|
 
-What survives is weighted by :math:`e^{-\tau/T_2}` rather than by :math:`e^{-\tau/T_2^*}`, and
-that distinction is the whole module: without the refocusing train the same interval would decay
-at :math:`T_2^*`, which is a property of the magnet rather than of the tissue.
+What survives is weighted by :math:`e^{-\tau/T_2}` rather than by :math:`e^{-\tau/T_2^*}`.
+Without the refocusing train, static dephasing adds to the tissue's intrinsic :math:`T_2` decay
+and the transverse signal follows :math:`T_2^*` instead -- which is faster, and magnet-dependent
+as well as tissue-dependent.
 
 The weighting is a **factor**.  The signal is :math:`M_z\,e^{-\tau/T_2}`, where :math:`M_z` is the
 longitudinal magnetisation present when the preparation begins -- which under a steady state is
