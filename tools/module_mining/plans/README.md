@@ -8,6 +8,11 @@
 ```text
 plans/
     current/
+        2026-09-24_public_augmentation_api_alternatives.md
+                                                three candidate public surfaces for GRE plus
+                                                velocity encoding and flow compensation, and the
+                                                capability/refusal model.  FOR REVIEW; nothing
+                                                implemented
         2026-09-24_repetition_physical_design_architecture.md
                                                 THE GOVERNING ARCHITECTURE for the rest of
                                                 Stage C.  Where MRI timing design lives, what
