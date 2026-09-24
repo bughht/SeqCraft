@@ -85,24 +85,49 @@ scheduled and leaves the purely-per-repetition one on the repetition.
 - needs the acquisition to pass state down into build(), which today it does not
 ```
 
-**Leaning:** B for the repetition-level surface, with C's observation kept in mind — a velocity
-acquisition is the thing that knows there are two states, so whatever generates them belongs
-beside the line ordering rather than inside one repetition.
+**Recommendation: B for the repetition-level surface**, with C's observation kept in mind — a
+velocity acquisition is the thing that knows there are two states, so whatever generates them
+belongs beside the line ordering rather than inside one repetition.
+
+The stress pass supplied an argument that was not available when these three were written. The
+spike accepts a claim on an axis the repetition does not own and either silently does nothing or
+refuses with the wrong reason (see **Capability and refusal** below). Whatever ships has to
+validate the axis, and the three alternatives differ in whether there is anywhere to put that:
+
+```text
+A  flow_comp='q'                      a bare string; the only place to check it is inside the
+                                      kernel, mixed in with the physics
+B  sc.FlowCompensated(axis='q')       the object validates its own axis against the repetition
+                                      it is handed to, and owns the message that explains it
+C  PhaseContrast2D(gre, axis='q')     same as B for the state-generating case, and nothing for
+                                      the per-repetition one
+```
+
+B is the only one of the three with an obvious home for the refusal, which is the deciding
+argument rather than a tie-breaker: this is a class of bug the stress matrix caught once already.
+
+**Still open for the reviewer:** whether `augmentations=[...]` is worth the plugin-bus risk noted
+above, or whether the closed set should be named keywords taking intent objects
+(`flow_comp=sc.FlowCompensated('y')`), which keeps the refusal home and removes the list.
 
 ---
 
 ## `VelocityEncode`: eager realisation, and whether it matters
 
-The constructor designs its standalone bipolar eagerly. Measured on a deliberately weak system
-(8 mT/m, 25 T/m/s):
+The constructor designs its standalone bipolar eagerly. Swept over 648 systems — 3 to 72 mT/m,
+6 to 200 T/m/s, venc 5.0 down to 0.01 m/s — it **never refused**:
 
 ```text
-venc 0.05 m/s   standalone builds, 8.00 ms pair
-venc 0.02 m/s   standalone builds, 12.46 ms pair
+builds      648 / 648
+pair duration   0.600 ms  (72 mT/m, 200 T/m/s, venc 5.0)
+             to 28.5 ms   (3 mT/m, 6 T/m/s, venc 0.01)
 ```
 
-It does not refuse — the duration search grows the window until it fits — so eager realisation is
-a **cost**, not a correctness blocker: it designs a waveform the joint path may never emit.
+`_solve_times` solves the continuous hardware-limited problem in closed form and rounds up onto
+the raster, so the lobe grows until it fits rather than failing. Eager realisation is therefore a
+**cost**, not a correctness blocker: it designs a waveform the joint path may never emit. It is
+also not a capability gap in the other direction — there is no venc the joint path can reach that
+the standalone pair refuses, because the standalone pair does not refuse.
 
 ```text
 A  make the standalone realisation lazy      works, but a property that builds on first
@@ -138,6 +163,38 @@ does for a slab.
 
 Unsupported combinations should refuse with the axis, the reason, and what would make it
 supported — never silently do nothing.
+
+**The spike does not do this yet, and the stress pass caught it.** Nothing validates the claimed
+axis against the axes the repetition owns, so `GRE2DTR` accepts a claim on an axis that does not
+exist, at 40 mT/m and 150 T/m/s:
+
+```text
+joint_claims                     min TE      winder
+(none)                           4.662 ms     520 us
+CommonModeClaim('y', 1)          5.732 ms    1590 us
+CommonModeClaim('x', 1)          5.652 ms    1510 us
+CommonModeClaim('z', 1)          6.542 ms    2400 us
+CommonModeClaim('q', 1)          4.662 ms     520 us    <- accepted, identical to no claim
+CommonModeClaim('zzz', 1)        4.662 ms     520 us    <- accepted, identical to no claim
+```
+
+Two failure shapes, both from the same missing check:
+
+```text
+target resolves to zero      reports success having emitted nothing -- a silent no-op that
+  (common mode alone)        claims the repetition is flow-compensated on an axis it has not
+                             got, which is the worst of the two
+
+target is nonzero            refuses, but with the physics message: "allow a longer window",
+  (a difference claim)       "relax the target", "widen the gradient limits".  The real cause
+                             is that pypulseq cannot make a trapezoid on channel 'q', which
+                             `_lobe` reads as "did not fit" and the cascade reads as infeasible
+```
+
+The fix is a capability check where the claims arrive, phrased physically — the axis must be one
+the repetition owns an adjustable window on — not an `isinstance` test and not a hard-coded axis
+letter list. It belongs with the public API, so it is recorded here rather than patched into the
+spike.
 
 ---
 
