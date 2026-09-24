@@ -324,12 +324,35 @@ def test_nothing_changes_when_no_claim_is_made(opts) -> None:
     assert also_plain(line=3).duration == plain(line=3).duration
 
 
-def test_a_claim_naming_two_axes_is_refused(opts) -> None:
-    """One coupled design serves one axis, because each logical axis encodes independently."""
-    with pytest.raises(sc.ConfigurationError, match='axes'):
-        sc.modules.GRE2DTR(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
-                           flip_deg=15.0, encoding_states=POLARITIES,
-                           joint_claims=(CommonModeClaim('y', 1), CommonModeClaim('z', 1)))
+def test_two_axes_are_designed_against_one_common_schedule(opts) -> None:
+    """
+    **Multi-axis.** Velocity encoding on `z`, flow compensation on `y`, one window, one echo.
+
+    Each axis is its own physical problem -- one `JointProblem` each, never a single
+    multidimensional solver -- but the *schedule* is shared, because they share a winder and an
+    echo.  Both are then measured on the complete repetition at that one achieved echo, which is
+    the check that the common schedule really was common.
+    """
+    shared = dict(opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(16, 16, 8), flip_deg=15.0,
+                  slab_thickness_mm=120.0)
+    kernel = sc.modules.GRE3DTR(
+        **shared, encoding_states=POLARITIES,
+        joint_claims=(DifferenceClaim('z', 1, delta(), POLARITIES),
+                      CommonModeClaim('z', 1), CommonModeClaim('y', 1)))
+
+    assert sorted(kernel._joint) == ['y', 'z'], 'one design per claimed axis'
+    schedules = {designed.schedule for designed in kernel._joint.values()}
+    assert len(schedules) == 1, 'and one schedule shared between them'
+
+    origin, echo = kernel.exc.time_to_center(), kernel.time_to_echo()
+    for axis, count, wanted_m1 in (('y', kernel.matrix[1], lambda state: 0.0),
+                                   ('z', kernel.matrix[2], lambda state: state * delta() / 2.0)):
+        for index in range(count):
+            for state in POLARITIES:
+                shot = kernel(line=index if axis == 'y' else 8,
+                              partition=index if axis == 'z' else 4, encoding_state=state)
+                m1 = measure_moment(shot, 1, axis, origin_s=origin, start_s=0.0, end_s=echo)
+                assert m1 == pytest.approx(wanted_m1(state), abs=1e-11)
 
 
 def test_the_compiler_accepts_a_jointly_designed_repetition(opts) -> None:
@@ -341,3 +364,60 @@ def test_the_compiler_accepts_a_jointly_designed_repetition(opts) -> None:
     seq = sc.compile(kernel(line=8, encoding_state=+1), opts)
 
     assert len(seq.block_events) > 3
+
+
+@pytest.mark.parametrize('extra_ms', (0.0, 0.5, 2.0, 5.0))
+def test_an_explicit_te_above_the_minimum_does_not_stale_the_first_moment(opts,
+                                                                          extra_ms: float
+                                                                          ) -> None:
+    """
+    **The schedule-shift bug, pinned.**
+
+    An explicit TE inserts fill *in front of* the winder, so a waveform solved at the minimum
+    schedule would be translated bodily -- and translating changes the first moment whenever
+    ``m0`` is non-zero, by ``dt * m0``.  Before the common-schedule fix this was wrong by
+    0.264 s/m at TE + 2 ms against a target of 0.167.
+
+    A non-centre line is the case that shows it; at ``ky = 0`` the error vanishes and the bug
+    hides.
+    """
+    shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0, flip_deg=15.0)
+    joint = dict(joint_claims=claims('y'), encoding_states=POLARITIES)
+    floor = sc.modules.GRE2DTR(**shared, **joint).min_te_s
+
+    kernel = sc.modules.GRE2DTR(**shared, **joint, te_s=floor + extra_ms * 1e-3)
+    origin, echo = kernel.exc.time_to_center(), kernel.time_to_echo()
+
+    assert kernel.te_s == pytest.approx(floor + extra_ms * 1e-3, abs=1e-9)
+    for line in (0, 5, 31):
+        for state in POLARITIES:
+            shot = kernel(line=line, encoding_state=state)
+            assert measure_moment(shot, 1, 'y', origin_s=origin, start_s=0.0,
+                                  end_s=echo) == pytest.approx(state * delta() / 2.0, abs=1e-11)
+            assert measure_moment(shot, 0, 'y', origin_s=origin, start_s=0.0,
+                                  end_s=echo) == pytest.approx(kernel.pe.k_per_m(line),
+                                                               abs=1e-6 * max(1.0, abs(
+                                                                   kernel.pe.k_per_m(line))))
+
+
+def test_the_design_schedule_is_the_schedule_the_kernel_emits(opts) -> None:
+    """
+    The invariant behind both schedule bugs, asserted directly rather than via a protocol.
+
+    A design made against one schedule and emitted at another is stale whenever ``m0`` is
+    non-zero.  I could not construct a GRE protocol where *axis-local-then-max* bit -- the joint
+    axis wanted the longest window in every case tried -- so the property is pinned here instead
+    of relying on a case that happens to expose it.
+    """
+    shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0, flip_deg=15.0)
+    for extra in (0.0, 1.5e-3):
+        floor = sc.modules.GRE2DTR(**shared, joint_claims=claims('y'),
+                                   encoding_states=POLARITIES).min_te_s
+        kernel = sc.modules.GRE2DTR(**shared, joint_claims=claims('y'),
+                                    encoding_states=POLARITIES, te_s=floor + extra)
+        designed = kernel._joint['y'].schedule
+
+        assert designed.window_s == pytest.approx(kernel.winder_s, abs=1e-12)
+        assert designed.endpoint_s == pytest.approx(kernel.time_to_echo(), abs=1e-9)
+        assert designed.origin_s == pytest.approx(kernel.exc.time_to_center(), abs=1e-12)
+
