@@ -353,8 +353,8 @@ docstring              keeps the API
 The rules themselves live in the repository, not here:
 
 ```text
-Layer 2 / Layer 3 notebooks     examples/README.md -> Writing example notebooks
-new public Module docstrings    docs/writing_a_module.md -> Public API prose
+Layer 2 / Layer 3 notebooks     docs/writing_examples.md
+new public Module docstrings    docs/writing_a_module.md
 ```
 
 **The ladder describes software-validation depth and nothing else.** It does not describe

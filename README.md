@@ -478,7 +478,9 @@ including the off-resonance map the EPI examples distort against, which is the p
 Documentation: [`api_reference.md`](docs/api_reference.md) (every public name, executed by CI),
 [`architecture.md`](docs/architecture.md) (the layering, and what is deliberately absent),
 [`compiler.md`](docs/compiler.md) (how boundaries are chosen, what every warning means),
-[`writing_a_module.md`](docs/writing_a_module.md) (the `Module` contract in full).
+[`writing_a_module.md`](docs/writing_a_module.md) (the `Module` contract in full, and what a
+public docstring documents), [`writing_examples.md`](docs/writing_examples.md) (how the notebooks
+under `examples/` are written).
 
 Tests: `pytest tests --doctest-modules src/seqcraft`.
 

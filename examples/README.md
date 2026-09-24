@@ -33,11 +33,6 @@ the answer would teach nothing.
 asserts that what the notebook writes and what the package ships produce identical events, so the
 tutorial cannot drift from the library without CI noticing.
 
-This pair established the extraction pattern the library uses: start from a working acquisition,
-find the reusable physical boundary in it, and then compare the extracted module against the
-reference implementation event for event. A module that cannot be extracted without altering the
-sequence is not a module, and one whose extraction does not shorten the notebook is a wrapper.
-
 ## `mprage_2d/` and `mp2rage_2d/`
 
 | | |
@@ -90,12 +85,11 @@ only so the comparison has both halves at one common TR.
 recommended way to use them. `SE2D` is still **defined in its notebook and does not ship**, for
 the reason `MPRAGE2D` and `MP2RAGE2D` do not: one consumer each.
 
-`fse_2d/01_build.ipynb` keeps its **own** `FSE2D` on purpose, and it should not be replaced with
-an import. It is the working implementation the package classes were extracted from, and
+`fse_2d/01_build.ipynb` keeps its **own** `FSE2D` on purpose and should not be replaced with an
+import. It is the working implementation the package classes were extracted from, and
 [`tests/modules/test_fse_notebook_matches_the_package.py`](../tests/modules/test_fse_notebook_matches_the_package.py)
-compares the two event for event at turbo 1, 8, 16 and HASTE. A reference that is rewritten
-whenever the package changes cannot detect a regression in the package — so this one is
-deliberately **able to disagree**.
+compares the two event for event at turbo 1, 8, 16 and HASTE. Editing it: see
+[*Preserved reference notebooks*](../docs/writing_examples.md).
 
 [`tests/modules/test_se_notebooks.py`](../tests/modules/test_se_notebooks.py) runs both build
 notebooks, asserts k at every echo of every train length, and pins `FSE2D(echoes=1)` against what
@@ -358,138 +352,15 @@ which sign of flow a reconstruction calls forward is its own choice.
 
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
 
-## Writing example notebooks
-
-**Examples are tutorials and runnable demonstrations, not pull-request records, design reviews or
-development postmortems.** A reader arrives knowing some MRI and no project history, wanting to
-build something. Write for them.
-
-The shape that works:
-
-```text
-concept  ->  physics  ->  SeqCraft API  ->  composition  ->  measurement
-         ->  interpretation  ->  limitations  ->  references
-```
-
-**Sequence first, subtlety second.** An opening should normally establish, in this order: what
-sequence or acquisition family this is; its basic physical structure — RF, gradients, encoding,
-readout; what it is used to measure; and only then the particular question this notebook explores.
-A reader who has seen only the **title and the first two paragraphs** should be able to answer the
-first three. Keep the interesting sentence — put it where it lands on a reader who now knows what
-it refers to, as a section heading or a conclusion.
-
-**Do not assume the reader has completed a preceding example.** Cross-links may deepen context,
-but an ordinary build or simulation notebook should establish its sequence or acquisition family,
-its physical purpose and its main components **on its own**. A cross-link extends an explanation;
-it does not supply the missing introduction.
-
-Both rules are about ordinary **build** and **simulation/reconstruction** notebooks.
-Special-purpose documents — API guides, preserved reference implementations, migration guides,
-explicit validation notebooks — may lead with their document purpose instead, and should say what
-that purpose is in the first paragraph. [`fse_2d/03_module_api.ipynb`](fse_2d/03_module_api.ipynb)
-is the example: it opens by relating itself to the reference notebook beside it, which is exactly
-what it is for.
-
-| | |
-|---|---|
-| **start from the MRI concept and the user's goal** | title the notebook after the sequence or the problem, not after a conclusion about it. `# Off-resonance in spiral imaging`, not `# A spiral pays for its long readout in off-resonance` |
-| **define domain terms before using them** | if b-value, VENC or turbo factor is the organising idea, say what it is first |
-| **explain formulas directly** | write the equation and define every symbol; a citation supports the explanation, it is not the explanation |
-| **keep the depth** | measurements, closed forms, tolerances and honest negative results are the value. Only the framing changes |
-| **state limitations plainly** | what the example demonstrates, and what it does not |
-| **end with `Summary` and `References`** | not "What this notebook established" |
-
-Do **not** organise a notebook around:
-
-```text
-abstraction-selection history      why this is a kernel and not a leaf
-rejected alternatives              what a different design would have cost
-previous implementation bugs       what an earlier version of this module got wrong
-reference-repository shortcomings  what some other project leaves out
-licence and evidence arguments     which corpus witnessed what
-solver / compiler avoidance        that no new layer was needed
-```
-
-All of that is real and worth recording — in `CHANGELOG.md`, in the pull request, or in
-`tools/module_mining/plans/<candidate>/`. Page-level source provenance belongs in
-`tools/module_mining/domain_evidence/`.
-
-**Explain the MRI result, not why the check is trustworthy.** Measurements and controls belong in
-the notebook; acceptance-criterion arguments, validator independence, why a module exists, what a
-test would catch, and what evidence was sufficient to ship belong in the candidate/findings/PR. A
-simulator or tool limitation belongs in the notebook only when the reader needs it to interpret or
-reproduce the result.
-
-> **The reader test.** If a sentence would not help a reader who knows MRI but knows nothing about
-> SeqCraft's development history, move it out of the tutorial.
-
-That is a test of the sentence, not a banned-word list — but these phrasings are reliable enough
-signals to be worth stopping on when they appear:
-
-```text
-the claim / the contract              a physical statement, written as a promise the code makes
-this module exists to                 motivation for the abstraction rather than for the physics
-the witness / the corpus              evidence provenance
-this establishes / proves             acceptance-criterion language
-why this is a leaf / a kernel         layering rationale
-the analyser was checked too          validator independence
-measured rather than restated         an argument about the measurement instead of its result
-```
-
-Each can be rewritten into the physics it is standing in front of. "This is the claim the module
-exists to make good on" is usually one sentence away from "the two toggles differ in first moment
-by `delta_m1`"; the second is what the reader needed.
-
-Avoid raising an imagined objection in order to answer it — "why this is not a defect", "the
-check this notebook exists for", "three pieces, none of them new". State what the sequence does
-and what the reader is about to build. The exception is a genuine **MRI** misconception, which is
-worth confronting directly: `se_epi_2d/02` exists because most readers expect a spin echo to fix
-EPI distortion, and it does not.
-
-**Deliberately wrong cases earn their place when they teach physics or protocol design** — a
-mismatched echo time that contaminates an ADC, a readout aligned to the wrong instant. Replaying a
-historical *software* bug because it was instructive during development does not.
-
-> `dwi_se_epi_2d/` was the pilot for these rules and the rest of this directory has since been
-> brought across. New examples are expected to follow them from the start.
-
 ## Requirements
 
 Building needs only `seqcraft`. Simulating and reconstructing need `MRzeroCore`, `torch` and
 `sigpy` — `pip install "seqcraft[sim,recon]"`.
 
-### What a simulation notebook is allowed to cost
-
-MRzero's inner loop is dense complex linear algebra and it takes every core it is offered — sixteen
-threads by default on a 32-core machine. A draft of [`fse_2d/02`](fse_2d/02_simulate_and_reconstruct.ipynb)
-ran several 16-echo, 9-shot acquisitions in a single cell, minutes of saturated CPU with no output
-until it finished, and took a workstation down.
-
-So the spin-echo and EPI `02` notebooks each set `SIM_THREADS` **before importing torch**, print
-their budget in the first cell, and keep anything expensive behind a named switch that is off by
-default. `se_2d/02` is 38 s. `fse_2d/02` is 15 s of measurement plus 4 minutes of images, and the
-images are the part behind the switch — every *number* in it is measured on a single spin, because a
-ghost is a modulation of `ky` and a point object's k-space is that modulation.
-
-`megre_2d/02` is three acquisitions and 24 SENSE reconstructions, and it has no switch because it
-does not need one: it **picks up a GPU when there is one**, and the MRzero simulation — which is
-essentially all of its cost — is a torch computation that moves there wholesale. Both `DEVICE` and
-sigpy's `RECON_DEVICE` are chosen by *probing* rather than by asking, because
-`torch.cuda.is_available()` reports the driver and comes back true on a machine whose devices are
-all hidden, and because cupy needs a toolkit to compile against where torch needs only a driver to
-talk to — so the two can disagree, and a machine can simulate on its GPU with no working cupy at
-all. Either way the notebook is the same notebook, and every step prints what it cost.
-
-The two EPI `02`s take the same bargain at a different scale: about a minute of one-voxel
-measurement each, then `BRAIN_IMAGES` for the slab. `gre_epi_2d/02`'s switch also covers §7, which
-is the one section that **cannot** be measured on a single spin — parallel imaging is a statement
-about receive sensitivity, so it needs coils and an object or it needs nothing.
-
-If you add a simulation to an example, price it first: the cost is voxels × repetitions × states, and
-a 16-echo train has all three. Two of the three are not negotiable — the repetitions are the
-sequence, and dropping `max_state_count` from 200 to 32 is 5 % wrong because a CPMG train's
-stimulated pathways *are* the physics. The slab thickness was the one that turned out to be free, and
-only because it was measured rather than assumed.
+Build notebooks run in seconds. Simulation notebooks vary from about 15 s to a few minutes; the
+expensive parts sit behind a named switch that is off by default, and each one prints its budget
+in the first cell. Writing a new one: see
+[*What a simulation notebook is allowed to cost*](../docs/writing_examples.md).
 
 ## `phantom.py`
 
@@ -546,3 +417,7 @@ plain functions. Two of the three have since been written as modules, in
 `mr0_bridge.py` went with them: every `02` uses `mr0.Sequence.import_file` on the written `.seq`,
 which is a stronger check than converting the tree, because it tests the file a scanner would
 actually play.
+
+## Contributing
+
+Writing or editing an example? See [`docs/writing_examples.md`](../docs/writing_examples.md).

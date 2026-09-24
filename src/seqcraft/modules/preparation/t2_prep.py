@@ -37,8 +37,8 @@ selection                       none.  The family is non-selective
 spoiler                         after the tip-up, entirely outside ``prep_time_s``
 ==============================  ===============================================================
 
-Composite refocusing pulses and a phase-cycled train are used to keep the errors of one pulse from
-accumulating down the train rather than cancelling.  **No quantitative** :math:`B_0` **or**
+Composite refocusing pulses and phase cycling are used so that pulse imperfections tend to cancel
+across the train rather than accumulate.  **No quantitative** :math:`B_0` **or**
 :math:`B_1` **robustness is claimed for either** ``tip_up`` **value**;
 ``examples/t2prep_gre_2d/02`` compares them under :math:`B_1` and :math:`B_0` offsets and finds no
 consistent advantage for the composite form, which costs about 2.6 ms more in RF.

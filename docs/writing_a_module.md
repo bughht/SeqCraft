@@ -22,8 +22,13 @@ def spoiler(opts, *, twists=4, voxel_mm=5.0, axis='z'):
 So is a class of whatever shape the physics wants. Nothing here inherits anything, and the compiler
 cannot tell:
 
+> `ToyBipolar` below is a teaching sketch, deliberately not the shipped
+> [`sc.modules.VelocityEncode`](api_reference.md), which solves its geometry against the hardware
+> limits and takes a required `polarity`. The point here is the *shape* of a component, not this
+> physics.
+
 ```python
-class VelocityEncode:
+class ToyBipolar:
     """A bipolar pair straddling a refocusing pulse — two outputs, named for what they are."""
 
     def __init__(self, opts, *, venc_cm_s, axis='y'):
@@ -38,7 +43,7 @@ class VelocityEncode:
 ```
 
 ```python
-venc = VelocityEncode(opts, venc_cm_s=50)
+venc = ToyBipolar(opts, venc_cm_s=50)
 first = venc.pre()
 seq.add(t0, first)
 seq.add(t0 + first.duration + refoc_duration, venc.post())
@@ -83,7 +88,7 @@ import pypulseq as pp
 import seqcraft as sc
 
 
-class VelocityEncode(sc.Module):
+class ToyBipolar(sc.Module):
     """A bipolar gradient pair that encodes velocity along one axis."""
 
     def __init__(self, *, opts, venc_cm_s, axis='y', tag=None):
@@ -108,7 +113,7 @@ reports. Wrapping it in `sc.events.derive` strips pypulseq's registration state 
 the stored design can be scaled again after a compile has registered one of its outputs.
 
 ```python
-venc = VelocityEncode(opts=opts, venc_cm_s=50)
+venc = ToyBipolar(opts=opts, venc_cm_s=50)
 seq.add(t0, venc(sign=-1.0))
 ```
 
@@ -346,7 +351,7 @@ plans / CHANGELOG / PR     why this abstraction, what was rejected, which eviden
                            what a test would catch, what changed and when
 ```
 
-The same reader test as [`examples/README.md`](../examples/README.md): if a sentence would not
+The same reader test as [`writing_examples.md`](writing_examples.md): if a sentence would not
 help someone who knows MRI but knows nothing about this project's development history, it belongs
 somewhere else.
 
@@ -415,7 +420,7 @@ Add the **known values** yourself, because those are the ones that catch physics
 
 ```python
 def test_venc_encodes_the_right_velocity(opts):
-    venc = VelocityEncode(opts=opts, venc_cm_s=50)
+    venc = ToyBipolar(opts=opts, venc_cm_s=50)
     raster = opts.grad_raster_time
     m1 = 0.0
     for node in venc():
