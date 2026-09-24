@@ -1,5 +1,5 @@
 r"""
-:class:`VelocityEncode` -- a bipolar pair that encodes velocity and leaves stationary spins alone.
+:class:`VelocityEncode` -- a bipolar pair that encodes velocity along one axis.
 
 What it is
 ----------
@@ -18,11 +18,11 @@ two lobes do not cancel and it comes out with a phase proportional to its veloci
 
 The module emits **one** of two toggles per call.  Subtracting the phase of an acquisition made
 with ``polarity=+1`` from one made with ``polarity=-1`` cancels everything that is not velocity --
-coil phase, off-resonance, susceptibility -- and leaves a map of it.  That subtraction is the
-caller's, and so is which toggle is played when.
+coil phase, off-resonance, susceptibility -- and leaves a map of it.  Which toggle is played when,
+and the phase-difference reconstruction, are the caller's.
 
-The public quantity, and the factor of two
-------------------------------------------
+``venc_m_s``, and the factor of two
+-----------------------------------
 ``venc_m_s`` is the velocity that accumulates exactly :math:`\pi` of phase **difference between
 the toggles**.  The quantity that produces it is the *change* in first moment:
 
@@ -30,53 +30,46 @@ the toggles**.  The quantity that produces it is the *change* in first moment:
 
     \Delta m_1 = \frac{1}{2\,\mathrm{venc}}
 
-Each toggle carries half of that, :math:`\pm \Delta m_1 / 2`, so **a caller who sets one toggle's
-first moment to** :math:`\Delta m_1` **is wrong by a factor of two** -- which is the single easiest
-mistake to make here, and it produces a perfectly plausible velocity map at half the stated VENC.
-The module takes ``venc_m_s`` and never asks for a moment, so that the mistake has nowhere to
-happen.
+Each toggle carries half of that, :math:`\pm \Delta m_1 / 2`.  Setting one toggle's first moment
+to :math:`\Delta m_1` rather than to half of it doubles the sensitivity, which reads as a velocity
+map at half the stated VENC.  The module takes ``venc_m_s`` and never a moment.
 
 No :math:`\gamma` appears in that relation, because SeqCraft's gradients are in Hz/m rather than
-T/m.  The phase a moving spin accumulates is :math:`\phi = 2\pi\,(m_0 x_0 + m_1 v)`, so with
-:math:`m_0 = 0` a first moment of :math:`\Delta m_1 = 1/(2\,\mathrm{venc})` s/m gives
-:math:`\Delta\phi = \pi` at :math:`v = \mathrm{venc}` for **any** nucleus.  The Handbook writes the
-same number as :math:`\pi / (\gamma\,\mathrm{VENC})` because its gradients are in T/m; the
-:math:`\gamma` is the unit conversion, not physics this module has to know.
+T/m.  A moving spin accumulates :math:`\phi = 2\pi\,(m_0 x_0 + m_1 v)`, so with :math:`m_0 = 0` a
+first moment of :math:`\Delta m_1 = 1/(2\,\mathrm{venc})` s/m gives :math:`\Delta\phi = \pi` at
+:math:`v = \mathrm{venc}` for **any** nucleus.  The Handbook writes the same number as
+:math:`\pi / (\gamma\,\mathrm{VENC})` because its gradients are in T/m.
 
-``polarity``, and what its sign means
--------------------------------------
-``polarity`` is **the sign of the emitted first moment**, not the sign of a velocity and not the
-sign of a reconstructed phase:
+``polarity``
+------------
+``polarity`` is the sign of the emitted first moment:
 
 .. code-block:: text
 
     polarity = +1    m1 = +delta_m1 / 2    the negative lobe is played first
     polarity = -1    m1 = -delta_m1 / 2    the positive lobe is played first
 
-Defining it on the emitted waveform is what makes it checkable: :func:`~seqcraft.moments` reads
-the sign back off the events, and nothing has to agree a convention with the reconstruction to do
-it.  Which sign of measured flow a reader calls *forward* is a reconstruction choice, and it is
-downstream of this module.
+The sign of a *reconstructed* velocity additionally depends on the phase-difference convention of
+the scanner or simulator the data came from, which is fixed downstream of this module.
 
-Why the first moment needs no time origin
------------------------------------------
-A first moment normally depends on where you start the clock.  This one does not: once
+The first moment needs no time origin
+-------------------------------------
+A first moment normally depends on where the clock starts.  This one does not: once
 :math:`m_0 = 0`, shifting the origin changes :math:`m_1` by :math:`m_0 \Delta t = 0`.  So the pair
-can be placed anywhere in a repetition and still deliver the same :math:`\Delta m_1`, and the
-module never has to be told where the echo is.  That is the property that makes this a leaf rather
-than something that needs to negotiate with its neighbours.
+delivers the same :math:`\Delta m_1` wherever in a repetition it is placed, and needs no echo time
+to be declared to it.
 
 How the pair is designed
 ------------------------
-In closed form rather than by search, and then rounded onto the raster.  Each lobe is a trapezoid
-of area `A` with rise time `r` and flat time `f`, and the two are played back to back, so their
-centres are :math:`\Delta T = 2r + f` apart and
+Each lobe is a trapezoid of area `A` with rise time `r` and flat time `f`, and the two are played
+back to back, so their centres are :math:`\Delta T = 2r + f` apart and
 
 .. math::
 
     |m_1| = A \, \Delta T = \frac{\Delta m_1}{2}
 
-Two regimes, and which one applies is decided rather than searched:
+The **continuous** hardware-limited problem has two regimes, and which one applies is decided
+rather than searched:
 
 ============================  =================================================================
 triangular, ``f = 0``         when the target fits below the gradient maximum.  The amplitude is
@@ -85,29 +78,18 @@ trapezoidal, ``g = max_grad`` otherwise.  `f` is the positive root of
                               :math:`f^2 + 3 r f + 2 r^2 - A\Delta T / g = 0`
 ============================  =================================================================
 
-Those two expressions solve the **continuous** hardware-limited problem.  Both times are then
-rounded **up** onto the gradient raster and the amplitude is solved again against the realised
-times, which keeps :math:`\Delta m_1` exact and keeps the gradient and slew inside their limits --
-rounding up can only lower the amplitude the target needs.
-:attr:`VelocityEncode.amplitude_hz_per_m` reports what that came to.
+Both times are then rounded up onto the gradient raster and the amplitude is solved again against
+the realised times, which keeps :math:`\Delta m_1` exact and keeps the gradient and slew inside
+their limits.  Rasterisation preserves the requested moment and the hardware limits; it is not a
+global minimum-duration search on the discrete lattice, and no ``min_duration_s`` is published.
+:attr:`VelocityEncode.amplitude_hz_per_m` reports the amplitude that came out.
 
-**What that does not claim.**  The rounded pair is legal and hits the target exactly; it is *not*
-guaranteed to be the shortest legal pair on the discrete raster lattice.  Rounding the continuous
-optimum up is not the same as searching the lattice, and on the nominal 40 mT/m / 150 T/m/s system
-at ``venc_m_s = 1.0`` this design is 1.100 ms where a lattice search finds a legal 1.080 ms.  No
-such search is done here, and no minimum-duration or minimum-TE claim is made -- the module does
-not even publish a ``min_duration_s``.  Echo-time minimisation is the business of the merged
-designs, which are out of scope below.
-
-Ramping down through zero and back up at the seam costs exactly as much as ramping straight from
-:math:`+g` to :math:`-g` would -- two rise times either way -- so the two-lobe form is not paying
-for its simplicity.
-
-Out of scope, each a different claim rather than a parameter of this one: the **merged** designs,
-where the encoding lobe and an already-compensated imaging lobe are combined into one waveform,
-which reshapes gradients this module does not own; acceleration and higher-order encoding;
-concomitant-field phase, which the simple bipolar cancels automatically and which is still not
-claimed because it was not measured; and any statement about achievable minimum TE.
+Scope
+-----
+This is the **appended** bipolar form.  Not covered: the merged designs, in which the encoding
+lobe and an already-compensated imaging lobe are combined into one shorter waveform; acceleration
+and higher-order encoding; and concomitant-field phase, which the simple bipolar cancels
+automatically and which is not quantified here.  No minimum-TE property is claimed.
 
 References
 ----------
@@ -194,7 +176,7 @@ class VelocityEncode(Module):
     >>> round(sc.moments(ve(polarity=-1), 1)['z'], 6)
     -0.166667
 
-    Stationary spins see nothing, which is the other half of the contract:
+    Stationary spins see no net area:
 
     >>> {round(sc.moments(ve(polarity=p), 0)['z'], 12) for p in (1, -1)}
     {0.0}
@@ -231,8 +213,7 @@ class VelocityEncode(Module):
         The first moment one toggle carries, in s/m -- ``polarity * delta_m1_s_per_m / 2``.
 
         No time origin is named because none is needed: the pair's zeroth moment is zero, so
-        shifting the origin changes the first moment by ``m0 * dt == 0``.  That is why this is a
-        number the module can state rather than a question about where it was placed.
+        shifting the origin changes the first moment by ``m0 * dt == 0``.
         """
         return self._check_polarity(polarity) * self._target
 
@@ -248,16 +229,8 @@ class VelocityEncode(Module):
         Parameters
         ----------
         polarity
-            ``+1`` or ``-1``, **the sign of the emitted first moment**.  ``+1`` plays the negative
-            lobe first, because a negative lobe followed by a positive one is what puts a moving
-            spin ahead rather than behind.
-
-            There is deliberately **no default**.  One instance owns ``venc_m_s``, the waveform
-            design and the pair invariant; which toggle a given acquisition plays is the caller's,
-            and a phase-contrast pair is only a pair because someone chose both.  A default would
-            let ``ve()`` emit a toggle nobody selected, which is how a velocity map ends up
-            reconstructed from two copies of the same encoding.  Required for the same reason
-            :meth:`~seqcraft.modules.PhaseEncode.build` requires ``line``.
+            **Required.**  ``+1`` or ``-1``, the sign of the emitted first moment.  ``+1`` plays
+            the negative lobe first.
         """
         sign = self._check_polarity(polarity)
         out = LogicBlock()
@@ -289,9 +262,8 @@ class VelocityEncode(Module):
         when ``f == 0`` and a quadratic in `f` when `g` is pinned at the maximum.  The triangular
         form is enough exactly when a full-amplitude triangle already overshoots the target.
 
-        Rounding that solution up onto the raster keeps it legal and lets the amplitude re-solve
-        exactly, but it does **not** search the lattice, so the result is not the shortest legal
-        pair the raster admits.  See the module docstring.
+        Rounding up onto the raster keeps the pair legal and lets the amplitude re-solve exactly;
+        it is not a minimum-duration search over the lattice.
         """
         g_max, s_max = float(self.opts.max_grad), float(self.opts.max_slew)
         if self._target <= 2.0 * g_max ** 3 / s_max ** 2:
@@ -306,10 +278,8 @@ class VelocityEncode(Module):
         """
         Solve the amplitude against the **realised** times, so that ``delta_m1`` is exact.
 
-        Rounding the times up and then re-solving is what makes this a design rather than an
-        approximation: the target is met to floating point, and because both times grew, the
-        amplitude this returns is below the one they were solved from -- so a rounding can never
-        push the gradient over the limit.
+        Both times grew when they were rounded, so the amplitude this returns is below the one
+        they were solved from, and the target is met to floating point.
         """
         return float(self._target / ((flat_s + rise_s) * (2.0 * rise_s + flat_s)))
 

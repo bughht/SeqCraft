@@ -339,9 +339,23 @@ its own claim** -- not an invariant of a family that does not make that claim; a
 implementation detail and is not promoted. `plans/process/fine_scan_playbook.md` §20 has the
 decision and the worked case.
 
-Layer 2 and Layer 3 notebooks are **user-facing examples**, so they follow the repository rule in
-`examples/README.md` -> *Writing example notebooks*. The scan record is where the evidence
-argument goes; the notebook is a tutorial.
+**When validation is complete, do a prose-only tutorial/API pass before declaring the
+implementation ready for review.** Validation prose is written while the argument is fresh, and it
+leaks into the two places a user reads. Separating it is an editorial step, not a rewrite: the
+code cells, measurements and negative results stay exactly as they are.
+
+```text
+candidate / findings   keeps the argument
+notebook               keeps the lesson
+docstring              keeps the API
+```
+
+The rules themselves live in the repository, not here:
+
+```text
+Layer 2 / Layer 3 notebooks     examples/README.md -> Writing example notebooks
+new public Module docstrings    docs/writing_a_module.md -> Public API prose
+```
 
 **The ladder describes software-validation depth and nothing else.** It does not describe
 reference comparison, emitted-sequence inspection, human expert review or scanner work, and those

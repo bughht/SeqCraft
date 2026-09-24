@@ -414,6 +414,32 @@ All of that is real and worth recording — in `CHANGELOG.md`, in the pull reque
 `tools/module_mining/plans/<candidate>/`. Page-level source provenance belongs in
 `tools/module_mining/domain_evidence/`.
 
+**Explain the MRI result, not why the check is trustworthy.** Measurements and controls belong in
+the notebook; acceptance-criterion arguments, validator independence, why a module exists, what a
+test would catch, and what evidence was sufficient to ship belong in the candidate/findings/PR. A
+simulator or tool limitation belongs in the notebook only when the reader needs it to interpret or
+reproduce the result.
+
+> **The reader test.** If a sentence would not help a reader who knows MRI but knows nothing about
+> SeqCraft's development history, move it out of the tutorial.
+
+That is a test of the sentence, not a banned-word list — but these phrasings are reliable enough
+signals to be worth stopping on when they appear:
+
+```text
+the claim / the contract              a physical statement, written as a promise the code makes
+this module exists to                 motivation for the abstraction rather than for the physics
+the witness / the corpus              evidence provenance
+this establishes / proves             acceptance-criterion language
+why this is a leaf / a kernel         layering rationale
+the analyser was checked too          validator independence
+measured rather than restated         an argument about the measurement instead of its result
+```
+
+Each can be rewritten into the physics it is standing in front of. "This is the claim the module
+exists to make good on" is usually one sentence away from "the two toggles differ in first moment
+by `delta_m1`"; the second is what the reader needed.
+
 Avoid raising an imagined objection in order to answer it — "why this is not a defect", "the
 check this notebook exists for", "three pieces, none of them new". State what the sequence does
 and what the reader is about to build. The exception is a genuine **MRI** misconception, which is

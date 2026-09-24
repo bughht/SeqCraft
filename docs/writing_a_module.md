@@ -330,6 +330,48 @@ three parameters to change. That difference is most of what a module is for.
 
 ---
 
+## Public API prose
+
+Public docstrings describe **current behaviour and physical/API semantics**, not the history of
+why the API has this shape. Explain parameters, units, sign and reference conventions, the
+structure the module emits, its constraints, and the limitations a user will meet. Keep
+abstraction selection, witness provenance, rejected alternatives, validation arguments and bug
+history in `tools/module_mining/plans/`, `CHANGELOG.md` and the pull request.
+
+```text
+module / class docstring   what it is, what it emits, what the parameters mean,
+                           units and conventions, constraints, scope
+
+plans / CHANGELOG / PR     why this abstraction, what was rejected, which evidence,
+                           what a test would catch, what changed and when
+```
+
+The same reader test as [`examples/README.md`](../examples/README.md): if a sentence would not
+help someone who knows MRI but knows nothing about this project's development history, it belongs
+somewhere else.
+
+A worked contrast, both describing the same parameter:
+
+```text
+no    A realisation variant, not part of what the family is -- offered because it is
+      established rather than because we measure it to be better, and named rather than
+      made a boolean because the choice moves prep_time_s's second endpoint.
+
+yes   270 about +x then 360 about -x, also a net -90.  About 2.6 ms more RF, and
+      prep_time_s then ends at the centre of the 270.
+```
+
+Two specific habits to avoid, because both read as documentation and are not:
+
+**Defending the signature.** `polarity` needs "required; +1 or -1, the sign of the emitted first
+moment". It does not need a paragraph on why there is no default.
+
+**Quoting validation as justification.** A measured limitation is worth stating — "no quantitative
+B1 robustness is claimed for either value" is useful. The sweep that established it, and what that
+was sufficient to conclude, are not docstring material; point at the example instead.
+
+---
+
 ## What to assert in your tests
 
 **Compile it on its own.** That is one line, and it is most of the suite seqcraft used to ship:
