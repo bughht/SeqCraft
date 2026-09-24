@@ -18,6 +18,7 @@
 | [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | Diffusion-weighted imaging: a Stejskal–Tanner gradient pair around a 180°, a single-shot EPI readout, and an ADC map recovered from a phantom whose diffusion coefficient is known. Introduces `DiffusionSEPrep` and `sc.b_value`. |
 | [`t2prep_gre_2d/`](t2prep_gre_2d/) | A T2 preparation in front of a spoiled gradient echo: adding controlled T2 weighting before a readout that would otherwise follow T2\*, and the measurement that the weighting really is T2 rather than T2\*. Introduces `T2Prep`. |
 | [`pc_gre_2d/`](pc_gre_2d/) | Phase contrast: a bipolar pair that leaves still spins alone and gives moving ones a phase proportional to their velocity, and the two acquisitions whose difference is a velocity map. Introduces `VelocityEncode`. |
+| [`flowcomp_gre_2d/`](flowcomp_gre_2d/) | Gradient moment nulling on the readout axis: why a readout's first moment at the echo gives moving spins a phase, and the reshaped prephaser that removes it. Introduces `CartesianLine(null_moment_order=1)`. |
 
 ## `gre_2d/`
 
@@ -350,6 +351,30 @@ as the sign of the emitted first moment, which is something `sc.moments` can rea
 which sign of flow a reconstruction calls forward is its own choice.
 
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
+
+## `flowcomp_gre_2d/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](flowcomp_gre_2d/01_build.ipynb) | The moments of an ordinary Cartesian readout at the echo, the reshaped two-lobe prephaser that nulls the first one as well as the zeroth, both measured on the emitted waveform across three protocols, the gradient and slew cost, and the echo time it adds. Then a complete gradient echo with each. Two `.seq` files. **Needs nothing but `seqcraft`.** |
+
+A gradient echo cancels its readout area at the echo, so `m0 = 0` and a stationary spin picks up
+no phase from that axis. `m1` is not zero, and a spin moving along the readout direction arrives
+with `2*pi*m1*v`:
+
+```text
+ordinary        [ winder ] [ readout ->  echo         m0 = 0, m1 != 0
+compensated  [ w1 ][ w2 ] [ readout ->  echo          m0 = 0, m1 = 0
+```
+
+Gradient moment nulling is a **reshaping of the waveform that already exists**, so it is an option
+on the readout — `CartesianLine(null_moment_order=1)` — rather than a block to insert. The two
+winder areas are solved in closed form against the readout's own measured moments, and what it
+costs is a longer winder and therefore a later echo.
+
+Readout axis only, and the first echo of a train only.
+
+`01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
 
 ## Requirements
 

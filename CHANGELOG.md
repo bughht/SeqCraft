@@ -1,5 +1,69 @@
 # Changelog
 
+## Unreleased — the readout nulls its own first moment
+
+`CartesianLine(null_moment_order=1)`: gradient moment nulling on the readout axis. The zeroth
+moment at the echo is what a prephaser already cancels, so a stationary spin picks up no phase
+from that axis; the **first** moment is not zero, and a spin moving along the readout arrives with
+`2 pi m1 v`. The option reshapes the prephaser into two lobes of opposite sign so that both
+moments are zero at the echo.
+
+**Not a new module.** The fine scan recorded flow compensation as `EXTEND_EXISTING`, because
+gradient moment nulling is a modification of a waveform that already belongs to someone — and
+here that is `CartesianLine`, which owns both the winder and the readout lobe and can integrate
+their moments. No `FlowComp` class, no moment-requirement interface, no solver, no compiler or
+`LogicBlock` change, and nothing outside the readout is read or rewritten.
+
+The solve is closed form. Taking the echo as the origin, the readout's own contribution up to it
+is a property of the lobe alone, computed once from its knots. Two winders of equal duration `D`
+played back to back have centroids at known offsets, and a symmetric trapezoid's first moment
+about an external origin is its area times its centroid exactly, so both conditions are **linear**
+in the two areas:
+
+```text
+A1 + A2                            = -m0_ro
+A1 (t_rs - 3D/2) + A2 (t_rs - D/2) = -m1_ro
+```
+
+`D` is found by bisection on the gradient raster, and the monotonicity that licenses bisection is
+derived rather than assumed: before the first echo the readout has one sign, so
+`C = m0_ro e - M` is the integral of `g(t) t` over an interval where both factors are
+non-negative, which makes `A1 = C/D + |S|/2 > 0` and `A2 = -(3|S|/2 + C/D) < 0` with both
+magnitudes falling as `D` grows, against a trapezoid capacity that rises. The predicate is the
+lobes pypulseq actually builds.
+
+**The duration claim is scoped.** This construction gives the two winders the *same* duration and
+the search returns the shortest such pair on the raster. Whether unequal durations could be
+shorter is not established, no two-duration search was added, and no minimum-TE property is
+claimed anywhere.
+
+`prephaser_area_per_m` keeps its identity with `-area_to_echo_per_m` and is documented as the
+**total** across the lobes. `prephaser_lobes` is new and exposes the events themselves, which is
+what the record says a leaf should offer a composing module instead of a cached moment; it also
+replaced two reaches into a private attribute, one of them from a notebook.
+
+Validated in two layers. **Layer 1**, 45 tests, every moment integrated from the emitted events'
+own knots, truncated at the echo and summed across every event on the axis — which is the part no
+per-event check reaches, since the two winders and the readout's ramp-up only cancel together.
+`m1` comes out at the arithmetic floor where an ordinary readout carries 0.03 to 0.37 s/m, over
+full-echo, partial-Fourier, monopolar-train and bipolar-train geometries. Tolerances are
+dimensioned per moment order. Seven of nine deliberate mutations fail the suite; the two survivors
+are the gradient and slew checks inside the feasibility predicate, which are unreachable one
+raster below the minimum because pypulseq refuses to build the lobe at all. **Layer 2**,
+`examples/flowcomp_gre_2d/01_build.ipynb`, both readouts in a complete gradient echo: 0.680 ms
+added to the echo time at the reference protocol.
+
+**No Layer 3.** Given `m0 = 0`, the removal of the constant-velocity phase term follows from
+`m1 = 0` by `phi = 2 pi (m0 x0 + m1 v)`, and a moving-spin simulation already exercised that
+relation for `VelocityEncode`. The claim a simulation would add is image-level artefact
+reduction, which the record explicitly does not make.
+
+Readout axis only, and the first echo of a train only — later echoes accumulate their own first
+moment from the lobes between them, and a test measures that rather than leaving it to the prose.
+Still deferred: acceleration and higher orders, which need a fourth lobe; the slice-selection
+case, which needs the excitation's moment from the RF isodelay point and is kernel work; and the
+merged minimum-TE designs.
+
 ## Unreleased — velocity, written into the phase
 
 `VelocityEncode` (`encoding/`): a bipolar pair on one logical axis. Two lobes of equal area and
