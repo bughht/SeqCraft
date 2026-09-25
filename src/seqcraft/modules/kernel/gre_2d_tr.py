@@ -307,7 +307,7 @@ class GRE2DTR(Module):
         # `_joint`, and what comes back is a window length folded into this module's own -- the
         # same way three local minima are already folded together above.
         jointly = {a for a, owner in routed.items() if owner == 'joint'}
-        joint_claims, self.encoding_states = _augment.claims_and_states(
+        joint_claims, self._encoding_states = _augment.claims_and_states(
             _augment.flow_comp_for(flow_comp, jointly), velocity_encode)
         self._joint: dict[str, _joint.JointDesign] = {}
         if joint_claims:
@@ -436,7 +436,7 @@ class GRE2DTR(Module):
             loads the gradients exactly as a real repetition does.
         center_mm
             ``(x, y, z)`` centre of the imaging volume, millimetres.  ``y`` must be ``0.0``.
-                encoding_state
+        encoding_state
             Which encoding state this repetition realises, when `velocity_encode` gave it more
             than one.
 
@@ -504,7 +504,7 @@ class GRE2DTR(Module):
         two identical repetitions, which they find out about when the subtraction comes back
         zero.
         """
-        states = self.encoding_states
+        states = self._encoding_states
         if states == (_augment.ONE_STATE,):
             if encoding_state is not None:
                 _augment.refuse_state_mismatch(type(self).__name__, states, encoding_state)
@@ -651,12 +651,12 @@ class GRE2DTR(Module):
         for index in indices:
             resolved = {
                 order: _joint.resolve_claims(
-                    group, self.encoding_states, axis=axis, order=order,
+                    group, self._encoding_states, axis=axis, order=order,
                     base={key: (base_m0(index) if order == 0 else 0.0)
-                          for key in self.encoding_states})
+                          for key in self._encoding_states})
                 for order in _joint.ORDERS
             }
-            for key in self.encoding_states:
+            for key in self._encoding_states:
                 targets[(index, key)] = (
                     resolved[0][key], resolved[1][key] if 1 in claimed else None)
 

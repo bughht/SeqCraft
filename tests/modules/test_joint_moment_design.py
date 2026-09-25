@@ -707,7 +707,7 @@ def test_nothing_changes_when_no_augmentation_is_asked_for(
     assert abs(first_moment(kernel, shot, 'y')) > 1e-3
 
     # one state, and it is not spelled by the caller
-    assert kernel.encoding_states == ('only',)
+    assert kernel._encoding_states == ('only',)
     with pytest.raises(sc.errors.ConfigurationError, match='has no meaning here'):
         kernel(**build_kwargs, encoding_state=+1)
 

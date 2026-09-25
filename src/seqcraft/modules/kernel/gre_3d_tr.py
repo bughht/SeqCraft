@@ -300,7 +300,7 @@ class GRE3DTR(Module):
         # rather than either leaf.  A claimed first moment is a third, and it is handed to the
         # shared designer for the same reason: no one leaf can see all of them.
         jointly = {a for a, owner in routed.items() if owner == 'joint'}
-        self._joint_claims, self.encoding_states = _augment.claims_and_states(
+        self._joint_claims, self._encoding_states = _augment.claims_and_states(
             _augment.flow_comp_for(flow_comp, jointly), velocity_encode)
         self._joint: dict[str, _joint.JointDesign] = {}
         self.winder_s = ceil_raster(
@@ -461,7 +461,7 @@ class GRE3DTR(Module):
             ``False`` drops the ADC and the labels and changes nothing else.
         center_mm
             ``(x, y, z)`` centre of the imaging volume, millimetres.  ``y`` must be ``0.0``.
-                encoding_state
+        encoding_state
             Which encoding state this repetition realises, when `velocity_encode` gave it more
             than one.
 
@@ -525,7 +525,7 @@ class GRE3DTR(Module):
         and an ignored state hands the caller two identical repetitions that they find out about
         when the subtraction comes back zero.
         """
-        states = self.encoding_states
+        states = self._encoding_states
         if states == (_augment.ONE_STATE,):
             if encoding_state is not None:
                 _augment.refuse_state_mismatch(type(self).__name__, states, encoding_state)
@@ -658,11 +658,11 @@ class GRE3DTR(Module):
             area = float(encode.k_per_m(index)) if encode is not None else 0.0
             resolved = {
                 order: _joint.resolve_claims(
-                    group, self.encoding_states, axis=axis, order=order,
-                    base={key: (area if order == 0 else 0.0) for key in self.encoding_states})
+                    group, self._encoding_states, axis=axis, order=order,
+                    base={key: (area if order == 0 else 0.0) for key in self._encoding_states})
                 for order in _joint.ORDERS
             }
-            for key in self.encoding_states:
+            for key in self._encoding_states:
                 targets[(index, key)] = (
                     resolved[0][key], resolved[1][key] if 1 in claimed else None)
 

@@ -47,8 +47,9 @@ class FlowCompensation:
         alone, one acquired state    the common mode IS that state, so this reduces to m1 = 0.
                                      A spin moving at constant velocity along the axis arrives
                                      at the echo with the phase it would have had standing
-                                     still, so flow does not blur or misplace it -- which is
-                                     what "flow compensated" means
+                                     still -- which is what "flow compensated" means.  It is a
+                                     statement about that phase term, not a promise about how
+                                     much artefact a given acquisition will show
 
         with VelocityEncoding        this fixes the MEAN of the two states at zero while the
                                      velocity encoding fixes their separation, so the pair comes
