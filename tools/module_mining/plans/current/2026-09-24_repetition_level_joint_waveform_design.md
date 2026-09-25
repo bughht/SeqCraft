@@ -49,13 +49,16 @@ LogicBlock
 
 The important reusable abstraction is therefore **requirements-before-realization**, not a universal numerical optimizer.
 
-PR #39's `CartesianLine(null_moment_order=1)` remains useful as:
+PR #39's readout-axis solve remains useful as:
 
 - a correct local canonical realization;
 - a regression/reference case;
-- potentially one realization primitive used by the shared designer.
+- one realization primitive the repetition routes to.
 
-It should **not yet be treated as the final Stage C architecture**. In particular, the public placement of `null_moment_order` on `CartesianLine` should remain reviewable until the repetition-level design is tested.
+**Resolved 2026-09-25.** All three held. The selector is private — `_null_moment_order` — and a
+caller reaches the solve through `flow_comp=sc.FlowCompensation(axis='x')` at the repetition
+level, which decides that the readout owns that axis. The question below about its public
+placement is closed.
 
 ---
 
@@ -530,19 +533,16 @@ CartesianLine
 
 The implementation and Layer-1/Layer-2 evidence should be preserved.
 
-However, before merge, decide whether the public API:
-
-```python
-CartesianLine(..., null_moment_order=1)
-```
-
-is:
+**Decided 2026-09-25: internal.** The selector is `_null_moment_order` and the public way to ask
+is `flow_comp=sc.FlowCompensation(axis='x')` on the repetition, which routes to this solve. The
+alternatives that were weighed:
 
 1. a useful standalone local option that should remain public;
 2. an internal realization primitive used by the repetition-level designer;
 3. or a temporary API that should be refactored before shipping.
 
-Do not merge PR #39 under the claim that the overall Stage C architecture is complete until this question is answered.
+**(2).** PR #39 merged with the solve and its tests intact and no public augmentation surface;
+the repetition-level API arrived separately, against that final substrate.
 
 The flow-compensation record may be GREEN for the **local readout-axis realization**, but the roadmap should continue to mark the repetition-augmentation architecture as unresolved until the shared design is demonstrated.
 

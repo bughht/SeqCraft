@@ -790,13 +790,15 @@ CartesianLine
 
 Its realization and tests should be preserved.
 
-Its public:
+**Decided 2026-09-25: the selector is private.** `_null_moment_order` is internal, and the public
+way to ask is at the repetition:
 
 ```python
-CartesianLine(null_moment_order=1)
+GRE2DTR(..., flow_comp=sc.FlowCompensation(axis='x'))
 ```
 
-surface remains provisional.
+which routes to this solve. A public per-leaf keyword would have been the first instance of a
+leaf-by-augmentation surface with no principled place to stop.
 
 The evidence increasingly suggests the solve is useful as an internal realization primitive, while the public per-leaf option may represent the N×M API shape the joint architecture is intended to avoid.
 
@@ -1028,7 +1030,9 @@ Validate moments on the **complete emitted repetition**.
 
 ### Step H — decide PR #39 public surface
 
-Only after real-kernel integration decide whether `CartesianLine(null_moment_order=1)` remains a useful standalone public capability or becomes internal.
+**Done 2026-09-25: internal.** The solve stays, the selector became private, and the repetition-level
+intent is the public way to reach it. Re-exposing it later, if a standalone-readout need is ever
+demonstrated, is a one-line non-breaking change; retiring a released keyword would not have been.
 
 ### Step I — finish Stage C before bSSFPTR
 

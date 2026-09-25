@@ -329,12 +329,15 @@ infrastructure for the next stage, without becoming the definition of the module
 
 # Stage C — implement flow compensation without assuming a `FlowComp` class
 
-> **Partly superseded, 2026-09-24.** The readout-axis case below is implemented
-> (`CartesianLine(null_moment_order=1)`, PR #39). The rest of this stage is being revisited by
-> [`2026-09-24_repetition_level_joint_waveform_design.md`](2026-09-24_repetition_level_joint_waveform_design.md),
-> because a second real consumer arrived: a per-leaf option repeated for every augmentation and
-> every sequence family is the `N x M` shape that design exists to avoid. **Stage C is not
-> complete**, and bSSFPTR waits on the same boundary.
+> **Superseded, 2026-09-25.** The readout-axis solve below shipped in PR #39, and the per-leaf
+> option this stage assumed did **not**: a keyword repeated for every augmentation and every
+> sequence family is the `N x M` shape the design exists to avoid, so the selector is private and
+> the public surface is repetition-level intent —
+> `GRE2DTR(..., flow_comp=sc.FlowCompensation(axis='x'))`. See
+> [`2026-09-24_repetition_physical_design_architecture.md`](2026-09-24_repetition_physical_design_architecture.md)
+> for the architecture and
+> [`2026-09-25_public_augmentation_api_implementation_plan.md`](2026-09-25_public_augmentation_api_implementation_plan.md)
+> for what was built. Stage C is complete; bSSFPTR is still not started.
 
 ## Governing decision
 
