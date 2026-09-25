@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased — flow compensation and velocity encoding as physical intent
+
+Two new public names, `sc.FlowCompensation` and `sc.VelocityEncoding`, and one new keyword each on
+`GRE2DTR` and `GRE3DTR`:
+
+```python
+tr = sc.modules.GRE3DTR(
+    ..., flow_comp=sc.FlowCompensation(axis='y'),
+    velocity_encode=sc.VelocityEncoding(venc_m_s=1.5, axis='z'),
+)
+```
+
+They are **values, not modules**: no `opts`, nothing built, and constructing one commits to
+nothing. A caller says what physics they want; the repetition answers whether and how.
+
+**Which axes work is the repetition's answer.** `GRE2DTR` carries a first-moment requirement on
+`y`, its own phase-encode winder, and on `x`, where `CartesianLine` solves it locally with the
+analytic two-lobe prephaser. Its `z` gradient is the slice rephaser, which `Excitation` owns, so a
+claim there is refused before anything is designed — naming what that axis carries rather than
+saying "unsupported". `GRE3DTR` owns `y` and `z`, because its z winder already carries the
+partition encode. The same `FlowCompensation(axis='z')` value is honoured by one and refused by the
+other, which is why that check cannot live on the value.
+
+The two routes are invisible from outside. `flow_comp=sc.FlowCompensation(axis=('x', 'y'))` sends
+one axis to a leaf's closed-form solve and the other to the repetition designer, and the emitted
+repetition has both moments nulled.
+
+**Flow compensation is the common mode, not a per-state zero.** Alone, the common mode is the one
+acquired state and it reads as `m1 = 0`. Beside a velocity encoding it fixes the *mean* of the two
+states while the encoding fixes their difference, so the pair comes out at `±Δm1/2` — derived, not
+specified. Nothing computes that half; it falls out of two independent constraints on the same
+moment, which is what lets the two compose without a precedence rule.
+
+**Velocity encoding separates what a state means from when it is acquired.** The intent owns the
+VENC relation — read from `VelocityEncode.delta_m1_for`, still the single source — and the identity
+of the two states; the caller owns whether both are acquired and in what order; the repetition
+realises the one it is handed:
+
+```python
+for state in venc.states:
+    scan.add(at, tr(line=line, partition=partition, encoding_state=state))
+```
+
+A state is required exactly when velocity encoding is present, and refused when it is not. An
+ignored `encoding_state` would hand a caller two identical repetitions and show up as a
+subtraction that comes back zero, so both directions raise.
+
+`sc.modules.VelocityEncode` is unchanged and stays public: it is the standalone bipolar, and
+constructing one is not a prerequisite for the joint path.
+
+Internally: the claim vocabulary — `CommonModeClaim`, `DifferenceClaim`, `JointProblem`,
+`Schedule`, the realisation families — stays private, and public intent is translated to it in one
+place. The value-domain checks moved to `design/validation.py`, below `modules`, which is what
+keeps the intents from closing an `augmentation -> modules -> kernel -> augmentation` import cycle.
+
 ## Unreleased — the readout nulls its own first moment
 
 `CartesianLine` can now null the **first** gradient moment at the echo on its own axis, as well

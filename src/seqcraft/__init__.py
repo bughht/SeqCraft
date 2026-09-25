@@ -99,6 +99,7 @@ import importlib
 from . import _compat, modules
 from ._version import __version__
 from .analysis import b_value, kspace, moments, pns, sample
+from .augmentation import FlowCompensation, VelocityEncoding
 from .compiler import compile_sequence as compile  # noqa: A001, A004
 from .compiler.errors import CompileError, DefinitionConflict, HardwareLimitError
 from .compiler.verification import CompilerContractError
@@ -159,6 +160,7 @@ __all__ = [
     'CompilerContractError',
     'ConfigurationError',
     'DefinitionConflict',
+    'FlowCompensation',
     'HardwareLimitError',
     'Item',
     'LogicBlock',
@@ -170,6 +172,7 @@ __all__ = [
     'SeqCraftError',
     'SeqCraftWarning',
     'UnknownFieldError',
+    'VelocityEncoding',
     '__version__',
     'analysis',
     'barrier',

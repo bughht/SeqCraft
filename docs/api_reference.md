@@ -1068,6 +1068,62 @@ parts.
 what a class **composes**: it owns an excitation and a refocusing pulse as well as its own
 gradients.
 
+## Augmentations — physical intent a repetition carries out
+
+`sc.FlowCompensation` and `sc.VelocityEncoding` are **not** modules and are not in `sc.modules`.
+They take no `opts`, build nothing, and constructing one commits to nothing: they are values that
+say what physics is wanted, handed to a repetition that decides whether and how it can be done.
+
+```python
+tr = sc.modules.GRE3DTR(
+    opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(128, 128, 16),
+    flow_comp=sc.FlowCompensation(axis='y'),
+    velocity_encode=sc.VelocityEncoding(venc_m_s=1.5, axis='z'),
+)
+```
+
+| | |
+|---|---|
+| `FlowCompensation(axis=...)` | the **common-mode** first moment is zero at the echo on that axis. `axis` may name several — `('y', 'z')` — which is two independent requirements, spelled as `spoil_axis` already is |
+| `VelocityEncoding(venc_m_s=..., axis=...)` | the first moment **differs** between two acquired states by `1 / (2 venc)`. `.states` is `(+1, -1)`, and `.delta_m1_s_per_m` reads the relation from `VelocityEncode.delta_m1_for`, so the two paths cannot disagree |
+
+Three things follow, and each is a refusal rather than a surprise:
+
+**Which axes work is the repetition's answer, not the intent's.** `GRE2DTR` carries a moment
+requirement on `y` — its own phase-encode winder — and on `x`, where `CartesianLine` solves it
+locally; its `z` gradient is the slice rephaser, which `Excitation` owns, so a claim there is
+refused. `GRE3DTR` owns `y` and `z`, because its z winder already carries the partition encode.
+The same `FlowCompensation(axis='z')` value is therefore honoured by one and refused by the other,
+which is why the check cannot live on the value.
+
+**A state is required exactly when velocity encoding is present.** `tr(line=..., encoding_state=s)`
+for one of `venc.states`, and passing one where nothing generates a pair is refused too — an
+ignored state would hand you two identical repetitions and show up as a subtraction that comes
+back zero.
+
+**Flow compensation is the common mode, not a per-state zero.** Alone, the common mode is the one
+acquired state and it reads as `m1 = 0`. Beside a velocity encoding it fixes the *mean* of the two
+states while the encoding fixes their difference, so they come out at `±Δm1/2` — derived, not
+asked for, which is what lets the two compose without a precedence rule.
+
+```python
+venc = sc.VelocityEncoding(venc_m_s=1.5, axis='z')
+tr = sc.modules.GRE3DTR(opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(64, 64, 8),
+                        velocity_encode=venc)
+
+scan = sc.LogicBlock()
+at = 0.0
+for partition in range(8):
+    for line in range(64):
+        for state in venc.states:
+            scan.add(at, tr(line=line, partition=partition, encoding_state=state))
+            at += tr.tr_s
+```
+
+Ordering the states is the caller's: innermost minimises the time between the two acquisitions
+that get subtracted, outermost minimises the difference in their eddy-current history. This is a
+protocol decision and the library does not make it.
+
 Every module here was extracted from a working example rather than designed in the abstract.
 [`examples/gre_2d/01_build.ipynb`](../examples/gre_2d/01_build.ipynb) builds the same sequence
 three ways — raw pypulseq, the leaves composed inline, and the composition as a module — which is
@@ -1797,6 +1853,8 @@ at import.
 | `PYPULSEQ_VERSION` | `_compat` | constant |
 | `PhaseEncode` | `modules` | class |
 | `VelocityEncode` | `modules` | class |
+| `FlowCompensation` | `augmentation` | class |
+| `VelocityEncoding` | `augmentation` | class |
 | `RadialReadout` | `modules` | class |
 | `PlacedEvent` | `compiler.model` | class |
 | `PulseqReadyBlock` | `compiler.model` | class |

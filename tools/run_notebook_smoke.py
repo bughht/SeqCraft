@@ -33,6 +33,7 @@ _NOTEBOOKS = (
     Path('dwi_se_epi_2d/01_build.ipynb'),
     Path('t2prep_gre_2d/01_build.ipynb'),
     Path('pc_gre_2d/01_build.ipynb'),
+    Path('flowcomp_gre_2d/01_build.ipynb'),
 )
 
 

@@ -368,25 +368,24 @@ def probe_capability(grid: Grid) -> dict[str, Any]:
     for name, make, kwargs in (
         ('GRE2DTR', lambda ax: sc.modules.GRE2DTR(
             opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
-            joint_claims=(CommonModeClaim(ax, 1),), encoding_states=('only',)), {'line': 4}),
+            flow_comp=sc.FlowCompensation(axis=ax)), {'line': 4}),
         ('GRE3DTR', lambda ax: sc.modules.GRE3DTR(
             opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(32, 32, 8),
-            joint_claims=(CommonModeClaim(ax, 1),), encoding_states=('only',)),
-         {'line': 4, 'partition': 1}),
+            flow_comp=sc.FlowCompensation(axis=ax)), {'line': 4, 'partition': 1}),
     ):
-        owned, refusals = [], {}
-        for axis in ('x', 'y', 'z', 'q'):
+        accepted, refusals = [], {}
+        for axis in ('x', 'y', 'z'):
             try:
                 kernel = make(axis)
             except ConfigurationError as exc:
                 refusals[axis] = str(exc).splitlines()[0]
                 continue
-            shot = kernel(encoding_state='only', **kwargs)
+            shot = kernel(**kwargs)
             residual = measure_moment(shot, 1, axis, origin_s=kernel.exc.time_to_center(),
                                       start_s=0.0, end_s=kernel.time_to_echo())
-            owned.append({'axis': axis, 'advertised': axis in kernel.joint_axes,
-                          'm1_residual': round(residual, 12)})
-        out[name] = {'accepted': owned, 'refused': refusals}
+            accepted.append({'axis': axis, 'route': kernel._moment_owners[axis],
+                             'm1_residual': round(residual, 12)})
+        out[name] = {'accepted': accepted, 'refused': refusals}
     return out
 
 
@@ -409,10 +408,11 @@ def human_summary(evidence: dict[str, Any]) -> str:
 
     cap = evidence['probes'].get('capability', {})
     for name, got in cap.items():
-        advertised = [a['axis'] for a in got['accepted'] if a['advertised']]
-        out.append(f'{name} owns {tuple(advertised)}; refused {tuple(got["refused"])}')
+        out.append(f'{name} accepts {tuple(a["axis"] for a in got["accepted"])}; '
+                   f'refused {tuple(got["refused"])}')
         for entry in got['accepted']:
-            out.append(f'    {entry["axis"]}: m1 residual {entry["m1_residual"]:.3e}')
+            out.append(f'    {entry["axis"]} via {entry["route"]:8s} '
+                       f'm1 residual {entry["m1_residual"]:.3e}')
 
     venc = evidence['probes'].get('standalone_venc')
     if venc:

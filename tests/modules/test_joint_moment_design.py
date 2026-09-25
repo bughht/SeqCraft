@@ -51,6 +51,22 @@ def claims(axis: str, *, flow_comp: bool = True, venc: bool = True) -> tuple:
     return tuple(out)
 
 
+def intents(axis: str, *, flow_comp: bool = True, venc: bool = True) -> dict:
+    """
+    The same request as :func:`claims`, spelled the way a caller spells it.
+
+    `claims` stays for the requirement-layer tests, which are about the internal vocabulary and
+    should go on testing it in its own terms.  Everything that goes through a kernel uses this,
+    so those tests read the way the API is meant to be written.
+    """
+    out = {}
+    if flow_comp:
+        out['flow_comp'] = sc.FlowCompensation(axis=axis)
+    if venc:
+        out['velocity_encode'] = sc.VelocityEncoding(venc_m_s=VENC_M_S, axis=axis)
+    return out
+
+
 def residual(kernel, axis: str, shot, wanted: tuple[float, float]) -> tuple[float, float]:
     """How far the **whole repetition** is from its target, at the achieved echo."""
     origin, echo = kernel.exc.time_to_center(), kernel.time_to_echo()
@@ -248,10 +264,10 @@ def _emits_on(shot, axis: str) -> bool:
 @pytest.mark.parametrize('kernel_of, build_kwargs', [
     (lambda opts, ax: sc.modules.GRE2DTR(
         opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
-        joint_claims=(CommonModeClaim(ax, 1),), encoding_states=('only',)), {'line': 4}),
+        flow_comp=sc.FlowCompensation(axis=ax)), {'line': 4}),
     (lambda opts, ax: sc.modules.GRE3DTR(
         opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(32, 32, 8),
-        joint_claims=(CommonModeClaim(ax, 1),), encoding_states=('only',)),
+        flow_comp=sc.FlowCompensation(axis=ax)),
      {'line': 4, 'partition': 1}),
 ])
 def test_every_advertised_axis_is_designed_emitted_and_met(opts, kernel_of, build_kwargs) -> None:
@@ -268,12 +284,12 @@ def test_every_advertised_axis_is_designed_emitted_and_met(opts, kernel_of, buil
     would pass this test without exercising the joint path at all.
     """
     probe = kernel_of(opts, 'y')
-    for axis in probe.joint_axes:
+    for axis in probe._joint_axes:
         kernel = kernel_of(opts, axis)
 
         assert axis in kernel._joint, f'{axis} is advertised but no design was produced'
 
-        shot = kernel(encoding_state='only', **build_kwargs)
+        shot = kernel(**build_kwargs)
         assert _emits_on(shot, axis), f'{axis} is advertised but nothing is emitted on it'
 
         off_m1 = measure_moment(shot, 1, axis, origin_s=kernel.exc.time_to_center(),
@@ -281,29 +297,59 @@ def test_every_advertised_axis_is_designed_emitted_and_met(opts, kernel_of, buil
         assert abs(off_m1) < 1e-11, f'{axis} is advertised but the repetition emits m1 = {off_m1}'
 
 
-@pytest.mark.parametrize('kernel_of, unowned', [
-    (lambda opts, ax: sc.modules.GRE2DTR(
-        opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
-        joint_claims=(CommonModeClaim(ax, 1),), encoding_states=('only',)), ('x', 'z', 'q')),
-    (lambda opts, ax: sc.modules.GRE3DTR(
-        opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(32, 32, 8),
-        joint_claims=(CommonModeClaim(ax, 1),), encoding_states=('only',)), ('x', 'q')),
-])
-def test_an_axis_the_repetition_does_not_own_is_refused_before_realisation(
-        opts, kernel_of, unowned) -> None:
+def test_an_axis_the_repetition_does_not_own_is_refused_before_realisation(opts) -> None:
     """
-    `x` and `z` are legal axes these kernels play gradients on, and neither owns their winder.
+    `z` is a legal axis `GRE2DTR` plays a gradient on, and it does not own that gradient.
 
-    Before the check existed, `GRE2DTR` accepted a claim on `z`, designed it, grew the winder
-    from 520 to 2400 us -- 1.9 ms of TE the caller paid for -- and then emitted nothing, leaving
-    `m1 = -0.736 s/m` on the axis it reported as compensated.  So the refusal has to come from
-    what the repetition **materialises**, not from whether the axis letter is legal.
+    Before the check existed it accepted the claim, designed it, grew the winder from 520 to
+    2400 us -- 1.9 ms of TE the caller paid for -- and then emitted nothing, leaving
+    `m1 = -0.736 s/m` on the axis it reported as compensated.  So the refusal comes from what the
+    repetition **materialises**, not from whether the axis letter is legal.
     """
-    for axis in unowned:
+    with pytest.raises(sc.errors.ConfigurationError) as raised:
+        sc.modules.GRE2DTR(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
+                           flow_comp=sc.FlowCompensation(axis='z'))
+
+    said = str(raised.value)
+    assert 'cannot apply flow compensation' in said and "'z'" in said
+    assert 'slice rephaser' in said, 'the reason should name what that axis carries here'
+
+
+def test_a_meaningless_axis_is_refused_by_the_intent_itself(opts) -> None:
+    """
+    An axis that is not a gradient channel at all never reaches a repetition.
+
+    This is the one axis check an intent may make, because it needs no sequence to answer: `'q'`
+    is not a logical channel anywhere, on any kernel.  Everything beyond that -- whether *this*
+    repetition owns `'z'` -- is the repetition's, and the two refusals read differently on
+    purpose.
+    """
+    with pytest.raises(sc.errors.ConfigurationError, match='must be one of'):
+        sc.FlowCompensation(axis='q')
+
+
+def test_velocity_encoding_on_the_readout_axis_is_refused_without_claiming_impossibility(
+        opts) -> None:
+    """
+    The readout owns `x` and nulls its first moment; it cannot aim it at a value.
+
+    That is this realisation's scope, not a law.  Extending `CartesianLine` to take a target
+    rather than only zero would make this work with no routing change, so the message must not
+    say it cannot be done.
+    """
+    for kernel_of in (
+        lambda ve: sc.modules.GRE2DTR(opts=opts, fov_mm=220.0, matrix=(32, 32),
+                                      thickness_mm=5.0, velocity_encode=ve),
+        lambda ve: sc.modules.GRE3DTR(opts=opts, fov_mm=(220.0, 220.0, 120.0),
+                                      matrix=(32, 32, 8), velocity_encode=ve),
+    ):
         with pytest.raises(sc.errors.ConfigurationError) as raised:
-            kernel_of(opts, axis)
-        assert axis in str(raised.value)
-        assert 'adjustable window' in str(raised.value)
+            kernel_of(sc.VelocityEncoding(venc_m_s=VENC_M_S, axis='x'))
+
+        said = str(raised.value)
+        assert 'cannot velocity encode' in said
+        assert 'one repetition at a time' in said
+        assert 'impossible' not in said and 'cannot be done' not in said
 
 
 def test_running_out_of_candidate_windows_is_not_called_infeasible(opts, monkeypatch) -> None:
@@ -320,11 +366,11 @@ def test_running_out_of_candidate_windows_is_not_called_infeasible(opts, monkeyp
     quadratic and takes the better part of a minute.  That cost is the search's, not this test's.
     """
     monkeypatch.setattr(sc.modules._joint, 'SEARCH_LIMIT_WINDOWS', 200)
-    absurd = DifferenceClaim('y', 1, 5000.0, POLARITIES)
+    absurd = sc.VelocityEncoding(venc_m_s=1e-4, axis='y')      # 5000 s/m of first moment
 
     with pytest.raises(sc.errors.ConfigurationError) as raised:
         sc.modules.GRE2DTR(opts=opts, fov_mm=220.0, matrix=(8, 8), thickness_mm=5.0,
-                           joint_claims=(absurd,), encoding_states=POLARITIES)
+                           velocity_encode=absurd)
 
     said = str(raised.value)
     assert 'design search limit' in said or 'search reached its limit' in said
@@ -347,6 +393,99 @@ def test_capability_is_a_property_of_the_repetition_not_of_the_claim(opts) -> No
         require_owned_axes([claim], ('y',), component='GRE2DTR')
 
 
+# ----------------------------------------------------------------- the public surface
+def test_an_intent_carries_physics_and_nothing_else() -> None:
+    """
+    No `opts`, so constructing one designs nothing and cannot disagree with a scanner.
+
+    The VENC relation is read from the standalone module rather than restated, so the two paths
+    to a velocity encoding cannot drift apart.
+    """
+    venc = sc.VelocityEncoding(venc_m_s=VENC_M_S, axis='z')
+
+    assert venc.delta_m1_s_per_m == sc.modules.VelocityEncode.delta_m1_for(VENC_M_S)
+    assert venc.states == (+1, -1)
+    assert not hasattr(venc, 'opts') and not hasattr(venc, 'build')
+    assert sc.FlowCompensation(axis='y') == sc.FlowCompensation(axis='y'), 'values, not objects'
+
+
+@pytest.mark.parametrize('bad, keyword, expected', [
+    (sc.VelocityEncoding(venc_m_s=1.5, axis='y'), 'flow_comp', 'velocity_encode='),
+    (sc.FlowCompensation(axis='y'), 'velocity_encode', 'flow_comp='),
+])
+def test_an_intent_in_the_wrong_keyword_says_where_it_goes(opts, bad, keyword, expected) -> None:
+    """A closed set means the signature can say exactly what went where."""
+    with pytest.raises(sc.errors.ConfigurationError) as raised:
+        sc.modules.GRE2DTR(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
+                           **{keyword: bad})
+
+    assert expected in str(raised.value)
+
+
+def test_one_intent_reaches_two_different_owners(opts) -> None:
+    """
+    The same spelling on `x` and on `y`, and the caller cannot tell which solved it.
+
+    `x` is `CartesianLine`'s own analytic solve and `y` is the repetition designer.  Asking for
+    both at once is the strongest form: two owners, one intent, one emitted repetition that
+    satisfies both.
+    """
+    kernel = sc.modules.GRE2DTR(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
+                                flow_comp=sc.FlowCompensation(axis=('x', 'y')))
+    shot = kernel(line=4)
+    origin, echo = kernel.exc.time_to_center(), kernel.time_to_echo()
+
+    assert sorted(kernel._joint) == ['y'], 'only y went to the joint designer'
+    for axis in ('x', 'y'):
+        moment = measure_moment(shot, 1, axis, origin_s=origin, start_s=0.0, end_s=echo)
+        assert moment == pytest.approx(0.0, abs=1e-11), f'{axis} was not compensated'
+
+
+def test_a_state_is_refused_in_both_directions(opts) -> None:
+    """
+    Neither a missing state nor an unwanted one is silently ignored.
+
+    The second direction is the one worth having: a caller who writes a two-state loop against a
+    repetition that does not encode would otherwise get two identical repetitions, and find out
+    when the subtraction comes back zero.
+    """
+    shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0)
+    encoding = sc.modules.GRE2DTR(**shared, **intents('y', flow_comp=False))
+    plain = sc.modules.GRE2DTR(**shared)
+
+    with pytest.raises(sc.errors.ConfigurationError, match='which state'):
+        encoding(line=4)
+    with pytest.raises(sc.errors.ConfigurationError, match='not one of'):
+        encoding(line=4, encoding_state=0)
+    with pytest.raises(sc.errors.ConfigurationError, match='has no meaning here'):
+        plain(line=4, encoding_state=+1)
+
+
+def test_flow_compensation_is_the_common_mode_not_a_per_state_zero(opts) -> None:
+    """
+    The contract that composition depends on, asserted as the difference it makes.
+
+    Alone, the common mode is the one acquired state, so it reads as `m1 = 0`.  Beside a velocity
+    encoding it fixes the **mean**, and neither state is zero -- that separation is the signal.
+    Asserting `m1 == 0` per state in the second case would be asserting the wrong physics.
+    """
+    shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0)
+    alone = sc.modules.GRE2DTR(**shared, flow_comp=sc.FlowCompensation(axis='y'))
+    with_venc = sc.modules.GRE2DTR(**shared, **intents('y'))
+
+    def m1(kernel, **state):
+        return measure_moment(kernel(line=4, **state), 1, 'y',
+                              origin_s=kernel.exc.time_to_center(), start_s=0.0,
+                              end_s=kernel.time_to_echo())
+
+    assert m1(alone) == pytest.approx(0.0, abs=1e-11)
+
+    both = {s: m1(with_venc, encoding_state=s) for s in POLARITIES}
+    assert (both[+1] + both[-1]) / 2.0 == pytest.approx(0.0, abs=1e-11), 'the mean is claimed'
+    assert abs(both[+1]) > 1e-3, 'and no individual state is zero'
+    assert both[+1] == pytest.approx(delta() / 2.0, rel=1e-9), 'the half is derived, not asked for'
+
+
 # -------------------------------------------------------------- the kernels, whole repetition
 def test_gre2dtr_meets_its_targets_on_the_complete_repetition(opts) -> None:
     """
@@ -354,8 +493,7 @@ def test_gre2dtr_meets_its_targets_on_the_complete_repetition(opts) -> None:
     every gradient the repetition plays on the axis -- not over the joint lobes alone.
     """
     kernel = sc.modules.GRE2DTR(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
-                                flip_deg=15.0, joint_claims=claims('y'),
-                                encoding_states=POLARITIES)
+                                flip_deg=15.0, **intents('y'))
 
     for line in (0, 16, 31):
         for state in POLARITIES:
@@ -379,8 +517,7 @@ def test_gre3dtr_meets_its_targets_including_the_slab_contribution(opts,
     shared = dict(opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(32, 32, 8), flip_deg=15.0)
     if slab_thickness_mm is not None:
         shared['slab_thickness_mm'] = slab_thickness_mm
-    kernel = sc.modules.GRE3DTR(**shared, joint_claims=claims('z'),
-                                encoding_states=POLARITIES)
+    kernel = sc.modules.GRE3DTR(**shared, **intents('z'))
 
     for partition in range(kernel.matrix[2]):
         for state in POLARITIES:
@@ -404,17 +541,25 @@ def test_the_kernel_adapter_does_not_branch_on_the_augmentation(opts) -> None:
     for name, kwargs in (('flow comp', dict(flow_comp=True, venc=False)),
                          ('venc', dict(flow_comp=False, venc=True)),
                          ('both', dict(flow_comp=True, venc=True))):
-        kernel = sc.modules.GRE2DTR(**shared, joint_claims=claims('y', **kwargs),
-                                    encoding_states=POLARITIES)
+        asked = intents('y', **kwargs)
+        kernel = sc.modules.GRE2DTR(**shared, **asked)
         origin, echo = kernel.exc.time_to_center(), kernel.time_to_echo()
+        venc = asked.get('velocity_encode')
+        # One state when nothing generates a pair, which is the intent's own answer rather than
+        # something the test knows about the kernel.
+        states = venc.states if venc is not None else (None,)
         realised[name] = {
-            state: measure_moment(kernel(line=8, encoding_state=state), 1, 'y',
-                                  origin_s=origin, start_s=0.0, end_s=echo)
-            for state in POLARITIES
+            state: measure_moment(
+                kernel(line=8, **({} if state is None else {'encoding_state': state})), 1, 'y',
+                origin_s=origin, start_s=0.0, end_s=echo)
+            for state in states
         }
 
-    assert realised['flow comp'][+1] == pytest.approx(0.0, abs=1e-11)
-    assert realised['flow comp'][-1] == pytest.approx(0.0, abs=1e-11)
+    # Flow compensation alone: one state, and its first moment is zero.
+    assert realised['flow comp'][None] == pytest.approx(0.0, abs=1e-11)
+    # Velocity encoding alone: the difference is claimed, the common mode is not.
+    assert realised['venc'][+1] - realised['venc'][-1] == pytest.approx(delta(), rel=1e-9)
+    # Both: the difference AND the mean, which is the composition that has no precedence rule.
     assert realised['both'][+1] - realised['both'][-1] == pytest.approx(delta(), rel=1e-9)
     assert realised['both'][+1] + realised['both'][-1] == pytest.approx(0.0, abs=1e-11)
 
@@ -429,8 +574,7 @@ def test_enabling_the_feature_moves_the_automatic_minima(opts) -> None:
     """
     shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0, flip_deg=15.0)
     plain = sc.modules.GRE2DTR(**shared)
-    joint = sc.modules.GRE2DTR(**shared, joint_claims=claims('y'),
-                               encoding_states=POLARITIES)
+    joint = sc.modules.GRE2DTR(**shared, **intents('y'))
 
     assert joint.winder_s > plain.winder_s
     assert joint.min_te_s > plain.min_te_s
@@ -449,7 +593,7 @@ def test_an_explicit_time_that_the_feature_made_infeasible_is_refused(opts, kind
     """
     shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0, flip_deg=15.0)
     plain = sc.modules.GRE2DTR(**shared)
-    joint = dict(joint_claims=claims('y'), encoding_states=POLARITIES)
+    joint = intents('y')
     was_legal = plain.min_te_s if kind == 'te_s' else plain.min_tr_s
 
     with pytest.raises(sc.ConfigurationError, match=kind) as caught:
@@ -462,7 +606,7 @@ def test_an_explicit_time_that_the_feature_made_infeasible_is_refused(opts, kind
 def test_the_new_minimum_itself_is_accepted(opts, kind: str) -> None:
     """The rule for quoting a number: build at it and check."""
     shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0, flip_deg=15.0)
-    joint = dict(joint_claims=claims('y'), encoding_states=POLARITIES)
+    joint = intents('y')
     floor = getattr(sc.modules.GRE2DTR(**shared, **joint), f'min_{kind[:2]}_s')
 
     built = sc.modules.GRE2DTR(**shared, **joint, **{kind: floor})
@@ -480,7 +624,7 @@ def test_nothing_changes_when_no_claim_is_made(opts) -> None:
     shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0, flip_deg=15.0)
 
     plain = sc.modules.GRE2DTR(**shared)
-    also_plain = sc.modules.GRE2DTR(**shared, joint_claims=(), encoding_states=())
+    also_plain = sc.modules.GRE2DTR(**shared)
 
     assert also_plain.winder_s == plain.winder_s
     assert also_plain.te_s == plain.te_s
@@ -499,9 +643,9 @@ def test_two_axes_are_designed_against_one_common_schedule(opts) -> None:
     shared = dict(opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(16, 16, 8), flip_deg=15.0,
                   slab_thickness_mm=120.0)
     kernel = sc.modules.GRE3DTR(
-        **shared, encoding_states=POLARITIES,
-        joint_claims=(DifferenceClaim('z', 1, delta(), POLARITIES),
-                      CommonModeClaim('z', 1), CommonModeClaim('y', 1)))
+        **shared,
+        velocity_encode=sc.VelocityEncoding(venc_m_s=VENC_M_S, axis='z'),
+        flow_comp=sc.FlowCompensation(axis=('z', 'y')))
 
     assert sorted(kernel._joint) == ['y', 'z'], 'one design per claimed axis'
     schedules = {designed.schedule for designed in kernel._joint.values()}
@@ -521,8 +665,7 @@ def test_two_axes_are_designed_against_one_common_schedule(opts) -> None:
 def test_the_compiler_accepts_a_jointly_designed_repetition(opts) -> None:
     """The contract is the emitted file, so the repetition has to survive compilation."""
     kernel = sc.modules.GRE2DTR(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
-                                flip_deg=15.0, joint_claims=claims('y'),
-                                encoding_states=POLARITIES)
+                                flip_deg=15.0, **intents('y'))
 
     seq = sc.compile(kernel(line=8, encoding_state=+1), opts)
 
@@ -545,7 +688,7 @@ def test_an_explicit_te_above_the_minimum_does_not_stale_the_first_moment(opts,
     hides.
     """
     shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0, flip_deg=15.0)
-    joint = dict(joint_claims=claims('y'), encoding_states=POLARITIES)
+    joint = intents('y')
     floor = sc.modules.GRE2DTR(**shared, **joint).min_te_s
 
     kernel = sc.modules.GRE2DTR(**shared, **joint, te_s=floor + extra_ms * 1e-3)
@@ -574,10 +717,8 @@ def test_the_design_schedule_is_the_schedule_the_kernel_emits(opts) -> None:
     """
     shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0, flip_deg=15.0)
     for extra in (0.0, 1.5e-3):
-        floor = sc.modules.GRE2DTR(**shared, joint_claims=claims('y'),
-                                   encoding_states=POLARITIES).min_te_s
-        kernel = sc.modules.GRE2DTR(**shared, joint_claims=claims('y'),
-                                    encoding_states=POLARITIES, te_s=floor + extra)
+        floor = sc.modules.GRE2DTR(**shared, **intents('y')).min_te_s
+        kernel = sc.modules.GRE2DTR(**shared, **intents('y'), te_s=floor + extra)
         designed = kernel._joint['y'].schedule
 
         assert designed.window_s == pytest.approx(kernel.winder_s, abs=1e-12)

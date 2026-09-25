@@ -64,12 +64,13 @@ from typing import TYPE_CHECKING
 
 import pypulseq as pp
 
+from ...augmentation import FlowCompensation, VelocityEncoding
 from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...design.timing import EPS
 from ...errors import ConfigurationError, format_error
-from .. import _joint
+from .. import _augment, _joint
 from .._support import ceil_raster, require_positive
 from ..encoding.phase_encoding import PhaseEncode
 from ..readout.cartesian_line import CartesianLine
@@ -207,6 +208,11 @@ class GRE3DTR(Module):
     (True, -11.148)
     """
 
+    #: The axes `PhaseEncode` acts on here.  Class constants because the routing table is built
+    #: from them before either leaf exists.
+    _PE_AXIS = 'y'
+    _PAR_AXIS = 'z'
+
     def __init__(
         self,
         *,
@@ -224,11 +230,13 @@ class GRE3DTR(Module):
         partial_fourier: float = 1.0,
         spoil_cycles_per_voxel: float = 4.0,
         spoil_axis: str | Iterable[str] = ('x',),
-        joint_claims: Sequence[object] = (),
-        encoding_states: Sequence[object] = (),
+        flow_comp: FlowCompensation | None = None,
+        velocity_encode: VelocityEncoding | None = None,
         tag: str | None = None,
     ) -> None:
         super().__init__(opts=opts, tag=tag)
+        _augment.require_intent_type(flow_comp, FlowCompensation, 'flow_comp')
+        _augment.require_intent_type(velocity_encode, VelocityEncoding, 'velocity_encode')
         self.fov_mm = self._require_triple(fov_mm, 'fov_mm')
         self.matrix = tuple(int(n) for n in self._require_triple(matrix, 'matrix'))
         self.selective = slab_thickness_mm is not None
@@ -247,9 +255,19 @@ class GRE3DTR(Module):
         nx, ny, nz = self.matrix
         self.pe = PhaseEncode(opts=opts, fov_mm=self.fov_mm[1], matrix=ny, axis='y')
         self.pe_z = PhaseEncode(opts=opts, fov_mm=self.fov_mm[2], matrix=nz, axis='z')
+        # Who owns a moment requirement on each axis.  `y` is the phase-encode blip and `z` the
+        # winder that already carries the partition encode and the slab rephasing, so both are
+        # this module's; `x` is the readout's, which solves its own first moment.
+        self._moment_owners: dict[str, str] = {
+            self._PE_AXIS: 'joint', self._PAR_AXIS: 'joint', 'x': 'readout',
+        }
+        routed = self._route(flow_comp, velocity_encode)
+        # The readout route reaches the probe too: a compensated prephaser is longer, and the
+        # probe is what sizes the winder.
+        readout_moment = {'_null_moment_order': 1} if routed.get('x') else {}
         probe_ro = CartesianLine(opts=opts, fov_mm=self.fov_mm[0], matrix=nx, axis='x',
                                  bandwidth_hz_px=bandwidth_hz_px,
-                                 partial_fourier=partial_fourier)
+                                 partial_fourier=partial_fourier, **readout_moment)
 
         # The one quantity that makes this a kernel: the slab's rephasing requirement, read as a
         # signed moment rather than as somebody's event.  Zero when non-selective, which is what
@@ -261,17 +279,10 @@ class GRE3DTR(Module):
         # the slab rephasing and the partition encoding -- which is why this module owns it
         # rather than either leaf.  A claimed first moment is a third, and it is handed to the
         # shared designer for the same reason: no one leaf can see all of them.
-        self._pe_axis, self._par_axis = 'y', 'z'
-        #: The axes a joint claim may name here: the ones `build` actually materialises, the
-        #: phase-encode blip and the z winder.  `x` is legal but its prephaser belongs to
-        #: `CartesianLine`, so a claim there would be designed, costed in TE, and never emitted.
-        self.joint_axes: tuple[str, ...] = (self._pe_axis, self._par_axis)
-        self.encoding_states = tuple(encoding_states)
+        jointly = {a for a, owner in routed.items() if owner == 'joint'}
+        self._joint_claims, self.encoding_states = _augment.claims_and_states(
+            _augment.flow_comp_for(flow_comp, jointly), velocity_encode)
         self._joint: dict[str, _joint.JointDesign] = {}
-        self._joint_claims = tuple(joint_claims)
-        if self._joint_claims:
-            _joint.require_owned_axes(
-                self._joint_claims, self.joint_axes, component=type(self).__name__)
         self.winder_s = ceil_raster(
             max(probe_ro.prephaser_duration_s, self.pe.min_duration_s,
                 self.exc.rephaser_duration_s if not self.selective else 0.0,
@@ -293,7 +304,7 @@ class GRE3DTR(Module):
         self.ro = CartesianLine(opts=opts, fov_mm=self.fov_mm[0], matrix=nx, axis='x',
                                 bandwidth_hz_px=bandwidth_hz_px,
                                 partial_fourier=partial_fourier,
-                                prephaser_duration_s=self.winder_s)
+                                prephaser_duration_s=self.winder_s, **readout_moment)
         self.pe = PhaseEncode(opts=opts, fov_mm=self.fov_mm[1], matrix=ny, axis='y',
                               duration_s=self.winder_s)
         # One z design at the winder duration, carrying the largest combined moment, scaled per
@@ -446,10 +457,11 @@ class GRE3DTR(Module):
         tail = self._tail_start_s
         # rephase=False when selective: this module realises that requirement inside the z
         # winder below, and a standalone rephaser beside it would apply the slab term twice.
+        state = self._resolve_state(encoding_state)
         out = (
             LogicBlock()
             .add(0.0, self.exc(phase_deg=phase_deg, position_mm=z, rephase=not self.selective))
-            .add(start, self._joint_block(self._pe_axis, (line, encoding_state))
+            .add(start, self._joint_block(self._PE_AXIS, (line, state))
                  or self.pe(line=line))
             .add(start, self.ro(acquire=acquire, phase_deg=phase_deg, offset_mm=x))
             .add(tail, self.pe(line=line, rewind=True))
@@ -457,7 +469,7 @@ class GRE3DTR(Module):
             # compensation and is already spent.
             .add(tail, self.pe_z(line=partition, rewind=True))
         )
-        winder = self._z_winder(partition, encoding_state)
+        winder = self._z_winder(partition, state)
         if winder is not None:
             out.add(start, winder)
         for block in self.spoilers.values():
@@ -470,9 +482,55 @@ class GRE3DTR(Module):
             out.add(tail + self._tail_s, pp.make_delay(fill))
         return out
 
+    def _resolve_state(self, encoding_state: object) -> object:
+        """
+        Turn what the caller passed into the state key this repetition designed against.
+
+        Refuses in **both** directions: a missing state would realise an arbitrary one of a pair,
+        and an ignored state hands the caller two identical repetitions that they find out about
+        when the subtraction comes back zero.
+        """
+        states = self.encoding_states
+        if states == (_augment.ONE_STATE,):
+            if encoding_state is not None:
+                _augment.refuse_state_mismatch(type(self).__name__, states, encoding_state)
+            return _augment.ONE_STATE
+        if encoding_state not in states:
+            _augment.refuse_state_mismatch(type(self).__name__, states, encoding_state)
+        return encoding_state
+
+    # --------------------------------------------------------------------- capability
+    @property
+    def _joint_axes(self) -> tuple[str, ...]:
+        """The axes this repetition designs jointly, derived from who owns what."""
+        return tuple(a for a, owner in self._moment_owners.items() if owner == 'joint')
+
+    def _route(self, flow_comp: FlowCompensation | None,
+               velocity_encode: VelocityEncoding | None) -> dict[str, str]:
+        """
+        Which owner handles each intent, or a refusal naming the axis.
+
+        Reads nothing about an intent but its `axis` and, for the one case that needs it, whether
+        it is a difference between states.
+        """
+        routed: dict[str, str] = {}
+        component = type(self).__name__
+        for intent, axis in [(i, a) for i in (flow_comp, velocity_encode) if i is not None
+                             for a in i.axes]:
+            owner = self._moment_owners.get(axis)
+            if owner is None:
+                _augment.refuse_unowned_axis(
+                    component, axis, self._moment_owners,
+                    f'{axis!r} is not an axis this repetition plays an adjustable gradient on')
+            elif owner != 'joint' and isinstance(intent, VelocityEncoding):
+                _augment.refuse_unsupported_route(component, axis, self._joint_axes)
+            else:
+                routed[axis] = owner
+        return routed
+
     def _z_winder(self, partition: int, encoding_state: object = None):
         """The one z gradient carrying ``A_slab + A_partition(p)``, or ``None`` when it is zero."""
-        designed = self._joint_block(self._par_axis, (partition, encoding_state))
+        designed = self._joint_block(self._PAR_AXIS, (partition, encoding_state))
         if designed is not None:
             return designed
         area = self.combined_z_area_per_m(partition)
@@ -557,9 +615,9 @@ class GRE3DTR(Module):
         would not.
         """
         claimed = {getattr(claim, 'order', None) for claim in group}
-        encode = {self._pe_axis: self.pe, self._par_axis: self.pe_z}.get(axis)
-        count = self.matrix[1] if axis == self._pe_axis else (
-            self.matrix[2] if axis == self._par_axis else 1)
+        encode = {self._PE_AXIS: self.pe, self._PAR_AXIS: self.pe_z}.get(axis)
+        count = self.matrix[1] if axis == self._PE_AXIS else (
+            self.matrix[2] if axis == self._PAR_AXIS else 1)
         targets: dict[object, tuple[float, float | None]] = {}
         for index in range(count):
             area = float(encode.k_per_m(index)) if encode is not None else 0.0
