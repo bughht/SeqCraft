@@ -262,9 +262,16 @@ class GRE3DTR(Module):
         # rather than either leaf.  A claimed first moment is a third, and it is handed to the
         # shared designer for the same reason: no one leaf can see all of them.
         self._pe_axis, self._par_axis = 'y', 'z'
+        #: The axes a joint claim may name here: the ones `build` actually materialises, the
+        #: phase-encode blip and the z winder.  `x` is legal but its prephaser belongs to
+        #: `CartesianLine`, so a claim there would be designed, costed in TE, and never emitted.
+        self.joint_axes: tuple[str, ...] = (self._pe_axis, self._par_axis)
         self.encoding_states = tuple(encoding_states)
         self._joint: dict[str, _joint.JointDesign] = {}
         self._joint_claims = tuple(joint_claims)
+        if self._joint_claims:
+            _joint.require_owned_axes(
+                self._joint_claims, self.joint_axes, component=type(self).__name__)
         self.winder_s = ceil_raster(
             max(probe_ro.prephaser_duration_s, self.pe.min_duration_s,
                 self.exc.rephaser_duration_s if not self.selective else 0.0,
@@ -506,11 +513,15 @@ class GRE3DTR(Module):
             for axis, group in _joint.group_by_axis(claims).items()
         }
 
-        for steps in range(int(round(local_min_s / raster)), 4000):
+        exhausted = True
+        for steps in range(int(round(local_min_s / raster)), _joint.SEARCH_LIMIT_WINDOWS):
             window = steps * raster
             fill = 0.0 if te_request is None else (
                 te_request - (start + window + echo_in_lobe - origin))
             if fill < -EPS:
+                # The requested TE is already overshot; a longer window only overshoots further,
+                # so this is the request's own refusal and not the search running out.
+                exhausted = False
                 break
             schedule = _joint.Schedule(
                 origin_s=origin,
@@ -526,7 +537,14 @@ class GRE3DTR(Module):
                 designs[axis] = found
             if len(designs) == len(problems):
                 return window, designs
-        return _joint.refuse_infeasible(next(iter(problems.values())))
+        # Two different failures, and only one of them is about physics.  Running out of
+        # candidate windows means the ceiling was reached without trying what lies beyond it;
+        # saying "infeasible" there would claim something the search never established.
+        first = next(iter(problems.values()))
+        if exhausted:
+            return _joint.refuse_search_exhausted(
+                first, steps=_joint.SEARCH_LIMIT_WINDOWS, raster_s=raster)
+        return _joint.refuse_infeasible(first)
 
     def _axis_problem(self, axis: str, group: Sequence[object], excitation: LogicBlock,
                       opts: Opts) -> _joint.JointProblem:

@@ -718,16 +718,22 @@ M1 targets, fixed contributions, the origin-to-window lead, window duration, exp
 fixed and AUTO echo spacing, acquisition state, axis and echo count — with local refinement at
 every large coarse transition. The evidence is in the spike findings, §7.
 
-**Extensive stress testing did not reveal an artificial feasibility cliff.** This is not a claim
-that cliffs are impossible; the families here are low-dimensional by design, and a richer
-requirement could produce one. It is a statement about what a deliberate search found.
+**Extensive stress testing did not reveal a large artificial feasibility cliff.** This is a
+statement about a sampled and refined parameter space, not a proof that cliffs cannot occur; the
+families here are low-dimensional by design, and a richer requirement could produce one.
+
+Reproduce it with `tools/module_mining/stress_repetition_design.py` (`--quick` or `--full`), which
+does not run in CI.
 
 Three things it did find, all worth carrying into the design:
 
 ```text
-a bounded family artefact       a raster-aligned two-lobe split does not exist for every
+a family artefact               a raster-aligned two-lobe split does not exist for every
                                 window, so the feasible set has holes -- 1.6 % of cells,
-                                at most 110 us wide.  Mechanism 2 is present and bounded.
+                                widest OBSERVED 110 us.  A sampled maximum, not a bound,
+                                and a property of this family: the raster is fundamental,
+                                this particular missing split is not, and a richer
+                                raster-aligned family could plausibly fill it.
 
 a turning point in the lead     pushing the origin further before the window helps until the
                                 M0 target pins the area and its own M1 overshoots.  A smooth V.

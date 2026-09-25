@@ -66,6 +66,8 @@ __all__ = [
     'group_by_axis',
     'placed',
     'refuse_infeasible',
+    'refuse_search_exhausted',
+    'require_owned_axes',
     'utilisation',
     'events_for',
     'measure_moment',
@@ -77,6 +79,12 @@ _NEGLIGIBLE = 1e-9
 
 #: The orders this module's realisation families compute exactly.  See the module docstring.
 ORDERS = (0, 1)
+
+#: How many candidate windows a kernel's schedule search will try before giving up.  An
+#: implementation guard, not a physical statement: 4000 gradient raster steps is 40 ms at the
+#: usual 10 us raster, far past any repetition that would be useful, and reaching it is reported
+#: as a search limit rather than as infeasibility.  See :func:`refuse_search_exhausted`.
+SEARCH_LIMIT_WINDOWS = 4000
 
 
 # ------------------------------------------------------------------ the independent validator
@@ -146,8 +154,40 @@ def placed(event: Event, at_s: float) -> LogicBlock:
 
 
 def refuse_infeasible(problem: JointProblem) -> None:
-    """Public spelling of the refusal, for a kernel that ran out of candidate schedules."""
+    """Public spelling of the refusal, for a kernel whose candidate schedules all failed."""
     _refuse_infeasible(problem)
+
+
+def refuse_search_exhausted(problem: JointProblem, *, steps: int, raster_s: float) -> None:
+    """
+    The schedule search hit its own ceiling, which is **not** a proof that nothing would work.
+
+    A window search has to stop somewhere, and the number it stops at is an implementation guard.
+    Reporting that as "these moments cannot be realised" would be a claim the search never
+    established -- the next window along was simply never tried.  The two need different words
+    because they need different fixes: one is relax the physics, the other is raise the ceiling.
+    """
+    _refuse_search_exhausted(problem, steps, raster_s)
+
+
+def require_owned_axes(claims: Iterable[object], owned: Sequence[str], *, component: str) -> None:
+    """
+    Refuse a claim on an axis this repetition cannot carry -- **before** any realisation.
+
+    The question is physical and it belongs to the repetition, which is the only thing that knows
+    which of its axes have an adjustable window between the semantic origin and the endpoint that
+    it will actually **materialise**.  Not a class-name test, and not a check that the letter is
+    one of ``x``, ``y``, ``z``: a kernel can own a legal axis it never emits on, and designing a
+    waveform for that axis would lengthen the winder, push out TE, and then drop the events.
+
+    `owned` is that list, and the caller is responsible for it naming the axes it emits rather
+    than the axes it can imagine.
+    """
+    allowed = tuple(owned)
+    for claim in claims:
+        axis = str(getattr(claim, 'axis', ''))
+        if axis not in allowed:
+            _refuse_unowned_axis(axis, allowed, component)
 
 
 def claimed_axis(claims: Sequence[object]) -> str:
@@ -554,6 +594,35 @@ def _refuse_duplicate(component: str, axis: str, order: int, count: int) -> None
         {'axis': axis, 'order': order, 'component': component, 'claims': count},
         ['one augmentation owns one component of one moment on one axis',
          'a second claim is a disagreement about physics, not something to order by precedence'],
+    )
+    raise ConfigurationError(msg)
+
+
+def _refuse_search_exhausted(problem: JointProblem, steps: int, raster_s: float) -> None:
+    msg = format_error(
+        f'the schedule search reached its limit of {steps} windows on {problem.axis} without '
+        f'finding one that fits.  This is a design search limit, not a proof of infeasibility: '
+        f'windows longer than {steps * raster_s * 1e3:.1f} ms were never tried.',
+        {'axis': problem.axis, 'states': len(problem.targets),
+         'search_limit_windows': steps, 'longest_window_tried_s': steps * raster_s},
+        [f'the requirement may still be realisable beyond {steps * raster_s * 1e3:.1f} ms; '
+         'if that is plausible here, raise the search ceiling',
+         'more usually it is not -- a target needing a window this long is worth rechecking '
+         'against the units it was stated in',
+         'relaxing the target or widening the gradient limits shortens the window it needs'],
+    )
+    raise ConfigurationError(msg)
+
+
+def _refuse_unowned_axis(axis: str, owned: Sequence[str], component: str) -> None:
+    msg = format_error(
+        f'{component} does not own an adjustable window on {axis!r}, so it cannot carry a '
+        f'moment claim there.',
+        {'axis': axis, 'owned_axes': tuple(owned), 'component': component},
+        [f'claim one of {tuple(owned)}, which is what this repetition designs and emits',
+         'an axis whose gradients this repetition does not own is realised by the leaf that '
+         'does own them, and cannot be jointly designed here',
+         'this is about what gets emitted, not about whether the axis name is legal'],
     )
     raise ConfigurationError(msg)
 

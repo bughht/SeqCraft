@@ -168,3 +168,23 @@ Only the TSE scripts need the PyPulseq checkout's `write_tse.py`; `radial/` need
 Each writes a `*_result.json` beside itself. Those files are **not** tracked -- `.gitignore`
 excludes `*.json` repo-wide, and scan output is exactly what that rule is for. They are
 regenerable by re-running the script, and the reports quote the numbers that matter.
+
+## Stress evidence for the repetition physical design
+
+`stress_repetition_design.py` reproduces the numbers the architecture document and the spike
+findings quote -- hole widths, jump ratios, diagnostic agreement, the owned axes of each kernel.
+A deliberate search for a feasibility cliff, not a gate, and **not run in CI**.
+
+```bash
+python tools/module_mining/stress_repetition_design.py --quick
+python tools/module_mining/stress_repetition_design.py --full --json evidence.json
+```
+
+`--quick` runs every probe in about two minutes. `--full` is the reported matrix and takes hours,
+because the split search tries every raster-aligned split at every candidate window and is
+therefore quadratic in the window length. The rare findings -- the feasible-set holes, and the
+divergence between the two diagnostic lattices -- need `--full`; the quick summary says so rather
+than reading as an absence.
+
+Deterministic: fixed grids, no sampling, so two runs of the same size agree. What holds the
+conclusions in place is `tests/modules/test_joint_moment_design.py`, not this script.
