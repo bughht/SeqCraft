@@ -200,29 +200,8 @@ class CartesianLine(Module):
         Lengthen the prephaser beyond its own minimum.  ``None`` is the minimum.  A composite
         passes the winder maximum here; see :class:`~seqcraft.modules.GRE2DTR`.  Passing it with
         ``prephase=False`` raises, in the shape this library already uses for an argument that
-        cannot take effect.  At ``null_moment_order=1`` it is the **total** across the two
+        cannot take effect.  At ``_null_moment_order=1`` it is the **total** across the two
         winder lobes, and the areas are re-solved against it rather than scaled.
-    null_moment_order
-        The highest gradient moment nulled at the echo on this axis.
-
-        ``0``
-            The ordinary prephaser: one lobe, ``m0 = 0`` at the echo, which is what puts
-            ``k = 0`` there.  **The default**, and unchanged behaviour.
-        ``1``
-            Velocity compensation: two winder lobes of opposite sign instead of one, nulling
-            ``m0`` **and** ``m1`` at the echo, so a spin moving at constant velocity along `axis`
-            arrives with the phase it would have had standing still.
-
-        Needs ``prephase=True``, because the winder is the waveform being reshaped.  It costs
-        time -- three lobes before the echo rather than two -- and :attr:`prephaser_duration_s`
-        and :meth:`time_to_echo` report what it came to.  That duration is the shortest for the
-        realisation used here, which gives the two winder lobes the **same** duration; it is not
-        claimed to be the shortest compensated prephaser that exists, and no minimum-TE property
-        is claimed.
-
-        The moment is nulled at the **first** echo.  Later echoes of a train accumulate their own
-        first moment from the lobes between them, which this does not compensate.  Nulling the
-        second moment as well needs a fourth lobe and is not implemented.
     axis
         Logical gradient channel.
     tag
@@ -347,7 +326,7 @@ class CartesianLine(Module):
         echo_spacing_s: float | None = None,
         prephase: bool = True,
         prephaser_duration_s: float | None = None,
-        null_moment_order: int = 0,
+        _null_moment_order: int = 0,
         axis: str = 'x',
         tag: str | None = None,
     ) -> None:
@@ -395,8 +374,29 @@ class CartesianLine(Module):
         if self.polarity == 'monopolar':
             self._flyback = self._design_flyback(echo_spacing_s)
         self._refuse_echo_spacing(echo_spacing_s)
-        #: The highest gradient moment nulled at the echo on this axis.
-        self.null_moment_order = self._check_null_moment_order(null_moment_order)
+        #: **Internal.**  The highest gradient moment nulled at the echo on this axis.
+        #:
+        #: ``0`` is the ordinary prephaser -- one lobe, ``m0 = 0`` at the echo, which is what
+        #: puts ``k = 0`` there.  ``1`` is velocity compensation: two winder lobes of opposite
+        #: sign instead of one, nulling ``m0`` **and** ``m1``, so a spin moving at constant
+        #: velocity along `axis` arrives with the phase it would have had standing still.
+        #:
+        #: Not a public parameter.  A caller asks for this at the repetition level, where the
+        #: repetition decides whether its readout axis is the right owner -- see the public
+        #: augmentation API.  Exposing it per leaf is the N x M surface the joint architecture
+        #: exists to avoid, so it stays private until a standalone need is demonstrated.
+        #:
+        #: Needs ``prephase=True``, because the winder is the waveform being reshaped.  It costs
+        #: time -- three lobes before the echo rather than two -- and
+        #: :attr:`prephaser_duration_s` and :meth:`time_to_echo` report what it came to.  That
+        #: duration is the shortest for the realisation used here, which gives the two winder
+        #: lobes the **same** duration; it is not claimed to be the shortest compensated
+        #: prephaser that exists, and no minimum-TE property is claimed.
+        #:
+        #: The moment is nulled at the **first** echo.  Later echoes of a train accumulate their
+        #: own first moment from the lobes between them, which this does not compensate.  Nulling
+        #: the second moment as well needs a fourth lobe and is not implemented.
+        self._null_moment_order = self._check_null_moment_order(_null_moment_order)
         self._prephasers: tuple[Event, ...] = (
             self._design_prephaser(prephaser_duration_s) if self.prephase
             else self._refuse_prephaser_duration(prephaser_duration_s)
@@ -467,7 +467,7 @@ class CartesianLine(Module):
         """
         Seconds the prephaser occupies -- its own minimum unless one was requested.
 
-        At ``null_moment_order=1`` the prephaser is two lobes played back to back and this is the
+        At ``_null_moment_order=1`` the prephaser is two lobes played back to back and this is the
         pair's total, which is what the readout is placed after.
         """
         return float(sum(pp.calc_duration(lobe) for lobe in self._require_prephasers()))
@@ -478,7 +478,7 @@ class CartesianLine(Module):
         The prephaser's area, 1/m -- exactly minus :attr:`area_to_echo_per_m`.
 
         The **total** across its lobes, which is what puts ``k = 0`` at the echo.  At
-        ``null_moment_order=1`` the two lobes have opposite signs and individually are neither of
+        ``_null_moment_order=1`` the two lobes have opposite signs and individually are neither of
         these; :attr:`prephaser_lobes` is where to read them.
 
         Exposed so a test can assert that identity without reaching into the block.
@@ -490,7 +490,7 @@ class CartesianLine(Module):
         """
         The prephaser's own gradient events, in the order they play.
 
-        One at ``null_moment_order=0``.  Two at ``1``, of opposite sign, whose areas sum to
+        One at ``_null_moment_order=0``.  Two at ``1``, of opposite sign, whose areas sum to
         :attr:`prephaser_area_per_m` and whose first moments about the echo cancel the readout's.
 
         A leaf exposing its events, which is what lets a composing module measure what it needs
@@ -1011,7 +1011,7 @@ class CartesianLine(Module):
 
     def _design_prephaser(self, requested_s: float | None) -> tuple[Event, ...]:
         """Return the prephaser lobes, in play order."""
-        if self.null_moment_order >= 1:
+        if self._null_moment_order >= 1:
             return self._design_velocity_compensated(requested_s)
         return (self._design_prephaser_m0(requested_s),)
 
@@ -1333,17 +1333,18 @@ class CartesianLine(Module):
             return order
         if order == 1:
             msg = format_error(
-                'null_moment_order=1 needs a prephaser to reshape, and prephase=False.',
-                {'null_moment_order': order, 'prephase': self.prephase},
+                'this readout cannot compensate its first moment, because it has no prephaser '
+                'to reshape.',
+                {'axis': self.axis, 'prephase': self.prephase},
                 ['pass prephase=True, whose winder is what carries the compensation',
                  'a readout with no prephaser has no waveform here to null a moment with'],
             )
             raise ConfigurationError(msg)
         msg = format_error(
-            f'null_moment_order={order} is out of range: 0 or 1.',
-            {'null_moment_order': order},
-            ['0 nulls the zeroth moment at the echo, which is the ordinary prephaser',
-             '1 also nulls the first, which is velocity compensation',
+            f'this readout cannot null moments above the first, and was asked for {order}.',
+            {'axis': self.axis, 'order': order},
+            ['the zeroth moment is the ordinary prephaser, which puts k = 0 at the echo',
+             'the first is velocity compensation',
              'nulling the second needs a fourth lobe and is not implemented'],
         )
         raise ConfigurationError(msg)
@@ -1355,7 +1356,7 @@ class CartesianLine(Module):
             f'readout\'s equal-duration compensated winder pair needs.',
             {'prephaser_duration_s': requested_s,
              'min_prephaser_duration_s': self._min_prephaser_duration_s,
-             'null_moment_order': self.null_moment_order,
+             'axis': self.axis,
              'prephaser_area_per_m': -self.area_to_echo_per_m},
             [
                 f'pass prephaser_duration_s >= {self._min_prephaser_duration_s:.6g}',
@@ -1369,9 +1370,9 @@ class CartesianLine(Module):
     def _refuse_impossible_compensation(self) -> None:  # pragma: no cover - unreachable
         msg = format_error(
             'no velocity-compensated prephaser fits this gradient system.',
-            {'null_moment_order': self.null_moment_order,
-             'area_to_echo_per_m': self.area_to_echo_per_m},
-            ['pass null_moment_order=0', 'or widen the readout, which lowers the area to cancel'],
+            {'axis': self.axis, 'area_to_echo_per_m': self.area_to_echo_per_m},
+            ['drop the first-moment compensation on this axis',
+             'or widen the readout, which lowers the area to cancel'],
         )
         raise ConfigurationError(msg)
 

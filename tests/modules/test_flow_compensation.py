@@ -92,7 +92,7 @@ def test_the_first_moment_is_null_at_the_echo(opts, matrix: int, bandwidth: floa
     ``m0 = 0`` removes the constant-position one.  Whether that reduces an artefact in an image is
     a separate question this does not reach.
     """
-    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
+    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, _null_moment_order=1)
 
     assert moment_to_echo(module, 1) == pytest.approx(0.0, abs=tolerance(module, 1))
 
@@ -106,7 +106,7 @@ def test_the_zeroth_moment_is_still_null_at_the_echo(opts, matrix: int,
     ``m0 = 0`` at the echo is what puts ``k = 0`` there at all; a compensated readout that lost it
     would image a shifted k-space and still look plausible.
     """
-    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
+    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, _null_moment_order=1)
 
     assert moment_to_echo(module, 0) == pytest.approx(0.0, abs=tolerance(module, 0))
 
@@ -137,7 +137,7 @@ def test_the_two_lobes_sum_to_the_area_the_echo_needs(opts, matrix: int,
     The individual areas are neither ``-area_to_echo_per_m`` nor half of it, which is why
     `prephaser_area_per_m` is documented as the total and the lobes are exposed separately.
     """
-    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
+    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, _null_moment_order=1)
     areas = [float(lobe.area) for lobe in module.prephaser_lobes]
 
     assert len(areas) == 2
@@ -147,10 +147,10 @@ def test_the_two_lobes_sum_to_the_area_the_echo_needs(opts, matrix: int,
 
 
 def test_the_ordinary_prephaser_is_one_lobe(opts) -> None:
-    """``null_moment_order=0`` is exactly today's readout, and the default."""
+    """``_null_moment_order=0`` is exactly today's readout, and the default."""
     module = line(opts)
 
-    assert module.null_moment_order == 0
+    assert module._null_moment_order == 0
     assert len(module.prephaser_lobes) == 1
     assert module.prephaser_area_per_m == pytest.approx(-module.area_to_echo_per_m, rel=1e-12)
 
@@ -166,7 +166,7 @@ def test_compensation_costs_time_and_the_cost_is_readable(opts, matrix: int,
     against.
     """
     plain = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth)
-    compensated = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
+    compensated = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, _null_moment_order=1)
 
     assert compensated.prephaser_duration_s > plain.prephaser_duration_s
     assert compensated.time_to_echo() - plain.time_to_echo() == pytest.approx(
@@ -178,7 +178,7 @@ def test_compensation_costs_time_and_the_cost_is_readable(opts, matrix: int,
 def test_the_compensated_prephaser_stays_inside_the_gradient_system(opts, matrix: int,
                                                                     bandwidth: float) -> None:
     """A compensated waveform meets the same limits as the one it replaces."""
-    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
+    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, _null_moment_order=1)
     raster = float(opts.grad_raster_time)
 
     for lobe in module.prephaser_lobes:
@@ -205,7 +205,7 @@ def test_the_pair_is_the_shortest_this_realisation_can_build(opts, matrix: int,
     gradient and slew limits -- so there is one authority for legality rather than a smooth
     estimate and a correction after it.
     """
-    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
+    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, _null_moment_order=1)
     raster = float(opts.grad_raster_time)
     half = module.prephaser_duration_s / 2.0
 
@@ -226,7 +226,7 @@ def test_the_feasibility_predicate_is_monotone_in_the_lobe_duration(opts, matrix
     Asserted here as one transition across a swept range, which is the property itself; the
     signs it follows from are checked separately.
     """
-    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, null_moment_order=1)
+    module = line(opts, matrix=matrix, bandwidth_hz_px=bandwidth, _null_moment_order=1)
     raster = float(opts.grad_raster_time)
     half = module.prephaser_duration_s / 2.0
 
@@ -254,7 +254,7 @@ def test_the_premises_the_monotonicity_argument_rests_on(opts, geometry: str) ->
     If a future geometry broke any of them the bisection would no longer be licensed, and this
     is where that would show.
     """
-    module = line(opts, null_moment_order=1, **GEOMETRIES[geometry])
+    module = line(opts, _null_moment_order=1, **GEOMETRIES[geometry])
     area, moment = (module._readout_moment_to_echo(order) for order in (0, 1))
     constant = area * module._echo_in_gx - -moment
 
@@ -270,7 +270,7 @@ def test_the_premises_the_monotonicity_argument_rests_on(opts, geometry: str) ->
 
 def test_the_compiler_accepts_a_compensated_readout(opts) -> None:
     """The contract is the emitted file, so the block has to survive compilation."""
-    seq = sc.compile(line(opts, null_moment_order=1)(), opts)
+    seq = sc.compile(line(opts, _null_moment_order=1)(), opts)
 
     assert len(seq.block_events) >= 3
 
@@ -285,8 +285,8 @@ def test_a_requested_duration_is_honoured_and_still_nulls_the_moment(opts, echoe
     not give.
     """
     train = {'polarity': 'monopolar'} if echoes > 1 else {}
-    shortest = line(opts, echoes=echoes, null_moment_order=1, **train)
-    stretched = line(opts, echoes=echoes, null_moment_order=1, **train,
+    shortest = line(opts, echoes=echoes, _null_moment_order=1, **train)
+    stretched = line(opts, echoes=echoes, _null_moment_order=1, **train,
                      prephaser_duration_s=shortest.prephaser_duration_s + 200e-6)
 
     assert stretched.prephaser_duration_s > shortest.prephaser_duration_s
@@ -305,7 +305,7 @@ def test_the_first_echo_is_compensated_and_later_echoes_are_not(opts, polarity: 
     protocol that assumed otherwise would look fine and be uncompensated everywhere but the
     start.
     """
-    module = line(opts, echoes=3, polarity=polarity, null_moment_order=1)
+    module = line(opts, echoes=3, polarity=polarity, _null_moment_order=1)
 
     assert moment_to_echo(module, 1, 0) == pytest.approx(0.0, abs=tolerance(module, 1))
     for echo in (1, 2):
@@ -322,7 +322,7 @@ def test_the_first_echo_is_compensated_in_every_supported_geometry(opts, geometr
     by the same arithmetic rather than by a case each.  Worth asserting because "it is measured,
     so it must be right" is exactly the reasoning that hides a geometry nobody tried.
     """
-    module = line(opts, null_moment_order=1, **GEOMETRIES[geometry])
+    module = line(opts, _null_moment_order=1, **GEOMETRIES[geometry])
 
     assert moment_to_echo(module, 1, 0) == pytest.approx(0.0, abs=tolerance(module, 1))
     assert moment_to_echo(module, 0, 0) == pytest.approx(0.0, abs=tolerance(module, 0))
@@ -331,7 +331,7 @@ def test_the_first_echo_is_compensated_in_every_supported_geometry(opts, geometr
 @pytest.mark.parametrize('geometry', list(GEOMETRIES))
 def test_every_supported_geometry_stays_inside_the_gradient_system(opts, geometry: str) -> None:
     """A geometry that met the moment condition by exceeding the amplifier would not count."""
-    module = line(opts, null_moment_order=1, **GEOMETRIES[geometry])
+    module = line(opts, _null_moment_order=1, **GEOMETRIES[geometry])
 
     for lobe in module.prephaser_lobes:
         amplitude = abs(float(lobe.amplitude))
@@ -341,29 +341,36 @@ def test_every_supported_geometry_stays_inside_the_gradient_system(opts, geometr
 
 # ------------------------------------------------------------------------------ the refusals
 def test_an_order_above_one_is_refused(opts) -> None:
-    """Acceleration compensation needs a fourth lobe and is deferred, so it refuses by name."""
-    with pytest.raises(sc.ConfigurationError, match='null_moment_order') as caught:
-        line(opts, null_moment_order=2)
+    """
+    Acceleration compensation needs a fourth lobe and is deferred, so it refuses.
 
-    assert 'velocity compensation' in str(caught.value)
+    The message names the physics rather than the parameter: nulling this is not something a
+    caller can ask for by keyword, so quoting one would send them looking for a spelling that
+    does not exist.
+    """
+    with pytest.raises(sc.ConfigurationError, match='cannot null moments above the first') as got:
+        line(opts, _null_moment_order=2)
+
+    assert 'velocity compensation' in str(got.value)
+    assert 'fourth lobe' in str(got.value)
 
 
 def test_compensation_without_a_prephaser_is_refused(opts) -> None:
     """There is nothing to reshape: the compensation lives in the winder."""
-    with pytest.raises(sc.ConfigurationError, match='prephase') as caught:
-        line(opts, prephase=False, null_moment_order=1)
+    with pytest.raises(sc.ConfigurationError, match='no prephaser') as got:
+        line(opts, prephase=False, _null_moment_order=1)
 
-    assert 'null_moment_order' in str(caught.value)
+    assert 'prephase=True' in str(got.value)
 
 
 def test_a_prephaser_too_short_for_the_compensated_areas_is_refused(opts) -> None:
     """Naming the floor, because "too short" without a number is a search for the caller."""
-    module = line(opts, null_moment_order=1)
+    module = line(opts, _null_moment_order=1)
     floor = module.prephaser_duration_s
 
     with pytest.raises(sc.ConfigurationError, match='prephaser_duration_s') as caught:
-        line(opts, null_moment_order=1, prephaser_duration_s=floor / 2.0)
+        line(opts, _null_moment_order=1, prephaser_duration_s=floor / 2.0)
 
     assert f'{floor:.6g}' in str(caught.value)
-    assert line(opts, null_moment_order=1, prephaser_duration_s=floor).prephaser_duration_s == (
+    assert line(opts, _null_moment_order=1, prephaser_duration_s=floor).prephaser_duration_s == (
         pytest.approx(floor, abs=1e-12))

@@ -2,17 +2,23 @@
 
 ## Unreleased — the readout nulls its own first moment
 
-`CartesianLine(null_moment_order=1)`: gradient moment nulling on the readout axis. The zeroth
-moment at the echo is what a prephaser already cancels, so a stationary spin picks up no phase
-from that axis; the **first** moment is not zero, and a spin moving along the readout arrives with
-`2 pi m1 v`. The option reshapes the prephaser into two lobes of opposite sign so that both
+`CartesianLine` can now null the **first** gradient moment at the echo on its own axis, as well
+as the zeroth. The zeroth is what a prephaser already cancels, so a stationary spin picks up no
+phase from that axis; the first is not zero, and a spin moving along the readout arrives with
+`2 pi m1 v`. The capability reshapes the prephaser into two lobes of opposite sign so that both
 moments are zero at the echo.
+
+**No new public parameter.** The capability is reached through the repetition-level augmentation
+API, which is where a caller says what physics they want and the repetition decides which of its
+components owns the problem. A per-leaf keyword would be the first instance of a
+leaf-by-augmentation surface the design deliberately avoids, so the switch that selects it is
+private.
 
 **Not a new module.** The fine scan recorded flow compensation as `EXTEND_EXISTING`, because
 gradient moment nulling is a modification of a waveform that already belongs to someone — and
 here that is `CartesianLine`, which owns both the winder and the readout lobe and can integrate
-their moments. No `FlowComp` class, no moment-requirement interface, no solver, no compiler or
-`LogicBlock` change, and nothing outside the readout is read or rewritten.
+their moments. No moment-requirement interface, no solver, no compiler or `LogicBlock` change, and
+nothing outside the readout is read or rewritten.
 
 The solve is closed form. Taking the echo as the origin, the readout's own contribution up to it
 is a property of the lobe alone, computed once from its knots. Two winders of equal duration `D`
