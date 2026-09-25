@@ -5,8 +5,9 @@
 > The two copies are identical today and there is nothing keeping them that way; see
 > [`../README.md`](../../README.md) for which one to edit.
 
-**Status:** plan for review. **Nothing here is implemented.**
-**Date:** 2026-09-25
+**Status:** approved in direction; revised after the correction pass. **Nothing here is
+implemented**, and PR #39 is unchanged.
+**Date:** 2026-09-25, revised 2026-09-25
 **Governed by:** [`2026-09-24_repetition_physical_design_architecture.md`](2026-09-24_repetition_physical_design_architecture.md)
 **Evidence:** [`2026-09-24_repetition_joint_design_spike_findings.md`](2026-09-24_repetition_joint_design_spike_findings.md),
 frozen at tag `stage-c-evidence` (`67c3e3c`)
@@ -67,7 +68,7 @@ an acquisition framework. Section 12 lists those as non-goals.
 ```python
 @dataclass(frozen=True)
 class FlowCompensation:
-    """Ask that the first gradient moment be zero at the echo, on one axis."""
+    """Ask that the COMMON-MODE first gradient moment be zero at the echo, on one axis."""
     axis: str
 
 @dataclass(frozen=True)
@@ -97,6 +98,32 @@ opts                  duration                any waveform at all
 and designs nothing.** `delta_m1_s_per_m` delegates to `VelocityEncode.delta_m1_for(venc_m_s)`,
 which stays the single source of the VENC relation (§4).
 
+### 1.1a What FlowCompensation actually means
+
+**Its reusable contract is common-mode first-moment nulling**, not `m1 = 0` for every state. The
+distinction is invisible in the common case and load-bearing in the composed one:
+
+```text
+alone, single-state acquisition        the common mode IS the one state, so it reduces to
+                                       m1 = 0 -- which is what a reader expects "flow
+                                       compensated" to mean, and it is true here
+
+with VelocityEncoding, same axis       it constrains the MEAN of the two states to zero while
+                                       the difference claim constrains their separation, so
+                                       the pair comes out at +delta/2 and -delta/2.
+                                       Neither state has m1 = 0, and neither should
+```
+
+The symmetric plus-and-minus half-delta is therefore **derived, not specified**. Nothing in the
+intent type, the translation layer or the kernel computes a half-delta; it falls out of resolving a
+common-mode claim and a difference claim on the same axis and order. That is the property which
+lets a third augmentation compose without a precedence rule, and the docstring must say *common
+mode* rather than *zero* or the contract will be re-broken the first time someone reads it.
+
+A consequence for the tests (§10): the whole-repetition assertion for flow compensation alone is
+`m1 == 0`; combined with velocity encoding it is `mean(m1 over states) == 0`, and asserting
+`m1 == 0` per state there would be asserting the wrong physics.
+
 ### 1.2 Where they live
 
 New module `src/seqcraft/augmentation.py`, exported at **top level**:
@@ -115,6 +142,41 @@ contract false for two of its members, and the first question a reader would ask
 
 Top level already holds the vocabulary that is not itself a building block — `Raster`, `span`,
 `barrier`, the error types — so a physical-intent value belongs there.
+
+### 1.2a Prerequisite: move the shared validators to a neutral home
+
+**A separate, mechanical commit, landing before any augmentation code.**
+
+`require_axis` and `require_positive` live in `seqcraft/modules/_support.py`. `augmentation.py`
+needs them and must not import them from there, for a reason stronger than taste:
+
+```text
+augmentation.py  imports  modules._support     (for the validators)
+modules/kernel/* imports  augmentation         (for the keyword types and the routing)
+```
+
+That is an import cycle, and it is the kind that works until someone changes an import order. The
+fix is to put the pure value validators below both:
+
+```text
+new         src/seqcraft/design/validation.py
+moves       require_axis, require_positive, require_count, require_pair, require_range
+re-exported from modules/_support.py so existing call sites keep working unchanged
+```
+
+Why `design/validation.py` and not `design/units.py`: `units.py` is the unit-conversion table and
+`convert`, a different job. Why the whole `require_*` family and not only the two needed: they are
+one coherent thing — check a value's domain, raise `ConfigurationError` — and splitting a family
+across two modules to save two moves is how the next reader ends up looking in both places.
+
+The move is safe: these five touch nothing but `ConfigurationError`, `format_error` and `AXES`,
+all of which already live in `errors` and `design.events`, below `modules`. Call sites number 12
+for `require_axis` and 17 for `require_positive`; keeping the re-export from `_support` means none
+of them change in this commit, and they can be repointed later or never.
+
+`design/validation.py` stays **internal**. It is not added to `docs/api_reference.md` §9 and not
+exported at top level; `_support` re-exporting it preserves exactly today's public surface, which
+is what makes this commit mechanical and separately reviewable.
 
 ### 1.3 The kernel keywords
 
@@ -176,16 +238,8 @@ FlowCompensation      axis is a well-formed axis name        via require_axis
 VelocityEncoding      axis is well formed; venc_m_s > 0      via require_axis, require_positive
 ```
 
-One layering detail for implementation: those two validators live in
-`seqcraft/modules/_support.py`, and `seqcraft/augmentation.py` sits above `modules`, not inside
-it. Today `seqcraft/__init__.py` imports `modules`, so an `augmentation` module importing
-`modules._support` would be a top-level package reaching into a subpackage's private helper.
-
-Recommended: import them anyway, and accept it. They are pure value validators with no module
-dependencies, the alternative is duplicating two small functions, and a duplicated validator is
-how two spellings of the same refusal appear. If implementation finds the import awkward in
-practice, promote both to `seqcraft/design/units.py` — where the other unit-and-domain validators
-already live — as a separate, mechanical commit rather than as part of this work.
+Those validators live in `seqcraft/modules/_support.py` today, and **that is not where
+`augmentation.py` may reach for them.** See §1.2a: they move first, in their own commit.
 
 It must not know, and has no way to learn, that `GRE2DTR` owns `y` jointly, that `GRE3DTR` also
 owns `z`, that `CartesianLine` owns the readout problem locally, or that `Excitation` owns slice
@@ -233,9 +287,19 @@ runtime, and not something an intent can read. `joint_axes` becomes a derived vi
 
 ```python
 @property
-def joint_axes(self) -> tuple[str, ...]:
+def _joint_axes(self) -> tuple[str, ...]:
     return tuple(a for a, owner in self._moment_owners.items() if owner == 'joint')
 ```
+
+**Ownership metadata is internal implementation state, not API.** Stage C left `joint_axes` as a
+public attribute; the API work renames it to `_joint_axes` and it stays private. A caller never
+needs to ask a kernel which axes it owns — they state an intent and get either a sequence or a
+refusal that explains itself (§8.1). Publishing the table would invite branching on it, and the
+capability answer would then live in two places.
+
+Two in-tree readers to update with the rename: the capability tests in
+`tests/modules/test_joint_moment_design.py`, and `probe_capability` in
+`tools/module_mining/stress_repetition_design.py`. Both are ours.
 
 Routing is then a lookup, not a branch on the augmentation's class:
 
@@ -267,16 +331,31 @@ FlowCompensation(axis='z')  on GRE3DTR   -> 'joint'   (the z winder carries the 
                                                        encode and the slab rephasing)
                             on GRE2DTR   -> no entry -> refusal (§8)
 
-VelocityEncoding(axis=...)  -> 'joint' only.  A difference between states is by construction
-                               cross-state, so there is no local route; an axis whose owner is
-                               'readout' is refused for velocity encoding with a reason that
-                               says why (§8).
+VelocityEncoding(axis=...)  -> 'joint'.  On an axis whose owner is 'readout' it is refused
+                               for v1 (§3.3a), with a reason that says why (§8.2).
 ```
 
-The last line is the one asymmetry worth stating plainly: **the routing table is per-axis, but
-whether a route can serve a given intent is a property of the intent's physics.** A local owner
-solving one component's problem cannot express a constraint between two acquisitions. That is one
-condition, checked once, in the translation layer — not a per-augmentation branch in the router.
+### 3.3a Why readout-axis velocity encoding is unsupported in v1
+
+The reason is the **current local realisation's scope, not an architectural rule**:
+
+```text
+CartesianLine's local solve implements first-moment NULLING -- one fixed target, m1 = 0.
+It does not implement arbitrary state-resolved M1 targets, which is what a difference
+between two encoding states requires.
+```
+
+So `VelocityEncoding(axis='x')` is refused because *this* local owner cannot express that target,
+and the refusal should say so rather than implying impossibility.
+
+**Do not turn this into "cross-state intent can never be realised locally."** It is not true, and
+writing it down would foreclose a cheap future: extending `CartesianLine` to accept a target `m1`
+rather than only zero would make readout-axis velocity encoding locally realisable, and the
+routing table above would need no change to pick it up. Whether that extension is worth doing is a
+separate question with its own evidence, and nothing here should prejudge it.
+
+The check itself is one condition in the translation layer — *this intent needs a state-resolved
+target; does the routed owner offer one?* — not a per-augmentation branch in the router.
 
 ### 3.4 Combining routes
 
@@ -358,9 +437,17 @@ def claims_and_states(flow_comp, velocity_encode) -> tuple[tuple[object, ...], t
         claims.append(DifferenceClaim(velocity_encode.axis, 1,
                                       velocity_encode.delta_m1_s_per_m, states))
     if flow_comp is not None:
+        # CommonModeClaim, not a per-state zero: this is the whole of FlowCompensation's
+        # contract (1.1a).  With a difference claim beside it the two resolve to +-delta/2,
+        # and nothing here computes that half.
         claims.append(CommonModeClaim(flow_comp.axis, 1))
     return tuple(claims), states
 ```
+
+The translation is a direct restatement of §1.1a: *common mode* maps to `CommonModeClaim`, and the
+`m1 = 0` a single-state caller sees is `resolve_claims` evaluating a mean over one state. There is
+no branch on how many states there are, and there must not be one — that branch is exactly how a
+per-state zero would creep back in and break the composed case.
 
 ### 5.2 The layering it preserves
 
@@ -407,7 +494,7 @@ joint_claims        -> flow_comp= / velocity_encode=, translated by _augment.cla
 encoding_states     -> derived from velocity_encode.states, or ('only',) when there is none
 encoding_state=     -> STAYS on build().  This is the seam, not a spike artefact
 _moment_owners      -> new, private, per kernel (§3.2)
-joint_axes          -> stays public-ish and read-only; derived from _moment_owners
+joint_axes          -> becomes _joint_axes, private; derived from _moment_owners
 ```
 
 ### 6.3 Tests
@@ -443,11 +530,11 @@ Keep, unchanged: the readout-axis M0/M1 solve, the analytic realisation, the
 substrate `FlowCompensation(axis='x')` routes to, and it is good work independent of how it is
 spelled.
 
-### 7.2 The decision
+### 7.2 The decision — **made: internal**
 
-**Recommendation: make `null_moment_order` internal before PR #39 merges.**
+The reviewer has decided: `null_moment_order` becomes internal before PR #39 merges.
 
-The asymmetry is the argument:
+The asymmetry that decided it:
 
 ```text
 ship it public, retire it later     a deprecation cycle on a released name, and a period
@@ -458,50 +545,49 @@ keep it private, expose it later    a one-line change, non-breaking, whenever a 
                                     standalone need is demonstrated
 ```
 
-PR #39 is unmerged, so the cost of choosing privacy now is zero and the cost of choosing it later
-is a deprecation. Nothing is lost that cannot be recovered cheaply.
+PR #39 is unmerged, so choosing privacy now costs nothing and choosing it later costs a
+deprecation. The architecture §22 N×M argument also applies: a public `null_moment_order` on
+`CartesianLine` would be the first instance of *per-leaf, per-augmentation* keywords, with no
+principled place to stop.
 
-The N×M argument from the architecture §22 also applies: a public `null_moment_order` on
-`CartesianLine` is the first instance of *per-leaf, per-augmentation* keywords, and there is no
-principled place to stop — `PhaseEncode` would want one, then `Excitation`.
+### 7.3 What was weighed against it
 
-### 7.3 The honest counter-case
-
-`CartesianLine` is a public leaf and is usable without a kernel; the `flowcomp_gre_2d` notebook
-builds one directly. A caller assembling a custom readout has no repetition to ask, and for them
-the repetition-level intent is not available. That is a real use, not a hypothetical one — the
-notebook is evidence that someone (us) wanted it.
-
-The counter-counter: that notebook is ours and was written to demonstrate the solve. Whether an
-external caller wants a standalone first-moment-nulled readout is unknown, and the way to find out
-is to ship the repetition-level path and see whether anyone asks.
-
-**This is the reviewer's decision.** The plan proceeds on the recommendation; if the decision goes
-the other way, §7.4 says what changes.
+Recorded because it was a real argument, not to reopen the decision. `CartesianLine` is a public
+leaf usable without a kernel, and the `flowcomp_gre_2d` notebook builds one directly; a caller
+assembling a custom readout has no repetition to ask. The decision accepts that cost on the
+grounds that re-exposing a private parameter later is cheap, and that whether an external caller
+wants a standalone first-moment-nulled readout is still unknown.
 
 ### 7.4 Concretely, either way
 
+The finalization commit on `feat/flow-compensation`:
+
 ```text
-IF null_moment_order becomes internal
-    modify PR #39 before merge:
-      null_moment_order          -> _null_moment_order, docstring marked internal
-      docs/api_reference.md      -> drop the public mention
-      examples/flowcomp_gre_2d   -> REWRITE against the repetition-level intent, which
-                                    means it cannot merge until this API exists
-      tests                      -> keep all 45; they test the solve, not the spelling
+src/seqcraft/modules/readout/cartesian_line.py
+    null_moment_order          -> _null_moment_order, constructor parameter made private
+    the docstring section      -> marked internal; the physics prose is kept, the "you can
+                                  pass this" framing removed
+    prephaser_lobes            -> KEEP.  It is a readable accessor for a two-lobe prephaser
+                                  and does not advertise the option
 
-    Consequence worth flagging: the notebook is the blocker.  Either PR #39 merges without
-    it and the notebook arrives with the integration PR, or PR #39 waits.  Recommend the
-    former -- the solve and its tests are the valuable part and should land early.
+docs/api_reference.md          -> drop the public mention of null_moment_order
 
-IF null_moment_order stays public
-    PR #39 merges as-is, and the integration PR must add to docs/writing_a_module.md a
-    short section distinguishing the low-level leaf option from the preferred
-    repetition-level intent, with a worked example of each and a sentence on when a caller
-    would reach for the leaf.
+tests/modules/test_flow_compensation.py, test_cartesian_line.py
+                               -> KEEP all 45.  They test the solve, not the spelling;
+                                  update the parameter name only
+
+examples/flowcomp_gre_2d/      -> MOVE to the integration PR, where it can be rewritten
+                                  against flow_comp=sc.FlowCompensation(axis='x').  It
+                                  cannot be written against the public API before that API
+                                  exists, and it must not ship demonstrating a private
+                                  parameter
+
+CHANGELOG.md                   -> reword to describe the capability rather than the keyword
 ```
 
-**PR #39 is not modified until this is decided.**
+The notebook is the one thing that moves rather than lands. That is the right trade: the analytic
+solve and its 45 tests are the valuable part of PR #39 and should merge early, and a demonstration
+notebook is exactly the kind of thing that belongs with the surface it demonstrates.
 
 ---
 
@@ -551,6 +637,29 @@ encoding_state=0 is not one of this repetition's states.
   states  :  (1, -1)
   fix
     iterate the states the intent defines:  for state in venc.states:
+```
+
+### 8.4a A state supplied where none is meant
+
+The symmetric case, and the one easiest to leave out:
+
+```text
+this repetition does not velocity encode, so encoding_state=+1 has no meaning here.
+  given  :  1
+  fix
+    drop encoding_state -- this repetition has one state and build() already realises it
+    or pass velocity_encode=... if the acquisition is meant to be phase contrast
+```
+
+Both directions refuse, so **state semantics are never silently ignored**. Accepting an
+`encoding_state` that nothing acts on is the worse of the two failures: the caller writes a
+two-state loop, gets two identical repetitions, and finds out when the subtraction is zero.
+
+The check is a pair of conditions in `build()`, not a per-augmentation branch:
+
+```text
+states != ('only',)  and  encoding_state is None       -> 8.3
+states == ('only',)  and  encoding_state is not None    -> 8.4a
 ```
 
 ### 8.5 Duplicate or conflicting intent
@@ -636,10 +745,12 @@ tr = sc.modules.GRE3DTR(
 )
 ```
 
-Same axis, deliberately, and the two compose rather than conflict: flow compensation fixes the
-mean of the two states at zero and velocity encoding fixes their difference, so the pair comes out
-symmetric at plus and minus half. A caller does not need to know that sentence — they need the
-code above to work.
+Same axis, deliberately, and the two compose rather than conflict. Flow compensation fixes the
+**mean** of the two states at zero; velocity encoding fixes their **difference**; the symmetric
+plus-and-minus half-delta falls out. Neither state has `m1 = 0` here, and neither should — that is
+what the velocity signal *is*. A caller does not need to know any of that sentence: they need the
+code above to work, and they need "flow compensation" to keep meaning the same thing whether or not
+velocity encoding is present beside it.
 
 ### 9.5 Flow compensation on x, routed to the local realisation
 
@@ -675,7 +786,9 @@ translation        FlowCompensation      -> CommonModeClaim(axis, 1)
                    delta matches VelocityEncode.delta_m1_for exactly
                    no isinstance on an augmentation below _augment
 
-routing            x  -> CartesianLine local solve, and the emitted readout m1 is nulled
+routing            x  -> CartesianLine local solve, emitted readout m1 nulled at the echo
+                   x  -> VelocityEncoding refused, with the 3.3a reason and not an
+                         impossibility claim
                    y  -> joint design on both kernels
                    z  -> joint on GRE3DTR, refused on GRE2DTR
                    the route is invisible in the emitted result: same physics either way
@@ -683,14 +796,25 @@ routing            x  -> CartesianLine local solve, and the emitted readout m1 i
 physics            whole-repetition M0 and M1 residuals at the achieved echo, per state,
                    off-centre lines and partitions -- the Stage C thresholds
                    (m0 < 1e-6 relative, m1 < 1e-11) carried over unchanged
-                   velocity encoding: m1(+) - m1(-) == delta, and with flow compensation
-                   the pair is symmetric about zero
+
+                   flow compensation ALONE      m1 == 0             (one state, so the
+                                                                     common mode is it)
+                   velocity encoding ALONE      m1(+) - m1(-) == delta
+                                                and the common mode is UNCONSTRAINED --
+                                                assert the difference, not the values
+                   both, same axis              mean(m1 over states) == 0
+                                                AND m1(+) - m1(-) == delta
+                                                the +-delta/2 symmetry is then DERIVED, so
+                                                assert it as a consequence rather than
+                                                testing it as the specification
 
 timing             AUTO TE/TR moves when an augmentation is enabled and not otherwise
                    explicit TE below the new minimum refuses, naming te_s
                    explicit TE above it does not stale the first moment (the Stage C bug)
 
 refusals           each of §8.1-8.5 by message content, not by exception type alone
+                   both state refusals: state supplied with no velocity encoding, and
+                   velocity encoding with no state (§8.3, §8.4a)
 
 no-op              with neither keyword, every emitted repetition is byte-identical to
                    today's.  This is the regression that matters most and is cheap:
@@ -743,45 +867,79 @@ will overlap there; those are the only conflicts to expect, and they are additiv
 
 ### 11.3 The sequence
 
+The PR #39 surface decision is made, so the integration branch rebases onto the **updated** PR #39
+tip *before* implementation, not onto main afterwards. Implementing against the final local
+substrate is the point: `FlowCompensation(axis='x')` routes into `CartesianLine`, and it should be
+written against the private parameter it will actually call.
+
 ```sh
-# 1. now -- the plan only.  Already done:
-#      tag stage-c-evidence at 67c3e3c
-#      branch feat/augmentation-api from it
-#    This document is committed on feat/augmentation-api.  Nothing is pushed as a PR yet.
+# ---- done already -----------------------------------------------------------------
+#   tag stage-c-evidence at 67c3e3c            spike frozen
+#   branch feat/augmentation-api from it       this plan committed there
+#   PR #39 untouched at 9967ffc
 
-# 2. after this plan is approved: implement the API on feat/augmentation-api
+# ---- step 1: finalize PR #39 (its own work, on its own branch) ---------------------
+git switch feat/flow-compensation
+#   null_moment_order -> _null_moment_order, docs and tests per 7.4,
+#   notebook moved out to the integration PR
+git commit ...                                 # -> NEW PR #39 TIP, call it <pr39-final>
 
-# 3. after the §7 decision: finalize PR #39 (modify only if null_moment_order goes internal)
-#    and merge it to main.  The repo merges with merge commits (see PRs #36-#38).
+# ---- step 2: rebase the integration branch onto that tip ---------------------------
+git rebase --onto feat/flow-compensation 9967ffc feat/augmentation-api
+#   replays the 8 spike commits + this plan onto <pr39-final>.
+#   9967ffc is the ORIGINAL fork point and stays the rebase base in every step below:
+#   it is what "everything after this" means, regardless of what PR #39's tip becomes.
 
-# 4. rebase the integration branch, dropping the commits main now has
+# ---- step 3: implement the API on feat/augmentation-api ---------------------------
+#   1.2a validator move first, then augmentation.py, routing, translation, migration
+
+# ---- step 4: merge PR #39 to main -------------------------------------------------
+#   the repo merges with merge commits (PRs #36-#38)
+
+# ---- step 5: rebase onto main, dropping everything through the updated tip ---------
 git fetch origin
-git rebase --onto origin/main 9967ffc feat/augmentation-api
+git rebase --onto origin/main <pr39-final> feat/augmentation-api
+
+# ---- step 6: verify nothing was reintroduced --------------------------------------
+git log --oneline origin/main..feat/augmentation-api    # spike + plan + API commits only
+git diff --stat origin/main...feat/augmentation-api     # no cartesian_line.py unless the
+                                                        # API work deliberately touched it
+
+# ---- step 7: open the integration PR against main ---------------------------------
 ```
 
-`--onto` with the explicit fork point `9967ffc` is what prevents PR #39's commits being replayed.
-A bare `git rebase origin/main` would *probably* also work, because a merge commit makes those four
-commits ancestors of main and git skips already-applied patches by patch-id — but "probably" is
-doing real work in that sentence, and it fails outright if PR #39 is squashed or if it is modified
-per §7.4. Use `--onto`.
+Two different bases, and using the wrong one is the failure this section exists to prevent:
 
-```sh
-# 5. verify the rebase reintroduced nothing
-git log --oneline origin/main..feat/augmentation-api      # expect only spike + API commits
-git diff --stat origin/main...feat/augmentation-api       # expect no cartesian_line.py unless
-                                                          # the API work deliberately touched it
+```text
+step 2   --onto feat/flow-compensation  9967ffc        the ORIGINAL fork point.  Everything
+                                                       after it is spike + plan, none of which
+                                                       PR #39 has.
 
-# 6. open the integration PR against main
+step 5   --onto origin/main            <pr39-final>    the UPDATED tip.  Everything through it
+                                                       is now in main via the merge, so
+                                                       replaying it would duplicate PR #39.
 ```
 
-### 11.4 If PR #39 is modified per §7.4
+`--onto` with an explicit base in both, never a bare `git rebase`. A bare one relies on git
+skipping already-applied commits by patch-id, which a merge commit makes *usually* true and which
+fails outright if PR #39 is squashed — and PR #39 is being modified in step 1, so its patches will
+not match anyway.
 
-Then `9967ffc` is no longer PR #39's tip, but it is still the commit `feat/augmentation-api` forked
-from, and that is what `--onto` needs. The rebase command above is unchanged. The `_null_moment_order`
-rename lands in main via PR #39; the integration branch never touched that file, so it inherits the
-rename with no conflict.
+### 11.4 Current tips, for the record
 
----
+```text
+origin/main                     982b308     unchanged
+feat/flow-compensation          9967ffc     PR #39, OPEN, UNCHANGED -- step 1 not yet done
+spike/repetition-joint-design   67c3e3c     frozen, tagged stage-c-evidence
+feat/augmentation-api           <this plan> branched from 67c3e3c
+
+integration base after step 2   <pr39-final>, which does not exist yet
+rebase base for steps 2         9967ffc      (fixed, the original fork point)
+rebase base for step 5          <pr39-final>
+```
+
+**PR #39 has not been modified.** This pass revised the plan only, as instructed; step 1 is the
+next action and needs one word to start.
 
 ## 12. Non-goals for this phase
 
@@ -797,26 +955,35 @@ public requirement objects
 
 ---
 
-## 13. Open decisions for the reviewer
+## 13. Decisions, and what is left open
 
-Everything else in this document is a proposal that implementation can follow mechanically. These
-four need an answer first.
+Recorded as settled. Implementation follows these without reopening them.
 
 ```text
-1  naming collision       sc.VelocityEncoding (intent) sits one letter from
-   HIGHEST RISK           sc.modules.VelocityEncode (module), and they mean different
-                          things.  Alternatives: sc.PhaseContrast(venc_m_s=...),
-                          sc.VelocityEncoded(...), or renaming the intent keyword.
-                          Recommend deciding this before any code is written.
+sc.FlowCompensation           APPROVED    the intent type and the name
+sc.VelocityEncoding           APPROVED    the intent type and the name; the near-collision
+                                          with sc.modules.VelocityEncode is accepted, and
+                                          the two are distinguished in the docs by what they
+                                          are -- an intent, and the standalone bipolar Module
+states = (+1, -1)             APPROVED    plain ints, consistent with
+                                          VelocityEncode.build(polarity=...)
+PR #39 null_moment_order      INTERNAL    before merge, per 7.2
 
-2  FlowComp vs            the brief used sc.FlowComp; this plan proposes
-   FlowCompensation       sc.FlowCompensation for symmetry with VelocityEncoding and
-                          because flow_comp=sc.FlowComp(...) reads as a stutter.
-                          Low stakes, easy to change, but change it once.
+sc.modules.VelocityEncode     UNCHANGED   stays public, stays the standalone bipolar Module,
+                                          stays the single source of delta_m1_for
+joint_axes                    INTERNAL    ownership metadata is implementation state
+```
 
-3  PR #39 surface         §7.  Internal is recommended; the notebook is the cost.
+Nothing is open that blocks implementation. Two things are deliberately deferred and named here so
+they are not mistaken for oversights:
 
-4  states representation  (+1, -1) as plain ints, versus an enum or opaque sentinels.
-                          Ints are consistent with VelocityEncode.build(polarity=...)
-                          today, which is an argument for keeping them.
+```text
+readout-axis velocity encoding      unsupported in v1 because CartesianLine's local solve
+                                    implements nulling, not state-resolved targets (3.3a).
+                                    An implementation limit with a known cheap fix, not an
+                                    architectural rule, and not scheduled.
+
+a third augmentation                no mechanism exists and none is planned.  Adding one is
+                                    a SeqCraft-owned type, a keyword and a routing entry, by
+                                    the same process that added these two.
 ```
