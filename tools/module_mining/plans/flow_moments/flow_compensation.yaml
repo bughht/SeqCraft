@@ -146,8 +146,19 @@ acceptance:
       The compensated waveform meets the same hardware limits as the uncompensated one, and its
       cost in time is reported rather than hidden.
     - >
-      Metamorphic- with the target set to zero and the neighbour's moment set to zero, the
-      construction reduces to the canonical binomial pattern.
+      WITHDRAWN 2026-09-24, during the CartesianLine implementation.  This bullet asked for a
+      metamorphic check that the construction reduces to the canonical binomial 1,-2,1 pattern
+      when the target and the neighbour's moment are both zero.  It does not apply to this
+      realisation- the third contribution is the READOUT's own pre-echo waveform, which is not a
+      symmetric lobe of matching duration, so the binomial ratio is not an invariant of the
+      construction and asserting it would be asserting something false.  The two moment
+      conditions are asserted directly instead, on the full emitted waveform, which is what the
+      binomial pattern is a special case of.  The acceptance conditions that DO hold are the
+      other bullets in this list-
+        full emitted m0 at the echo = 0
+        full emitted m1 at the echo = 0
+        hardware and raster legality of the reshaped waveform
+        the cost in time reported rather than hidden
   does_not_establish:
     - >
       Artefact reduction in an image.  D1's own justification is ghosting and signal loss from
@@ -156,20 +167,80 @@ acceptance:
     - Eddy-current or concomitant-field behaviour.
 
 validation:
+  # IMPLEMENTED 2026-09-24 for the readout-axis case.
   layers:
-    layer_1: NOT_APPLICABLE
-    layer_2: NOT_APPLICABLE
+    layer_1: GREEN            # 45 tests in tests/modules/test_flow_compensation.py, every moment
+                              # integrated from the emitted knots and summed across the axis
+    layer_2: GREEN            # examples/flowcomp_gre_2d/01_build.ipynb -- both readouts in a
+                              # complete gradient echo, with the cost measured
     layer_3: NOT_APPLICABLE
+    layer_1_result: >
+      m1 at the echo comes out at the arithmetic floor where an ordinary readout carries 0.03 to
+      0.37 s/m, across full-echo, partial-Fourier, monopolar-train and bipolar-train geometries,
+      with m0 still at the floor.  A control asserts the uncompensated case is large, so the null
+      is measured rather than assumed.  Tolerances are dimensioned per moment order- an area for
+      m0, an area times a time for m1.
+    layer_1_mutations: >
+      Nine deliberate mutations, seven caught.  The two survivors are the gradient and slew
+      checks inside the feasibility predicate- one raster step below the minimum pypulseq refuses
+      to build the lobe at all, so neither check is reached there.  They are kept because they
+      are physical and can only ever lengthen the answer.  Recorded rather than reported as a
+      clean sweep.
+    layer_2_result: >
+      0.680 ms added to the echo time at the reference protocol -- three lobes before the echo
+      instead of two, and a winder carrying more area.
     layer_3_reason: >
-      NOT_APPLICABLE because no module is proposed.  Recorded for a future extension- the
-      measurable claim is the summed moment on the axis, which is Layer 1; the artefact claim
-      needs moving spins, which MRzeroCore can provide and which would be Layer 3.
-  planned: see acceptance.establishes, if an extension is approved
+      NOT_APPLICABLE, and deliberately.  Given m0 = 0, the removal of the constant-velocity phase
+      term follows from m1 = 0 by phi = 2 pi (m0 x0 + m1 v), and PR #38 already exercised that
+      relation against a moving-spin simulation for VelocityEncode.  What a simulation would add
+      here is image-level artefact reduction, which acceptance.does_not_establish excludes and
+      which needs a flow phantom and a scanner.
 
 coverage_classification: null
 
 status: EXTEND_EXISTING
-traffic_light: APPROVED_FOR_IMPLEMENTATION
+traffic_light: GREEN          # IMPLEMENTED 2026-09-24 for the readout-axis case; was
+                              # APPROVED_FOR_IMPLEMENTATION
+
+implementation:
+  shipped: >
+    src/seqcraft/modules/readout/cartesian_line.py -- the readout-axis first-moment solve, on
+    CartesianLine, selected by the PRIVATE `_null_moment_order`.  No new module, no requirement
+    interface, no solver, no compiler or LogicBlock change.  The single_axis_self_contained
+    recommendation in ownership.where_it_belongs, taken literally.
+
+    The switch is private because a caller asks at the repetition level, where the repetition
+    decides which of its components owns the problem; a public per-leaf keyword would be the
+    first instance of a leaf-by-augmentation surface with no principled place to stop.
+  scope: >
+    The readout axis, first moment, first echo.  Order 0 is the ordinary prephaser and the
+    default, so nothing that existed before changed behaviour.  Everything in
+    evidence_state.deferred is still deferred.
+  the_solve: >
+    Closed form and LINEAR, which is simpler than the quadratic D1 gives for the slice-selection
+    case -- because here the lobe durations are fixed by the realisation and only the areas are
+    unknown.  Taking the echo as origin, the readout's own m0 and m1 up to it are properties of
+    the lobe alone; two winders of equal duration D played back to back have centroids at known
+    offsets; and a symmetric trapezoid's first moment about an external origin is its area times
+    its centroid, exactly.  So-
+      A1 + A2                            = -m0_ro
+      A1 (t_rs - 3D/2) + A2 (t_rs - D/2) = -m1_ro
+  the_duration_is_not_closed_form: >
+    D is found by bisection on the gradient raster, and the monotonicity that licenses bisection
+    is derived rather than assumed- before the first echo the readout has one sign, so
+    C = m0_ro e - M is the integral of g(t) t over an interval where both factors are
+    non-negative, which makes A1 = C/D + |S|/2 > 0 and A2 = -(3|S|/2 + C/D) < 0 with both
+    magnitudes falling as D grows, against a trapezoid capacity that rises.
+    **The claim is scoped**- this realisation gives the two winders the SAME duration, and the
+    search returns the shortest such pair on the raster.  Whether unequal durations could be
+    shorter is NOT established, no two-duration search was added, and no minimum-TE property is
+    claimed.
+  what_a_leaf_exposes: >
+    The open question asked what a leaf must offer a joint owner, and answered- not a cached
+    moment, but its semantic instants and its events.  `prephaser_lobes` is that, and it is what
+    this implementation needed for its own notebook and tests; `time_to_echo` was already the
+    semantic instant.  No moment is published, because a moment is only true for one choice of
+    origin, endpoint and order.
 
 decision_summary: >
   **Flow compensation is not a Module, and the domain source says so in its first sentence.**
@@ -192,9 +263,12 @@ decision_summary: >
 
 open_questions:
   - >
-    Which leaves should carry a compensation option, and should the option be an order (null
-    moments up to n) or a boolean?  D1 says the useful order "depends on the specifics of the
-    application and on the performance of the gradient hardware", which argues for an order.
+    ANSWERED 2026-09-25.  The selector is an ORDER -- `_null_moment_order` -- for the reason D1
+    gives, and CartesianLine is the first leaf to carry it because the readout is the
+    self-contained single-axis case.  It is private: no OTHER leaf should carry a public one,
+    because the question a caller asks is at the repetition level and the repetition routes it.
+    A phase-encode blip and a slice-selection waveform are different problems, and the second is
+    the cross-leaf case that belongs to a kernel.
   - >
     What must a leaf expose for a joint owner to do the algebra?  **Not a cached moment.**  A
     moment is not an intrinsic property of a waveform -- it depends on the placement time, the

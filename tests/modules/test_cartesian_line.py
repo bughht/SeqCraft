@@ -998,7 +998,7 @@ def test_the_barriers_change_nothing_against_this_compiler(fast_opts, polarity, 
     period, lobe = train.echo_spacing_s, float(pp.calc_duration(train.gx))
 
     def compiled(barriers: int):
-        out = sc.LogicBlock(f'{barriers}-barriers').add(0.0, train._prephaser)
+        out = sc.LogicBlock(f'{barriers}-barriers').add(0.0, train.prephaser_lobes[0])
         start = train.prephaser_duration_s
         for n in range(8):
             t0 = start + n * period
