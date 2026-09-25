@@ -64,10 +64,13 @@ from typing import TYPE_CHECKING
 
 import pypulseq as pp
 
+from ...augmentation import FlowCompensation, VelocityEncoding
 from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
+from ...design.timing import EPS
 from ...errors import ConfigurationError, format_error
+from .. import _augment, _joint
 from .._support import ceil_raster, require_positive
 from ..encoding.phase_encoding import PhaseEncode
 from ..readout.cartesian_line import CartesianLine
@@ -174,6 +177,26 @@ class GRE3DTR(Module):
         one.  ``writeGradientEcho3D.m`` spoils on x for the same reason, its tail being
         ``gyReph, gzReph, gxSpoil``.  Asking for ``'z'`` here is allowed and may need a derated
         design; see :func:`seqcraft.opts.derate`.
+    flow_comp
+        Ask that the **common-mode** first gradient moment be zero at the echo:
+        :class:`~seqcraft.FlowCompensation`, or ``None``.  Its `axis` may name one axis or
+        several, and each is refused unless this repetition owns an adjustable window there --
+        ``'x'``, ``'y'`` and ``'z'`` are all available here.  The refusal names what that axis carries here instead.
+
+        Which part of the repetition reshapes to deliver it is not the caller's problem: ``'x'`` is solved by this repetition's :class:`~seqcraft.modules.CartesianLine`, while ``'y'`` and ``'z'`` are designed together with the encoding areas that share their windows -- on ``'z'`` that is the partition encode and the slab rephasing.
+    velocity_encode
+        Ask that the first moment **differ** between two acquired states:
+        :class:`~seqcraft.VelocityEncoding`, or ``None``.  This makes the repetition two-state, so
+        :meth:`build` then requires ``encoding_state`` to be one of ``velocity_encode.states``,
+        and refuses one when there is no velocity encoding to give it meaning.
+
+        Only on an axis designed jointly (``'y'`` or ``'z'``).  A readout axis is realised by a solve that
+        nulls its first moment rather than aiming it at a value, which a difference between two
+        acquisitions needs.
+
+        Composing the two on one axis is not a conflict: `flow_comp` constrains the mean over the
+        states and this constrains their separation, so the pair comes out at half the difference
+        either side of zero -- derived, not specified.
     tag
         Optional identity, as for any :class:`~seqcraft.Module`.
 
@@ -205,6 +228,11 @@ class GRE3DTR(Module):
     (True, -11.148)
     """
 
+    #: The axes `PhaseEncode` acts on here.  Class constants because the routing table is built
+    #: from them before either leaf exists.
+    _PE_AXIS = 'y'
+    _PAR_AXIS = 'z'
+
     def __init__(
         self,
         *,
@@ -222,9 +250,13 @@ class GRE3DTR(Module):
         partial_fourier: float = 1.0,
         spoil_cycles_per_voxel: float = 4.0,
         spoil_axis: str | Iterable[str] = ('x',),
+        flow_comp: FlowCompensation | None = None,
+        velocity_encode: VelocityEncoding | None = None,
         tag: str | None = None,
     ) -> None:
         super().__init__(opts=opts, tag=tag)
+        _augment.require_intent_type(flow_comp, FlowCompensation, 'flow_comp')
+        _augment.require_intent_type(velocity_encode, VelocityEncoding, 'velocity_encode')
         self.fov_mm = self._require_triple(fov_mm, 'fov_mm')
         self.matrix = tuple(int(n) for n in self._require_triple(matrix, 'matrix'))
         self.selective = slab_thickness_mm is not None
@@ -243,9 +275,19 @@ class GRE3DTR(Module):
         nx, ny, nz = self.matrix
         self.pe = PhaseEncode(opts=opts, fov_mm=self.fov_mm[1], matrix=ny, axis='y')
         self.pe_z = PhaseEncode(opts=opts, fov_mm=self.fov_mm[2], matrix=nz, axis='z')
+        # Who owns a moment requirement on each axis.  `y` is the phase-encode blip and `z` the
+        # winder that already carries the partition encode and the slab rephasing, so both are
+        # this module's; `x` is the readout's, which solves its own first moment.
+        self._moment_owners: dict[str, str] = {
+            self._PE_AXIS: 'joint', self._PAR_AXIS: 'joint', 'x': 'readout',
+        }
+        routed = self._route(flow_comp, velocity_encode)
+        # The readout route reaches the probe too: a compensated prephaser is longer, and the
+        # probe is what sizes the winder.
+        readout_moment = {'_null_moment_order': 1} if routed.get('x') else {}
         probe_ro = CartesianLine(opts=opts, fov_mm=self.fov_mm[0], matrix=nx, axis='x',
                                  bandwidth_hz_px=bandwidth_hz_px,
-                                 partial_fourier=partial_fourier)
+                                 partial_fourier=partial_fourier, **readout_moment)
 
         # The one quantity that makes this a kernel: the slab's rephasing requirement, read as a
         # signed moment rather than as somebody's event.  Zero when non-selective, which is what
@@ -253,17 +295,36 @@ class GRE3DTR(Module):
         self.slab_rephase_area_per_m = self.exc.rephaser_area_per_m
 
         self._z_worst_partition, z_worst_s = self._solve_z()
+        # **Provisional, internal.**  The z winder already carries two coupled requirements --
+        # the slab rephasing and the partition encoding -- which is why this module owns it
+        # rather than either leaf.  A claimed first moment is a third, and it is handed to the
+        # shared designer for the same reason: no one leaf can see all of them.
+        jointly = {a for a, owner in routed.items() if owner == 'joint'}
+        self._joint_claims, self._encoding_states = _augment.claims_and_states(
+            _augment.flow_comp_for(flow_comp, jointly), velocity_encode)
+        self._joint: dict[str, _joint.JointDesign] = {}
         self.winder_s = ceil_raster(
             max(probe_ro.prephaser_duration_s, self.pe.min_duration_s,
                 self.exc.rephaser_duration_s if not self.selective else 0.0,
                 z_worst_s),
             opts.grad_raster_time,
         )
+        if self._joint_claims:
+            # AUTO first, so the minimum is known before an explicit TE is judged
+            # against it -- and so the refusal for a too-short TE stays this module's,
+            # naming `te_s`, rather than the designer's naming an axis.
+            window, self._joint = self._design_joint(
+                self._joint_claims, probe_ro, self.winder_s, None, opts)
+            self.winder_s = ceil_raster(window, opts.grad_raster_time)
+            if te_s is not None and te_s >= self._reachable_te_s(probe_ro) - EPS:
+                window, self._joint = self._design_joint(
+                self._joint_claims, probe_ro, self.winder_s, te_s, opts)
+                self.winder_s = ceil_raster(window, opts.grad_raster_time)
 
         self.ro = CartesianLine(opts=opts, fov_mm=self.fov_mm[0], matrix=nx, axis='x',
                                 bandwidth_hz_px=bandwidth_hz_px,
                                 partial_fourier=partial_fourier,
-                                prephaser_duration_s=self.winder_s)
+                                prephaser_duration_s=self.winder_s, **readout_moment)
         self.pe = PhaseEncode(opts=opts, fov_mm=self.fov_mm[1], matrix=ny, axis='y',
                               duration_s=self.winder_s)
         # One z design at the winder duration, carrying the largest combined moment, scaled per
@@ -384,6 +445,7 @@ class GRE3DTR(Module):
         phase_deg: float = 0.0,
         acquire: bool = True,
         center_mm: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        encoding_state: int | None = None,
     ) -> LogicBlock:
         """
         Return one repetition, as a block exactly :attr:`tr_s` long.
@@ -399,6 +461,21 @@ class GRE3DTR(Module):
             ``False`` drops the ADC and the labels and changes nothing else.
         center_mm
             ``(x, y, z)`` centre of the imaging volume, millimetres.  ``y`` must be ``0.0``.
+        encoding_state
+            Which encoding state this repetition realises, when `velocity_encode` gave it more
+            than one.
+
+            .. code-block:: text
+
+                no velocity_encode       omit it.  Passing one raises -- a state nothing acts on
+                                         would quietly hand you identical repetitions
+                velocity_encode present  required, and one of ``velocity_encode.states``
+
+            Iterate `states` rather than writing the pair out, so what a state means stays with
+            the object that owns the physics::
+
+                for state in venc.states:
+                    scan.add(at, tr(line=line, encoding_state=state))
         """
         x, y, z = (float(v) for v in center_mm)
         if y != 0.0:
@@ -415,17 +492,19 @@ class GRE3DTR(Module):
         tail = self._tail_start_s
         # rephase=False when selective: this module realises that requirement inside the z
         # winder below, and a standalone rephaser beside it would apply the slab term twice.
+        state = self._resolve_state(encoding_state)
         out = (
             LogicBlock()
             .add(0.0, self.exc(phase_deg=phase_deg, position_mm=z, rephase=not self.selective))
-            .add(start, self.pe(line=line))
+            .add(start, self._joint_block(self._PE_AXIS, (line, state))
+                 or self.pe(line=line))
             .add(start, self.ro(acquire=acquire, phase_deg=phase_deg, offset_mm=x))
             .add(tail, self.pe(line=line, rewind=True))
             # Only the partition encoding is unwound: the slab rephasing was a one-way
             # compensation and is already spent.
             .add(tail, self.pe_z(line=partition, rewind=True))
         )
-        winder = self._z_winder(partition)
+        winder = self._z_winder(partition, state)
         if winder is not None:
             out.add(start, winder)
         for block in self.spoilers.values():
@@ -438,13 +517,174 @@ class GRE3DTR(Module):
             out.add(tail + self._tail_s, pp.make_delay(fill))
         return out
 
-    def _z_winder(self, partition: int):
+    def _resolve_state(self, encoding_state: int | None) -> object:
+        """
+        Turn what the caller passed into the state key this repetition designed against.
+
+        Refuses in **both** directions: a missing state would realise an arbitrary one of a pair,
+        and an ignored state hands the caller two identical repetitions that they find out about
+        when the subtraction comes back zero.
+        """
+        states = self._encoding_states
+        if states == (_augment.ONE_STATE,):
+            if encoding_state is not None:
+                _augment.refuse_state_mismatch(type(self).__name__, states, encoding_state)
+            return _augment.ONE_STATE
+        if encoding_state not in states:
+            _augment.refuse_state_mismatch(type(self).__name__, states, encoding_state)
+        return encoding_state
+
+    # --------------------------------------------------------------------- capability
+    @property
+    def _joint_axes(self) -> tuple[str, ...]:
+        """The axes this repetition designs jointly, derived from who owns what."""
+        return tuple(a for a, owner in self._moment_owners.items() if owner == 'joint')
+
+    def _route(self, flow_comp: FlowCompensation | None,
+               velocity_encode: VelocityEncoding | None) -> dict[str, str]:
+        """
+        Which owner handles each requested axis: ``axis -> owner``, and nothing else.
+
+        This method reads **only** an intent's `axes`.  It does not know what kind of requirement
+        an intent is, so a third augmentation needs no change here.  Whether the owner an axis
+        routes to can express what was asked is a different question, and it belongs to the
+        translation layer, which is already allowed to interpret public intent.
+        """
+        routed: dict[str, str] = {}
+        component = type(self).__name__
+        intents = (flow_comp, velocity_encode)
+        for intent, axis in _augment.axes_claimed(intents):
+            owner = self._moment_owners.get(axis)
+            if owner is None:
+                _augment.refuse_unowned_axis(
+                    component, intent, axis, self._moment_owners, f'{axis!r} is not an axis this repetition plays an adjustable gradient on')
+            else:
+                routed[axis] = owner
+        _augment.require_owners_can_serve(component, intents, routed, self._joint_axes)
+        return routed
+
+    def _z_winder(self, partition: int, encoding_state: object = None):
         """The one z gradient carrying ``A_slab + A_partition(p)``, or ``None`` when it is zero."""
+        designed = self._joint_block(self._PAR_AXIS, (partition, encoding_state))
+        if designed is not None:
+            return designed
         area = self.combined_z_area_per_m(partition)
         if self._gz_combined is None or abs(area) <= _NEGLIGIBLE_PER_M:
             return None
         scale = area / self._gz_reference_area_per_m
         return derive(pp.scale_grad(self._gz_combined, scale))
+
+    def _reachable_te_s(self, probe_ro: CartesianLine) -> float:
+        """The echo time the current winder reaches, before any explicit-TE fill."""
+        raster = float(self.opts.grad_raster_time)
+        start = ceil_raster(
+            max(self.exc.time_to_rephaser(), float(pp.calc_duration(self.exc.rf))), raster)
+        return (start + self.winder_s + probe_ro.time_to_echo()
+                - probe_ro.prephaser_duration_s - self.exc.time_to_center())
+
+    # ------------------------------------------------------------- the coupled design
+    def _design_joint(self, claims: Sequence[object], probe_ro: CartesianLine,
+                      local_min_s: float, te_request: float | None,
+                      opts: Opts) -> tuple[float, dict[str, _joint.JointDesign]]:
+        """
+        Design every claimed axis against **one common candidate schedule**.
+
+        Both `y` and `z` are winder axes here, so a claim on each is two physical problems sharing
+        one window and one echo -- which is the case the single-axis spike could not reach.  A
+        candidate is accepted only when every claimed axis is feasible at it, and the candidate
+        carries the fill an explicit ``te_s`` would insert, because translating a solved waveform
+        changes its first moment whenever ``m0`` is non-zero.
+        """
+        raster = float(opts.grad_raster_time)
+        origin = self.exc.time_to_center()
+        start = ceil_raster(
+            max(self.exc.time_to_rephaser(), float(pp.calc_duration(self.exc.rf))), raster)
+        echo_in_lobe = probe_ro.time_to_echo() - probe_ro.prephaser_duration_s
+        excitation = self.exc(rephase=not self.selective)
+        problems = {
+            axis: self._axis_problem(axis, group, excitation, opts)
+            for axis, group in _joint.group_by_axis(claims).items()
+        }
+
+        exhausted = True
+        for steps in range(int(round(local_min_s / raster)), _joint.SEARCH_LIMIT_WINDOWS):
+            window = steps * raster
+            fill = 0.0 if te_request is None else (
+                te_request - (start + window + echo_in_lobe - origin))
+            if fill < -EPS:
+                # The requested TE is already overshot; a longer window only overshoots further,
+                # so this is the request's own refusal and not the search running out.
+                exhausted = False
+                break
+            schedule = _joint.Schedule(
+                origin_s=origin,
+                endpoint_s=start + max(fill, 0.0) + window + echo_in_lobe,
+                window_start_s=start + max(fill, 0.0),
+                window_s=window,
+            )
+            designs = {}
+            for axis, problem in problems.items():
+                found = _joint.attempt(problem, schedule, opts)
+                if found is None:
+                    break
+                designs[axis] = found
+            if len(designs) == len(problems):
+                return window, designs
+        # Two different failures, and only one of them is about physics.  Running out of
+        # candidate windows means the ceiling was reached without trying what lies beyond it;
+        # saying "infeasible" there would claim something the search never established.
+        first = next(iter(problems.values()))
+        if exhausted:
+            return _joint.refuse_search_exhausted(
+                first, steps=_joint.SEARCH_LIMIT_WINDOWS, raster_s=raster)
+        return _joint.refuse_infeasible(first)
+
+    def _axis_problem(self, axis: str, group: Sequence[object], excitation: LogicBlock,
+                      opts: Opts) -> _joint.JointProblem:
+        """
+        One axis' physical problem.  **No augmentation is named here.**
+
+        The `z` base requirement is the partition's own k -- *not* ``combined_z_area_per_m``,
+        which already contains the slab rephasing that `fixed` supplies below.  Adding both would
+        count the slab twice, which whole-repetition validation catches and a per-lobe check
+        would not.
+        """
+        claimed = {getattr(claim, 'order', None) for claim in group}
+        encode = {self._PE_AXIS: self.pe, self._PAR_AXIS: self.pe_z}.get(axis)
+        count = self.matrix[1] if axis == self._PE_AXIS else (
+            self.matrix[2] if axis == self._PAR_AXIS else 1)
+        targets: dict[object, tuple[float, float | None]] = {}
+        for index in range(count):
+            area = float(encode.k_per_m(index)) if encode is not None else 0.0
+            resolved = {
+                order: _joint.resolve_claims(
+                    group, self._encoding_states, axis=axis, order=order,
+                    base={key: (area if order == 0 else 0.0) for key in self._encoding_states})
+                for order in _joint.ORDERS
+            }
+            for key in self._encoding_states:
+                targets[(index, key)] = (
+                    resolved[0][key], resolved[1][key] if 1 in claimed else None)
+
+        def fixed(state: object, schedule: _joint.Schedule) -> tuple[float, float]:
+            """A selective slab's own lobe carries the fine scan's ``ms`` on `z`."""
+            return tuple(  # type: ignore[return-value]
+                _joint.measure_moment(excitation, order, axis, origin_s=schedule.origin_s,
+                                      start_s=0.0, end_s=schedule.endpoint_s)
+                for order in _joint.ORDERS
+            )
+
+        return _joint.JointProblem(axis=axis, targets=targets, fixed=fixed)
+
+    def _joint_block(self, axis: str, state: object):
+        """One axis' jointly designed waveform, or ``None`` when nothing claimed that axis."""
+        designed = self._joint.get(axis)
+        if designed is None:
+            return None
+        out = LogicBlock('joint')
+        for at, event in _joint.events_for(designed, state):
+            out.add(at - designed.schedule.window_start_s, event)
+        return out
 
     # --------------------------------------------------------------------------- design
     def _solve_z(self) -> tuple[int, float]:

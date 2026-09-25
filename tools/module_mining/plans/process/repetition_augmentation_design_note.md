@@ -87,3 +87,9 @@ Each may become right. None is justified now, and the rule that decides is uncha
 Revisit when two of these are real, not one: `FlowCompensation`, `DiffusionEncoding`,
 `FIDNavigator`, velocity/motion encoding. The first to arrive should be built **candidate-local**,
 and the second is what turns this note into a design.
+
+> **That trigger fired on 2026-09-24.** `VelocityEncode` shipped and flow compensation has a
+> candidate-local realisation, which is two real consumers. The revisit is
+> [`../current/2026-09-24_repetition_level_joint_waveform_design.md`](../current/2026-09-24_repetition_level_joint_waveform_design.md),
+> and this note is what it argues from. Nothing here is superseded yet: no API is frozen until
+> that document's spike has been run and reviewed.

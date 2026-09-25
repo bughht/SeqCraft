@@ -182,6 +182,19 @@ class VelocityEncode(Module):
     {0.0}
     """
 
+    @staticmethod
+    def delta_m1_for(venc_m_s: float) -> float:
+        r"""
+        The change in first moment a VENC implies, in s/m -- ``1 / (2 * venc_m_s)``.
+
+        The relation on its own, without a waveform.  A composing design that needs the number
+        but not the standalone bipolar reads it here, so the factor of two lives in one place.
+
+        >>> round(VelocityEncode.delta_m1_for(1.5), 6)
+        0.333333
+        """
+        return 1.0 / (2.0 * require_positive(venc_m_s, 'venc_m_s'))
+
     def __init__(
         self,
         *,
@@ -197,7 +210,7 @@ class VelocityEncode(Module):
 
         # delta_m1 is the CHANGE across the toggles, so one toggle carries half of it -- and that
         # half is what the geometry has to produce.  See the module docstring on the factor of two.
-        self.delta_m1_s_per_m = 1.0 / (2.0 * self.venc_m_s)
+        self.delta_m1_s_per_m = self.delta_m1_for(self.venc_m_s)
         self._target = self.delta_m1_s_per_m / 2.0
         self.rise_time_s, self.flat_time_s = self._solve_times()
         self.amplitude_hz_per_m = self._amplitude_for(self.rise_time_s, self.flat_time_s)

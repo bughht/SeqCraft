@@ -18,6 +18,7 @@
 | [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | Diffusion-weighted imaging: a Stejskal–Tanner gradient pair around a 180°, a single-shot EPI readout, and an ADC map recovered from a phantom whose diffusion coefficient is known. Introduces `DiffusionSEPrep` and `sc.b_value`. |
 | [`t2prep_gre_2d/`](t2prep_gre_2d/) | A T2 preparation in front of a spoiled gradient echo: adding controlled T2 weighting before a readout that would otherwise follow T2\*, and the measurement that the weighting really is T2 rather than T2\*. Introduces `T2Prep`. |
 | [`pc_gre_2d/`](pc_gre_2d/) | Phase contrast: a bipolar pair that leaves still spins alone and gives moving ones a phase proportional to their velocity, and the two acquisitions whose difference is a velocity map. Introduces `VelocityEncode`. |
+| [`flowcomp_gre_2d/`](flowcomp_gre_2d/) | Flow compensation: why a gradient echo's first moment at the echo gives moving spins a velocity-dependent phase, and the reshaped winder that removes it. Measured on the emitted waveform; image-level artefact reduction is not demonstrated. Introduces `sc.FlowCompensation`. |
 
 ## `gre_2d/`
 
@@ -350,6 +351,35 @@ as the sign of the emitted first moment, which is something `sc.moments` can rea
 which sign of flow a reconstruction calls forward is its own choice.
 
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
+
+## `flowcomp_gre_2d/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](flowcomp_gre_2d/01_build.ipynb) | The first moment of an ordinary gradient echo at the echo, the reshaped two-lobe winder that nulls it, both measured on the emitted repetition across three protocols, which axes a 2D gradient echo can compensate, and the echo time it costs. Two `.seq` files. **Needs nothing but `seqcraft`.** |
+
+A gradient echo puts `k = 0` at the echo, which is `m0 = 0`, so a stationary spin picks up no
+phase from that axis. `m1` is not zero, and a spin moving along the axis arrives with `2 pi m1 v`
+— which pulses with the flow rather than staying constant, and a shot-to-shot phase variation is
+the mechanism behind flow ghosting and flow-related signal loss.
+
+```text
+ordinary        [ winder ] [ readout ->  echo         m0 = 0, m1 != 0
+compensated  [ w1 ][ w2 ] [ readout ->  echo          m0 = 0, m1 = 0
+```
+
+Flow compensation is asked for as physical intent — `flow_comp=sc.FlowCompensation(axis='x')` —
+rather than as a block to insert or an option on a particular leaf. Which part of the repetition
+reshapes to deliver it is the repetition's problem, and for the two axes a 2D gradient echo owns
+the answers are different: the readout's prephaser solves its own, and the phase-encode winder is
+designed together with the encode area it already carries.
+
+**What it demonstrates, and what it does not.** The velocity-dependent phase term goes to zero:
+`m1 = 0` on the emitted waveform, measured across three protocols against an uncompensated
+control. **Image-level artefact reduction is not demonstrated** — that is a question for a flow
+phantom or a scanner, and nothing in the notebook stands in for one.
+
+`01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
 
 ## Requirements
 

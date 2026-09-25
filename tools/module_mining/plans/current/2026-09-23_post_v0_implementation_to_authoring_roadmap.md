@@ -329,6 +329,16 @@ infrastructure for the next stage, without becoming the definition of the module
 
 # Stage C — implement flow compensation without assuming a `FlowComp` class
 
+> **Superseded, 2026-09-25.** The readout-axis solve below shipped in PR #39, and the per-leaf
+> option this stage assumed did **not**: a keyword repeated for every augmentation and every
+> sequence family is the `N x M` shape the design exists to avoid, so the selector is private and
+> the public surface is repetition-level intent —
+> `GRE2DTR(..., flow_comp=sc.FlowCompensation(axis='x'))`. See
+> [`2026-09-24_repetition_physical_design_architecture.md`](2026-09-24_repetition_physical_design_architecture.md)
+> for the architecture and
+> [`2026-09-25_public_augmentation_api_implementation_plan.md`](2026-09-25_public_augmentation_api_implementation_plan.md)
+> for what was built. Stage C is complete; bSSFPTR is still not started.
+
 ## Governing decision
 
 The fine scan deliberately did **not** approve a new leaf named `FlowComp`.

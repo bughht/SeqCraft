@@ -15,12 +15,16 @@
 #                   primary source.  Good for the canonical definition of a family and for the
 #                   mental model a practitioner is taught; it does NOT outrank a handbook, a
 #                   review or a primary paper, and it settles nothing those disagree with.
+#   stress-case     a real sequence a proposed abstraction is tested AGAINST.  It supplies edge
+#                   cases and a regression target; it is not evidence that a boundary exists,
+#                   and a corpus authored by this project's own owner can never be a second
+#                   witness to its own design.
 #
 # A corpus may be more than one.  It is never automatically a design-witness just because it
 # contains working sequences.
 
-registry_version: 4
-updated: 2026-09-23
+registry_version: 5
+updated: 2026-09-24
 
 sources:
 
@@ -336,6 +340,36 @@ sources:
       never a design-witness -- it contains no construction to corroborate -- and never an oracle.
       Use it to identify the canonical form of a family and the vocabulary practitioners use for
       it, and then cite the primary source for the physics.
+
+  # ------------------------------------------------- the project owner's own sequence, as a case
+  - id: wave-gre-flow-comp
+    repo: HarmonizedMRI/wave-gre-flow-comp
+    commit_scanned: 0e1ec51
+    license: MIT
+    compatible_with_seqcraft_mit: true
+    roles: [stress-case]
+    explicitly_not: [design-witness, oracle]
+    language: matlab
+    executable: documentary
+    admitted: >
+      2026-09-24, for Stage C only, and file by file rather than by admitting HarmonizedMRI.
+      Read- seq/gre_3d_wave_with_flash_calibration.m and seq/utils/{makeM0PreservingM1CorrectedLobe,
+      makeZeroAreaM1FourPointFC, designMinDurationM0M1LobeRefStart, makeM0M1LobeRefStart,
+      calcInterEchoCosExternalMoments}.m
+    covers: >
+      A 3D wave-encoded GRE with first-moment-corrected readout, phase-encode, partition, cosine
+      wave gradients and slab rephasing, across a multi-echo train.
+    why_registered: >
+      The implementation roadmap reserved it for Stage C as a concrete real-sequence case with
+      substantial hard-coded per-protocol flow-compensation logic- the thing a shared boundary
+      should make less hard-coded.  Admitted to test a proposed abstraction against a real
+      implementation, not to derive one.
+    role_note: >
+      **NOT independent boundary evidence, and the roadmap says so.**  It is authored by the
+      SeqCraft project owner, so agreement between it and a SeqCraft design is not two witnesses
+      converging -- it is one author.  Use it as a stress case, a source of edge cases and a
+      regression target.  Nothing may be adapted from it; SeqCraft's own constructions are
+      derived from the domain reference and measured independently.
 
 # ---------------------------------------------------------------------------------------------
 # Per-candidate questions.  A corpus's registry entry does NOT answer these; they are re-asked

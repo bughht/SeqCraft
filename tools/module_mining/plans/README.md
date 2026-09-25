@@ -8,11 +8,28 @@
 ```text
 plans/
     current/
+        2026-09-24_public_augmentation_api_alternatives.md
+                                                three candidate public surfaces for GRE plus
+                                                velocity encoding and flow compensation, and the
+                                                capability/refusal model.  FOR REVIEW; nothing
+                                                implemented
+        2026-09-24_repetition_physical_design_architecture.md
+                                                THE GOVERNING ARCHITECTURE for the rest of
+                                                Stage C.  Where MRI timing design lives, what
+                                                stays local, what becomes shared, and the
+                                                schedule-outside / realization-inside split
+        2026-09-24_repetition_level_joint_waveform_design.md
+                                                the direction it settles.  Base requirements plus
+                                                augmentation requirements, solved together at the
+                                                repetition level, so that velocity encoding and
+                                                flow compensation are each defined once instead
+                                                of per sequence family.  Opened the revisit that
+                                                process/repetition_augmentation_design_note.md
+                                                asked for
         2026-09-23_post_v0_implementation_to_authoring_roadmap.md
-                                                THE CURRENT DIRECTION.  Implement the approved
-                                                queue -- T2Prep, VelocityEncode, flow
-                                                compensation, bSSFPTR -- then build
-                                                sequence-authoring v0
+                                                the implementation roadmap it interrupts.  Still
+                                                current for T2Prep, VelocityEncode and bSSFPTR;
+                                                its Stage C is what the design above revisits
         roadmap.md                              the post-v0 roadmap it continues.  Still current
                                                 for everything before the queue
 
