@@ -204,10 +204,14 @@ traffic_light: GREEN          # IMPLEMENTED 2026-09-24 for the readout-axis case
 
 implementation:
   shipped: >
-    src/seqcraft/modules/readout/cartesian_line.py -- `null_moment_order` on CartesianLine.  No
-    new module, no FlowComp class, no requirement interface, no solver, no compiler or LogicBlock
-    change.  The single_axis_self_contained recommendation in ownership.where_it_belongs, taken
-    literally.
+    src/seqcraft/modules/readout/cartesian_line.py -- the readout-axis first-moment solve, on
+    CartesianLine, selected by the PRIVATE `_null_moment_order`.  No new module, no requirement
+    interface, no solver, no compiler or LogicBlock change.  The single_axis_self_contained
+    recommendation in ownership.where_it_belongs, taken literally.
+
+    The switch is private because a caller asks at the repetition level, where the repetition
+    decides which of its components owns the problem; a public per-leaf keyword would be the
+    first instance of a leaf-by-augmentation surface with no principled place to stop.
   scope: >
     The readout axis, first moment, first echo.  Order 0 is the ordinary prephaser and the
     default, so nothing that existed before changed behaviour.  Everything in
@@ -259,10 +263,11 @@ decision_summary: >
 
 open_questions:
   - >
-    PARTLY ANSWERED 2026-09-24.  The option is an ORDER -- `null_moment_order` -- for the reason
-    D1 gives, and CartesianLine is the first leaf to carry it because the readout is the
-    self-contained single-axis case.  Which OTHER leaves should carry one is still open- a
-    phase-encode blip and a slice-selection waveform are different problems, and the second is
+    ANSWERED 2026-09-25.  The selector is an ORDER -- `_null_moment_order` -- for the reason D1
+    gives, and CartesianLine is the first leaf to carry it because the readout is the
+    self-contained single-axis case.  It is private: no OTHER leaf should carry a public one,
+    because the question a caller asks is at the repetition level and the repetition routes it.
+    A phase-encode blip and a slice-selection waveform are different problems, and the second is
     the cross-leaf case that belongs to a kernel.
   - >
     What must a leaf expose for a joint owner to do the algebra?  **Not a cached moment.**  A
