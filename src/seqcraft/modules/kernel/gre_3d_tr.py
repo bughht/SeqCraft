@@ -177,6 +177,26 @@ class GRE3DTR(Module):
         one.  ``writeGradientEcho3D.m`` spoils on x for the same reason, its tail being
         ``gyReph, gzReph, gxSpoil``.  Asking for ``'z'`` here is allowed and may need a derated
         design; see :func:`seqcraft.opts.derate`.
+    flow_comp
+        Ask that the **common-mode** first gradient moment be zero at the echo:
+        :class:`~seqcraft.FlowCompensation`, or ``None``.  Its `axis` may name one axis or
+        several, and each is refused unless this repetition owns an adjustable window there --
+        ``'x'``, ``'y'`` and ``'z'`` are all available here.  The refusal names what that axis carries here instead.
+
+        Which part of the repetition reshapes to deliver it is not the caller's problem: ``'x'`` is solved by this repetition's :class:`~seqcraft.modules.CartesianLine`, while ``'y'`` and ``'z'`` are designed together with the encoding areas that share their windows -- on ``'z'`` that is the partition encode and the slab rephasing.
+    velocity_encode
+        Ask that the first moment **differ** between two acquired states:
+        :class:`~seqcraft.VelocityEncoding`, or ``None``.  This makes the repetition two-state, so
+        :meth:`build` then requires ``encoding_state`` to be one of ``velocity_encode.states``,
+        and refuses one when there is no velocity encoding to give it meaning.
+
+        Only on an axis designed jointly (``'y'`` or ``'z'``).  A readout axis is realised by a solve that
+        nulls its first moment rather than aiming it at a value, which a difference between two
+        acquisitions needs.
+
+        Composing the two on one axis is not a conflict: `flow_comp` constrains the mean over the
+        states and this constrains their separation, so the pair comes out at half the difference
+        either side of zero -- derived, not specified.
     tag
         Optional identity, as for any :class:`~seqcraft.Module`.
 

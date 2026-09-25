@@ -5,9 +5,10 @@
 > The two copies are identical today and there is nothing keeping them that way; see
 > [`../README.md`](../../README.md) for which one to edit.
 
-**Status:** approved in direction; revised after the correction pass. **Nothing here is
-implemented**, and PR #39 is unchanged.
-**Date:** 2026-09-25, revised 2026-09-25
+**Status:** **implemented.** Approved in direction, revised after the correction pass, and built
+on `feat/augmentation-api`. One adjustment was accepted during implementation and is recorded in
+§1.1b; everything else shipped as planned.
+**Date:** 2026-09-25, revised and implemented 2026-09-25
 **Governed by:** [`2026-09-24_repetition_physical_design_architecture.md`](2026-09-24_repetition_physical_design_architecture.md)
 **Evidence:** [`2026-09-24_repetition_joint_design_spike_findings.md`](2026-09-24_repetition_joint_design_spike_findings.md),
 frozen at tag `stage-c-evidence` (`67c3e3c`)
@@ -22,8 +23,8 @@ reopening anything settled there. Where it names a decision the reviewer still o
 Two public types, two keywords, one attribute, and nothing else.
 
 ```text
-sc.FlowCompensation(axis=...)              what physics is wanted
-sc.VelocityEncoding(venc_m_s=..., axis=...)
+sc.FlowCompensation(axis=...)              what physics is wanted; one axis or several
+sc.VelocityEncoding(venc_m_s=..., axis=...)   one axis -- two is a different acquisition
 
 GRE2DTR(..., flow_comp=..., velocity_encode=...)     where it is wanted
 tr(..., encoding_state=state)                        which state is being realised
@@ -68,8 +69,10 @@ an acquisition framework. Section 12 lists those as non-goals.
 ```python
 @dataclass(frozen=True)
 class FlowCompensation:
-    """Ask that the COMMON-MODE first gradient moment be zero at the echo, on one axis."""
-    axis: str
+    """Ask that the COMMON-MODE first gradient moment be zero at the echo."""
+    axis: str | tuple[str, ...]          # one axis, or several
+    @property
+    def axes(self) -> tuple[str, ...]: ...
 
 @dataclass(frozen=True)
 class VelocityEncoding:
@@ -81,6 +84,40 @@ class VelocityEncoding:
     def delta_m1_s_per_m(self) -> float: ...
     @property
     def states(self) -> tuple[int, int]: ...      # (+1, -1)
+    @property
+    def axes(self) -> tuple[str, ...]: ...        # always one; see 1.1b
+```
+
+### 1.1b One axis or several — the accepted adjustment
+
+**Accepted during implementation, 2026-09-25.** `FlowCompensation.axis` takes one axis or several;
+`VelocityEncoding.axis` stays single.
+
+The draft gave both a single `axis`, and implementation showed that one `flow_comp` keyword then
+could not express flow compensation on two axes at once -- something the spike could do and a real
+protocol wants, since compensating the phase-encode and slice axes together is ordinary. That is a
+capability regression rather than a simplification.
+
+```python
+FlowCompensation(axis='y')                # one
+FlowCompensation(axis=('y', 'z'))         # two independent requirements
+```
+
+**This does not reopen B2.** It is still one keyword carrying one intent object per augmentation,
+with the set closed in the signature; only the intent's own field is richer. The spelling is the
+one `spoil_axis` already uses on these kernels, so it is a convention the codebase has rather than
+a new one.
+
+The asymmetry with `VelocityEncoding` is principled, not an oversight:
+
+```text
+flow compensation, two axes    two independent requirements on two waveforms.  Asking for both
+                               means the same as asking for each, and they do not interact
+
+velocity encoding, two axes    a different acquisition.  Encoding two directions needs more than
+                               two states -- four, or a three-directional scheme -- so it is not
+                               this intent applied twice, and spelling it as though it were would
+                               hide that the scan just got longer
 ```
 
 Frozen dataclasses: they are values, not objects with behaviour. Two of them comparing equal means

@@ -37,27 +37,31 @@ __all__ = ['FlowCompensation', 'VelocityEncoding']
 @dataclass(frozen=True)
 class FlowCompensation:
     """
-    Ask that the **common-mode** first gradient moment be zero at the echo, on one axis.
+    Ask that the **common-mode** first gradient moment be zero at the echo.
 
-    Common mode, not "zero in every state", and the difference matters as soon as something else
-    constrains the same moment:
+    Common mode, not "zero in every acquired state".  The two mean the same thing until something
+    else constrains the same moment, and then they do not:
 
     .. code-block:: text
 
-        alone                    one acquired state, so the common mode IS that state and this
-                                 reduces to m1 = 0 -- which is what "flow compensated" means
+        alone, one acquired state    the common mode IS that state, so this reduces to m1 = 0.
+                                     A spin moving at constant velocity along the axis arrives
+                                     at the echo with the phase it would have had standing
+                                     still, so flow does not blur or misplace it -- which is
+                                     what "flow compensated" means
 
-        with VelocityEncoding    this fixes the MEAN of the two states at zero while the velocity
-                                 encoding fixes their separation, so the pair comes out at
-                                 +delta/2 and -delta/2.  Neither state has m1 = 0, and neither
-                                 should: that separation is the velocity signal
+        with VelocityEncoding        this fixes the MEAN of the two states at zero while the
+                                     velocity encoding fixes their separation, so the pair comes
+                                     out at +delta/2 and -delta/2.  NEITHER state has m1 = 0,
+                                     and neither should: a moving spin is meant to arrive with a
+                                     different phase in each, and that difference is the
+                                     velocity signal.  What the compensation removes here is the
+                                     background phase common to both, which is what makes the
+                                     subtraction a clean velocity map
 
     The symmetric half-delta is **derived**, not asked for.  Nothing computes it; it falls out of
     two independent constraints on the same moment, which is what lets the two compose without a
     precedence rule.
-
-    A spin moving at constant velocity along `axis` then arrives at the echo with the phase it
-    would have had standing still -- so flow does not blur or misplace it.
 
     Parameters
     ----------
