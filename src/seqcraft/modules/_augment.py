@@ -32,12 +32,14 @@ if TYPE_CHECKING:
 
 __all__ = [
     'ONE_STATE',
+    'asked_for',
+    'axes_claimed',
     'claims_and_states',
     'flow_comp_for',
     'refuse_state_mismatch',
     'refuse_unowned_axis',
-    'refuse_unsupported_route',
     'require_intent_type',
+    'require_owners_can_serve',
 ]
 
 #: The state key of a repetition that acquires one state, which is every repetition that is not
@@ -114,15 +116,40 @@ def flow_comp_for(flow_comp: FlowCompensation | None,
     return FlowCompensation(axis=wanted) if wanted else None
 
 
-def refuse_unowned_axis(component: str, axis: str, owners: dict[str, str], why: str) -> None:
+#: What each intent asks for, in the words a refusal should use.  The translation layer is where
+#: public intent may be interpreted, so this is the one place that knows an intent by type.
+_ASKED: dict[type, str] = {
+    FlowCompensation: 'apply flow compensation',
+    VelocityEncoding: 'velocity encode',
+}
+
+
+def asked_for(intent: object) -> str:
+    """The verb phrase naming what an intent wants, for a message that has to say which one."""
+    return _ASKED.get(type(intent), 'constrain a gradient moment')
+
+
+def axes_claimed(intents: Sequence[object]) -> tuple[tuple[object, str], ...]:
+    """Every ``(intent, axis)`` pair the caller asked for, skipping the intents not given."""
+    return tuple((intent, axis)
+                 for intent in intents if intent is not None
+                 for axis in intent.axes)
+
+
+def refuse_unowned_axis(component: str, intent: object, axis: str,
+                        owners: dict[str, str], why: str) -> None:
     """
-    Refuse an axis this repetition has no owner for, in physical terms.
+    Refuse an axis this repetition has no owner for, naming the intent that asked.
+
+    Naming it matters: the same axis can be unowned for one augmentation and fine for another, and
+    a message that always says "flow compensation" sends a caller who asked for velocity encoding
+    looking at the wrong keyword.
 
     `why` is the sequence-specific sentence -- which gradient that axis carries here, and who
     realises it -- because "not supported" is not a reason a caller can act on.
     """
     raise ConfigurationError(format_error(
-        f'{component} cannot apply flow compensation on {axis!r}.',
+        f'{component} cannot {asked_for(intent)} on {axis!r}.',
         {'axis': axis, 'axes it can use': tuple(owners)},
         [why,
          f'this repetition designs {tuple(owners)}; an axis it does not own is realised by the '
@@ -130,23 +157,31 @@ def refuse_unowned_axis(component: str, axis: str, owners: dict[str, str], why: 
     ))
 
 
-def refuse_unsupported_route(component: str, axis: str, joint_axes: Sequence[str]) -> None:
+def require_owners_can_serve(component: str, intents: Sequence[object],
+                             routed: dict[str, str], joint_axes: Sequence[str]) -> None:
     """
-    Refuse velocity encoding on an axis whose owner realises one repetition at a time.
+    Refuse an intent whose routed owner cannot express what it asks for.
 
-    The reason is the current local realisation's scope, **not** an impossibility: the readout's
-    solve implements first-moment nulling, one fixed target, and a difference between two
-    acquisitions needs a state-resolved one.  Extending it would make this work with no change to
-    the routing, so the message must not say it cannot be done.
+    This lives here rather than in the kernel because it is the one question that depends on
+    **what kind of requirement** an intent is, and interpreting public intent is this layer's job.
+    Routing stays ``axis -> owner`` and knows nothing about augmentation types.
+
+    Today there is exactly one such restriction, and it is a **v1 implementation scope rather than
+    an architectural impossibility**: a local owner realises one repetition at a time, and the
+    readout's solve nulls its first moment rather than aiming it at a value, which is what a
+    difference between two acquired states needs.  Extending `CartesianLine` to take a target
+    would make readout-axis velocity encoding work with no routing change at all.
     """
-    raise ConfigurationError(format_error(
-        f'{component} cannot velocity encode on {axis!r}.',
-        {'axis': axis, 'axes it can velocity encode on': tuple(joint_axes)},
-        ['the readout axis is designed by its readout, which solves one repetition at a time and '
-         'nulls its first moment rather than aiming it at a value',
-         f'velocity encoding is a difference between two acquisitions, so it needs an axis this '
-         f'repetition designs jointly: {tuple(joint_axes)}'],
-    ))
+    for intent, axis in axes_claimed(intents):
+        if isinstance(intent, VelocityEncoding) and routed.get(axis) not in (None, 'joint'):
+            raise ConfigurationError(format_error(
+                f'{component} cannot velocity encode on {axis!r}.',
+                {'axis': axis, 'axes it can velocity encode on': tuple(joint_axes)},
+                ['the readout axis is designed by its readout, which solves one repetition at a '
+                 'time and nulls its first moment rather than aiming it at a value',
+                 f'velocity encoding is a difference between two acquisitions, so it needs an '
+                 f'axis this repetition designs jointly: {tuple(joint_axes)}'],
+            ))
 
 
 def refuse_state_mismatch(component: str, states: Sequence[object], given: object) -> None:

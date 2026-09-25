@@ -419,7 +419,7 @@ class GRE2DTR(Module):
         phase_deg: float = 0.0,
         acquire: bool = True,
         center_mm: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        encoding_state: object = None,
+        encoding_state: int | None = None,
     ) -> LogicBlock:
         """
         Return one repetition.
@@ -436,6 +436,21 @@ class GRE2DTR(Module):
             loads the gradients exactly as a real repetition does.
         center_mm
             ``(x, y, z)`` centre of the imaging volume, millimetres.  ``y`` must be ``0.0``.
+                encoding_state
+            Which encoding state this repetition realises, when `velocity_encode` gave it more
+            than one.
+
+            .. code-block:: text
+
+                no velocity_encode       omit it.  Passing one raises -- a state nothing acts on
+                                         would quietly hand you identical repetitions
+                velocity_encode present  required, and one of ``velocity_encode.states``
+
+            Iterate `states` rather than writing the pair out, so what a state means stays with
+            the object that owns the physics::
+
+                for state in venc.states:
+                    scan.add(at, tr(line=line, encoding_state=state))
         """
         x, y, z = (float(v) for v in center_mm)
         if y != 0.0:
@@ -480,7 +495,7 @@ class GRE2DTR(Module):
             out.add(tail + self._tail_s, pp.make_delay(fill))
         return out
 
-    def _resolve_state(self, encoding_state: object) -> object:
+    def _resolve_state(self, encoding_state: int | None) -> object:
         """
         Turn what the caller passed into the state key this repetition designed against.
 
@@ -507,26 +522,24 @@ class GRE2DTR(Module):
     def _route(self, flow_comp: FlowCompensation | None,
                velocity_encode: VelocityEncoding | None) -> dict[str, str]:
         """
-        Which owner handles each intent, or a refusal naming the axis.
+        Which owner handles each requested axis: ``axis -> owner``, and nothing else.
 
-        Reads nothing about an intent but its `axis` and, for the one case that needs it, whether
-        it is a difference between states.  There is no branch on augmentation class here, and a
-        third augmentation would need no change to this method.
+        This method reads **only** an intent's `axes`.  It does not know what kind of requirement
+        an intent is, so a third augmentation needs no change here.  Whether the owner an axis
+        routes to can express what was asked is a different question, and it belongs to the
+        translation layer, which is already allowed to interpret public intent.
         """
         routed: dict[str, str] = {}
         component = type(self).__name__
-        for intent, axis in [(i, a) for i in (flow_comp, velocity_encode) if i is not None
-                             for a in i.axes]:
+        intents = (flow_comp, velocity_encode)
+        for intent, axis in _augment.axes_claimed(intents):
             owner = self._moment_owners.get(axis)
             if owner is None:
                 _augment.refuse_unowned_axis(
-                    component, axis, self._moment_owners, self._why_unowned(axis))
-            elif owner != 'joint' and isinstance(intent, VelocityEncoding):
-                # Not an impossibility: the readout's local solve nulls its first moment rather
-                # than aiming it at a value, and a difference between states needs a target.
-                _augment.refuse_unsupported_route(component, axis, self._joint_axes)
+                    component, intent, axis, self._moment_owners, self._why_unowned(axis))
             else:
                 routed[axis] = owner
+        _augment.require_owners_can_serve(component, intents, routed, self._joint_axes)
         return routed
 
     def _why_unowned(self, axis: str) -> str:

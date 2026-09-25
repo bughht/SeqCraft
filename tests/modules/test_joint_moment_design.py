@@ -255,46 +255,82 @@ def test_a_family_reports_utilisation_and_what_limits_it(opts) -> None:
 
 
 # ----------------------------------------------------------------------- capability
-def _emits_on(shot, axis: str) -> bool:
-    """Does the emitted tree actually play a gradient on `axis`, from the joint block?"""
-    return any(getattr(event, 'channel', None) == axis and 'joint' in path
-               for _, event, path in sc.design.logic.flatten(shot))
+#: The two kernels, each as "make one" plus the indices `build` needs.  Off-centre on purpose:
+#: at the centre line the encode area is zero, the design has nothing to realise, and the emitted
+#: block is the ordinary blip either way -- which would pass a capability test without exercising
+#: anything.
+KERNELS = [
+    pytest.param(
+        lambda opts, **kw: sc.modules.GRE2DTR(
+            opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0, **kw),
+        {'line': 4}, id='GRE2DTR'),
+    pytest.param(
+        lambda opts, **kw: sc.modules.GRE3DTR(
+            opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(32, 32, 8), **kw),
+        {'line': 4, 'partition': 1}, id='GRE3DTR'),
+]
 
 
-@pytest.mark.parametrize('kernel_of, build_kwargs', [
-    (lambda opts, ax: sc.modules.GRE2DTR(
-        opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
-        flow_comp=sc.FlowCompensation(axis=ax)), {'line': 4}),
-    (lambda opts, ax: sc.modules.GRE3DTR(
-        opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(32, 32, 8),
-        flow_comp=sc.FlowCompensation(axis=ax)),
-     {'line': 4, 'partition': 1}),
-])
-def test_every_advertised_axis_is_designed_emitted_and_met(opts, kernel_of, build_kwargs) -> None:
+def first_moment(kernel, shot, axis: str) -> float:
+    """`m1` on one axis over the whole emitted repetition, from the excitation to the echo."""
+    return measure_moment(shot, 1, axis, origin_s=kernel.exc.time_to_center(),
+                          start_s=0.0, end_s=kernel.time_to_echo())
+
+
+@pytest.mark.parametrize('kernel_of, build_kwargs', KERNELS)
+def test_every_accepted_axis_is_materialised_on_the_emitted_repetition(
+        opts, kernel_of, build_kwargs) -> None:
     """
-    An advertised capability is three claims, and the middle one is the easy one to lose.
+    Accepted capability -> physically materialised -> the emitted repetition meets it.
 
-    A design that is produced but never materialised is worse than a refusal: the winder grows,
-    TE goes out with it, and the events are dropped -- the caller pays for a compensation they do
-    not get.  So this asserts the design exists, that something is emitted on the axis, and that
-    the **whole** repetition meets the target, for every axis the kernel says it owns.
+    The middle step is the one that goes missing quietly.  `GRE3DTR` once sized its winder from a
+    compensated probe and then built its real readout without the compensation: the echo moved out
+    by 860 us that the caller paid for, and the axis it reported as compensated emitted
+    `m1 = 0.276 s/m`.  Nothing about the winder number looked wrong.
 
-    Off-centre indices, deliberately: at the centre line the encode area is zero, the design has
-    nothing to realise, and the emitted block would be the ordinary blip either way -- which
-    would pass this test without exercising the joint path at all.
+    So this measures `m1` on the **complete emitted repetition** for every axis the kernel accepts
+    -- including the one served locally by `CartesianLine`, which `_joint_axes` deliberately
+    excludes -- and pins it against the uncompensated baseline so the null is measured rather than
+    read off a waveform that was never going to have a first moment anyway.
     """
-    probe = kernel_of(opts, 'y')
-    for axis in probe._joint_axes:
-        kernel = kernel_of(opts, axis)
+    baseline = kernel_of(opts)
+    accepted = tuple(baseline._moment_owners)
+    assert 'x' in accepted, 'the local readout owner must be covered, not only the joint ones'
 
-        assert axis in kernel._joint, f'{axis} is advertised but no design was produced'
+    for axis in accepted:
+        kernel = kernel_of(opts, flow_comp=sc.FlowCompensation(axis=axis))
+        before = abs(first_moment(baseline, baseline(**build_kwargs), axis))
+        after = abs(first_moment(kernel, kernel(**build_kwargs), axis))
 
-        shot = kernel(**build_kwargs)
-        assert _emits_on(shot, axis), f'{axis} is advertised but nothing is emitted on it'
+        assert before > 1e-3, (
+            f'{axis} has no first moment to null even uncompensated, so this proves nothing'
+        )
+        assert after < 1e-11, (
+            f'{axis} is accepted but the emitted repetition still has m1 = {after:.3e} s/m'
+        )
 
-        off_m1 = measure_moment(shot, 1, axis, origin_s=kernel.exc.time_to_center(),
-                                start_s=0.0, end_s=kernel.time_to_echo())
-        assert abs(off_m1) < 1e-11, f'{axis} is advertised but the repetition emits m1 = {off_m1}'
+
+@pytest.mark.parametrize('kernel_of, build_kwargs', KERNELS)
+def test_the_local_route_is_carried_by_the_readout_and_costs_echo_time(
+        opts, kernel_of, build_kwargs) -> None:
+    """
+    The `x` route reaches `CartesianLine`'s own solve, and pays for it where it should.
+
+    Two independent signatures of the same thing, either of which would have caught the probe bug
+    on its own: the readout's prephaser becomes two lobes of opposite sign summing to the area it
+    already had, and the echo moves out because three lobes before it take longer than two.
+    """
+    baseline = kernel_of(opts)
+    local = kernel_of(opts, flow_comp=sc.FlowCompensation(axis='x'))
+
+    assert len(baseline.ro.prephaser_lobes) == 1
+    assert len(local.ro.prephaser_lobes) == 2, 'the real readout, not only the sizing probe'
+
+    areas = [float(lobe.area) for lobe in local.ro.prephaser_lobes]
+    assert areas[0] * areas[1] < 0.0, 'two lobes of opposite sign'
+    assert sum(areas) == pytest.approx(sum(float(lobe.area)
+                                           for lobe in baseline.ro.prephaser_lobes), rel=1e-9)
+    assert local.te_s > baseline.te_s, 'compensation costs echo time'
 
 
 def test_an_axis_the_repetition_does_not_own_is_refused_before_realisation(opts) -> None:
@@ -326,6 +362,33 @@ def test_a_meaningless_axis_is_refused_by_the_intent_itself(opts) -> None:
     """
     with pytest.raises(sc.errors.ConfigurationError, match='must be one of'):
         sc.FlowCompensation(axis='q')
+
+
+def test_a_refusal_names_the_augmentation_that_was_actually_asked_for(opts) -> None:
+    """
+    `z` is unowned on `GRE2DTR` for both augmentations, and they must not share a message.
+
+    The refusal used to read "cannot apply flow compensation" whatever had been asked, so a caller
+    who passed `velocity_encode=` was pointed at a keyword they had not used. Which axes an
+    augmentation may name is the repetition's answer; *which augmentation asked* is not something
+    the message may get wrong.
+    """
+    shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0)
+
+    with pytest.raises(sc.errors.ConfigurationError) as flow:
+        sc.modules.GRE2DTR(**shared, flow_comp=sc.FlowCompensation(axis='z'))
+    with pytest.raises(sc.errors.ConfigurationError) as velocity:
+        sc.modules.GRE2DTR(**shared, velocity_encode=sc.VelocityEncoding(venc_m_s=VENC_M_S,
+                                                                        axis='z'))
+
+    assert 'cannot apply flow compensation' in str(flow.value)
+    assert 'cannot velocity encode' in str(velocity.value)
+    assert 'flow compensation' not in str(velocity.value)
+
+    # Both are the unowned-axis refusal, so both still explain what z carries here -- which is a
+    # different reason from the readout-axis one in the test below.
+    for raised in (flow, velocity):
+        assert 'slice rephaser' in str(raised.value)
 
 
 def test_velocity_encoding_on_the_readout_axis_is_refused_without_claiming_impossibility(
@@ -614,21 +677,39 @@ def test_the_new_minimum_itself_is_accepted(opts, kind: str) -> None:
     assert getattr(built, kind) == pytest.approx(floor, abs=1e-9)
 
 
-def test_nothing_changes_when_no_claim_is_made(opts) -> None:
+@pytest.mark.parametrize('kernel_of, build_kwargs', KERNELS)
+def test_nothing_changes_when_no_augmentation_is_asked_for(
+        opts, kernel_of, build_kwargs) -> None:
     """
     The local path is untouched, which is the other half of the architecture.
 
-    A kernel with no claims designs exactly what it designed before -- same winder, same TE, same
-    events -- so the shared machinery costs nothing where it is not used.
+    Every repetition now walks through the routing and translation layers on its way to being
+    built, so the thing worth pinning is that walking through them changes nothing when they are
+    handed nothing. Four independent ways the machinery could leak into the unaugmented path,
+    each of which would fail here on its own:
     """
-    shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0, flip_deg=15.0)
+    kernel = kernel_of(opts)
 
-    plain = sc.modules.GRE2DTR(**shared)
-    also_plain = sc.modules.GRE2DTR(**shared)
+    # 1. no design was produced, and nothing is emitted from one
+    assert kernel._joint == {}
+    shot = kernel(**build_kwargs)
+    assert not any('joint' in path for _, _, path in sc.design.logic.flatten(shot))
 
-    assert also_plain.winder_s == plain.winder_s
-    assert also_plain.te_s == plain.te_s
-    assert also_plain(line=3).duration == plain(line=3).duration
+    # 2. the readout is the ordinary one-lobe prephaser, so no route leaked into it
+    assert len(kernel.ro.prephaser_lobes) == 1
+
+    # 3. the winder is still the plain maximum over the local minima -- not widened by machinery
+    local = [kernel.ro.prephaser_duration_s, kernel.pe.min_duration_s]
+    assert kernel.winder_s == pytest.approx(max(local), abs=kernel.opts.grad_raster_time)
+
+    # 4. and the moments are the UNCOMPENSATED ones: nothing was silently nulled
+    assert abs(first_moment(kernel, shot, 'x')) > 1e-3
+    assert abs(first_moment(kernel, shot, 'y')) > 1e-3
+
+    # one state, and it is not spelled by the caller
+    assert kernel.encoding_states == ('only',)
+    with pytest.raises(sc.errors.ConfigurationError, match='has no meaning here'):
+        kernel(**build_kwargs, encoding_state=+1)
 
 
 def test_two_axes_are_designed_against_one_common_schedule(opts) -> None:
