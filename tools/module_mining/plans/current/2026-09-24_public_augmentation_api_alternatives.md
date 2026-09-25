@@ -89,26 +89,72 @@ scheduled and leaves the purely-per-repetition one on the repetition.
 velocity acquisition is the thing that knows there are two states, so whatever generates them
 belongs beside the line ordering rather than inside one repetition.
 
-The stress pass supplied an argument that was not available when these three were written. The
-spike accepts a claim on an axis the repetition does not own and either silently does nothing or
-refuses with the wrong reason (see **Capability and refusal** below). Whatever ships has to
-validate the axis, and the three alternatives differ in whether there is anywhere to put that:
+**The reason is representation, not validation.** A small intent object gives one documented
+spelling of physical intent and keeps the claim algebra — `DifferenceClaim`, `CommonModeClaim`,
+`JointProblem`, `Schedule` — off the public surface entirely. That is the whole of the argument.
 
-```text
-A  flow_comp='q'                      a bare string; the only place to check it is inside the
-                                      kernel, mixed in with the physics
-B  sc.FlowCompensated(axis='q')       the object validates its own axis against the repetition
-                                      it is handed to, and owns the message that explains it
-C  PhaseContrast2D(gre, axis='q')     same as B for the state-generating case, and nothing for
-                                      the per-repetition one
+It is explicitly **not** that the intent object is where capability is validated. Capability
+belongs to the repetition adapter and is now implemented there (see **Capability and refusal**
+below). An intent object may check that an axis name is syntactically well formed; it must not
+know which axes a particular repetition owns, because it cannot — `z` is owned by `GRE3DTR` and
+not by `GRE2DTR`, and the object is the same object in both cases.
+
+### The two remaining B spellings
+
+```python
+# B1 -- a list
+GRE2D(..., augmentations=[FlowComp(axis='y'), VelocityEncoding(venc_m_s=1.5, axis='y')])
+
+# B2 -- named keywords carrying intent objects
+GRE2D(..., flow_comp=FlowComp(axis='y'), velocity_encode=VelocityEncoding(venc_m_s=1.5))
 ```
 
-B is the only one of the three with an obvious home for the refusal, which is the deciding
-argument rather than a tie-breaker: this is a class of bug the stress matrix caught once already.
+```text
+                          B1 list                        B2 named keywords
+a third augmentation      add a type                     add a type and a keyword
+reads like                a set of things applied        a protocol card
+two of the same kind      possible, and meaningless      impossible by construction
+                          -- has to be refused           -- the signature refuses it
+discoverability           one name to find               each shows in the signature
+                          the set behind it              and in help()
+risk                      invites "register your own"    none of that shape
+```
 
-**Still open for the reviewer:** whether `augmentations=[...]` is worth the plugin-bus risk noted
-above, or whether the closed set should be named keywords taking intent objects
-(`flow_comp=sc.FlowCompensated('y')`), which keeps the refusal home and removes the list.
+**Leaning B2**, narrowly. The closed set is the point, and a keyword per augmentation makes the
+set closed *in the signature* rather than by documentation and a runtime check. B1's advantage —
+a third augmentation costs one type instead of a type and a keyword — is small when the set is
+expected to stay at three or four.
+
+**If B1 is chosen instead**, then `augmentations=[...]` must be defined as a **closed,
+SeqCraft-owned set of intent types**: a fixed union the kernel knows by name, not a registration
+point, not a plugin API, and not an extension hook. An unknown type is a refusal, not a
+pass-through. The architecture rules out a plugin bus and the spelling must not smuggle one back.
+
+### Where a state-generating intent is consumed
+
+Velocity encoding differs from flow compensation in a way the spelling has to respect: it
+**creates states**, and a repetition realises one state but owns neither the ordering nor the
+existence of the pair.
+
+```text
+acquisition layer     knows there are two states, orders the shots, doubles the scan,
+                      and defines the subtraction reconstruction will do
+        |  passes one state down into build()
+        v
+repetition            realises THAT state: the claim resolves to one absolute target per
+                      state, and the joint design serves the state it was handed
+        |
+        v
+realisation           sees a number.  It never learns a state existed
+```
+
+So `VelocityEncoding(venc_m_s=...)` on the repetition declares *what a state means* — the venc
+relation, through `VelocityEncode.delta_m1_for` — while the acquisition decides *that there are
+two of them* and in what order. Today `build(..., encoding_state=...)` is the seam and the
+acquisition does not yet pass anything down; that gap is the concrete work the public API needs,
+and it is larger than the keyword question.
+
+---
 
 ---
 
@@ -146,55 +192,76 @@ thing — not a prerequisite for the joint path. The VENC relation is not duplic
 
 ## Capability and refusal
 
-An augmentation must not be assumed to work on every axis of every sequence. The repetition owns
-the answer, and it is a capability question rather than a class-name question:
+**Implemented at the repetition adapter, not deferred to the public API.** An augmentation must
+not be assumed to work on every axis of every sequence, and the question is physical:
 
 ```text
-does this repetition own an adjustable window on that axis,
-between the semantic origin and the endpoint?
+does this repetition own an adjustable window on that axis, between the semantic
+origin and the endpoint, that it will actually MATERIALISE?
     yes  -> it can carry a moment claim there
-    no   -> refuse, naming the axis and what it would need
+    no   -> refuse, before any waveform is designed, naming the axis
 ```
 
-`GRE2DTR` owns `y` (the phase-encode winder) and, if it took its readout prephaser over, `x`.
-`GRE3DTR` owns `y` and `z`. A slice-selective axis whose rephasing the excitation still realises
-locally is **not** owned until the kernel folds it in, which is exactly what `GRE3DTR` already
-does for a slab.
-
-Unsupported combinations should refuse with the axis, the reason, and what would make it
-supported — never silently do nothing.
-
-**The spike does not do this yet, and the stress pass caught it.** Nothing validates the claimed
-axis against the axes the repetition owns, so `GRE2DTR` accepts a claim on an axis that does not
-exist, at 40 mT/m and 150 T/m/s:
+The last clause is the one the stress pass had to teach. "Owns gradients on that axis" is not the
+same question as "materialises a joint design on that axis", and the difference was expensive:
 
 ```text
-joint_claims                     min TE      winder
-(none)                           4.662 ms     520 us
-CommonModeClaim('y', 1)          5.732 ms    1590 us
-CommonModeClaim('x', 1)          5.652 ms    1510 us
-CommonModeClaim('z', 1)          6.542 ms    2400 us
-CommonModeClaim('q', 1)          4.662 ms     520 us    <- accepted, identical to no claim
-CommonModeClaim('zzz', 1)        4.662 ms     520 us    <- accepted, identical to no claim
+GRE2DTR, at 40 mT/m and 150 T/m/s, before the check existed
+
+joint_claims                winder     min TE      emitted m1 on the claimed axis
+(none)                       520 us   4.662 ms     --
+CommonModeClaim('y', 1)     1590 us   5.732 ms     -0.000000   designed and emitted
+CommonModeClaim('x', 1)     1510 us   5.652 ms      0.597804   designed, costed, DROPPED
+CommonModeClaim('z', 1)     2400 us   6.542 ms     -0.736067   designed, costed, DROPPED
+CommonModeClaim('q', 1)      520 us   4.662 ms      --         silent no-op
 ```
 
-Two failure shapes, both from the same missing check:
+`x` and `z` are legal axes `GRE2DTR` plays gradients on. It does not own their winders: the
+readout prephaser belongs to `CartesianLine` and the slice rephaser to `Excitation`. So a claim on
+either was designed, grew the winder, pushed TE out by up to **1.9 ms that the caller paid for**,
+and was then dropped unemitted — leaving the axis reported as compensated and carrying
+`m1 = -0.74 s/m`. A nonexistent axis was worse in a different way: accepted, identical to no claim,
+a silent no-op claiming compensation on an axis that is not there.
+
+### The owned axes, verified by what is emitted
 
 ```text
-target resolves to zero      reports success having emitted nothing -- a silent no-op that
-  (common mode alone)        claims the repetition is flow-compensated on an axis it has not
-                             got, which is the worst of the two
-
-target is nonzero            refuses, but with the physics message: "allow a longer window",
-  (a difference claim)       "relax the target", "widen the gradient limits".  The real cause
-                             is that pypulseq cannot make a trapezoid on channel 'q', which
-                             `_lobe` reads as "did not fit" and the cascade reads as infeasible
+GRE2DTR     ('y',)         the phase-encode winder, materialised through `_encode`
+GRE3DTR     ('y', 'z')     the phase-encode blip and the z winder carrying the partition
+                           encode; `_z_winder` folds the slab rephasing in, which is what
+                           makes z genuinely owned here and not in the 2D kernel
 ```
 
-The fix is a capability check where the claims arrive, phrased physically — the axis must be one
-the repetition owns an adjustable window on — not an `isinstance` test and not a hard-coded axis
-letter list. It belongs with the public API, so it is recorded here rather than patched into the
-spike.
+Each kernel declares this as `joint_axes` and calls `_joint.require_owned_axes` **before**
+designing anything. The check is on the axis the repetition emits, not on the claim's type and not
+on whether the letter is one of `x`, `y`, `z`; `require_owned_axes` never inspects the claim
+beyond reading its `axis`, so the same claim object is accepted by `GRE3DTR` and refused by
+`GRE2DTR`, which is the behaviour a class-name test could not produce.
+
+Three tests hold it: every advertised axis is designed, **emitted**, and met on the complete
+repetition; every unowned axis refuses before realisation; and the same claim is accepted or
+refused depending only on the repetition it is handed to.
+
+### Search exhaustion is not infeasibility
+
+A related honesty problem in the same refusal path. The schedule search stops after
+`_joint.SEARCH_LIMIT_WINDOWS` candidate windows, and reaching that ceiling used to raise "no
+candidate schedule realises these moments" — a claim the search never established, since the next
+window along was simply never tried. The two now read differently, because they need different
+fixes:
+
+```text
+windows ran out       "design search limit reached ... not a proof of infeasibility:
+                       windows longer than 40.0 ms were never tried"
+a schedule failed     "no candidate schedule realises these moments on y"
+```
+
+The ceiling stays a fixed guard rather than becoming a growth policy. One consequence is worth
+knowing: because the split search tries every raster-aligned split at every candidate window, it
+is quadratic in window length, and walking all 4000 windows to reach the ceiling takes the better
+part of a minute. An absurd target therefore refuses slowly. That is a cost of the exact search,
+and making it dynamic would trade it for the risk of stepping over the true minimum — which this
+same stress pass showed is not always where a monotone search would expect.
 
 ---
 

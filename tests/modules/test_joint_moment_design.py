@@ -26,6 +26,7 @@ from seqcraft.modules._joint import (
     realise_single_lobe,
     realise_split_search,
     realise_two_lobes,
+    require_owned_axes,
     resolve_claims,
     utilisation,
 )
@@ -235,6 +236,115 @@ def test_a_family_reports_utilisation_and_what_limits_it(opts) -> None:
     assert tight is None or tight.limiting in ('gradient', 'slew')
     if tight is not None:
         assert tight.peak_grad > 0.0 and tight.peak_slew > 0.0
+
+
+# ----------------------------------------------------------------------- capability
+def _emits_on(shot, axis: str) -> bool:
+    """Does the emitted tree actually play a gradient on `axis`, from the joint block?"""
+    return any(getattr(event, 'channel', None) == axis and 'joint' in path
+               for _, event, path in sc.design.logic.flatten(shot))
+
+
+@pytest.mark.parametrize('kernel_of, build_kwargs', [
+    (lambda opts, ax: sc.modules.GRE2DTR(
+        opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
+        joint_claims=(CommonModeClaim(ax, 1),), encoding_states=('only',)), {'line': 4}),
+    (lambda opts, ax: sc.modules.GRE3DTR(
+        opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(32, 32, 8),
+        joint_claims=(CommonModeClaim(ax, 1),), encoding_states=('only',)),
+     {'line': 4, 'partition': 1}),
+])
+def test_every_advertised_axis_is_designed_emitted_and_met(opts, kernel_of, build_kwargs) -> None:
+    """
+    An advertised capability is three claims, and the middle one is the easy one to lose.
+
+    A design that is produced but never materialised is worse than a refusal: the winder grows,
+    TE goes out with it, and the events are dropped -- the caller pays for a compensation they do
+    not get.  So this asserts the design exists, that something is emitted on the axis, and that
+    the **whole** repetition meets the target, for every axis the kernel says it owns.
+
+    Off-centre indices, deliberately: at the centre line the encode area is zero, the design has
+    nothing to realise, and the emitted block would be the ordinary blip either way -- which
+    would pass this test without exercising the joint path at all.
+    """
+    probe = kernel_of(opts, 'y')
+    for axis in probe.joint_axes:
+        kernel = kernel_of(opts, axis)
+
+        assert axis in kernel._joint, f'{axis} is advertised but no design was produced'
+
+        shot = kernel(encoding_state='only', **build_kwargs)
+        assert _emits_on(shot, axis), f'{axis} is advertised but nothing is emitted on it'
+
+        off_m1 = measure_moment(shot, 1, axis, origin_s=kernel.exc.time_to_center(),
+                                start_s=0.0, end_s=kernel.time_to_echo())
+        assert abs(off_m1) < 1e-11, f'{axis} is advertised but the repetition emits m1 = {off_m1}'
+
+
+@pytest.mark.parametrize('kernel_of, unowned', [
+    (lambda opts, ax: sc.modules.GRE2DTR(
+        opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
+        joint_claims=(CommonModeClaim(ax, 1),), encoding_states=('only',)), ('x', 'z', 'q')),
+    (lambda opts, ax: sc.modules.GRE3DTR(
+        opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(32, 32, 8),
+        joint_claims=(CommonModeClaim(ax, 1),), encoding_states=('only',)), ('x', 'q')),
+])
+def test_an_axis_the_repetition_does_not_own_is_refused_before_realisation(
+        opts, kernel_of, unowned) -> None:
+    """
+    `x` and `z` are legal axes these kernels play gradients on, and neither owns their winder.
+
+    Before the check existed, `GRE2DTR` accepted a claim on `z`, designed it, grew the winder
+    from 520 to 2400 us -- 1.9 ms of TE the caller paid for -- and then emitted nothing, leaving
+    `m1 = -0.736 s/m` on the axis it reported as compensated.  So the refusal has to come from
+    what the repetition **materialises**, not from whether the axis letter is legal.
+    """
+    for axis in unowned:
+        with pytest.raises(sc.errors.ConfigurationError) as raised:
+            kernel_of(opts, axis)
+        assert axis in str(raised.value)
+        assert 'adjustable window' in str(raised.value)
+
+
+def test_running_out_of_candidate_windows_is_not_called_infeasible(opts, monkeypatch) -> None:
+    """
+    The window search stops at a ceiling, and the ceiling is an implementation number.
+
+    Reporting "these moments cannot be realised" when the search simply stopped would assert
+    something it never established -- the next window along was never tried.  The two failures
+    need different words because they need different fixes: relax the physics, or raise the
+    ceiling.
+
+    The ceiling is lowered here for speed, not to make the refusal fire: the split search tries
+    every raster-aligned split at every candidate window, so walking to the real limit of 4000 is
+    quadratic and takes the better part of a minute.  That cost is the search's, not this test's.
+    """
+    monkeypatch.setattr(sc.modules._joint, 'SEARCH_LIMIT_WINDOWS', 200)
+    absurd = DifferenceClaim('y', 1, 5000.0, POLARITIES)
+
+    with pytest.raises(sc.errors.ConfigurationError) as raised:
+        sc.modules.GRE2DTR(opts=opts, fov_mm=220.0, matrix=(8, 8), thickness_mm=5.0,
+                           joint_claims=(absurd,), encoding_states=POLARITIES)
+
+    said = str(raised.value)
+    assert 'design search limit' in said or 'search reached its limit' in said
+    assert 'not a proof of infeasibility' in said
+    assert 'no candidate schedule realises' not in said
+
+
+def test_capability_is_a_property_of_the_repetition_not_of_the_claim(opts) -> None:
+    """
+    The same claim is fine on one repetition and refused on another, and nothing inspects a type.
+
+    `z` is owned by `GRE3DTR`, whose z winder carries the partition encode, and not by `GRE2DTR`,
+    whose z gradient is the slice rephaser that `Excitation` owns.  A check keyed on the claim --
+    its class, or the augmentation that made it -- could not tell those apart.
+    """
+    claim = CommonModeClaim('z', 1)
+
+    require_owned_axes([claim], ('y', 'z'), component='GRE3DTR')
+    with pytest.raises(sc.errors.ConfigurationError):
+        require_owned_axes([claim], ('y',), component='GRE2DTR')
 
 
 # -------------------------------------------------------------- the kernels, whole repetition

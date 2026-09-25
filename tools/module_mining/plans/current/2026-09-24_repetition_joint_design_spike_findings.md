@@ -187,20 +187,27 @@ is a smooth V with its minimum at about 1.54 ms; at 20 us resolution the steepes
 `x1.154`. **"A longer TE fill always helps" is false**, and a schedule search that assumes it
 will walk the wrong way past the optimum.
 
-**Bounded holes in the feasible set.** Over 3 072 cells, scanning 100 raster steps above each
-cell's first feasible window:
+**Holes in the feasible set.** Over 3 072 cells, scanning 100 raster steps above each cell's
+first feasible window:
 
 ```text
 cells with at least one hole      48  (1.6 %)
-hole width                        median 3, p95 11, max 11 raster steps = 110 us
+hole width                        median 3, p95 11, max 11 raster steps
+maximum OBSERVED width            110 us, in this sampled census
 ```
 
 A window can refuse where a shorter one succeeded. The two-lobe split must land on the gradient
 raster, and for some window lengths no raster-aligned split solves the 2x2 system inside the
-limits while both neighbours do. This is mechanism 2 -- an artificial realisation-family effect --
-and the honest statement is that it **exists and is bounded at 110 us**, two orders of magnitude
-away from the pathology being looked for. The kernel walks windows upward and takes the first that
-fits, so the worst cost is ~110 us of TE.
+limits while both neighbours do. This is mechanism 2, an artificial realisation-family effect.
+
+Two things this is **not**. It is not a bound: 110 us is the widest hole seen over the grid above,
+and a target outside that grid could do worse. And it is not something a numerical backend would
+necessarily meet as well -- the gradient raster is fundamental, but *this particular* missing
+two-lobe split is not. A richer raster-aligned family, with a third lobe or an asymmetric one,
+could plausibly fill these holes without leaving the raster.
+
+The kernel walks windows upward and takes the first that fits, so the observed cost is up to
+~110 us of TE.
 
 **The continuous diagnostic was measuring the wrong lattice.** `utilisation` sampled 48 fixed
 fractions of the window while `realise_split_search` emits on the gradient raster. `u(T)` is not
@@ -223,14 +230,24 @@ boundary, and that is what manufactures a cliff. Fixed, and pinned by two tests.
 This is the second time a diagnostic rather than the design produced a false cliff. A validator is
 only independent of what it saw: the metric and the emitter must search the same lattice.
 
-**Multi-echo costs the winder nothing, and that is correct rather than a gap.** 972 kernel builds
-over 1 to 8 echoes, bipolar and monopolar, AUTO and two explicit echo spacings, three gradient and
-four slew limits, flow compensation and two vencs: **all 972 built, none refused**, and the winder
-ratio across every echo-count step was exactly `1.000` over 756 pairs.
+**On the tested GRE phase-encode axis, adding readout echoes does not lengthen the compensation
+window.** The narrow statement, because it is a statement about one axis of one kernel family:
 
-The reason is the reference the requirement is stated in. A maintained phase encode is silent after
-the winder, and `m1` about a **fixed origin** stops accruing when the gradient stops — so once it
-is nulled from the excitation it stays nulled, at every echo of the train:
+```text
+for the GRE phase-encode axis, with no additional gradient on that axis after the
+winder, and with M1 defined about the fixed excitation origin, adding readout echoes
+does not increase the required compensation window
+```
+
+972 kernel builds over 1 to 8 echoes, bipolar and monopolar, AUTO and two explicit echo spacings,
+three gradient and four slew limits, flow compensation and two vencs: **all 972 built, none
+refused**, and the winder ratio across every echo-count step was exactly `1.000` over 756 pairs.
+
+**This does not generalise to "multi-echo costs nothing."** It holds because of a condition that
+an axis with inter-echo gradients does not satisfy: the phase encode is silent after the winder,
+and `m1` about a **fixed origin** stops accruing when the gradient stops, so once it is nulled from
+the excitation it stays nulled at every echo. An axis that plays between echoes — a readout, or a
+wave gradient — still needs the checkpoint/propagation model, and nothing here tests that.
 
 ```text
 m1 on y about the excitation centre      echo 1   0.000000   echo 2   0.000000   echo 3   0.000000
@@ -246,24 +263,42 @@ concrete reason a moment target carries an origin as well as an endpoint: the sa
 compensated in one frame and off by 0.74 s/m in the other, and only naming the origin distinguishes
 them.
 
-### 7c. The narrow conclusion
+### 7c. The narrow conclusion, and how the search was done
 
-**Extensive stress testing did not reveal an artificial feasibility cliff.** It did reveal a
-bounded family artefact of at most 110 us, a smooth turning point in the lead, and a diagnostic
-that overstated utilisation by up to x1.82 until it was corrected.
+**Extensive stress testing did not reveal a large artificial feasibility cliff.** It did find a
+family artefact whose widest observed instance was 110 us, a smooth turning point in the lead, and
+a diagnostic that overstated utilisation by up to x1.82 until it was corrected.
 
 This is not a claim that cliffs are impossible. The families here are low-dimensional by design,
 and a richer requirement -- a second-order moment, a third coupled axis, a fixed contribution with
-structure the two-lobe solve cannot oppose -- could produce one. The claim is only that a
-deliberate search over the dimensions above did not find one.
+structure the two-lobe solve cannot oppose -- could produce one. The claim is about **this sampled
+and refined parameter space**.
+
+The method matters to how far the claim reaches. The coarse matrix finds each cell's minimum
+window by bisecting to a feasible window and then walking down until 60 consecutive windows
+refuse. Bisection alone would be unsound, because this same search establishes that the feasible
+set has holes; the walk-down bounds the error at 60 raster steps, which is five times the widest
+hole observed. The fine 1-D refinements scan every raster step and assume nothing.
+
+So the numbers above are **observed maxima over a sampled grid**, not bounds over all targets. The
+harness is committed and re-runnable:
+
+```sh
+python tools/module_mining/stress_repetition_design.py --quick
+python tools/module_mining/stress_repetition_design.py --full --json evidence.json
+```
+
+It does not run in CI. The conclusions are held in place by the regression tests in
+`tests/modules/test_joint_moment_design.py`, not by the harness.
 
 ### 7d. Which of the four mechanisms
 
 ```text
 1  genuine physical frontier         observed and correct -- the window tracks the net
                                      requirement, proportionately, in every refinement
-2  waveform-family artificial cliff  PRESENT but bounded: raster-aligned split holes,
-                                     max 110 us, 1.6 % of cells
+2  waveform-family artificial cliff  PRESENT and small: raster-aligned split holes, 1.6 % of
+                                     cells, widest OBSERVED 110 us.  A sampled maximum, and
+                                     a property of this family rather than of the raster
 3  fixed-schedule artifact           present and mild: AUTO timing removes it for +9 % ESP
 4  profile-assignment artifact       dominant in the historical case: 0.85 under the envelope
                                      and 1.71 under the FC profile, for the same waveform
@@ -329,8 +364,13 @@ structure rather than in every term.
 
 Per the governing decision, a numerical-backend comparison is warranted only if the **current**
 stress matrix exposes a suspicious gap — not because the historical sequence once showed one. It
-did not, so none was run. The bounded 110 us holes are the one candidate, and they are a raster
-quantisation effect that a different optimiser would meet too.
+did not, so none was run.
+
+The holes are the one candidate, and they are not being dismissed on the grounds that an optimiser
+could not help. **The reason is that the observed artefact is small enough not to justify a
+numerical-backend investigation**, not that an optimiser has been shown incapable of improving it.
+A richer family, numerical or analytic, might well close them; nobody has tried, and this record
+should not be read as saying otherwise.
 
 ## 8. Corrections discovered during the spike
 
@@ -363,3 +403,12 @@ the kernel emits.
   the opposite; it was a guess, and the search for a counterexample found none.
 - A whole-waveform safety evaluator: seam and ownership settled, nothing implemented.
 - Pathway-aware moments, deferred: pathway-aware `m0` first, `m1` later, neither now.
+
+Closed since the stress pass:
+
+- **Capability and refusal.** Implemented at the repetition adapter rather than deferred to the
+  public API: each kernel declares the axes it materialises and refuses the rest before designing
+  anything. `GRE2DTR` owns `('y',)`; `GRE3DTR` owns `('y', 'z')`.
+- **Search exhaustion.** Running out of candidate windows now reports a design search limit rather
+  than infeasibility.
+- **Reproducibility.** `tools/module_mining/stress_repetition_design.py`.

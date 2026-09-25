@@ -269,9 +269,15 @@ class GRE2DTR(Module):
         #: The axis `PhaseEncode` acts on here.  Named before the leaf exists, because the
         #: coupled design runs first and may take that axis' winder over.
         self._pe_axis = 'y'
+        #: The axes a joint claim may name here: the ones `_encode` actually materialises.
+        #: `x` and `z` are legal axes this repetition plays gradients on, but their winders
+        #: belong to `CartesianLine` and `Excitation`; a claim on them would be designed, would
+        #: lengthen the winder and TE, and would then be dropped unemitted.
+        self.joint_axes: tuple[str, ...] = (self._pe_axis,)
         self.encoding_states = tuple(encoding_states)
         self._joint: dict[str, _joint.JointDesign] = {}
         if joint_claims:
+            _joint.require_owned_axes(joint_claims, self.joint_axes, component=type(self).__name__)
             # AUTO first, so the minimum is known before an explicit TE is judged
             # against it -- and so the refusal for a too-short TE stays this module's,
             # naming `te_s`, rather than the designer's naming an axis.
@@ -491,13 +497,15 @@ class GRE2DTR(Module):
         problems = {axis: self._axis_problem(axis, group, probe_ro, fov_y, excitation, opts)
                     for axis, group in by_axis.items()}
 
-        for steps in range(int(round(local_min_s / raster)), 4000):
+        exhausted = True
+        for steps in range(int(round(local_min_s / raster)), _joint.SEARCH_LIMIT_WINDOWS):
             window = steps * raster
             reachable_te = start + window + echo_in_lobe - origin
             fill = 0.0 if te_request is None else te_request - reachable_te
             if fill < -EPS:
                 # This window already overshoots the requested TE; a longer one only overshoots
                 # further, so the request is infeasible and the kernel's own refusal will say so.
+                exhausted = False
                 break
             schedule = _joint.Schedule(
                 origin_s=origin,
@@ -513,7 +521,14 @@ class GRE2DTR(Module):
                 designs[axis] = found
             if len(designs) == len(problems):
                 return window, designs
-        return _joint.refuse_infeasible(next(iter(problems.values())))
+        # Two different failures, and only one of them is about physics.  Running out of
+        # candidate windows means the ceiling was reached without trying what lies beyond it;
+        # saying "infeasible" there would claim something the search never established.
+        first = next(iter(problems.values()))
+        if exhausted:
+            return _joint.refuse_search_exhausted(
+                first, steps=_joint.SEARCH_LIMIT_WINDOWS, raster_s=raster)
+        return _joint.refuse_infeasible(first)
 
     def _axis_problem(self, axis: str, group: Sequence[object], probe_ro: CartesianLine,
                       fov_y: float, excitation: LogicBlock, opts: Opts) -> _joint.JointProblem:
