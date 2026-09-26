@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — flow compensation on any axis, and on repetitions with no kernel
+
+`GRE2DTR` now flow-compensates **`z`** as well as `x` and `y`, and any combination of them. The
+slice rephasing is taken over from `Excitation` — via the `rephase=False` seam it already had —
+so the repetition designs rephasing and compensation together, because on that axis they are one
+problem. Compensating `z` costs echo time: 3.11 ms to 4.14 ms at the reference protocol.
+
+Internally this is a new substrate, `seqcraft.design.scope`, and it is **not public API**. It is
+the region of a sequence whose physical degrees of freedom a designer may own, and it has two
+first-class consumers: a packaged kernel, and a user's own composition of leaves. `GRE2DTR` is now
+an adapter onto it with no change to its public surface; `GRE3DTR` keeps its own path for now.
+
+`examples/gre_spiral_2d/03_flow_comp.ipynb` is the second consumer — a spiral repetition with **no
+kernel class**, composed in the notebook, reaching the same designer. Its moment requirement
+rotates with the interleaf on both in-plane axes at once, which no packaged kernel produces.
+
+`modules/_joint.py` moved to `design/joint.py`, mechanically. It never depended on `modules` at
+all, and a scope serving user compositions cannot sit under `modules/kernel`.
+
+`examples/flowcomp_gre_2d/` is now `examples/gre_2d/03_flow_comp.ipynb`. Flow compensation is a
+reusable capability of a gradient echo rather than a separate sequence family, so it belongs
+beside the family it extends.
+
 ## Unreleased — flow compensation and velocity encoding as physical intent
 
 Two new public names, `sc.FlowCompensation` and `sc.VelocityEncoding`, and one new keyword each on
@@ -111,7 +134,7 @@ full-echo, partial-Fourier, monopolar-train and bipolar-train geometries. Tolera
 dimensioned per moment order. Seven of nine deliberate mutations fail the suite; the two survivors
 are the gradient and slew checks inside the feasibility predicate, which are unreachable one
 raster below the minimum because pypulseq refuses to build the lobe at all. **Layer 2**,
-`examples/flowcomp_gre_2d/01_build.ipynb`, both readouts in a complete gradient echo: 0.680 ms
+`examples/gre_2d/03_flow_comp.ipynb01_build.ipynb`, both readouts in a complete gradient echo: 0.680 ms
 added to the echo time at the reference protocol.
 
 **No Layer 3.** Given `m0 = 0`, the removal of the constant-velocity phase term follows from

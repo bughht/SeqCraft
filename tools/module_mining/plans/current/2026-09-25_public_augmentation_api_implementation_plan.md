@@ -589,8 +589,11 @@ principled place to stop.
 
 ### 7.3 What was weighed against it
 
+*(Paths in this section are as they were written. That notebook is now
+`examples/gre_2d/03_flow_comp.ipynb`.)*
+
 Recorded because it was a real argument, not to reopen the decision. `CartesianLine` is a public
-leaf usable without a kernel, and the `flowcomp_gre_2d` notebook builds one directly; a caller
+leaf usable without a kernel, and the `flowcomp_gre_2d` notebook built one directly; a caller
 assembling a custom readout has no repetition to ask. The decision accepts that cost on the
 grounds that re-exposing a private parameter later is cheap, and that whether an external caller
 wants a standalone first-moment-nulled readout is still unknown.
@@ -613,7 +616,7 @@ tests/modules/test_flow_compensation.py, test_cartesian_line.py
                                -> KEEP all 45.  They test the solve, not the spelling;
                                   update the parameter name only
 
-examples/flowcomp_gre_2d/      -> MOVE to the integration PR, where it can be rewritten
+examples/gre_2d/03_flow_comp.ipynb      -> MOVE to the integration PR, where it can be rewritten
                                   against flow_comp=sc.FlowCompensation(axis='x').  It
                                   cannot be written against the public API before that API
                                   exists, and it must not ship demonstrating a private
