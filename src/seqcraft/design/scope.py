@@ -51,6 +51,7 @@ part of `fixed`.  Nothing here inspects the surrounding sequence, and there is n
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -214,14 +215,27 @@ def design_scope(geometry: ScopeGeometry, requirements: Sequence[AxisRequirement
     raster = float(opts.grad_raster_time)
     proposed = [r.problem_for(r.design_states) for r in requirements]
 
+    # Every echo this geometry can reach sits an exact number of raster steps above the one a
+    # zero-length window reaches, so an explicit request is quantised **up** onto that grid once,
+    # here, rather than rounded inside the loop.  Two things follow: the fill is then an exact
+    # multiple of the raster at every candidate, and the echo time handed back is never earlier
+    # than the one asked for.
+    wanted_s = te_request_s
+    if wanted_s is not None:
+        floor = geometry.echo_at(0.0)
+        wanted_s = floor + max(math.ceil((wanted_s - floor) / raster - 1e-9), 0) * raster
+
     exhausted = True
     for steps in range(max(int(round(min_window_s / raster)), 1), joint.SEARCH_LIMIT_WINDOWS):
         window = steps * raster
-        fill = 0.0 if te_request_s is None else te_request_s - geometry.echo_at(window)
-        if fill < -1e-12:
-            # Already past the requested TE; a longer window only overshoots further.
-            exhausted = False
-            break
+        fill = 0.0
+        if wanted_s is not None:
+            fill = wanted_s - geometry.echo_at(window)
+            if fill < -1e-12:
+                # Already past the requested echo; a longer window only overshoots further.
+                exhausted = False
+                break
+            fill = max(fill, 0.0)
         schedule = geometry.schedule_at(window, fill)
         if not all(joint.attempt(p, schedule, opts) is not None for p in proposed):
             continue

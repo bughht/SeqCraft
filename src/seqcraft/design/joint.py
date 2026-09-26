@@ -417,19 +417,35 @@ def realise_base_plus_bipolar(axis: str, target: tuple[float, float],
     The decoupled basis `wave-gre-flow-comp` uses.  Same span as :func:`realise_two_lobes` and the
     same two degrees of freedom, but the columns are orthogonal in what they do, which changes
     which target values push a lobe over the limit first.
+
+    **The boundary between the halves is snapped onto the gradient raster**, for the reason
+    :func:`realise_two_lobes` gives: halving an odd number of raster steps does not land on one,
+    and an event may only begin where the sequence can name an instant.  The two pieces are then
+    generally unequal, so the base's own first moment is its area times the *duration-weighted*
+    centre of the two rather than the window centre, and the bipolar is solved against the actual
+    separation.  Both reduce to the equal-halves algebra when the window is even.
     """
     if target[1] is None:
         return None       # under-determined: nothing constrains the second degree of freedom
-    half = schedule.window_s / 2.0
-    if half <= 0.0:
+    raster = float(opts.grad_raster_time)
+    first_s = max(int(round(schedule.window_s / (2.0 * raster))), 1) * raster
+    second_s = schedule.window_s - first_s
+    if min(first_s, second_s) <= 0.0:
         return None
+
     area = target[0] - fixed[0]
-    base_centre = schedule.window_start_s + schedule.window_s / 2.0 - schedule.origin_s
-    # A zero-area bipolar of lobes +-b over the window has m1 = -b * half.
+    centres = (schedule.window_start_s + first_s / 2.0 - schedule.origin_s,
+               schedule.window_start_s + first_s + second_s / 2.0 - schedule.origin_s)
+    # A base lobe of constant amplitude across the window carries its area in proportion to the
+    # two durations, so its first moment is the area times the duration-weighted centre.
+    shares = (first_s / schedule.window_s, second_s / schedule.window_s)
+    base_centre = shares[0] * centres[0] + shares[1] * centres[1]
+    # A zero-area bipolar puts +b on the first piece and -b on the second, whatever their
+    # durations, so its whole first moment is b * (c0 - c1).
     residual = target[1] - fixed[1] - area * base_centre
-    bipolar = -residual / half
-    return _assemble(axis, [(area / 2.0 + bipolar, half), (area / 2.0 - bipolar, half)],
-                     opts, 'base+bipolar')
+    bipolar = residual / (centres[0] - centres[1])
+    return _assemble(axis, [(area * shares[0] + bipolar, first_s),
+                            (area * shares[1] - bipolar, second_s)], opts, 'base+bipolar')
 
 
 def realise_split_search(axis: str, target: tuple[float, float], fixed: tuple[float, float],

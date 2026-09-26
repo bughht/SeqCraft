@@ -2,9 +2,9 @@
 
 ## Unreleased — flow compensation on any axis, and on repetitions with no kernel
 
-**New public API.** `sc.PhysicalDesignScope` and `sc.design_repetition` let a composition you
-wrote yourself — `Excitation`, a readout and a spoiler, assembled in your own code — hand a region
-to the same physical designer a packaged kernel uses, without becoming a module first:
+**New public API.** `sc.PhysicalDesignScope` lets a composition you wrote yourself —
+`Excitation`, a readout and a spoiler, assembled in your own code — hand a region to the same
+physical designer a packaged kernel uses, without becoming a module first:
 
 ```python
 scope = sc.PhysicalDesignScope(
@@ -13,19 +13,28 @@ scope = sc.PhysicalDesignScope(
     echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
     axes=('x', 'y', 'z'), states=angles,
 )
-design = sc.design_repetition(scope, opts=opts,
-                              flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
-block = design.repetition(angle)
+design = scope.design(opts=opts, flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+block = design.build(angle)
 ```
+
+`k_at_echo(state, axis)` says where the designed region should leave `k`, in `1/m`, defaulting to
+zero — so a family that *encodes* with the region it owns, as a Cartesian phase encode does, can
+say so. The scope owns the zeroth moment; `FlowCompensation` and `VelocityEncoding` own the first.
+
+`design.at(te_s=...)` **redesigns** at a longer echo time rather than stretching: the request goes
+through the same search as an explicit TE, so the extra time may become fill rather than a wider
+region, and the achieved echo time is never shorter than the one asked for.
 
 Opt-in, and not a layer: events into a `LogicBlock` and then `sc.compile` needs none of it. The
 solver stays internal — nothing public names a schedule, a claim, a realisation family or a raw
 moment target.
 
-**Bug fix, the two-lobe family.** It split its window at exactly half, which is off the gradient
-raster whenever the window is an odd number of raster steps: a 1450 us window asked for two 725 us
-lobes and the compiler refused the second for starting at 2005 us. The split now snaps to the
-raster and the areas are solved against the durations that result.
+**Bug fix, the realisation families and the raster.** Two of them divided their window by a
+constant — the two-lobe family at exactly half, the base-plus-bipolar family likewise — which is
+off the gradient raster whenever the window is an odd number of steps. A 1450 us window asked for
+two 725 us lobes and the compiler refused the second for starting at 2005 us. Both now snap the
+boundary to the raster and re-solve their areas against the durations that result, and the
+invariant is tested at the cascade level rather than per helper.
 
 
 `GRE2DTR` now flow-compensates **`z`** as well as `x` and `y`, and any combination of them. The

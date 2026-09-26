@@ -1139,7 +1139,7 @@ arm = sc.modules.SpiralReadout(opts=opts, fov_mm=240.0, matrix=64, shots=8,
 angles = tuple(2.0 * np.pi * i / 8 for i in range(8))
 
 scope = sc.PhysicalDesignScope(
-    origin_s=exc.time_to_center(),          # when the spins were excited
+    origin_s=exc.time_to_center(),          # the semantic origin of the pathway
     before=exc(rephase=False),              # what plays before the designed region
     after=lambda angle: arm(angle_rad=angle, prephase=False),   # and after it
     echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
@@ -1147,30 +1147,49 @@ scope = sc.PhysicalDesignScope(
     states=angles,                          # what your repetition varies over
     min_window_s=arm.prephaser_duration_s,
 )
-design = sc.design_repetition(scope, opts=opts,
-                              flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+design = scope.design(opts=opts, flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
 
 scan = sc.LogicBlock('spiral')
 for index, angle in enumerate(angles):
-    scan.add(index * 30e-3, design.repetition(angle))
+    scan.add(index * 30e-3, design.build(angle))
 ```
 
 Three concepts, and they divide like this:
 
 | | |
 |---|---|
-| `FlowCompensation`, `VelocityEncoding` | **what physics is wanted**, and nothing else |
-| `PhysicalDesignScope` | **where** it applies in a composition you wrote |
-| `design.repetition(state)` | one state's fully timed block, built once from the finished design |
+| `FlowCompensation`, `VelocityEncoding` | **what physics is wanted** — the first moment |
+| `PhysicalDesignScope` | **where** it applies, and where `k` should be at the echo |
+| `design.build(state)` | one state's block, built once from the finished design |
 
 **It is opt-in, and it is not a layer.** Events, modules and functions into a `LogicBlock` and
 then `sc.compile` needs none of this. Nor is it a different designer: a packaged kernel and a
 scope end at the same internal machinery, which stays internal.
 
-**What the designed region is asked for.** On each axis it owns it brings `k` back to the origin
-at the echo — what a prephaser, a winder and a slice rephaser all do — plus whatever the intents
-add. A composition wanting a *non-zero* `k` there, as a Cartesian phase encode does, is what the
-packaged kernels are for.
+**What the designed region is asked for.** On each axis it owns it leaves `k` where `k_at_echo`
+says at the echo, plus whatever the intents add. The default is zero — what a prephaser, a winder
+and a slice rephaser all do. A family that *encodes* with the region it owns says so:
+
+```python
+pe = sc.modules.PhaseEncode(opts=opts, fov_mm=220.0, matrix=32, axis='y')
+ro = sc.modules.CartesianLine(opts=opts, fov_mm=220.0, matrix=32, bandwidth_hz_px=500.0,
+                              prephase=False)          # the scope designs the prephaser
+
+encoding = sc.PhysicalDesignScope(
+    origin_s=exc.time_to_center(),
+    before=exc(),
+    after=ro(),
+    echo_in_after_s=ro.time_to_echo(),      # this block has no prephaser in it
+    axes=('y',),
+    states=tuple(range(32)),
+    design_states=(0, 31),                       # a signed pair bounds a linear encode
+    k_at_echo=lambda line, axis: pe.k_per_m(line),
+)
+encoded = encoding.design(opts=opts, flow_comp=sc.FlowCompensation(axis='y'))
+```
+
+That is the zeroth moment of the whole scope at the echo, in `1/m`. The first moment is what the
+physical intents are for, which keeps the two kinds of requirement in separate places.
 
 **Handing a region over is explicit.** `before=exc(rephase=False)` is you saying the slice
 rephasing belongs to the designer now — the same seam `CartesianLine(prephase=False)` and
@@ -1182,8 +1201,12 @@ asked it to leave a region out, that region's duration is still in the number it
 `SpiralReadout.time_to_echo` is measured from a block containing its own prephaser, so a scope
 designing that prephaser subtracts `prephaser_duration_s` from `echo_in_after_s`.
 
-`design.at(te_s=...)` designs the same family again at a longer echo time, which is how a protocol
-holding two families harmonises them: take the longer of the two minima and ask both for it.
+`design.at(te_s=...)` **redesigns** the same family at a longer echo time — it does not stretch
+what exists. The request goes back through the same search as an explicit TE, so the designer may
+keep the region it had and let the extra time become fill in front of it rather than spending all
+of it on a wider region. The achieved `te_s` is never shorter than the one asked for: a request
+between two legal instants comes back at the first one at or above it. This is how a protocol
+holding two families harmonises them.
 
 `design_states` on the scope is a **hint** about which states will size the schedule, not a
 promise. Every state is realised and checked before a schedule is accepted, so a poor hint costs
@@ -1920,9 +1943,8 @@ at import.
 | `VelocityEncode` | `modules` | class |
 | `FlowCompensation` | `augmentation` | class |
 | `VelocityEncoding` | `augmentation` | class |
+| `PhysicalDesign` | `physical_design` | class |
 | `PhysicalDesignScope` | `physical_design` | class |
-| `RepetitionDesign` | `physical_design` | class |
-| `design_repetition` | `physical_design` | function |
 | `RadialReadout` | `modules` | class |
 | `PlacedEvent` | `compiler.model` | class |
 | `PulseqReadyBlock` | `compiler.model` | class |

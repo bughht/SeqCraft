@@ -37,9 +37,13 @@ learns which side produced it.
 
 ```text
 PUBLIC     seqcraft/physical_design.py
-           PhysicalDesignScope     where a designer may work, in a composition you wrote
-           design_repetition       design the family
-           RepetitionDesign        .repetition(state), .at(te_s=...), .te_s, .window_s
+           PhysicalDesignScope     where a designer may work, and where k should be at the echo
+             .design(opts=, flow_comp=, velocity_encode=)
+           PhysicalDesign          .build(state), .at(te_s=...), .te_s, .window_s
+
+           Two names, not three, and neither says "repetition": the region a scope names is not
+           necessarily a whole TR, and `.build(state)` returns exactly before + designed + after
+           -- a spoiler or a TR fill is the caller's to add.
 
 INTERNAL   seqcraft/design/scope.py    ScopeGeometry, AxisRequirement, design_scope
            seqcraft/design/joint.py    Schedule, JointProblem, claims, realisation families
@@ -47,12 +51,18 @@ INTERNAL   seqcraft/design/scope.py    ScopeGeometry, AxisRequirement, design_sc
 
 The public layer is a **translation**, not a second designer. It derives the two callables the
 internal layer needs rather than asking for them: `fixed` by measuring the user's own blocks
-where the schedule puts them, and `target` from the intent plus one default — *the designed
-region brings `k` back to the origin at the echo on every axis it owns*.
+where the schedule puts them, and `target` from `k_at_echo` for the zeroth moment and the intents
+for the first.
 
-That default is also the public surface's sharpest limit. A composition wanting a **non-zero** `k`
-at the echo on a designed axis, as a Cartesian phase encode does, is not expressible; that is what
-the packaged kernels are for. Adding it later is one optional field, not a redesign.
+`k_at_echo(state, axis)` is the one MRI-level semantic the declaration carries beyond geometry:
+where the designed region should leave `k`, in `1/m`, defaulting to zero. Zero is what a
+prephaser, a winder and a slice rephaser all do; a family that **encodes** with the region it owns
+— a Cartesian phase encode — says so there. That keeps the two kinds of requirement apart: the
+scope owns the zeroth moment, the intents own the first.
+
+A caller's state is carried through untouched. Internally a state and an encoding state are one
+frozen `_Key`, never a tuple, because a caller's own state may be `(ky, kz)` and tuple shape is
+not a type tag.
 
 Nothing public names a `Schedule`, a `JointProblem`, a claim, a realisation family, an ownership
 table or a raw `(m0, m1)` tuple. `design_scope(admissible=...)` stays internal: it is the future
@@ -182,6 +192,17 @@ m0 and m1 only           design/joint.py's scope.  m2 needs a family that comput
 ```
 
 These are limits of the current representation, not definitions of physical design.
+
+### The pathway assumption
+
+`origin_s` is the semantic origin of the pathway whose moments a scope designs, and the first
+public version **assumes the pathway begins there**. For the excitation-to-echo pathway of a
+gradient echo that origin is the RF effective centre, and gradient before it does not act on the
+signal being designed for, because the transverse magnetisation does not exist yet.
+
+That reasoning belongs to *that pathway*, not to MRI in general. A refocusing pulse creates
+several coherence pathways with different histories, and none of that is modelled. The wording in
+the docstrings and the API reference says so rather than stating a universal rule.
 
 ## 8. Edge boundaries
 
