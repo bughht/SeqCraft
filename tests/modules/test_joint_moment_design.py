@@ -360,7 +360,7 @@ def test_an_axis_no_owner_claims_is_refused_before_realisation(opts) -> None:
     that says which gradient that axis carries instead of "unsupported".
     """
     with pytest.raises(sc.errors.ConfigurationError) as raised:
-        sc.modules._augment.refuse_unowned_axis(
+        sc.design._augment.refuse_unowned_axis(
             'SomeRepetition', sc.FlowCompensation(axis='z'), 'z',
             {'y': 'joint', 'x': 'readout'},
             "this repetition's z gradient is realised by its excitation")
@@ -397,10 +397,10 @@ def test_a_refusal_names_the_augmentation_that_was_actually_asked_for(opts) -> N
     why = 'its z gradient is realised by the excitation'
 
     with pytest.raises(sc.errors.ConfigurationError) as flow:
-        sc.modules._augment.refuse_unowned_axis(
+        sc.design._augment.refuse_unowned_axis(
             'SomeRepetition', sc.FlowCompensation(axis='z'), 'z', owners, why)
     with pytest.raises(sc.errors.ConfigurationError) as velocity:
-        sc.modules._augment.refuse_unowned_axis(
+        sc.design._augment.refuse_unowned_axis(
             'SomeRepetition', sc.VelocityEncoding(venc_m_s=VENC_M_S, axis='z'), 'z', owners, why)
 
     assert 'cannot apply flow compensation' in str(flow.value)

@@ -49,13 +49,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .design import _augment
 from .design import scope as _scope
 from .design.joint import ORDERS, Schedule, measure_moment, resolve_claims
 from .design.logic import LogicBlock
 from .design.timing import Raster
 from .design.validation import require_axis
 from .errors import ConfigurationError, format_error
-from .modules import _augment
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Hashable, Sequence
