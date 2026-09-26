@@ -273,9 +273,17 @@ KERNELS = [
 
 
 def first_moment(kernel, shot, axis: str) -> float:
-    """`m1` on one axis over the whole emitted repetition, from the excitation to the echo."""
-    return measure_moment(shot, 1, axis, origin_s=kernel.exc.time_to_center(),
-                          start_s=0.0, end_s=kernel.time_to_echo())
+    """
+    `m1` on one axis over the whole emitted repetition, from the excitation to the echo.
+
+    Integrated **from the excitation instant**, not from the start of the block.  On `x` and `y`
+    the two agree, because nothing plays there earlier.  On the slice axis they do not: half the
+    selection lobe plays before the RF centre and dephases nothing, since there is no transverse
+    magnetisation yet, so counting it would be measuring a phase no spin accumulates.
+    """
+    origin = kernel.exc.time_to_center()
+    return measure_moment(shot, 1, axis, origin_s=origin,
+                          start_s=origin, end_s=kernel.time_to_echo())
 
 
 @pytest.mark.parametrize('kernel_of, build_kwargs', KERNELS)
@@ -334,22 +342,26 @@ def test_the_local_route_is_carried_by_the_readout_and_costs_echo_time(
     assert local.te_s > baseline.te_s, 'compensation costs echo time'
 
 
-def test_an_axis_the_repetition_does_not_own_is_refused_before_realisation(opts) -> None:
+def test_an_axis_no_owner_claims_is_refused_before_realisation(opts) -> None:
     """
-    `z` is a legal axis `GRE2DTR` plays a gradient on, and it does not own that gradient.
+    The refusal is physical, and it fires before anything is designed.
 
-    Before the check existed it accepted the claim, designed it, grew the winder from 520 to
-    2400 us -- 1.9 ms of TE the caller paid for -- and then emitted nothing, leaving
-    `m1 = -0.736 s/m` on the axis it reported as compensated.  So the refusal comes from what the
-    repetition **materialises**, not from whether the axis letter is legal.
+    Both shipped kernels now own all three axes -- `GRE2DTR` gained `z` when the scope learned to
+    take the slice rephasing over -- so there is no *legal* axis left for a kernel to refuse, and
+    exercising this through one would mean inventing a kernel that refuses something.  The check
+    itself is what matters and it is unchanged: an owners table without the axis, and a refusal
+    that says which gradient that axis carries instead of "unsupported".
     """
     with pytest.raises(sc.errors.ConfigurationError) as raised:
-        sc.modules.GRE2DTR(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
-                           flow_comp=sc.FlowCompensation(axis='z'))
+        sc.modules._augment.refuse_unowned_axis(
+            'SomeRepetition', sc.FlowCompensation(axis='z'), 'z',
+            {'y': 'joint', 'x': 'readout'},
+            "this repetition's z gradient is realised by its excitation")
 
     said = str(raised.value)
     assert 'cannot apply flow compensation' in said and "'z'" in said
-    assert 'slice rephaser' in said, 'the reason should name what that axis carries here'
+    assert 'realised by its excitation' in said, 'the reason, not just the refusal'
+    assert "('y', 'x')" in said, 'and what it could have asked for instead'
 
 
 def test_a_meaningless_axis_is_refused_by_the_intent_itself(opts) -> None:
@@ -374,22 +386,24 @@ def test_a_refusal_names_the_augmentation_that_was_actually_asked_for(opts) -> N
     augmentation may name is the repetition's answer; *which augmentation asked* is not something
     the message may get wrong.
     """
-    shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0)
+    owners = {'y': 'joint', 'x': 'readout'}
+    why = 'its z gradient is realised by the excitation'
 
     with pytest.raises(sc.errors.ConfigurationError) as flow:
-        sc.modules.GRE2DTR(**shared, flow_comp=sc.FlowCompensation(axis='z'))
+        sc.modules._augment.refuse_unowned_axis(
+            'SomeRepetition', sc.FlowCompensation(axis='z'), 'z', owners, why)
     with pytest.raises(sc.errors.ConfigurationError) as velocity:
-        sc.modules.GRE2DTR(**shared, velocity_encode=sc.VelocityEncoding(venc_m_s=VENC_M_S,
-                                                                        axis='z'))
+        sc.modules._augment.refuse_unowned_axis(
+            'SomeRepetition', sc.VelocityEncoding(venc_m_s=VENC_M_S, axis='z'), 'z', owners, why)
 
     assert 'cannot apply flow compensation' in str(flow.value)
     assert 'cannot velocity encode' in str(velocity.value)
     assert 'flow compensation' not in str(velocity.value)
 
-    # Both are the unowned-axis refusal, so both still explain what z carries here -- which is a
-    # different reason from the readout-axis one in the test below.
+    # Both are the unowned-axis refusal, so both still explain what that axis carries -- which is
+    # a different reason from the readout-axis one in the test below.
     for raised in (flow, velocity):
-        assert 'slice rephaser' in str(raised.value)
+        assert why in str(raised.value)
 
 
 def test_velocity_encoding_on_the_readout_axis_is_refused_without_claiming_impossibility(
