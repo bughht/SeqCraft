@@ -16,6 +16,13 @@ an adapter onto it with no change to its public surface; `GRE3DTR` keeps its own
 kernel class**, composed in the notebook, reaching the same designer. Its moment requirement
 rotates with the interleaf on both in-plane axes at once, which no packaged kernel produces.
 
+**Bug fix, `GRE3DTR` with a selective slab.** Asking for flow compensation on `z` reported
+success over the wrong interval: the fixed contribution was integrated from the start of the
+repetition rather than from the excitation, so it included the half of the selection lobe that
+plays before the RF centre and dephases nothing. Measured over the interval a spin is actually
+in, `m1` was `1.26e-2` and `k_z` sat half a slab lobe from its target while the design reported
+both met. The non-selective case was always correct, which is why nothing caught it.
+
 `modules/_joint.py` moved to `design/joint.py`, mechanically. It never depended on `modules` at
 all, and a scope serving user compositions cannot sit under `modules/kernel`.
 

@@ -69,10 +69,17 @@ def intents(axis: str, *, flow_comp: bool = True, venc: bool = True) -> dict:
 
 
 def residual(kernel, axis: str, shot, wanted: tuple[float, float]) -> tuple[float, float]:
-    """How far the **whole repetition** is from its target, at the achieved echo."""
+    """
+    How far the **whole repetition** is from its target, at the achieved echo.
+
+    Integrated from the excitation instant rather than from the start of the block.  On `x` and
+    `y` the two agree.  On a slice or slab axis they do not: half the selection lobe plays before
+    the RF centre and dephases nothing, because there is no transverse magnetisation yet, so
+    measuring from zero would be asking about a phase no spin accumulates.
+    """
     origin, echo = kernel.exc.time_to_center(), kernel.time_to_echo()
     return tuple(
-        abs(measure_moment(shot, order, axis, origin_s=origin, start_s=0.0, end_s=echo)
+        abs(measure_moment(shot, order, axis, origin_s=origin, start_s=origin, end_s=echo)
             - wanted[order])
         for order in (0, 1)
     )
@@ -515,7 +522,7 @@ def test_one_intent_reaches_two_different_owners(opts) -> None:
 
     assert sorted(kernel._joint) == ['y'], 'only y went to the joint designer'
     for axis in ('x', 'y'):
-        moment = measure_moment(shot, 1, axis, origin_s=origin, start_s=0.0, end_s=echo)
+        moment = measure_moment(shot, 1, axis, origin_s=origin, start_s=origin, end_s=echo)
         assert moment == pytest.approx(0.0, abs=1e-11), f'{axis} was not compensated'
 
 
@@ -553,7 +560,8 @@ def test_flow_compensation_is_the_common_mode_not_a_per_state_zero(opts) -> None
 
     def m1(kernel, **state):
         return measure_moment(kernel(line=4, **state), 1, 'y',
-                              origin_s=kernel.exc.time_to_center(), start_s=0.0,
+                              origin_s=kernel.exc.time_to_center(),
+                              start_s=kernel.exc.time_to_center(),
                               end_s=kernel.time_to_echo())
 
     assert m1(alone) == pytest.approx(0.0, abs=1e-11)
@@ -580,6 +588,37 @@ def test_gre2dtr_meets_its_targets_on_the_complete_repetition(opts) -> None:
             off_m0, off_m1 = residual(kernel, 'y', shot, wanted)
             assert off_m0 < 1e-6 * max(1.0, abs(wanted[0]))
             assert off_m1 < 1e-11
+
+
+def test_a_selective_slab_nulls_the_interval_a_spin_actually_sees(opts) -> None:
+    """
+    The regression for a bug that reported success over the wrong interval.
+
+    `GRE3DTR` integrated its fixed contribution from the start of the block, so a selective slab
+    asked for zero first moment got one measured across the whole selection lobe -- including the
+    half that plays before the RF centre and dephases nothing, since there is no transverse
+    magnetisation yet.  Measured over the interval a spin is actually in, `m1` was 1.26e-2 and
+    `k_z` sat half a slab lobe from its target while the design reported both met.
+
+    The non-selective case was always right, which is why nothing caught it: with no slab lobe
+    the two integration starts agree.
+    """
+    shared = dict(opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(32, 32, 8),
+                  flow_comp=sc.FlowCompensation(axis='z'))
+    partition = 2
+
+    for slab_thickness_mm in (None, 120.0):
+        kernel = sc.modules.GRE3DTR(**shared, slab_thickness_mm=slab_thickness_mm)
+        shot = kernel(line=4, partition=partition)
+        origin, echo = kernel.exc.time_to_center(), kernel.time_to_echo()
+
+        m0 = measure_moment(shot, 0, 'z', origin_s=origin, start_s=origin, end_s=echo)
+        m1 = measure_moment(shot, 1, 'z', origin_s=origin, start_s=origin, end_s=echo)
+
+        assert m0 == pytest.approx(kernel.pe_z.k_per_m(partition), abs=1e-6), (
+            f'slab {slab_thickness_mm}: k_z is not where the partition wants it'
+        )
+        assert abs(m1) < 1e-11, f'slab {slab_thickness_mm}: m1 = {m1}'
 
 
 @pytest.mark.parametrize('slab_thickness_mm', (None, 120.0))
@@ -629,7 +668,7 @@ def test_the_kernel_adapter_does_not_branch_on_the_augmentation(opts) -> None:
         realised[name] = {
             state: measure_moment(
                 kernel(line=8, **({} if state is None else {'encoding_state': state})), 1, 'y',
-                origin_s=origin, start_s=0.0, end_s=echo)
+                origin_s=origin, start_s=origin, end_s=echo)
             for state in states
         }
 
@@ -754,7 +793,7 @@ def test_two_axes_are_designed_against_one_common_schedule(opts) -> None:
             for state in POLARITIES:
                 shot = kernel(line=index if axis == 'y' else 8,
                               partition=index if axis == 'z' else 4, encoding_state=state)
-                m1 = measure_moment(shot, 1, axis, origin_s=origin, start_s=0.0, end_s=echo)
+                m1 = measure_moment(shot, 1, axis, origin_s=origin, start_s=origin, end_s=echo)
                 assert m1 == pytest.approx(wanted_m1(state), abs=1e-11)
 
 
@@ -794,9 +833,9 @@ def test_an_explicit_te_above_the_minimum_does_not_stale_the_first_moment(opts,
     for line in (0, 5, 31):
         for state in POLARITIES:
             shot = kernel(line=line, encoding_state=state)
-            assert measure_moment(shot, 1, 'y', origin_s=origin, start_s=0.0,
+            assert measure_moment(shot, 1, 'y', origin_s=origin, start_s=origin,
                                   end_s=echo) == pytest.approx(state * delta() / 2.0, abs=1e-11)
-            assert measure_moment(shot, 0, 'y', origin_s=origin, start_s=0.0,
+            assert measure_moment(shot, 0, 'y', origin_s=origin, start_s=origin,
                                   end_s=echo) == pytest.approx(kernel.pe.k_per_m(line),
                                                                abs=1e-6 * max(1.0, abs(
                                                                    kernel.pe.k_per_m(line))))

@@ -668,10 +668,19 @@ class GRE3DTR(Module):
                     resolved[0][key], resolved[1][key] if 1 in claimed else None)
 
         def fixed(state: object, schedule: _joint.Schedule) -> tuple[float, float]:
-            """A selective slab's own lobe carries the fine scan's ``ms`` on `z`."""
+            """
+            A selective slab's own lobe carries the fine scan's ``ms`` on `z`.
+
+            Integrated from the **semantic origin**, not from the start of the block.  Half the
+            selection lobe plays before the RF centre and dephases nothing, because there is no
+            transverse magnetisation yet -- so counting it nulls the wrong interval, and a
+            selective slab asked for a first moment of zero would get one measured over an
+            interval no spin experiences while `k_z` sat half a slab lobe away from its target.
+            On `y` the two starts agree, because nothing plays there earlier.
+            """
             return tuple(  # type: ignore[return-value]
                 _joint.measure_moment(excitation, order, axis, origin_s=schedule.origin_s,
-                                      start_s=0.0, end_s=schedule.endpoint_s)
+                                      start_s=schedule.origin_s, end_s=schedule.endpoint_s)
                 for order in _joint.ORDERS
             )
 

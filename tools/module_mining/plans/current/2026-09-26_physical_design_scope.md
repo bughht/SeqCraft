@@ -90,11 +90,16 @@ rewinder, where the `fixed` callable and the emitted block disagreed about what 
 does not raise — it shows up as a residual, `7.3e-2` where `1e-13` was expected, which is why
 `test_the_owned_region_must_be_taken_out_of_the_borrowed_timing` pins both numbers.
 
-A second instance of the same class, found in this pass: fixed contributions must be integrated
-**from the semantic origin**, not from the start of the block. On `x` and `y` those agree. On `z`
+A second instance of the same class, found in this pass and present on `main` before it: fixed
+contributions must be integrated **from the semantic origin**, not from the start of the block. On `x` and `y` those agree. On `z`
 half the selection lobe plays before the RF centre and dephases nothing, because there is no
 transverse magnetisation yet; counting it nulls the wrong interval and leaves `k_z` off zero while
 reporting `m1 = 0`.
+
+`GRE3DTR` had the same bug for a **selective slab** and was not migrated in this pass -- it was
+fixed in place, because it is one line and the alternative was leaving known-wrong physics on
+`main` to preserve scope discipline. Non-selective was always right, which is why nothing caught
+it: with no slab lobe the two integration starts agree.
 
 ## 5. `design_states` is a proposal
 
