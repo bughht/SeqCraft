@@ -48,6 +48,7 @@ _SKIP = {
 #: Modules whose ``__all__`` the index must account for, and the label §9 uses for each.
 _INDEXED = {
     'seqcraft.augmentation': 'augmentation',
+    'seqcraft.physical_design': 'physical_design',
     'seqcraft.errors': 'errors',
     'seqcraft.analysis': 'analysis',
     'seqcraft.display': 'display',

@@ -5,7 +5,8 @@
 > The two copies are identical today and there is nothing keeping them that way; see
 > [`../README.md`](../../README.md) for which one to edit.
 
-**Status:** implemented, internal. `seqcraft.design.scope` is **not public API**.
+**Status:** implemented. A **thin public declaration surface** sits above an internal substrate;
+`seqcraft.design.scope` and `seqcraft.design.joint` stay private.
 **Date:** 2026-09-26
 **Supersedes:** the spike record `2026-09-26_repetition_family_scope_spike.md`
 
@@ -31,6 +32,31 @@ FlowComp / VENC ------> PhysicalDesignScope ------> shared physical designer
 
 `ScopeGeometry` + `AxisRequirement` in `design/scope.py`, over `design/joint.py`. The middle never
 learns which side produced it.
+
+### The two layers
+
+```text
+PUBLIC     seqcraft/physical_design.py
+           PhysicalDesignScope     where a designer may work, in a composition you wrote
+           design_repetition       design the family
+           RepetitionDesign        .repetition(state), .at(te_s=...), .te_s, .window_s
+
+INTERNAL   seqcraft/design/scope.py    ScopeGeometry, AxisRequirement, design_scope
+           seqcraft/design/joint.py    Schedule, JointProblem, claims, realisation families
+```
+
+The public layer is a **translation**, not a second designer. It derives the two callables the
+internal layer needs rather than asking for them: `fixed` by measuring the user's own blocks
+where the schedule puts them, and `target` from the intent plus one default — *the designed
+region brings `k` back to the origin at the echo on every axis it owns*.
+
+That default is also the public surface's sharpest limit. A composition wanting a **non-zero** `k`
+at the echo on a designed axis, as a Cartesian phase encode does, is not expressible; that is what
+the packaged kernels are for. Adding it later is one optional field, not a redesign.
+
+Nothing public names a `Schedule`, a `JointProblem`, a claim, a realisation family, an ownership
+table or a raw `(m0, m1)` tuple. `design_scope(admissible=...)` stays internal: it is the future
+local-PNS seam (§9), not a user constraint hook.
 
 ## 2. It is optional, and that is a hard principle
 

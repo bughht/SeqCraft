@@ -25,7 +25,7 @@
 |---|---|
 | [`01_build.ipynb`](gre_2d/01_build.ipynb) | The sequence, three times over: raw pypulseq events, the four leaf modules composed inline, and the same composition written as a module. Every arithmetic check, three sampling patterns, three `.seq` files. **Needs nothing but `seqcraft`.** |
 | [`02_simulate_and_reconstruct.ipynb`](gre_2d/02_simulate_and_reconstruct.ipynb) | Those three files against a BrainWeb phantom — PD, T1, T2, T2′, D and a synthesised B0, all six simulated — with an eight-element receive ring, then one reconstruction across three samplings. **Needs `seqcraft[sim,recon]`** and a one-off ~19 MB phantom download. |
-| [`03_flow_comp.ipynb`](gre_2d/03_flow_comp.ipynb) | Why a gradient echo's first moment at the echo gives moving spins a velocity-dependent phase, and the reshaped winder that removes it — on `x`, `y`, `z` and in combination, measured on the emitted repetition. Two `.seq` files. **Needs nothing but `seqcraft`.** |
+| [`03_flow_comp.ipynb`](gre_2d/03_flow_comp.ipynb) | Why a gradient echo's first moment at the echo gives moving spins a velocity-dependent phase, and the reshaped winder that removes it — on `x`, `y` and `z`, each solved by a different part of the repetition. Two `.seq` files, the compensated one on all three axes. **Needs nothing but `seqcraft`.** |
 
 **On where flow compensation lives.** `03` is a later notebook in this family rather than a
 directory of its own, because flow compensation is a reusable physical capability of a gradient
@@ -212,7 +212,7 @@ different physical contract rather than a mode of this one. `01` is in
 | | |
 |---|---|
 | [`01_build.ipynb`](gre_spiral_2d/01_build.ipynb) | `sc.modules.SpiralReadout` in a complete acquisition: `Excitation` + one arm + an angle schedule + spoiling and TR fill, assembled in the notebook. Eight interleaves from one readout instance, the trajectory measured off the compiled file, and the alignment check the notebook exists for. One `.seq`. **Needs nothing but `seqcraft`.** |
-| [`03_flow_comp.ipynb`](gre_spiral_2d/03_flow_comp.ipynb) | Flow compensation on a repetition that has **no kernel class**: the notebook's own composition reaching the same physical designer `GRE2DTR` uses. A spiral-in arm whose moment requirement rotates with the interleaf, on both in-plane axes at once. Uses a provisional internal interface, and says so. One `.seq`. **Needs nothing but `seqcraft`.** |
+| [`03_flow_comp.ipynb`](gre_spiral_2d/03_flow_comp.ipynb) | Flow compensation on a repetition that has **no kernel class**: the notebook's own composition reaching the same physical designer `GRE2DTR` uses, through `sc.PhysicalDesignScope`. A spiral-in arm whose moment requirement rotates with the interleaf on both in-plane axes at once, compensated on `x`, `y` and `z`. One `.seq`. **Needs nothing but `seqcraft`.** |
 
 **The join is the point.** `SpiralReadout` says where the trajectory crosses the origin; it does
 not say where the *echo* is, and it must not — a readout that claimed to own TE would hide the

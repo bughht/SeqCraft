@@ -1124,6 +1124,71 @@ Ordering the states is the caller's: innermost minimises the time between the tw
 that get subtracted, outermost minimises the difference in their eddy-current history. This is a
 protocol decision and the library does not make it.
 
+## Designing part of your own composition
+
+The keywords above are the convenience surface for a **packaged kernel**. A composition you wrote
+yourself — `Excitation`, a readout and a spoiler, assembled in your own code — reaches the same
+designer through `sc.PhysicalDesignScope`, without becoming a module first.
+
+```python
+import numpy as np
+
+exc = sc.modules.Excitation(opts=opts, flip_deg=15.0, thickness_mm=5.0, duration_s=1e-3)
+arm = sc.modules.SpiralReadout(opts=opts, fov_mm=240.0, matrix=64, shots=8,
+                               dwell_s=4e-6, variant='in')
+angles = tuple(2.0 * np.pi * i / 8 for i in range(8))
+
+scope = sc.PhysicalDesignScope(
+    origin_s=exc.time_to_center(),          # when the spins were excited
+    before=exc(rephase=False),              # what plays before the designed region
+    after=lambda angle: arm(angle_rad=angle, prephase=False),   # and after it
+    echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
+    axes=('x', 'y', 'z'),                   # which axes it may use inside the region
+    states=angles,                          # what your repetition varies over
+    min_window_s=arm.prephaser_duration_s,
+)
+design = sc.design_repetition(scope, opts=opts,
+                              flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+
+scan = sc.LogicBlock('spiral')
+for index, angle in enumerate(angles):
+    scan.add(index * 30e-3, design.repetition(angle))
+```
+
+Three concepts, and they divide like this:
+
+| | |
+|---|---|
+| `FlowCompensation`, `VelocityEncoding` | **what physics is wanted**, and nothing else |
+| `PhysicalDesignScope` | **where** it applies in a composition you wrote |
+| `design.repetition(state)` | one state's fully timed block, built once from the finished design |
+
+**It is opt-in, and it is not a layer.** Events, modules and functions into a `LogicBlock` and
+then `sc.compile` needs none of this. Nor is it a different designer: a packaged kernel and a
+scope end at the same internal machinery, which stays internal.
+
+**What the designed region is asked for.** On each axis it owns it brings `k` back to the origin
+at the echo — what a prephaser, a winder and a slice rephaser all do — plus whatever the intents
+add. A composition wanting a *non-zero* `k` there, as a Cartesian phase encode does, is what the
+packaged kernels are for.
+
+**Handing a region over is explicit.** `before=exc(rephase=False)` is you saying the slice
+rephasing belongs to the designer now — the same seam `CartesianLine(prephase=False)` and
+`SpiralReadout(prephase=False)` offer. Nothing inspects a finished block and rewrites it.
+
+One rule is worth stating twice, because getting it wrong does not raise: **what you declare must
+describe the configuration you emit.** A module reports its timings for its own block, and if you
+asked it to leave a region out, that region's duration is still in the number it reports.
+`SpiralReadout.time_to_echo` is measured from a block containing its own prephaser, so a scope
+designing that prephaser subtracts `prephaser_duration_s` from `echo_in_after_s`.
+
+`design.at(te_s=...)` designs the same family again at a longer echo time, which is how a protocol
+holding two families harmonises them: take the longer of the two minima and ask both for it.
+
+`design_states` on the scope is a **hint** about which states will size the schedule, not a
+promise. Every state is realised and checked before a schedule is accepted, so a poor hint costs
+search time and never correctness.
+
 Every module here was extracted from a working example rather than designed in the abstract.
 [`examples/gre_2d/01_build.ipynb`](../examples/gre_2d/01_build.ipynb) builds the same sequence
 three ways — raw pypulseq, the leaves composed inline, and the composition as a module — which is
@@ -1855,6 +1920,9 @@ at import.
 | `VelocityEncode` | `modules` | class |
 | `FlowCompensation` | `augmentation` | class |
 | `VelocityEncoding` | `augmentation` | class |
+| `PhysicalDesignScope` | `physical_design` | class |
+| `RepetitionDesign` | `physical_design` | class |
+| `design_repetition` | `physical_design` | function |
 | `RadialReadout` | `modules` | class |
 | `PlacedEvent` | `compiler.model` | class |
 | `PulseqReadyBlock` | `compiler.model` | class |

@@ -385,10 +385,19 @@ def realise_two_lobes(axis: str, target: tuple[float, float], fixed: tuple[float
     ``split = 0.5`` is PR #39's equal-duration shape.  Letting the split move is one extra degree
     of freedom and costs nothing but a search over a raster-aligned fraction -- which is what
     :func:`realise_split_search` does with it.
+
+    **The boundary between the two lobes is snapped onto the gradient raster**, because it is an
+    instant the sequence has to be able to name.  Halving an odd number of raster steps does not
+    land on one: a 1450 us window split evenly asks for two 725 us lobes, and the compiler
+    rightly refuses the second for starting off-raster.  The snap moves the boundary by less than
+    one step and the areas are solved against the durations that result, so the moments stay
+    exact rather than being corrected afterwards.
     """
     if target[1] is None:
         return None       # under-determined: nothing constrains the second degree of freedom
-    first_s = schedule.window_s * split
+    raster = float(opts.grad_raster_time)
+    steps = max(int(round(schedule.window_s * split / raster)), 1)
+    first_s = steps * raster
     second_s = schedule.window_s - first_s
     if min(first_s, second_s) <= 0.0:
         return None

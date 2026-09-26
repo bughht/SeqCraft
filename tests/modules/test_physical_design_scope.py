@@ -10,6 +10,7 @@ the middle does not know which side it was handed.
 from __future__ import annotations
 
 import numpy as np
+import pypulseq as pp
 import pytest
 
 import seqcraft as sc
@@ -269,3 +270,173 @@ def test_the_kernel_sizes_its_schedule_from_two_lines_not_every_line(opts) -> No
         got = joint.measure_moment(kernel(line=line), 1, 'y', origin_s=origin,
                                    start_s=origin, end_s=echo)
         assert abs(got) < 1e-11, f'line {line} was realised at a schedule it does not meet'
+
+
+# --------------------------------------------------- the public custom-composition surface
+def spiral_pieces(opts):
+    """The composition `examples/gre_spiral_2d/03_flow_comp` writes, as plain leaves."""
+    exc = sc.modules.Excitation(opts=opts, flip_deg=15.0, thickness_mm=THICKNESS_MM,
+                                duration_s=1e-3)
+    arm = sc.modules.SpiralReadout(opts=opts, fov_mm=FOV_MM, matrix=MATRIX, shots=SHOTS,
+                                   dwell_s=4e-6, variant='in')
+    angles = tuple(2.0 * np.pi * i / SHOTS for i in range(SHOTS))
+    return exc, arm, angles
+
+
+def public_scope(opts, *, axes=('x', 'y', 'z')):
+    exc, arm, angles = spiral_pieces(opts)
+    return sc.PhysicalDesignScope(
+        origin_s=exc.time_to_center(),
+        before=exc(rephase=False),
+        after=lambda angle: arm(angle_rad=angle, prephase=False),
+        echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
+        axes=axes,
+        states=angles,
+        design_states=(angles[0], angles[SHOTS // 4]),
+        min_window_s=arm.prephaser_duration_s,
+    ), exc, arm, angles
+
+
+def public_residual(design, scope_, shot, order, axis):
+    end = scope_.origin_s + design.te_s
+    return joint.measure_moment(shot, order, axis, origin_s=scope_.origin_s,
+                                start_s=scope_.origin_s, end_s=end)
+
+
+def test_the_public_surface_designs_a_composition_that_has_no_kernel(opts) -> None:
+    """
+    The whole point, in the vocabulary a user is expected to have.
+
+    Nothing here names a schedule, a claim, a realisation family or a moment target.  The scope
+    says where the spins were excited, what plays either side, which axes may be used and what
+    states exist; the intent says what physics is wanted.
+    """
+    scope_, _exc, _arm, angles = public_scope(opts)
+    design = sc.design_repetition(scope_, opts=opts,
+                                  flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+
+    for angle in angles:
+        shot = design.repetition(angle)
+        for axis in ('x', 'y', 'z'):
+            assert abs(public_residual(design, scope_, shot, 0, axis)) < 1e-9
+            assert abs(public_residual(design, scope_, shot, 1, axis)) < 1e-11
+
+
+def test_both_paths_end_at_the_same_machinery(opts) -> None:
+    """
+    A packaged kernel and a user composition are two doors into one designer, not two designers.
+
+    Asserted structurally: both produce the internal `ScopeDesign`, from the same module, with the
+    same shape -- one schedule shared across axes, and a realisation per state.
+    """
+    kernel = sc.modules.GRE2DTR(opts=opts, fov_mm=FOV_MM, matrix=(32, 32),
+                                thickness_mm=THICKNESS_MM,
+                                flow_comp=sc.FlowCompensation(axis='y'))
+    scope_, _exc, _arm, angles = public_scope(opts, axes=('x', 'y'))
+    custom = sc.design_repetition(scope_, opts=opts,
+                                  flow_comp=sc.FlowCompensation(axis=('x', 'y')))
+
+    assert type(kernel._joint['y']).__module__ == 'seqcraft.design.joint'
+    assert type(custom._designed).__module__ == 'seqcraft.design.scope'
+    assert type(custom._designed.designs['y']) is type(kernel._joint['y'])
+
+    schedules = {d.schedule for d in custom._designed.designs.values()}
+    assert len(schedules) == 1, 'one schedule shared across axes, as for the kernel'
+
+
+def test_the_public_scope_re_realises_at_a_longer_echo_time(opts) -> None:
+    """A protocol takes the longer of two families' echo times and asks both for it."""
+    scope_, _exc, _arm, angles = public_scope(opts)
+    design = sc.design_repetition(scope_, opts=opts,
+                                  flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+
+    longer = design.at(te_s=design.te_s + 1.0e-3)
+    assert longer is not None and longer.te_s > design.te_s
+    for angle in angles:
+        shot = longer.repetition(angle)
+        for axis in ('x', 'y', 'z'):
+            assert abs(public_residual(longer, scope_, shot, 1, axis)) < 1e-11
+
+    assert design.at(te_s=-1.0) is None, 'an impossible request is None, not a wrong answer'
+
+
+def test_the_public_scope_refuses_an_axis_it_was_not_given(opts) -> None:
+    """The scope owns what `axes` lists.  An intent elsewhere is a refusal, not an omission."""
+    scope_, _exc, _arm, _angles = public_scope(opts, axes=('x', 'y'))
+
+    with pytest.raises(sc.errors.ConfigurationError) as raised:
+        sc.design_repetition(scope_, opts=opts, flow_comp=sc.FlowCompensation(axis='z'))
+
+    said = str(raised.value)
+    assert 'cannot apply flow compensation' in said and "'z'" in said
+    assert '`axes`' in said
+
+
+def test_the_public_scope_carries_velocity_encoding_states(opts) -> None:
+    """
+    The other intent, on a composition with a state family of its own.
+
+    The two multiply: eight interleaves times two encoding states, all at one echo time, and the
+    difference between the states is what was asked for.
+    """
+    scope_, _exc, _arm, angles = public_scope(opts, axes=('x', 'y'))
+    venc = sc.VelocityEncoding(venc_m_s=1.5, axis='y')
+    design = sc.design_repetition(scope_, opts=opts, velocity_encode=venc)
+
+    for angle in angles[:3]:
+        got = {state: public_residual(design, scope_,
+                                      design.repetition(angle, encoding_state=state), 1, 'y')
+               for state in venc.states}
+        assert got[+1] - got[-1] == pytest.approx(venc.delta_m1_s_per_m, rel=1e-9)
+
+    with pytest.raises(sc.errors.ConfigurationError, match='which state'):
+        design.repetition(angles[0])
+
+
+def test_a_scope_declaration_is_a_value(opts) -> None:
+    """Frozen, comparable, and reusable -- the re-realisation case needs it to outlive one call."""
+    first, _exc, _arm, _angles = public_scope(opts)
+    second, *_ = public_scope(opts)
+
+    assert first.axes == ('x', 'y', 'z')
+    assert first.states == second.states
+    with pytest.raises(Exception):
+        first.origin_s = 0.0                                          # noqa: B018 -- frozen
+
+
+def test_a_two_lobe_split_lands_on_the_gradient_raster(opts) -> None:
+    """
+    An odd number of raster steps cannot be halved onto the raster, and the compiler knows it.
+
+    The two-lobe family split the window at exactly 0.5, so a 1450 us window asked for two 725 us
+    lobes and the second began 5 us off-raster.  Nothing in the designer noticed -- the moments
+    were right -- and it surfaced as a `CompileError` from the emitted sequence, which is the
+    compiler doing its job but rather late.
+    """
+    raster = float(opts.grad_raster_time)
+    for steps in (144, 145, 146, 147):                      # even and odd alike
+        schedule = joint.Schedule(origin_s=0.5e-3, endpoint_s=6.0e-3,
+                                  window_start_s=1.0e-3, window_s=steps * raster)
+        made = joint.realise_two_lobes('y', (145.0, 0.2), (0.0, 0.0), schedule, opts)
+        if made is None:
+            continue
+        at = schedule.window_start_s
+        for event in made.events:
+            assert at / raster == pytest.approx(round(at / raster), abs=1e-9), (
+                f'{steps} raster steps: a lobe starts at {at * 1e6:.3f} us, off the raster'
+            )
+            at += float(pp.calc_duration(event))
+
+
+def test_the_published_spiral_scope_compiles_on_all_three_axes(opts) -> None:
+    """x + y + z through the public surface, assembled and compiled the way the notebook does."""
+    scope_, _exc, _arm, angles = public_scope(opts)
+    design = sc.design_repetition(scope_, opts=opts,
+                                  flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+
+    scan = sc.LogicBlock('gre_spiral_2d_flow_comp')
+    for index, angle in enumerate(angles):
+        scan.add(index * 30e-3, design.repetition(angle))
+
+    seq = sc.compile(scan, opts, name='gre_spiral_2d_flow_comp')
+    assert len(seq.block_events) > 0

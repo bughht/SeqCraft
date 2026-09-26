@@ -2,6 +2,32 @@
 
 ## Unreleased — flow compensation on any axis, and on repetitions with no kernel
 
+**New public API.** `sc.PhysicalDesignScope` and `sc.design_repetition` let a composition you
+wrote yourself — `Excitation`, a readout and a spoiler, assembled in your own code — hand a region
+to the same physical designer a packaged kernel uses, without becoming a module first:
+
+```python
+scope = sc.PhysicalDesignScope(
+    origin_s=exc.time_to_center(), before=exc(rephase=False),
+    after=lambda angle: arm(angle_rad=angle, prephase=False),
+    echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
+    axes=('x', 'y', 'z'), states=angles,
+)
+design = sc.design_repetition(scope, opts=opts,
+                              flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+block = design.repetition(angle)
+```
+
+Opt-in, and not a layer: events into a `LogicBlock` and then `sc.compile` needs none of it. The
+solver stays internal — nothing public names a schedule, a claim, a realisation family or a raw
+moment target.
+
+**Bug fix, the two-lobe family.** It split its window at exactly half, which is off the gradient
+raster whenever the window is an odd number of raster steps: a 1450 us window asked for two 725 us
+lobes and the compiler refused the second for starting at 2005 us. The split now snaps to the
+raster and the areas are solved against the durations that result.
+
+
 `GRE2DTR` now flow-compensates **`z`** as well as `x` and `y`, and any combination of them. The
 slice rephasing is taken over from `Excitation` — via the `rephase=False` seam it already had —
 so the repetition designs rephasing and compensation together, because on that axis they are one
