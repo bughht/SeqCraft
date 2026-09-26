@@ -34,8 +34,7 @@ import numpy as np
 import pypulseq as pp
 
 import seqcraft as sc
-from seqcraft.errors import ConfigurationError
-from seqcraft.modules._joint import (
+from seqcraft.design.joint import (
     CommonModeClaim,
     DifferenceClaim,
     JointProblem,
@@ -44,6 +43,7 @@ from seqcraft.modules._joint import (
     measure_moment,
     utilisation,
 )
+from seqcraft.errors import ConfigurationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence

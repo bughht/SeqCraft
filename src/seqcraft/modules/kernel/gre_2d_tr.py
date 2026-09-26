@@ -76,12 +76,13 @@ from typing import TYPE_CHECKING
 import pypulseq as pp
 
 from ...augmentation import FlowCompensation, VelocityEncoding
+from ...design import joint as _joint
 from ...design.events import AXES
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...design.timing import EPS
 from ...errors import ConfigurationError, format_error
-from .. import _augment, _joint
+from .. import _augment
 from .._support import ceil_raster, require_axis, require_pair, require_positive
 from ..encoding.phase_encoding import PhaseEncode
 from ..readout.cartesian_line import CartesianLine
@@ -641,7 +642,7 @@ class GRE2DTR(Module):
         One axis' physical problem: what is wanted per state, and what already plays on it.
 
         **No augmentation is named here.**  The claims arrive resolved into absolute targets by
-        :func:`~seqcraft.modules._joint.resolve_claims`, so a third augmentation needs no change
+        :func:`~seqcraft.design.joint.resolve_claims`, so a third augmentation needs no change
         to this method -- which is the whole point of the boundary.
         """
         claimed = {getattr(claim, 'order', None) for claim in group}

@@ -40,17 +40,17 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pypulseq as pp
 
-from ..design.events import knots_of, pwl_moment
-from ..design.logic import flatten
 from ..errors import ConfigurationError, format_error
+from .events import knots_of, pwl_moment
+from .logic import flatten
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from pypulseq.opts import Opts
 
-    from ..design.events import Event
-    from ..design.logic import LogicBlock
+    from .events import Event
+    from .logic import LogicBlock
 
 __all__ = [
     'ORDERS',
@@ -149,7 +149,7 @@ def group_by_axis(claims: Iterable[object]) -> dict[str, tuple[object, ...]]:
 
 def placed(event: Event, at_s: float) -> LogicBlock:
     """One event in a block at `at_s` -- for measuring a fixed contribution where it will play."""
-    from ..design.logic import LogicBlock as _LogicBlock
+    from .logic import LogicBlock as _LogicBlock
     return _LogicBlock().add(at_s, event)
 
 

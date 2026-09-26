@@ -17,7 +17,8 @@ import numpy as np
 import pytest
 
 import seqcraft as sc
-from seqcraft.modules._joint import (
+import seqcraft.design.joint  # noqa: F401  -- for monkeypatching the search ceiling
+from seqcraft.design.joint import (
     CommonModeClaim,
     DifferenceClaim,
     Schedule,
@@ -428,7 +429,7 @@ def test_running_out_of_candidate_windows_is_not_called_infeasible(opts, monkeyp
     every raster-aligned split at every candidate window, so walking to the real limit of 4000 is
     quadratic and takes the better part of a minute.  That cost is the search's, not this test's.
     """
-    monkeypatch.setattr(sc.modules._joint, 'SEARCH_LIMIT_WINDOWS', 200)
+    monkeypatch.setattr(sc.design.joint, 'SEARCH_LIMIT_WINDOWS', 200)
     absurd = sc.VelocityEncoding(venc_m_s=1e-4, axis='y')      # 5000 s/m of first moment
 
     with pytest.raises(sc.errors.ConfigurationError) as raised:

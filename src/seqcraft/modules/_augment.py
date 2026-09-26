@@ -24,8 +24,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..augmentation import FlowCompensation, VelocityEncoding
+from ..design.joint import CommonModeClaim, DifferenceClaim
 from ..errors import ConfigurationError, format_error
-from ._joint import CommonModeClaim, DifferenceClaim
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

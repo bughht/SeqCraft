@@ -65,12 +65,13 @@ from typing import TYPE_CHECKING
 import pypulseq as pp
 
 from ...augmentation import FlowCompensation, VelocityEncoding
+from ...design import joint as _joint
 from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...design.timing import EPS
 from ...errors import ConfigurationError, format_error
-from .. import _augment, _joint
+from .. import _augment
 from .._support import ceil_raster, require_positive
 from ..encoding.phase_encoding import PhaseEncode
 from ..readout.cartesian_line import CartesianLine
