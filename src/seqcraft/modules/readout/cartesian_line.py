@@ -119,6 +119,7 @@ import numpy as np
 import pypulseq as pp
 
 from ...design.events import derive, knots_of, pwl_moment
+from ...design.joint import JointProblem, Schedule, attempt
 from ...design.logic import LogicBlock, barrier
 from ...design.module import Module
 from ...design.timing import EPS, from_ticks, to_ticks
@@ -140,6 +141,12 @@ if TYPE_CHECKING:
     from ...design.events import Event
 
 __all__ = ['CartesianLine']
+
+#: How many raster steps the inter-echo transition search will walk before giving up.  It walks
+#: rather than bisects because feasibility over a window is not monotone -- a raster step that
+#: does not divide into two placeable lobes fails where both its neighbours succeed -- so the
+#: first feasible step is the shortest one, and a bisection would return a hole's far side.
+_TRANSITION_SEARCH_STEPS = 4000
 
 #: What each polarity costs, in one line each.  Quoted in the refusal, because the two produce
 #: files that differ in the dwell, the echo times, the k ordering of every second echo and the
@@ -360,9 +367,19 @@ class CartesianLine(Module):
         self._min_period_s: float | None = None
         self._period_s: float | None = None
         self._flyback: Event | None = None
+        self._transitions: tuple[tuple[Event, ...], ...] | None = None
+        # Resolved *before* the train, because it is what decides what plays between the lobes:
+        # an all-echo compensated train carries a solved transition where an ordinary one carries
+        # a fly-back or nothing at all.  It was resolved after the train until that was true.
+        self._null_moment_order = self._check_null_moment_order(_null_moment_order)
+        #: Whether every acquired echo carries the first-moment condition, not only the first.
+        self._compensated_train = self._null_moment_order >= 1 and self.echoes > 1
         self.gx, self.adc = (
-            self._design_lobe_centred(echo_spacing_s) if self.polarity == 'bipolar'
-            else self._design_readout()
+            # A compensated train holds its lobe at the minimum and spends a longer
+            # `echo_spacing_s` on the transition instead, which is the part that has freedom;
+            # stretching the lobe would move the sampling grid the reverse lobes share.
+            self._design_lobe_centred(None if self._compensated_train else echo_spacing_s)
+            if self.polarity == 'bipolar' else self._design_readout()
         )
         #: Seconds from the readout gradient's own start to k = 0.
         self._echo_in_gx = float(self.adc.delay) + (self.pre_echo_samples + 0.5) * self.dwell_s
@@ -371,7 +388,9 @@ class CartesianLine(Module):
             derive(self.gx, amplitude=-float(self.gx.amplitude))
             if self.polarity == 'bipolar' else None
         )
-        if self.polarity == 'monopolar':
+        if self._compensated_train:
+            self._transitions = self._design_transitions(echo_spacing_s)
+        elif self.polarity == 'monopolar':
             self._flyback = self._design_flyback(echo_spacing_s)
         self._refuse_echo_spacing(echo_spacing_s)
         #: **Internal.**  The highest gradient moment nulled at the echo on this axis.
@@ -393,10 +412,12 @@ class CartesianLine(Module):
         #: lobes the **same** duration; it is not claimed to be the shortest compensated
         #: prephaser that exists, and no minimum-TE property is claimed.
         #:
-        #: The moment is nulled at the **first** echo.  Later echoes of a train accumulate their
-        #: own first moment from the lobes between them, which this does not compensate.  Nulling
-        #: the second moment as well needs a fourth lobe and is not implemented.
-        self._null_moment_order = self._check_null_moment_order(_null_moment_order)
+        #: The moment is nulled at **every acquired echo**, not only the first.  The winder
+        #: carries the condition to echo 0; the waveform between each pair of lobes carries it
+        #: from one echo to the next, by nulling the interval's zeroth *and* first moment -- see
+        #: :meth:`_design_transitions`.  That costs echo spacing, and
+        #: :attr:`min_echo_spacing_s` reports what it came to.  Nulling the second moment as well
+        #: needs a further lobe and is not implemented.
         self._prephasers: tuple[Event, ...] = (
             self._design_prephaser(prephaser_duration_s) if self.prephase
             else self._refuse_prephaser_duration(prephaser_duration_s)
@@ -503,7 +524,9 @@ class CartesianLine(Module):
         """
         The **seam-to-seam period** of the train, seconds -- identical for every echo.
 
-        Bipolar: the lobe.  Monopolar: the lobe plus the fly-back.  **This is not the spacing
+        Bipolar: the lobe.  Monopolar: the lobe plus the fly-back.  When the train compensates
+        every echo it is the lobe plus the transition that carries the first moment across, which
+        is longer than either -- see :meth:`_design_transitions`.  **This is not the spacing
         between echo times**, and the difference is the whole reason :attr:`te_s` exists: under
         ``'bipolar'`` the echo times alternate about this number by one dwell either way, and
         under ``partial_fourier`` below 1 they alternate by nearly the period itself.  A
@@ -514,7 +537,16 @@ class CartesianLine(Module):
 
     @property
     def min_echo_spacing_s(self) -> float:
-        """The shortest legal period, seconds.  A feasibility fact known at design time."""
+        """
+        The shortest legal period, seconds.  A feasibility fact known at design time.
+
+        For an ordinary train it is the lobe plus the shortest fly-back that returns k.  For one
+        that compensates every echo it is the lobe plus the shortest transition that nulls the
+        interval's first moment as well, which depends on ``max_grad`` and ``max_slew`` -- a
+        weaker amplifier needs longer to carry the same moment.  Either way it is the shortest
+        within the realisation family this module implements and the supplied
+        :class:`~pypulseq.opts.Opts`, which is a narrower claim than shortest in principle.
+        """
         self._require_train('min_echo_spacing_s')
         # Set by whichever design method ran, in the same breath as `_period_s` -- so the refusal
         # above is what makes this reachable only when there is a number to return.
@@ -596,6 +628,32 @@ class CartesianLine(Module):
         return self.num_samples - 1 - self.pre_echo_samples
 
     @property
+    def transition_events(self) -> tuple[tuple[Event, ...], ...]:
+        """
+        What plays between the lobes, one entry per distinct interval, in the order they repeat.
+
+        Empty unless the train compensates every echo.  One entry under ``'monopolar'``, because
+        every interval there is the same waveform; two under ``'bipolar'``, alternating, because
+        ``k = 0`` is not the same sample index on a forward and a reverse lobe.
+
+        Exposed so a caller can measure the interval rather than trust that it was solved.
+        """
+        return self._transitions or ()
+
+    @property
+    def transition_duration_s(self) -> float:
+        """
+        Seconds between one lobe's end and the next one's start -- the same for every interval.
+
+        Zero for an uncompensated bipolar train, whose lobes abut.  The fly-back's duration for
+        an uncompensated monopolar one.  For a compensated train it is what nulling the
+        interval's first moment cost, and :attr:`echo_spacing_s` is this plus the lobe.
+        """
+        if self.echoes == 1:
+            return 0.0
+        return float(sum(pp.calc_duration(event) for event in self._transition_for(0)))
+
+    @property
     def flyback_area_per_m(self) -> float:
         """
         The fly-back's area, 1/m -- exactly minus the **whole** lobe's area.  Monopolar only.
@@ -603,13 +661,19 @@ class CartesianLine(Module):
         Not ``-area_to_echo_per_m``, which is the pre-echo part and is the wrong answer this
         attribute is spelled out to exclude: measured at 220 mm, 128, 250 Hz/px the two are
         -585.664336 and -294.638695 1/m.
+
+        On an all-echo compensated train the fly-back is several lobes rather than one and this
+        is their **total**, which is still exactly minus the lobe's area, because that is what
+        returns k to where the prephaser left it.  :attr:`transition_events` is where to read the
+        individual lobes.
         """
-        return float(self._require_flyback().area)
+        return float(sum(float(event.area) for event in self._require_flyback()))
 
     @property
     def flyback_duration_s(self) -> float:
         """Seconds the fly-back occupies.  Monopolar only; ``echo_spacing_s`` lengthens it."""
-        return float(pp.calc_duration(self._require_flyback()))
+        self._require_flyback()
+        return self.transition_duration_s
 
     # ----------------------------------------------------------------------- assembly
     def build(
@@ -654,7 +718,7 @@ class CartesianLine(Module):
                 out.add(t0, adc)
                 self._label(out, t0, echo)
             if echo + 1 < self.echoes:
-                self._seam(out, t0 + self._lobe_s, start + (echo + 1) * period)
+                self._seam(out, t0 + self._lobe_s, start + (echo + 1) * period, echo)
         return out
 
     def _label(self, out: LogicBlock, t0: float, echo: int) -> None:
@@ -672,13 +736,14 @@ class CartesianLine(Module):
         out.add(t0, pp.make_label(type='SET', label='REV',
                                   value=int(self.polarity_of(echo) < 0)))
 
-    def _seam(self, out: LogicBlock, seam_s: float, next_lobe_s: float) -> None:
+    def _seam(self, out: LogicBlock, seam_s: float, next_lobe_s: float, echo: int) -> None:
         """
         State the block boundary between two echoes, one barrier per gradient edge.
 
-        Monopolar gets **two** -- at the fly-back's start and at its end -- because a block may
-        hold only one gradient per axis, so a boundary is needed on each side of the fly-back
-        rather than only at the seam.  Bipolar gets one, because there is only the seam.
+        A seam with a waveform in it gets a barrier on **each side of each of its events**,
+        because a block may hold only one gradient per axis: an ordinary monopolar fly-back is
+        one event and needs two, and an all-echo compensated transition is two events and needs
+        three.  An uncompensated bipolar seam has nothing between its lobes and gets one.
 
         **These are not load-bearing against this compiler, and pretending otherwise would be
         worse than leaving them out.**  Measured with two, one and no barriers, at three
@@ -694,8 +759,14 @@ class CartesianLine(Module):
         the output, and the design no longer depends on a preference holding.
         """
         out.add(seam_s, barrier('seam'))
-        if self._flyback is not None:
-            out.add(seam_s, self._flyback)
+        between = self._transition_for(echo)
+        at = seam_s
+        for index, event in enumerate(between):
+            if index:
+                out.add(at, barrier('transition'))
+            out.add(at, event)
+            at += float(pp.calc_duration(event))
+        if between:
             out.add(next_lobe_s, barrier('lobe'))
 
     def _adc_for(self, offset_m: float, phase_rad: float) -> Event:
@@ -954,6 +1025,203 @@ class CartesianLine(Module):
         self._period_s = total_s
         return gx, adc
 
+    # ------------------------------------------------- the all-echo compensated train
+    def _interval_parities(self) -> tuple[int, ...]:
+        """
+        Which inter-echo intervals are physically distinct, named by the echo each one follows.
+
+        Monopolar: one.  Every lobe is the same lobe, every echo sits at the same instant inside
+        it and the period is constant, so every interval is the same waveform.
+
+        Bipolar: two, alternating -- forward-to-reverse and reverse-to-forward.  They differ
+        because ``k = 0`` is not the same sample index on the two lobes, which is the same fact
+        that makes :attr:`te_s` alternate.
+
+        Either way :meth:`_refuse_uneven_intervals` checks the claim against every interval the
+        train actually has, rather than leaving it asserted here.
+        """
+        distinct = 1 if self.polarity == 'monopolar' else 2
+        return tuple(range(min(distinct, max(self.echoes - 1, 1))))
+
+    def _lobe_for(self, echo: int) -> Event:
+        """The readout lobe `echo` is acquired on: the forward one, or its reversed twin."""
+        if self.polarity_of(echo) > 0 or self._gx_reverse is None:
+            return self.gx
+        return self._gx_reverse
+
+    @staticmethod
+    def _clipped(event: Event, start_s: float, lo_s: float, hi_s: float,
+                 about_s: float) -> tuple[float, float]:
+        """
+        ``(m0, m1)`` of `event` over ``[lo_s, hi_s]``, referenced to `about_s`.
+
+        The knots are clipped at both ends rather than whole events integrated, because an
+        interval boundary here is an **echo** -- an instant partway through a lobe, not an edge
+        of one.
+        """
+        times, amps = knots_of(event, start_s)
+        if times.size < 2 or hi_s <= times[0] or times[-1] <= lo_s:
+            return 0.0, 0.0
+        if times[0] < lo_s:
+            cut = int(np.searchsorted(times, lo_s))
+            edge = float(np.interp(lo_s, times, amps))
+            times = np.concatenate(([lo_s], times[cut:]))
+            amps = np.concatenate(([edge], amps[cut:]))
+        if hi_s < times[-1]:
+            cut = int(np.searchsorted(times, hi_s))
+            edge = float(np.interp(hi_s, times, amps))
+            times = np.concatenate((times[:cut], [hi_s]))
+            amps = np.concatenate((amps[:cut], [edge]))
+        shifted = times - about_s
+        return float(pwl_moment(shifted, amps, 0)), float(pwl_moment(shifted, amps, 1))
+
+    def _interval_fixed(self, parity: int, transition_s: float) -> tuple[float, float]:
+        """
+        ``(m0, m1)`` the two readout lobes contribute to one inter-echo interval.
+
+        The interval runs from echo `parity` to the next echo, and the two fixed parts are the
+        **post-echo tail** of this lobe and the **pre-echo head** of the next one.  What the
+        transition has to cancel is their combined contribution -- not its own first moment in
+        isolation, which is a different and weaker statement.
+
+        Both are referenced to the interval's own start, which is legitimate exactly because the
+        interval's net area is nulled: with ``dM0 = 0`` the lever arm from here back to the
+        repetition's origin multiplies zero, so ``dM1`` is the same number about either instant.
+        That is what keeps each interval a local problem instead of a coupled train-wide solve.
+
+        `transition_s` is how far apart the design is holding the two lobes, and it moves the
+        head's lever arm -- so this is recomputed per candidate rather than cached.
+        """
+        echo_s = self._echo_in_lobe_s(parity)
+        tail = self._clipped(self._lobe_for(parity), 0.0, echo_s, self._lobe_s, echo_s)
+        head_s = self._lobe_s + transition_s
+        head = self._clipped(self._lobe_for(parity + 1), head_s, head_s,
+                             head_s + self._echo_in_lobe_s(parity + 1), echo_s)
+        return tail[0] + head[0], tail[1] + head[1]
+
+    def _interval_schedule(self, parity: int, transition_s: float) -> Schedule:
+        """The window the transition fills, in coordinates whose origin is echo `parity`."""
+        echo_s = self._echo_in_lobe_s(parity)
+        return Schedule(
+            origin_s=0.0,
+            endpoint_s=self._lobe_s - echo_s + transition_s + self._echo_in_lobe_s(parity + 1),
+            window_start_s=self._lobe_s - echo_s,
+            window_s=transition_s,
+        )
+
+    def _interval_problem(self, parity: int) -> JointProblem:
+        """Null both moments over the interval: ``dM0 = 0`` keeps k, ``dM1 = 0`` keeps velocity."""
+        return JointProblem(
+            axis=self.axis,
+            targets={parity: (0.0, 0.0)},
+            fixed=lambda _state, schedule: self._interval_fixed(parity, schedule.window_s),
+        )
+
+    def _solve_transitions(self, transition_s: float) -> tuple[tuple[Event, ...], ...] | None:
+        """Every parity's waveform at one duration, or ``None`` if any of them cannot be served."""
+        solved = []
+        for parity in self._interval_parities():
+            found = attempt(self._interval_problem(parity),
+                            self._interval_schedule(parity, transition_s), self.opts)
+            if found is None:
+                return None
+            solved.append(found.realisations[parity].events)
+        return tuple(solved)
+
+    def _design_transitions(self, requested_s: float | None) -> tuple[tuple[Event, ...], ...]:
+        """
+        Return the waveform that plays between each pair of lobes, one per interval parity.
+
+        Nulling ``dM0`` over the interval returns k to where the prephaser left it -- the job the
+        uncompensated fly-back already did.  Nulling ``dM1`` as well is what carries the
+        first-moment condition from one echo to the next, so that the winder's work at echo 0
+        holds at every acquired echo rather than only the first.
+
+        **One duration serves the whole train**, so the period stays constant and :attr:`te_s`
+        stays the arithmetic it already was.  The parities may need different *waveforms* at that
+        duration, and under ``'bipolar'`` they do -- there the interval area is already zero, so
+        the transition is a pure first-moment waveform rather than a fly-back.
+
+        The shortest one is found by walking the gradient raster, so it is the shortest within
+        this realisation family and these :class:`~pypulseq.opts.Opts` -- not a claim about every
+        waveform that could exist.
+        """
+        raster = float(self.opts.grad_raster_time)
+        minimum_s, shortest = self._shortest_transition(raster)
+        self._refuse_uneven_intervals(minimum_s)
+        floor_s = ceil_raster(self._lobe_s + minimum_s, raster)
+        self._period_s = self._resolve_period(requested_s, floor_s)
+        if abs(self._period_s - floor_s) <= EPS:
+            return shortest
+        longer = self._solve_transitions(self._period_s - self._lobe_s)
+        if longer is None:
+            msg = format_error(
+                f'echo_spacing_s = {self._period_s * 1e6:.1f} us leaves a transition this '
+                f'readout cannot compensate, although {floor_s * 1e6:.1f} us can be.',
+                {'echo_spacing_s': self._period_s, 'min_echo_spacing_s': floor_s,
+                 'polarity': self.polarity},
+                [f'pass echo_spacing_s = {floor_s:.6g}, which is the shortest that works',
+                 'or echo_spacing_s=None, which picks it',
+                 'a window can be too long for a shape as well as too short: the areas fall and '
+                 'the lobes stop being placeable on the raster'],
+            )
+            raise ConfigurationError(msg)
+        return longer
+
+    def _shortest_transition(self, raster: float) -> tuple[float, tuple[tuple[Event, ...], ...]]:
+        """Walk the raster upward and return the first duration every parity can be served at."""
+        for steps in range(1, _TRANSITION_SEARCH_STEPS):
+            transition_s = steps * raster
+            solved = self._solve_transitions(transition_s)
+            if solved is not None:
+                return transition_s, solved
+        msg = format_error(
+            f'no transition up to {_TRANSITION_SEARCH_STEPS * raster * 1e3:.1f} ms can null both '
+            f'moments between the echoes of this train.',
+            {'polarity': self.polarity, 'bandwidth_hz_px': self.bandwidth_hz_px,
+             'matrix': self.matrix, 'max_grad': float(self.opts.max_grad),
+             'max_slew': float(self.opts.max_slew)},
+            ['a higher bandwidth_hz_px shortens the lobe and the moment it leaves behind',
+             'a larger max_slew lets the transition carry the same moment in less time',
+             'the search is exhausted here, which is not the same as the physics being '
+             'impossible'],
+        )
+        raise ConfigurationError(msg)
+
+    def _refuse_uneven_intervals(self, transition_s: float) -> None:
+        """
+        Check that every interval really is the parity it is about to be designed as.
+
+        :meth:`_interval_parities` claims a train has one or two distinct intervals and that they
+        repeat.  The claim is what lets one solved waveform be reused down the train, so it is
+        measured against every interval rather than trusted.
+        """
+        parities = self._interval_parities()
+        for echo in range(self.echoes - 1):
+            mine = self._interval_fixed(echo, transition_s)
+            theirs = self._interval_fixed(parities[echo % len(parities)], transition_s)
+            if any(abs(a - b) > 1e-9 * max(1.0, abs(b)) for a, b in zip(mine, theirs)):
+                msg = format_error(
+                    f'interval {echo} of this train is not the repeating shape its parity '
+                    f'describes, so one transition cannot serve the train.',
+                    {'echo': echo, 'polarity': self.polarity, 'echoes': self.echoes,
+                     'measured': mine, 'expected': theirs},
+                    ['this is an internal invariant of the multi-echo readout, not a '
+                     'configuration error -- please report the protocol that reached it'],
+                )
+                raise ConfigurationError(msg)
+
+    def _transition_for(self, echo: int) -> tuple[Event, ...]:
+        """
+        What plays between `echo` and the next one: a solved transition, a fly-back, or nothing.
+
+        The one place the three train shapes are reconciled, so that :meth:`build` and the
+        duration accessors do not each re-derive which of them they are looking at.
+        """
+        if self._transitions is not None:
+            return self._transitions[echo % len(self._transitions)]
+        return (self._flyback,) if self._flyback is not None else ()
+
     def _design_flyback(self, requested_s: float | None) -> Event:
         """
         Return the **monopolar** fly-back: minus the lobe's *total* area, ramps included.
@@ -999,11 +1267,20 @@ class CartesianLine(Module):
                 f'echo_spacing_s = {float(requested_s) * 1e6:.1f} us is shorter than the '
                 f'minimum this train needs.',
                 {'echo_spacing_s': requested_s, 'min_echo_spacing_s': minimum_s,
-                 'polarity': self.polarity, 'bandwidth_hz_px': self.bandwidth_hz_px},
+                 'polarity': self.polarity, 'bandwidth_hz_px': self.bandwidth_hz_px,
+                 'compensates_every_echo': self._compensated_train},
                 [
                     f'pass echo_spacing_s >= {minimum_s:.6g}',
                     'or echo_spacing_s=None for the shortest legal period',
                     'a higher bandwidth_hz_px shortens the lobe, and with it the minimum',
+                    *(
+                        [
+                            'this train nulls the first moment at every echo, which needs a '
+                            'waveform between the lobes and is most of this minimum',
+                            'a stronger max_slew lets that waveform carry the same moment in '
+                            'less time',
+                        ] if self._compensated_train else []
+                    ),
                 ],
             )
             raise ConfigurationError(msg)
@@ -1290,8 +1567,10 @@ class CartesianLine(Module):
             raise ConfigurationError(msg)
         return self._period_s
 
-    def _require_flyback(self) -> Event:
-        """Return the fly-back, or refuse a question about an event that was not designed."""
+    def _require_flyback(self) -> tuple[Event, ...]:
+        """Return the fly-back's events, or refuse a question about a train that has none."""
+        if self.polarity == 'monopolar' and self._transitions is not None:
+            return self._transition_for(0)
         if self._flyback is None:
             why = (
                 "polarity='bipolar' alternates the lobes instead, so there is no fly-back"
@@ -1307,7 +1586,7 @@ class CartesianLine(Module):
                 ],
             )
             raise ConfigurationError(msg)
-        return self._flyback
+        return (self._flyback,)
 
     def _require_prephasers(self) -> tuple[Event, ...]:
         """Return the prephaser lobes, or refuse a question about events not designed."""

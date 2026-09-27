@@ -997,3 +997,72 @@ def test_the_readout_axis_still_refuses_velocity_encoding(opts, kernel_of) -> No
     assert 'cannot velocity encode' in said and "'x'" in said
     assert 'one repetition at a time' in said
     assert 'impossible' not in said and 'cannot be done' not in said
+
+
+# ---------------------------------------------------- the whole repetition, at every echo
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+@pytest.mark.parametrize('echoes', (2, 4))
+def test_a_multi_echo_repetition_is_compensated_on_every_axis_at_every_echo(
+        opts, polarity: str, echoes: int) -> None:
+    """
+    **What `FlowCompensation` promises on a train**, measured on the complete repetition.
+
+    Every requested axis, every acquired echo, integrated from the RF effective centre and
+    referenced to it -- which is the origin the signal's phase actually starts from, and not the
+    same instant as any echo.
+
+    The line is well off centre so that `m0` on the phase-encode axis is the line's own non-zero
+    `ky`: a compensated `y` that had quietly lost the encoding would still read `m1 = 0` and
+    would image the wrong line.
+
+    `y` and `z` are the interesting half.  Nothing on those axes plays after the winder, so once
+    they are right at the first echo they are right at the last -- the train costs them nothing,
+    and this is what says so rather than assuming it.
+    """
+    matrix = 32
+    line = matrix // 4
+    kernel = sc.modules.GRE2DTR(opts=opts, fov_mm=FOV_MM, matrix=(matrix, matrix),
+                                thickness_mm=THICKNESS_MM, echoes=echoes, polarity=polarity,
+                                flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+    shot = kernel(line=line)
+    origin = kernel.exc.time_to_center()
+    first = kernel.time_to_echo()
+    echo_times = [first + (t - kernel.ro.te_s[0]) for t in kernel.ro.te_s]
+    wanted_ky = (line - matrix // 2) * kernel.ro.dk_per_m
+
+    assert len(echo_times) == echoes
+    for index, echo in enumerate(echo_times):
+        for axis in ('x', 'y', 'z'):
+            m0 = joint.measure_moment(shot, 0, axis, origin_s=origin, start_s=origin, end_s=echo)
+            m1 = joint.measure_moment(shot, 1, axis, origin_s=origin, start_s=origin, end_s=echo)
+            expected = wanted_ky if axis == 'y' else 0.0
+            assert m0 == pytest.approx(expected, abs=1e-6), f'm0 on {axis} at echo {index}'
+            assert abs(m1) < 1e-11, f'm1 on {axis} at echo {index} is {m1}'
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_an_uncompensated_train_is_only_right_on_the_zeroth_moment(opts, polarity: str) -> None:
+    """The control for the test above: without the option every echo has a first moment."""
+    kernel = sc.modules.GRE2DTR(opts=opts, fov_mm=FOV_MM, matrix=(32, 32),
+                                thickness_mm=THICKNESS_MM, echoes=4, polarity=polarity)
+    shot = kernel(line=8)
+    origin = kernel.exc.time_to_center()
+    first = kernel.time_to_echo()
+
+    for offset in kernel.ro.te_s:
+        echo = first + (offset - kernel.ro.te_s[0])
+        got = joint.measure_moment(shot, 1, 'x', origin_s=origin, start_s=origin, end_s=echo)
+        assert abs(got) > 1e-3
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_a_compensated_train_costs_echo_spacing_and_repetition_time(opts, polarity: str) -> None:
+    """The guarantee is bought with time, and the kernel reports what it spent."""
+    shared = dict(opts=opts, fov_mm=FOV_MM, matrix=(32, 32), thickness_mm=THICKNESS_MM,
+                  echoes=4, polarity=polarity)
+    plain = sc.modules.GRE2DTR(**shared)
+    compensated = sc.modules.GRE2DTR(**shared, flow_comp=sc.FlowCompensation(axis='x'))
+
+    assert compensated.ro.echo_spacing_s > plain.ro.echo_spacing_s
+    assert compensated.te_s > plain.te_s
+    assert compensated.min_tr_s > plain.min_tr_s

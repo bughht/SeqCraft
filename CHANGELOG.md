@@ -1,5 +1,64 @@
 # Changelog
 
+## Unreleased — flow compensation means every echo of a train
+
+`FlowCompensation` on a multi-echo acquisition now nulls the first moment at **every acquired
+echo**, not only the first. It was already the whole train on any axis that is silent across it —
+the phase-encode and slice axes of a 2D gradient echo both are, because their winders finish
+before the first echo and nothing on them plays again until after the last, and a first moment
+about a fixed origin stops accruing where the gradient is zero. The readout axis is the one that
+was not, because the readout is what makes the extra echoes.
+
+There is deliberately **no `all_echoes=` switch**. The guarantee is what the name means; if
+meeting it costs echo spacing then that cost is part of the physical design, and
+`min_echo_spacing_s` reports it.
+
+Between echoes the moments propagate as `M0(i+1) = M0(i)` and `M1(i+1) = M1(i) + mu_i`, the
+lever-arm term dropping out because every echo is a `k_x = 0` crossing, so each interval carries
+zero net area. `mu_i` is then independent of the origin and of the echo time — measured, the
+increments are identical to nine digits between two trains whose first echoes are a millisecond
+apart — which makes each interval a **local** problem rather than a train-wide solve.
+
+So `CartesianLine` now designs a waveform between each pair of lobes with `dM0 = 0` **and**
+`dM1 = 0` over the interval. The condition is on the interval as a whole: what plays between the
+lobes has to cancel the combined contribution of one lobe's post-echo tail and the next one's
+pre-echo head. "The fly-back nulls its own first moment" is a different and weaker statement, and
+a test asserts the transition's own first moment is *not* zero so that nobody simplifies it into
+one.
+
+The two polarities need structurally different waveforms, and the cost is not comparable:
+
+```text
+monopolar   the interval carries a whole lobe's area, so the existing fly-back is reshaped into
+            two lobes that carry the first moment as well.  ESP 2500 -> 2580 us, +3 %
+
+bipolar     the interval carries no net area, so the waveform is a balanced pair carrying pure
+            first moment -- but the lobes abut, so it has to be created rather than reshaped.
+            ESP 2080 -> 3300 us, +59 %
+```
+
+**That reverses the uncompensated ranking.** Bipolar is the shorter echo spacing until every echo
+has to be compensated, after which monopolar is. Every interval of a monopolar train is the same
+waveform and one solve serves it; a bipolar train alternates between two, because `k = 0` is not
+the same sample index on a forward and a reverse lobe — the same fact `te_s` exists for.
+
+The timing is **derived from the waveform** rather than from a formula, so it moves with the
+amplifier: across 80/40/32 mT/m the compensated bipolar minimum is 3120/3300/3730 us.
+`echo_spacing_s=None` is the shortest the implemented realisation family can carry the guarantee
+at under the supplied `Opts` — not a claim that no shorter waveform exists — and a hard request
+below it is refused with that minimum named. PNS is not part of this: it stays an after-the-fact
+check through `sc.pns`, and nothing here stretches a waveform for it.
+
+Nothing a reconstruction reads changed. Sample count, dwell, `echo_sample`, `polarity_of`, `ECO`
+and `REV` all come back identical to the uncompensated train; only the period moves, and `te_s`
+moves with it — still alternating by two dwells under `bipolar`, because that is the sample grid
+and compensation does not touch it. `PhysicalDesignScope` is unchanged: this is local design
+inside the leaf that owns both the echoes and the gradients between them.
+
+`examples/megre_2d/03_flow_comp.ipynb` measures all of it, and
+`tools/module_mining/plans/current/2026-09-27_megre_flow_compensation_evidence.md` is the evidence
+pass that preceded it.
+
 ## Unreleased — flow compensation on any axis, and on repetitions with no kernel
 
 **New public API.** `sc.PhysicalDesignScope` lets a composition you wrote yourself —
@@ -202,9 +261,8 @@ added to the echo time at the reference protocol.
 relation for `VelocityEncode`. The claim a simulation would add is image-level artefact
 reduction, which the record explicitly does not make.
 
-Readout axis only, and the first echo of a train only — later echoes accumulate their own first
-moment from the lobes between them, and a test measures that rather than leaving it to the prose.
-Still deferred: acceleration and higher orders, which need a fourth lobe; the slice-selection
+Readout axis only, and — when this shipped — the first echo of a train only. The entry at the top
+of this file extends it to every acquired echo. Still deferred: acceleration and higher orders, which need a fourth lobe; the slice-selection
 case, which needs the excitation's moment from the RF isodelay point and is kernel work; and the
 merged minimum-TE designs.
 

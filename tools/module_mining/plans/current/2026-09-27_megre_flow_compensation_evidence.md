@@ -5,8 +5,8 @@
 > The two copies are identical today and there is nothing keeping them that way; see
 > [`../README.md`](../../README.md) for which one to edit.
 
-**Status:** evidence pass complete. **No production change is proposed by this pass**; the only
-code added is a measurement notebook.
+**Status:** evidence pass complete, and **implemented**. The evidence below is what the
+implementation was designed from; §12 records what was decided after it.
 **Date:** 2026-09-27
 **Measured against:** `main` at `cacdca7` (PR #41 merged)
 
@@ -212,10 +212,13 @@ practice both point away from a single global answer:
 
 ```text
 y, z            contract B (every echo) -- and it already holds, for free, on both polarities
-x monopolar     contract A (first echo) is a good approximation to B; contract C (centred) is
-                strictly better and costs nothing but a different offset
-x bipolar       no offset achieves B; contract A is actively worse than nothing at the worst
-                echo; contract C is the best a single window can do and still leaves 2.9 deg
+x monopolar     A and B are physically DISTINCT -- after nulling TE1 the later echoes carry
+                5.099e-3, 1.020e-2, 1.530e-2 s/m, which is not zero.  Under THIS protocol that
+                residual is smaller than the bipolar train's; that is a statement about this
+                protocol, not a general equivalence of the two contracts
+x bipolar       a pre-echo offset alone achieves B at exactly one echo; contract A is worse than
+                nothing at the worst echo; contract C is the best a single window can do and
+                still leaves 2.9 deg
 ```
 
 That is **contract D — per-axis mixed** as the honest description of what the sequence supports
@@ -226,11 +229,10 @@ than a default — Wu et al., *A fully flow-compensated multiecho susceptibility
 sequence*, Magn Reson Med 76(2):478-489, 2016 — which is consistent with the finding that it is
 not reachable from the pre-echo gradients alone.
 
-**Recommendation for the public surface:** do not silently promise more than contract A on `x`.
-What `flow_comp=` means today is "M1 = 0 at the first echo", which on silent axes happens to be
-every echo. That is a statement worth making explicit in the docstring and worth measuring in the
-notebook, which this pass does. Whether to *offer* contract C (a nominated echo, or the centred
-offset) is a protocol question that should be asked of users before an API is designed for it.
+**Recommendation for the public surface:** `flow_comp=` as shipped means "M1 = 0 at the first
+echo", which on silent axes happens to be every echo. Contract A and contract B are physically
+distinct on `x` under both polarities, and the size of the difference is protocol dependent, so
+neither should be described as an approximation of the other.
 
 ## 9. Is the one-window / one-endpoint scope sufficient?
 
@@ -243,33 +245,50 @@ produced by gradients that play after the endpoint. No re-solve of a pre-echo wi
 number that a later gradient produces.
 
 Reaching contract B on `x` means `mu_i = 0` for every interval: a condition on the **inter-echo**
-gradients. Two facts decide whether that is even possible, and they differ by polarity:
+gradients. The condition is on the interval as a whole, not on any one event in it:
 
 ```text
-monopolar   there IS a free region between echoes -- the fly-back, whose AREA is fixed by the
-            need to return to the same k_x but whose SHAPE is not.  Per interval the constraints
-            are (a) net area 0, already required, and (b) first moment about TE_i = 0, new.
-            Crucially (b) is origin-independent BECAUSE (a) holds, so each fly-back is a LOCAL,
-            DECOUPLED two-constraint problem.  No global solve, no second semantic endpoint.
+over [TE_i, TE_{i+1}]        dM0 = 0        dM1 = 0
 
-bipolar     there is NO free region.  The lobes are exactly contiguous -- which is what makes the
-            echo spacing shorter -- so there is nothing to reshape without changing the readout
-            itself, and its echo spacing and SNR with it.
+    fixed contribution       post-echo part of readout_i
+                             + pre-echo part of readout_{i+1}
+
+    adjustable contribution  the fly-back / transition waveform
+
+    so the adjustable waveform must cancel the COMBINED fixed interval contribution --
+    it is NOT the statement "the fly-back's own first moment about TE_i is zero"
+```
+
+`dM1` here is origin-independent **because** `dM0 = 0`, which is what keeps each interval a local,
+decoupled two-constraint problem rather than a coupled family solve. What differs by polarity is
+whether an adjustable contribution exists at all:
+
+```text
+monopolar   there IS an adjustable region between echoes -- the fly-back.  Its net interval area
+            is fixed by the need to return to the same k_x; its shape is not.
+
+bipolar     in the CURRENT contiguous waveform family there is no adjustable inter-echo region:
+            the lobes abut, which is what makes the echo spacing shorter.  This is a statement
+            about that waveform family, NOT about bipolar readouts in general -- a compensated
+            bipolar family may insert or redesign inter-lobe transition waveforms, at the cost
+            of a longer ESP.
 ```
 
 So the answer to "one initial condition + known propagation + corrections at checkpoints, or a
-genuinely larger family-level solve?" is: **the former, and only for monopolar.** The structure is
-a chain of independent local problems, not a coupled optimisation, and the decoupling is a
-theorem, not a heuristic — it follows from `a_i = 0`.
+genuinely larger family-level solve?" is: **the former.** The structure is a chain of independent
+local problems, not a coupled optimisation, and the decoupling is a theorem, not a heuristic — it
+follows from `a_i = 0`. Monopolar has the adjustable region that structure needs; bipolar would
+have to grow one.
 
 ## 10. Classification
 
 **CASE D, with a CASE B interior.**
 
 - **CASE D** is the outer answer, on two independent grounds. The two polarities differ in
-  *kind*, not degree: monopolar has an inter-echo degree of freedom and bipolar has none, so a
-  single abstraction would have to refuse one of them anyway. And the right contract differs by
-  axis — silent axes already satisfy contract B, the readout axis cannot.
+  *kind*, not degree: the monopolar train has an inter-echo degree of freedom and the current
+  bipolar waveform family does not, so reaching contract B means different work in each case —
+  reshaping an existing region versus growing one. And the right contract differs by axis —
+  silent axes already satisfy contract B; the readout axis does not, under either polarity.
 - **CASE B** describes what an extension would look like *if* monopolar full compensation is
   wanted: a repeated **local** correction with a proven origin-independent recurrence. It is
   explicitly **not CASE C** — no second semantic endpoint, no multi-checkpoint scope, no global
@@ -277,9 +296,9 @@ theorem, not a heuristic — it follows from `a_i = 0`.
 - It is **not CASE A**: the current machinery cannot express contract B on `x`, and an adapter
   would not change that.
 
-The practical consequence: **nothing in `PhysicalDesignScope` needs to change.** A future
-monopolar full-compensation capability would be a condition on `CartesianLine`'s fly-back, which
-is the readout's own gradient, not the scope's.
+The practical consequence: **nothing in `PhysicalDesignScope` needs to change.** An all-echo
+compensation capability is a condition on the inter-echo intervals of `CartesianLine`'s train,
+which are the readout's own gradients, not the scope's.
 
 ## 11. Non-goals honoured
 
@@ -296,3 +315,31 @@ only code added is `examples/megre_2d/03_flow_comp.ipynb` plus its registration.
 This pass is the worked example: "MEGRE flow compensation" looked like a solver feature and turned
 out to be a per-axis, per-polarity contract question whose answer removes the need for the solver
 feature on three of the four cases and relocates it to the readout on the fourth.
+
+## 13. What was decided from this, and built
+
+The contract was fixed as **every acquired echo**, for every requested axis, with no option to ask
+for less: if meeting it costs echo spacing, that cost is physical design rather than a reason to
+weaken the guarantee. That is a decision *against* the "contract D, per-axis mixed" description in
+§8, which described what the sequence supported at the time rather than what it should promise.
+
+The implementation follows §9's structure exactly and confirms its two predictions:
+
+- **`PhysicalDesignScope` did not change.** The multi-echo problem is self-contained inside the
+  leaf that owns both the echoes and the gradients between them, so it is local design in
+  `CartesianLine`.
+- **Each interval is a local, decoupled two-constraint problem**, as the `a_i = 0` argument said
+  it would be. No second semantic endpoint, no multi-checkpoint IR, no global optimiser.
+
+Two things the evidence pass got wrong, or stated too strongly, and the implementation corrected:
+
+- The bipolar conclusion. §9 as first written said the contiguous lobes left "nothing to reshape".
+  Narrowed during review to a statement about *that waveform family*, and the implementation then
+  showed the family can simply grow a transition — a balanced pair carrying pure first moment,
+  since the bipolar interval's net area is already zero. It costs 59 % of the echo spacing, which
+  **reverses** the uncompensated ranking of the two readouts.
+- The shape of the monopolar condition. Writing it as "the fly-back's first moment about `TE_i` is
+  zero" is wrong; the condition is on the interval, and the adjustable part must cancel the
+  *combined* fixed contribution of one lobe's post-echo tail and the next one's pre-echo head. A
+  regression asserts the transition's own first moment is **not** zero, so the weaker statement
+  cannot be reintroduced as a simplification.
