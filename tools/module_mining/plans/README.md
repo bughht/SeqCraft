@@ -8,6 +8,14 @@
 ```text
 plans/
     current/
+        2026-09-27_megre_flow_compensation_evidence.md
+                                                what first-moment nulling means across a
+                                                multi-echo train, measured before anything was
+                                                designed.  CASE D with a CASE B interior; no
+                                                PhysicalDesignScope change needed
+        2026-09-26_physical_design_scope.md     the public physical-design scope, as implemented
+        2026-09-25_public_augmentation_api_implementation_plan.md
+                                                the plan the public augmentation API was built to
         2026-09-24_public_augmentation_api_alternatives.md
                                                 three candidate public surfaces for GRE plus
                                                 velocity encoding and flow compensation, and the
