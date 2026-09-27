@@ -76,12 +76,14 @@ from typing import TYPE_CHECKING
 import pypulseq as pp
 
 from ...augmentation import FlowCompensation, VelocityEncoding
+from ...design import _augment
+from ...design import joint as _joint
+from ...design import scope as _scope
 from ...design.events import AXES
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...design.timing import EPS
 from ...errors import ConfigurationError, format_error
-from .. import _augment, _joint
 from .._support import ceil_raster, require_axis, require_pair, require_positive
 from ..encoding.phase_encoding import PhaseEncode
 from ..readout.cartesian_line import CartesianLine
@@ -89,7 +91,7 @@ from ..rf.excitation import Excitation
 from ..spoiler import spoiler
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from pypulseq.opts import Opts
 
@@ -146,19 +148,27 @@ class GRE2DTR(Module):
     flow_comp
         Ask that the **common-mode** first gradient moment be zero at the echo:
         :class:`~seqcraft.FlowCompensation`, or ``None``.  Its `axis` may name one axis or
-        several, and each is refused unless this repetition owns an adjustable window there --
-        ``'x'`` and ``'y'`` here, not ``'z'``, whose gradient is the slice rephaser :class:`~seqcraft.modules.Excitation` realises for itself.  The refusal names what that axis carries here instead.
+        several: ``'x'``, ``'y'``, ``'z'`` and any combination of them.
 
-        Which part of the repetition reshapes to deliver it is not the caller's problem: ``'x'`` is solved by this repetition's :class:`~seqcraft.modules.CartesianLine`, which owns the readout prephaser, and ``'y'`` is designed together with the phase-encode area that shares its window.
+        Each axis keeps the zeroth-moment job it already had, and gains the first-moment one:
+        ``'x'`` still puts ``k = 0`` at the echo, ``'y'`` still reaches the line's own ``k``, and
+        ``'z'`` still finishes rephasing the slice.  Which pre-echo gradients deliver that is not
+        the caller's problem.  Compensating several axes costs more echo time than any one alone,
+        because their pre-echo gradients share an interval and the longest sets it.
     velocity_encode
         Ask that the first moment **differ** between two acquired states:
         :class:`~seqcraft.VelocityEncoding`, or ``None``.  This makes the repetition two-state, so
         :meth:`build` then requires ``encoding_state`` to be one of ``velocity_encode.states``,
         and refuses one when there is no velocity encoding to give it meaning.
 
-        Only on an axis designed jointly (``'y'``).  A readout axis is realised by a solve that
-        nulls its first moment rather than aiming it at a value, which a difference between two
-        acquisitions needs.
+        Only on an axis this repetition designs jointly -- ``'y'`` or ``'z'``, not ``'x'``.  The
+        readout axis is realised by a solve that nulls its first moment rather than aiming it at a
+        value, and a difference between two acquisitions needs a target.  That is the current
+        realisation's scope, **not** a claim that readout-axis velocity encoding is impossible.
+
+        On ``'z'`` the repetition designs the slice rephasing anyway, so it carries the encoding
+        as well: ``k_z`` still returns to zero at the echo and the two states come out at
+        ``+-delta_m1 / 2``.
 
         Composing the two on one axis is not a conflict: `flow_comp` constrains the mean over the
         states and this constrains their separation, so the pair comes out at half the difference
@@ -281,11 +291,17 @@ class GRE2DTR(Module):
         train = dict(echoes=echoes, polarity=polarity, echo_spacing_s=echo_spacing_s)
 
         # Who owns a moment requirement on each axis, and therefore where an intent is routed.
-        # `y` is this module's own winder; `x` is the readout's, which solves its first moment
-        # itself; `z` is the slice rephaser, which `Excitation` realises and this module never
-        # reshapes -- so it is absent, and a claim there is refused rather than silently dropped.
-        self._moment_owners: dict[str, str] = {self._PE_AXIS: 'joint', 'x': 'readout'}
+        # `y` is this module's own winder and `x` is the readout's, which solves its first moment
+        # itself.  `z` is the slice rephaser: `Excitation` realises it by default, and this module
+        # can take it over the same way `GRE3DTR` already takes over its slab -- by asking for
+        # `rephase=False` and designing that winder itself, in the window the other two share.
+        self._moment_owners: dict[str, str] = {
+            self._PE_AXIS: 'joint', 'x': 'readout', 'z': 'joint',
+        }
         routed = self._route(flow_comp, velocity_encode)
+        #: Whether this repetition designs its own slice rephasing rather than letting
+        #: `Excitation` emit it.  True only when something claimed `z`.
+        self._owns_z = routed.get('z') == 'joint'
 
         # The readout route has to reach the probe as well as the real readout.  A compensated
         # prephaser is longer than an ordinary one, and the probe is what sets `winder_s` -- a
@@ -471,7 +487,7 @@ class GRE2DTR(Module):
         tail = self._tail_start_s
         out = (
             LogicBlock()
-            .add(0.0, self.exc(phase_deg=phase_deg, position_mm=z))
+            .add(0.0, self.exc(phase_deg=phase_deg, position_mm=z, rephase=not self._owns_z))
             .add(start, self._encode(line, state))
             # The same phase to both: the receiver is phase-locked to the transmitter, so an
             # RF-spoiling schedule that moves one and not the other writes its quadratic phase
@@ -482,6 +498,12 @@ class GRE2DTR(Module):
             # dephasing rather than to one that depends on the line just acquired.
             .add(tail, self.pe(line=line, rewind=True))
         )
+        # Any axis the scope designed that has no leaf of its own -- the slice rephasing, when
+        # this repetition took it over.  Emitted at the same window start as the encode, because
+        # they were designed against one schedule.
+        elsewhere = self._designed_elsewhere(line, state)
+        if elsewhere is not None:
+            out.add(start, elsewhere)
         for block in self.spoilers.values():
             out.add(tail, block)
         if acquire:
@@ -543,16 +565,37 @@ class GRE2DTR(Module):
         return routed
 
     def _why_unowned(self, axis: str) -> str:
-        """The sequence-specific reason an axis has no owner here."""
-        if axis == 'z':
-            return ('this repetition\'s z gradient is the slice rephaser, which Excitation '
-                    'realises for itself; GRE3DTR does own z, because its z winder carries the '
-                    'partition encode')
+        """
+        The sequence-specific reason an axis has no owner here.
+
+        No **logical** axis reaches this any more -- this repetition designs all three -- so it
+        speaks for an axis name that is not a gradient channel of this sequence at all.  It stays
+        because the routing table is the thing that decides, and a table with an axis missing
+        should say why rather than what.
+        """
         return f'{axis!r} is not an axis this repetition plays an adjustable gradient on'
 
     def _encode(self, line: int, encoding_state: object) -> LogicBlock:
         """The phase-encode waveform: the ordinary blip, or the jointly designed one."""
         return self._joint_block(self._PE_AXIS, (line, encoding_state)) or self.pe(line=line)
+
+    def _designed_elsewhere(self, line: int, encoding_state: object) -> LogicBlock | None:
+        """
+        Every other jointly designed axis, which for this kernel means the slice rephasing.
+
+        The phase-encode axis has a leaf to fall back on and is handled by :meth:`_encode`.  `z`
+        has none: when the scope owns it the excitation is emitted with ``rephase=False``, so if
+        this returned nothing the repetition would be missing its rephaser entirely rather than
+        merely missing its compensation.
+        """
+        out = LogicBlock('joint')
+        for axis in self._joint:
+            if axis == self._PE_AXIS:
+                continue
+            block = self._joint_block(axis, (0, encoding_state))
+            if block is not None:
+                out.add(0.0, block)
+        return out if out.duration > 0.0 else None
 
     def _joint_block(self, axis: str, state: object) -> LogicBlock | None:
         """One axis' jointly designed waveform, or ``None`` when nothing claimed that axis."""
@@ -577,76 +620,44 @@ class GRE2DTR(Module):
                       local_min_s: float, te_request: float | None,
                       opts: Opts) -> tuple[float, dict[str, _joint.JointDesign]]:
         """
-        Design every claimed axis against **one common candidate schedule**, and return the
-        window that serves them all.
+        Adapt this repetition to the shared physical designer, and return the window it chose.
 
-        Two things this must not do, both of which change the first moment whenever ``m0`` is
-        non-zero, because ``m1' = m1 - dt m0``:
-
-        * solve one axis at *its* minimum and let another axis' minimum widen the winder
-          afterwards -- the echo moves and the solved moment goes stale;
-        * design at the minimum TE and then let an explicit ``te_s`` insert fill in front of the
-          winder -- the whole waveform translates, which is the same error by another route.
-
-        So a candidate is a window **and** the fill an explicit TE would need at that window, and
-        every axis is solved against the schedule that results.  A candidate is accepted only if
-        every claimed axis is feasible at it.
+        Everything here is about *being a Cartesian gradient echo*: where the semantic instants
+        are, what already plays, and which lines are worth designing against.  The search itself,
+        the one-schedule-across-axes rule and the family verification are
+        :mod:`seqcraft.design.scope`'s, and are shared with repetitions this module knows nothing
+        about.
         """
         raster = float(opts.grad_raster_time)
-        origin = self.exc.time_to_center()
-        start = ceil_raster(
-            max(self.exc.time_to_rephaser(), float(pp.calc_duration(self.exc.rf))), raster)
-        echo_in_lobe = probe_ro.time_to_echo() - probe_ro.prephaser_duration_s
-        excitation = self.exc()
-        by_axis = _joint.group_by_axis(claims)
-        problems = {axis: self._axis_problem(axis, group, probe_ro, fov_y, excitation, opts)
-                    for axis, group in by_axis.items()}
+        geometry = _scope.ScopeGeometry(
+            origin_s=self.exc.time_to_center(),
+            window_start_s=ceil_raster(
+                max(self.exc.time_to_rephaser(), float(pp.calc_duration(self.exc.rf))), raster),
+            # The readout's own pre-echo lobe, which does not move when the window grows.
+            tail_s=probe_ro.time_to_echo() - probe_ro.prephaser_duration_s,
+        )
+        requirements = [
+            self._axis_requirement(axis, group, probe_ro, fov_y, opts)
+            for axis, group in _joint.group_by_axis(claims).items()
+        ]
+        designed = _scope.design_scope(geometry, requirements, opts,
+                                       min_window_s=local_min_s, te_request_s=te_request)
+        return designed.window_s, dict(designed.designs)
 
-        exhausted = True
-        for steps in range(int(round(local_min_s / raster)), _joint.SEARCH_LIMIT_WINDOWS):
-            window = steps * raster
-            reachable_te = start + window + echo_in_lobe - origin
-            fill = 0.0 if te_request is None else te_request - reachable_te
-            if fill < -EPS:
-                # This window already overshoots the requested TE; a longer one only overshoots
-                # further, so the request is infeasible and the kernel's own refusal will say so.
-                exhausted = False
-                break
-            schedule = _joint.Schedule(
-                origin_s=origin,
-                endpoint_s=start + max(fill, 0.0) + window + echo_in_lobe,
-                window_start_s=start + max(fill, 0.0),
-                window_s=window,
-            )
-            designs = {}
-            for axis, problem in problems.items():
-                found = _joint.attempt(problem, schedule, opts)
-                if found is None:
-                    break
-                designs[axis] = found
-            if len(designs) == len(problems):
-                return window, designs
-        # Two different failures, and only one of them is about physics.  Running out of
-        # candidate windows means the ceiling was reached without trying what lies beyond it;
-        # saying "infeasible" there would claim something the search never established.
-        first = next(iter(problems.values()))
-        if exhausted:
-            return _joint.refuse_search_exhausted(
-                first, steps=_joint.SEARCH_LIMIT_WINDOWS, raster_s=raster)
-        return _joint.refuse_infeasible(first)
-
-    def _axis_problem(self, axis: str, group: Sequence[object], probe_ro: CartesianLine,
-                      fov_y: float, excitation: LogicBlock, opts: Opts) -> _joint.JointProblem:
+    def _axis_requirement(self, axis: str, group: Sequence[object], probe_ro: CartesianLine,
+                          fov_y: float, opts: Opts) -> _scope.AxisRequirement:
         """
-        One axis' physical problem: what is wanted per state, and what already plays on it.
+        One axis' requirement: what is wanted per state, what already plays, and which states
+        are worth searching over.
 
         **No augmentation is named here.**  The claims arrive resolved into absolute targets by
-        :func:`~seqcraft.modules._joint.resolve_claims`, so a third augmentation needs no change
-        to this method -- which is the whole point of the boundary.
+        :func:`~seqcraft.design.joint.resolve_claims`, so a third augmentation needs no change to
+        this method -- which is the whole point of the boundary.
         """
         claimed = {getattr(claim, 'order', None) for claim in group}
         base_m0 = self._base_moment(axis, fov_y, probe_ro, opts)
         indices = tuple(range(self.matrix[1])) if axis == self._PE_AXIS else (0,)
+
         targets: dict[object, tuple[float, float | None]] = {}
         for index in indices:
             resolved = {
@@ -661,12 +672,25 @@ class GRE2DTR(Module):
                     resolved[0][key], resolved[1][key] if 1 in claimed else None)
 
         readout = probe_ro if axis == probe_ro.axis else None
+        # The excitation as this repetition will actually emit it.  When the scope owns `z` the
+        # rephaser is not emitted, because the scope is designing it -- and then measuring the
+        # rephased excitation here would count the slice term twice.
+        excitation = self.exc(rephase=not self._owns_z)
 
         def fixed(state: object, schedule: _joint.Schedule) -> tuple[float, float]:
-            """What already plays on this axis between the two instants, as emitted."""
+            """
+            What already plays on this axis between the two instants, as emitted.
+
+            Integrated from the **semantic origin**, not from the start of the block.  On `x` and
+            `y` the two are the same, because nothing plays there before the excitation.  On the
+            slice axis they are not: half the selection lobe plays before the RF centre, and it
+            dephases nothing, because there is no transverse magnetisation yet.  Counting it
+            would make a rephased slice look unrephased by exactly that half, and a scope asked
+            to null `m1` on `z` would then null the wrong interval and leave `k_z` off zero.
+            """
             moments = [
                 _joint.measure_moment(excitation, order, axis, origin_s=schedule.origin_s,
-                                      start_s=0.0, end_s=schedule.endpoint_s)
+                                      start_s=schedule.origin_s, end_s=schedule.endpoint_s)
                 for order in _joint.ORDERS
             ]
             if readout is not None:
@@ -678,10 +702,33 @@ class GRE2DTR(Module):
                 for order in _joint.ORDERS:
                     moments[order] += _joint.measure_moment(
                         lobe, order, axis, origin_s=schedule.origin_s,
-                        start_s=0.0, end_s=schedule.endpoint_s)
+                        start_s=schedule.origin_s, end_s=schedule.endpoint_s)
             return (moments[0], moments[1])
 
-        return _joint.JointProblem(axis=axis, targets=targets, fixed=fixed)
+        return _scope.AxisRequirement(
+            axis=axis, states=tuple(targets), design_states=self._design_states(axis, targets),
+            target=lambda state: targets[state], fixed=fixed,
+        )
+
+    def _design_states(self, axis: str, targets: Mapping[object, object]) -> tuple[object, ...]:
+        """
+        Which states to size the schedule from.  A proposal the designer then verifies.
+
+        On the phase-encode axis the requirement is the line's own k, linear and signed in the
+        index, so the two **ends** bound every index between them.  Both ends rather than "the
+        largest |k|": a signed fixed contribution makes one end harder than the other, and taking
+        both keeps the proposal right when it does.  Encoding states are kept in full -- there are
+        at most two of them, and a difference claim makes them genuinely different problems.
+
+        Nothing depends on this being optimal.  A worse proposal costs search time; the family
+        verification in :func:`~seqcraft.design.scope.design_scope` is what makes it safe.
+        """
+        states = tuple(targets)
+        if axis != self._PE_AXIS:
+            return states
+        lines = sorted({index for index, _key in states})
+        ends = {lines[0], lines[-1]}
+        return tuple(state for state in states if state[0] in ends)
 
     def _base_moment(self, axis: str, fov_y: float, probe_ro: CartesianLine, opts: Opts):
         """What the sequence itself wants at order 0 on `axis`, per index."""

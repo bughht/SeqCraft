@@ -171,7 +171,7 @@ validation:
   layers:
     layer_1: GREEN            # 45 tests in tests/modules/test_flow_compensation.py, every moment
                               # integrated from the emitted knots and summed across the axis
-    layer_2: GREEN            # examples/flowcomp_gre_2d/01_build.ipynb -- both readouts in a
+    layer_2: GREEN            # examples/gre_2d/03_flow_comp.ipynb -- both readouts in a
                               # complete gradient echo, with the cost measured
     layer_3: NOT_APPLICABLE
     layer_1_result: >

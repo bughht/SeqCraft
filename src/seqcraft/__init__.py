@@ -114,6 +114,7 @@ from .errors import (
     SeqCraftError,
     SeqCraftWarning,
 )
+from .physical_design import PhysicalDesign, PhysicalDesignScope
 from .scanner import hardware, opts
 from .scanner.opts import UnknownFieldError
 
@@ -167,6 +168,8 @@ __all__ = [
     'MissingExtraError',
     'Module',
     'Node',
+    'PhysicalDesign',
+    'PhysicalDesignScope',
     'Raster',
     'RasterError',
     'SeqCraftError',

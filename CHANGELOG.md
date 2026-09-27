@@ -1,5 +1,88 @@
 # Changelog
 
+## Unreleased — flow compensation on any axis, and on repetitions with no kernel
+
+**New public API.** `sc.PhysicalDesignScope` lets a composition you wrote yourself —
+`Excitation`, a readout and a spoiler, assembled in your own code — hand a region to the same
+physical designer a packaged kernel uses, without becoming a module first:
+
+```python
+scope = sc.PhysicalDesignScope(
+    origin_s=exc.time_to_center(), before=exc(rephase=False),
+    after=lambda angle: arm(angle_rad=angle, prephase=False),
+    echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
+    axes=('x', 'y', 'z'), states=angles,
+)
+design = scope.design(opts=opts, flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+block = design.build(angle)
+```
+
+`k_at_echo(state, axis)` says where the designed region should leave `k`, in `1/m`, defaulting to
+zero — so a family that *encodes* with the region it owns, as a Cartesian phase encode does, can
+say so. The scope owns the zeroth moment; `FlowCompensation` and `VelocityEncoding` own the first.
+
+`design.at(te_s=...)` **redesigns** at a longer echo time rather than stretching: the request goes
+through the same search as an explicit TE, so the extra time may become fill rather than a wider
+region, and the achieved echo time is never shorter than the one asked for.
+
+Opt-in, and not a layer: events into a `LogicBlock` and then `sc.compile` needs none of it. The
+solver stays internal — nothing public names a schedule, a claim, a realisation family or a raw
+moment target.
+
+**Bug fix, the realisation families and the raster.** Two of them divided their window by a
+constant — the two-lobe family at exactly half, the base-plus-bipolar family likewise — which is
+off the gradient raster whenever the window is an odd number of steps. A 1450 us window asked for
+two 725 us lobes and the compiler refused the second for starting at 2005 us. Both now snap the
+boundary to the raster and re-solve their areas against the durations that result, and the
+invariant is tested at the cascade level rather than per helper.
+
+
+`GRE2DTR` now flow-compensates **`z`** as well as `x` and `y`, and any combination of them. The
+slice rephasing is taken over from `Excitation` — via the `rephase=False` seam it already had —
+so the repetition designs rephasing and compensation together, because on that axis they are one
+problem. Compensating `z` costs echo time: 3.11 ms to 4.14 ms at the reference protocol.
+
+Internally this is a new substrate, `seqcraft.design.scope`, and it is **not public API**. It is
+the region of a sequence whose physical degrees of freedom a designer may own, and it has two
+first-class consumers: a packaged kernel, and a user's own composition of leaves. `GRE2DTR` is now
+an adapter onto it with no change to its public surface; `GRE3DTR` keeps its own path for now.
+
+`examples/gre_spiral_2d/03_flow_comp.ipynb` is the second consumer — a spiral repetition with **no
+kernel class**, composed in the notebook, reaching the same designer. Its moment requirement
+rotates with the interleaf on both in-plane axes at once, which no packaged kernel produces.
+
+`GRE2DTR` and `GRE3DTR` both flow-compensate `x`, `y` and `z` in any combination. Each axis keeps
+the zeroth-moment job it already had — `k = 0` on the readout, the line's own `k` on the phase
+encode, a rephased slice — and gains the first-moment condition on top of it.
+
+**Velocity encoding now also works on `z`**, on both kernels, because the repetition designs the
+slice rephasing itself: one waveform returns `k_z` to zero at the echo *and* separates the two
+states at `±Δm1/2`. The capability is not the same for the two intents:
+
+```text
+                     x     y     z
+FlowCompensation    yes   yes   yes
+VelocityEncoding     no   yes   yes
+```
+
+`x` stays out for velocity encoding on both kernels: the readout's solve nulls its first moment
+rather than aiming it at a value, and a difference between two acquisitions needs a target. That
+is the current realisation's scope, not a claim that it is impossible.
+
+**Bug fix, `GRE3DTR` with a selective slab.** Asking for flow compensation on `z` reported
+success over the wrong interval: the fixed contribution was integrated from the start of the
+repetition rather than from the excitation, so it included the half of the selection lobe that
+plays before the RF centre and dephases nothing. Measured over the interval a spin is actually
+in, `m1` was `1.26e-2` and `k_z` sat half a slab lobe from its target while the design reported
+both met. The non-selective case was always correct, which is why nothing caught it.
+
+`modules/_joint.py` moved to `design/joint.py`, mechanically. It never depended on `modules` at
+all, and a scope serving user compositions cannot sit under `modules/kernel`.
+
+`examples/flowcomp_gre_2d/` is now `examples/gre_2d/03_flow_comp.ipynb`. Flow compensation is a
+reusable capability of a gradient echo rather than a separate sequence family, so it belongs
+beside the family it extends.
+
 ## Unreleased — flow compensation and velocity encoding as physical intent
 
 Two new public names, `sc.FlowCompensation` and `sc.VelocityEncoding`, and one new keyword each on
@@ -15,13 +98,13 @@ tr = sc.modules.GRE3DTR(
 They are **values, not modules**: no `opts`, nothing built, and constructing one commits to
 nothing. A caller says what physics they want; the repetition answers whether and how.
 
-**Which axes work is the repetition's answer.** `GRE2DTR` carries a first-moment requirement on
-`y`, its own phase-encode winder, and on `x`, where `CartesianLine` solves it locally with the
-analytic two-lobe prephaser. Its `z` gradient is the slice rephaser, which `Excitation` owns, so a
-claim there is refused before anything is designed — naming what that axis carries rather than
-saying "unsupported". `GRE3DTR` owns `y` and `z`, because its z winder already carries the
-partition encode. The same `FlowCompensation(axis='z')` value is honoured by one and refused by the
-other, which is why that check cannot live on the value.
+**Which axes work is the repetition's answer.** `GRE2DTR` and `GRE3DTR` both carry a first-moment
+requirement on `x`, `y` and `z`, in any combination: each axis keeps the zeroth-moment job it
+already had — `k = 0` on the readout, the line's own `k` on the phase encode, a rephased slice —
+and gains the first-moment one. A repetition with no pre-echo freedom on some axis refuses a claim
+there before anything is designed, naming what that axis carries rather than saying "unsupported".
+The same `FlowCompensation` value can therefore be honoured by one repetition and refused by
+another, which is why that check cannot live on the value.
 
 The two routes are invisible from outside. `flow_comp=sc.FlowCompensation(axis=('x', 'y'))` sends
 one axis to a leaf's closed-form solve and the other to the repetition designer, and the emitted
@@ -111,7 +194,7 @@ full-echo, partial-Fourier, monopolar-train and bipolar-train geometries. Tolera
 dimensioned per moment order. Seven of nine deliberate mutations fail the suite; the two survivors
 are the gradient and slew checks inside the feasibility predicate, which are unreachable one
 raster below the minimum because pypulseq refuses to build the lobe at all. **Layer 2**,
-`examples/flowcomp_gre_2d/01_build.ipynb`, both readouts in a complete gradient echo: 0.680 ms
+`examples/gre_2d/03_flow_comp.ipynb01_build.ipynb`, both readouts in a complete gradient echo: 0.680 ms
 added to the echo time at the reference protocol.
 
 **No Layer 3.** Given `m0 = 0`, the removal of the constant-velocity phase term follows from

@@ -1089,12 +1089,32 @@ tr = sc.modules.GRE3DTR(
 
 Three things follow, and each is a refusal rather than a surprise:
 
-**Which axes work is the repetition's answer, not the intent's.** `GRE2DTR` carries a moment
-requirement on `y` — its own phase-encode winder — and on `x`, where `CartesianLine` solves it
-locally; its `z` gradient is the slice rephaser, which `Excitation` owns, so a claim there is
-refused. `GRE3DTR` owns `y` and `z`, because its z winder already carries the partition encode.
-The same `FlowCompensation(axis='z')` value is therefore honoured by one and refused by the other,
-which is why the check cannot live on the value.
+**Which axes work is the repetition's answer, not the intent's**, and the two intents do not have
+the same answer:
+
+| | `x` | `y` | `z` |
+|---|---|---|---|
+| `FlowCompensation` on `GRE2DTR` | yes | yes | yes |
+| `FlowCompensation` on `GRE3DTR` | yes | yes | yes |
+| `VelocityEncoding` on `GRE2DTR` | **no** | yes | yes |
+| `VelocityEncoding` on `GRE3DTR` | **no** | yes | yes |
+
+A `PhysicalDesignScope` carries either on whichever axes its `axes` lists, and refuses the rest.
+
+Flow compensation works on every axis because each one keeps the zeroth-moment job it already had
+— `k = 0` on the readout, the line's own `k` on the phase encode, a rephased slice — and gains the
+first-moment one on top.
+
+Velocity encoding needs more than that. It asks for a first moment that **differs between two
+acquisitions**, and the readout axis is realised by a solve that nulls its first moment rather
+than aiming it at a value. That is the current realisation's scope, not a claim that readout-axis
+velocity encoding is impossible; extending it would need no change to the routing.
+
+The table is about **ownership**, not feasibility: an axis listed here, or in a scope's `axes`,
+still refuses a particular request that no schedule can realise within the scanner's limits.
+
+The same `FlowCompensation` value can therefore be honoured by one repetition and refused by
+another, which is why the check cannot live on the value.
 
 **A state is required exactly when velocity encoding is present.** `tr(line=..., encoding_state=s)`
 for one of `venc.states`, and passing one where nothing generates a pair is refused too — an
@@ -1123,6 +1143,94 @@ for partition in range(8):
 Ordering the states is the caller's: innermost minimises the time between the two acquisitions
 that get subtracted, outermost minimises the difference in their eddy-current history. This is a
 protocol decision and the library does not make it.
+
+## Designing part of your own composition
+
+The keywords above are the convenience surface for a **packaged kernel**. A composition you wrote
+yourself — `Excitation`, a readout and a spoiler, assembled in your own code — reaches the same
+designer through `sc.PhysicalDesignScope`, without becoming a module first.
+
+```python
+import numpy as np
+
+exc = sc.modules.Excitation(opts=opts, flip_deg=15.0, thickness_mm=5.0, duration_s=1e-3)
+arm = sc.modules.SpiralReadout(opts=opts, fov_mm=240.0, matrix=64, shots=8,
+                               dwell_s=4e-6, variant='in')
+angles = tuple(2.0 * np.pi * i / 8 for i in range(8))
+
+scope = sc.PhysicalDesignScope(
+    origin_s=exc.time_to_center(),          # the semantic origin of the pathway
+    before=exc(rephase=False),              # what plays before the designed region
+    after=lambda angle: arm(angle_rad=angle, prephase=False),   # and after it
+    echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
+    axes=('x', 'y', 'z'),                   # which axes it may use inside the region
+    states=angles,                          # what your repetition varies over
+    min_window_s=arm.prephaser_duration_s,
+)
+design = scope.design(opts=opts, flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+
+scan = sc.LogicBlock('spiral')
+for index, angle in enumerate(angles):
+    scan.add(index * 30e-3, design.build(angle))
+```
+
+Three concepts, and they divide like this:
+
+| | |
+|---|---|
+| `FlowCompensation`, `VelocityEncoding` | **what physics is wanted** — the first moment |
+| `PhysicalDesignScope` | **where** it applies, and where `k` should be at the echo |
+| `design.build(state)` | one state's block, built once from the finished design |
+
+**It is opt-in, and it is not a layer.** Events, modules and functions into a `LogicBlock` and
+then `sc.compile` needs none of this. Nor is it a different designer: a packaged kernel and a
+scope end at the same internal machinery, which stays internal.
+
+**What the designed region is asked for.** On each axis it owns it leaves `k` where `k_at_echo`
+says at the echo, plus whatever the intents add. The default is zero — what a prephaser, a winder
+and a slice rephaser all do. A family that *encodes* with the region it owns says so:
+
+```python
+pe = sc.modules.PhaseEncode(opts=opts, fov_mm=220.0, matrix=32, axis='y')
+ro = sc.modules.CartesianLine(opts=opts, fov_mm=220.0, matrix=32, bandwidth_hz_px=500.0,
+                              prephase=False)          # the scope designs the prephaser
+
+encoding = sc.PhysicalDesignScope(
+    origin_s=exc.time_to_center(),
+    before=exc(),
+    after=ro(),
+    echo_in_after_s=ro.time_to_echo(),      # this block has no prephaser in it
+    axes=('y',),
+    states=tuple(range(32)),
+    design_states=(0, 31),                       # a signed pair bounds a linear encode
+    k_at_echo=lambda line, axis: pe.k_per_m(line),
+)
+encoded = encoding.design(opts=opts, flow_comp=sc.FlowCompensation(axis='y'))
+```
+
+That is the zeroth moment of the whole scope at the echo, in `1/m`. The first moment is what the
+physical intents are for, which keeps the two kinds of requirement in separate places.
+
+**Handing a region over is explicit.** `before=exc(rephase=False)` is you saying the slice
+rephasing belongs to the designer now — the same seam `CartesianLine(prephase=False)` and
+`SpiralReadout(prephase=False)` offer. Nothing inspects a finished block and rewrites it.
+
+One rule is worth stating twice, because getting it wrong does not raise: **what you declare must
+describe the configuration you emit.** A module reports its timings for its own block, and if you
+asked it to leave a region out, that region's duration is still in the number it reports.
+`SpiralReadout.time_to_echo` is measured from a block containing its own prephaser, so a scope
+designing that prephaser subtracts `prephaser_duration_s` from `echo_in_after_s`.
+
+`design.at(te_s=...)` **redesigns** the same family at a longer echo time — it does not stretch
+what exists. The request goes back through the same search as an explicit TE, so the designer may
+keep the region it had and let the extra time become fill in front of it rather than spending all
+of it on a wider region. The achieved `te_s` is never shorter than the one asked for: a request
+between two legal instants comes back at the first one at or above it. This is how a protocol
+holding two families harmonises them.
+
+`design_states` on the scope is a **hint** about which states will size the schedule, not a
+promise. Every state is realised and checked before a schedule is accepted, so a poor hint costs
+search time and never correctness.
 
 Every module here was extracted from a working example rather than designed in the abstract.
 [`examples/gre_2d/01_build.ipynb`](../examples/gre_2d/01_build.ipynb) builds the same sequence
@@ -1855,6 +1963,8 @@ at import.
 | `VelocityEncode` | `modules` | class |
 | `FlowCompensation` | `augmentation` | class |
 | `VelocityEncoding` | `augmentation` | class |
+| `PhysicalDesign` | `physical_design` | class |
+| `PhysicalDesignScope` | `physical_design` | class |
 | `RadialReadout` | `modules` | class |
 | `PlacedEvent` | `compiler.model` | class |
 | `PulseqReadyBlock` | `compiler.model` | class |

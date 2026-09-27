@@ -17,7 +17,8 @@ import numpy as np
 import pytest
 
 import seqcraft as sc
-from seqcraft.modules._joint import (
+import seqcraft.design.joint  # noqa: F401  -- for monkeypatching the search ceiling
+from seqcraft.design.joint import (
     CommonModeClaim,
     DifferenceClaim,
     Schedule,
@@ -68,10 +69,17 @@ def intents(axis: str, *, flow_comp: bool = True, venc: bool = True) -> dict:
 
 
 def residual(kernel, axis: str, shot, wanted: tuple[float, float]) -> tuple[float, float]:
-    """How far the **whole repetition** is from its target, at the achieved echo."""
+    """
+    How far the **whole repetition** is from its target, at the achieved echo.
+
+    Integrated from the excitation instant rather than from the start of the block.  On `x` and
+    `y` the two agree.  On a slice or slab axis they do not: half the selection lobe plays before
+    the RF centre and dephases nothing, because there is no transverse magnetisation yet, so
+    measuring from zero would be asking about a phase no spin accumulates.
+    """
     origin, echo = kernel.exc.time_to_center(), kernel.time_to_echo()
     return tuple(
-        abs(measure_moment(shot, order, axis, origin_s=origin, start_s=0.0, end_s=echo)
+        abs(measure_moment(shot, order, axis, origin_s=origin, start_s=origin, end_s=echo)
             - wanted[order])
         for order in (0, 1)
     )
@@ -272,9 +280,17 @@ KERNELS = [
 
 
 def first_moment(kernel, shot, axis: str) -> float:
-    """`m1` on one axis over the whole emitted repetition, from the excitation to the echo."""
-    return measure_moment(shot, 1, axis, origin_s=kernel.exc.time_to_center(),
-                          start_s=0.0, end_s=kernel.time_to_echo())
+    """
+    `m1` on one axis over the whole emitted repetition, from the excitation to the echo.
+
+    Integrated **from the excitation instant**, not from the start of the block.  On `x` and `y`
+    the two agree, because nothing plays there earlier.  On the slice axis they do not: half the
+    selection lobe plays before the RF centre and dephases nothing, since there is no transverse
+    magnetisation yet, so counting it would be measuring a phase no spin accumulates.
+    """
+    origin = kernel.exc.time_to_center()
+    return measure_moment(shot, 1, axis, origin_s=origin,
+                          start_s=origin, end_s=kernel.time_to_echo())
 
 
 @pytest.mark.parametrize('kernel_of, build_kwargs', KERNELS)
@@ -333,22 +349,26 @@ def test_the_local_route_is_carried_by_the_readout_and_costs_echo_time(
     assert local.te_s > baseline.te_s, 'compensation costs echo time'
 
 
-def test_an_axis_the_repetition_does_not_own_is_refused_before_realisation(opts) -> None:
+def test_an_axis_no_owner_claims_is_refused_before_realisation(opts) -> None:
     """
-    `z` is a legal axis `GRE2DTR` plays a gradient on, and it does not own that gradient.
+    The refusal is physical, and it fires before anything is designed.
 
-    Before the check existed it accepted the claim, designed it, grew the winder from 520 to
-    2400 us -- 1.9 ms of TE the caller paid for -- and then emitted nothing, leaving
-    `m1 = -0.736 s/m` on the axis it reported as compensated.  So the refusal comes from what the
-    repetition **materialises**, not from whether the axis letter is legal.
+    Both shipped kernels now own all three axes -- `GRE2DTR` gained `z` when the scope learned to
+    take the slice rephasing over -- so there is no *legal* axis left for a kernel to refuse, and
+    exercising this through one would mean inventing a kernel that refuses something.  The check
+    itself is what matters and it is unchanged: an owners table without the axis, and a refusal
+    that says which gradient that axis carries instead of "unsupported".
     """
     with pytest.raises(sc.errors.ConfigurationError) as raised:
-        sc.modules.GRE2DTR(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0,
-                           flow_comp=sc.FlowCompensation(axis='z'))
+        sc.design._augment.refuse_unowned_axis(
+            'SomeRepetition', sc.FlowCompensation(axis='z'), 'z',
+            {'y': 'joint', 'x': 'readout'},
+            "this repetition's z gradient is realised by its excitation")
 
     said = str(raised.value)
     assert 'cannot apply flow compensation' in said and "'z'" in said
-    assert 'slice rephaser' in said, 'the reason should name what that axis carries here'
+    assert 'realised by its excitation' in said, 'the reason, not just the refusal'
+    assert "('y', 'x')" in said, 'and what it could have asked for instead'
 
 
 def test_a_meaningless_axis_is_refused_by_the_intent_itself(opts) -> None:
@@ -366,29 +386,34 @@ def test_a_meaningless_axis_is_refused_by_the_intent_itself(opts) -> None:
 
 def test_a_refusal_names_the_augmentation_that_was_actually_asked_for(opts) -> None:
     """
-    `z` is unowned on `GRE2DTR` for both augmentations, and they must not share a message.
+    Two augmentations refused for the same reason must not share one message.
 
     The refusal used to read "cannot apply flow compensation" whatever had been asked, so a caller
-    who passed `velocity_encode=` was pointed at a keyword they had not used. Which axes an
-    augmentation may name is the repetition's answer; *which augmentation asked* is not something
-    the message may get wrong.
+    who passed `velocity_encode=` was pointed at a keyword they had not used.  Which axes an
+    augmentation may name is the owner's answer; *which augmentation asked* is not something the
+    message may get wrong.
+
+    The owner below is hypothetical, because the axis it lacks is what makes the case -- both
+    shipped kernels design all three.
     """
-    shared = dict(opts=opts, fov_mm=220.0, matrix=(32, 32), thickness_mm=5.0)
+    owners = {'y': 'joint', 'x': 'readout'}
+    why = 'its z gradient is realised by the excitation'
 
     with pytest.raises(sc.errors.ConfigurationError) as flow:
-        sc.modules.GRE2DTR(**shared, flow_comp=sc.FlowCompensation(axis='z'))
+        sc.design._augment.refuse_unowned_axis(
+            'SomeRepetition', sc.FlowCompensation(axis='z'), 'z', owners, why)
     with pytest.raises(sc.errors.ConfigurationError) as velocity:
-        sc.modules.GRE2DTR(**shared, velocity_encode=sc.VelocityEncoding(venc_m_s=VENC_M_S,
-                                                                        axis='z'))
+        sc.design._augment.refuse_unowned_axis(
+            'SomeRepetition', sc.VelocityEncoding(venc_m_s=VENC_M_S, axis='z'), 'z', owners, why)
 
     assert 'cannot apply flow compensation' in str(flow.value)
     assert 'cannot velocity encode' in str(velocity.value)
     assert 'flow compensation' not in str(velocity.value)
 
-    # Both are the unowned-axis refusal, so both still explain what z carries here -- which is a
-    # different reason from the readout-axis one in the test below.
+    # Both are the unowned-axis refusal, so both still explain what that axis carries -- which is
+    # a different reason from the readout-axis one in the test below.
     for raised in (flow, velocity):
-        assert 'slice rephaser' in str(raised.value)
+        assert why in str(raised.value)
 
 
 def test_velocity_encoding_on_the_readout_axis_is_refused_without_claiming_impossibility(
@@ -428,7 +453,7 @@ def test_running_out_of_candidate_windows_is_not_called_infeasible(opts, monkeyp
     every raster-aligned split at every candidate window, so walking to the real limit of 4000 is
     quadratic and takes the better part of a minute.  That cost is the search's, not this test's.
     """
-    monkeypatch.setattr(sc.modules._joint, 'SEARCH_LIMIT_WINDOWS', 200)
+    monkeypatch.setattr(sc.design.joint, 'SEARCH_LIMIT_WINDOWS', 200)
     absurd = sc.VelocityEncoding(venc_m_s=1e-4, axis='y')      # 5000 s/m of first moment
 
     with pytest.raises(sc.errors.ConfigurationError) as raised:
@@ -445,15 +470,16 @@ def test_capability_is_a_property_of_the_repetition_not_of_the_claim(opts) -> No
     """
     The same claim is fine on one repetition and refused on another, and nothing inspects a type.
 
-    `z` is owned by `GRE3DTR`, whose z winder carries the partition encode, and not by `GRE2DTR`,
-    whose z gradient is the slice rephaser that `Excitation` owns.  A check keyed on the claim --
-    its class, or the augmentation that made it -- could not tell those apart.
+    Both shipped kernels design all three axes, so the pair below is two hypothetical owners
+    rather than two real ones -- which is the point: the answer comes from the table the caller
+    was handed, not from the claim.  A check keyed on the claim, on its class or on the
+    augmentation that made it, could not tell one owner from another at all.
     """
     claim = CommonModeClaim('z', 1)
 
-    require_owned_axes([claim], ('y', 'z'), component='GRE3DTR')
+    require_owned_axes([claim], ('y', 'z'), component='OwnsZ')
     with pytest.raises(sc.errors.ConfigurationError):
-        require_owned_axes([claim], ('y',), component='GRE2DTR')
+        require_owned_axes([claim], ('y',), component='DoesNotOwnZ')
 
 
 # ----------------------------------------------------------------- the public surface
@@ -500,7 +526,7 @@ def test_one_intent_reaches_two_different_owners(opts) -> None:
 
     assert sorted(kernel._joint) == ['y'], 'only y went to the joint designer'
     for axis in ('x', 'y'):
-        moment = measure_moment(shot, 1, axis, origin_s=origin, start_s=0.0, end_s=echo)
+        moment = measure_moment(shot, 1, axis, origin_s=origin, start_s=origin, end_s=echo)
         assert moment == pytest.approx(0.0, abs=1e-11), f'{axis} was not compensated'
 
 
@@ -538,7 +564,8 @@ def test_flow_compensation_is_the_common_mode_not_a_per_state_zero(opts) -> None
 
     def m1(kernel, **state):
         return measure_moment(kernel(line=4, **state), 1, 'y',
-                              origin_s=kernel.exc.time_to_center(), start_s=0.0,
+                              origin_s=kernel.exc.time_to_center(),
+                              start_s=kernel.exc.time_to_center(),
                               end_s=kernel.time_to_echo())
 
     assert m1(alone) == pytest.approx(0.0, abs=1e-11)
@@ -565,6 +592,37 @@ def test_gre2dtr_meets_its_targets_on_the_complete_repetition(opts) -> None:
             off_m0, off_m1 = residual(kernel, 'y', shot, wanted)
             assert off_m0 < 1e-6 * max(1.0, abs(wanted[0]))
             assert off_m1 < 1e-11
+
+
+def test_a_selective_slab_nulls_the_interval_a_spin_actually_sees(opts) -> None:
+    """
+    The regression for a bug that reported success over the wrong interval.
+
+    `GRE3DTR` integrated its fixed contribution from the start of the block, so a selective slab
+    asked for zero first moment got one measured across the whole selection lobe -- including the
+    half that plays before the RF centre and dephases nothing, since there is no transverse
+    magnetisation yet.  Measured over the interval a spin is actually in, `m1` was 1.26e-2 and
+    `k_z` sat half a slab lobe from its target while the design reported both met.
+
+    The non-selective case was always right, which is why nothing caught it: with no slab lobe
+    the two integration starts agree.
+    """
+    shared = dict(opts=opts, fov_mm=(220.0, 220.0, 120.0), matrix=(32, 32, 8),
+                  flow_comp=sc.FlowCompensation(axis='z'))
+    partition = 2
+
+    for slab_thickness_mm in (None, 120.0):
+        kernel = sc.modules.GRE3DTR(**shared, slab_thickness_mm=slab_thickness_mm)
+        shot = kernel(line=4, partition=partition)
+        origin, echo = kernel.exc.time_to_center(), kernel.time_to_echo()
+
+        m0 = measure_moment(shot, 0, 'z', origin_s=origin, start_s=origin, end_s=echo)
+        m1 = measure_moment(shot, 1, 'z', origin_s=origin, start_s=origin, end_s=echo)
+
+        assert m0 == pytest.approx(kernel.pe_z.k_per_m(partition), abs=1e-6), (
+            f'slab {slab_thickness_mm}: k_z is not where the partition wants it'
+        )
+        assert abs(m1) < 1e-11, f'slab {slab_thickness_mm}: m1 = {m1}'
 
 
 @pytest.mark.parametrize('slab_thickness_mm', (None, 120.0))
@@ -614,7 +672,7 @@ def test_the_kernel_adapter_does_not_branch_on_the_augmentation(opts) -> None:
         realised[name] = {
             state: measure_moment(
                 kernel(line=8, **({} if state is None else {'encoding_state': state})), 1, 'y',
-                origin_s=origin, start_s=0.0, end_s=echo)
+                origin_s=origin, start_s=origin, end_s=echo)
             for state in states
         }
 
@@ -739,7 +797,7 @@ def test_two_axes_are_designed_against_one_common_schedule(opts) -> None:
             for state in POLARITIES:
                 shot = kernel(line=index if axis == 'y' else 8,
                               partition=index if axis == 'z' else 4, encoding_state=state)
-                m1 = measure_moment(shot, 1, axis, origin_s=origin, start_s=0.0, end_s=echo)
+                m1 = measure_moment(shot, 1, axis, origin_s=origin, start_s=origin, end_s=echo)
                 assert m1 == pytest.approx(wanted_m1(state), abs=1e-11)
 
 
@@ -779,9 +837,9 @@ def test_an_explicit_te_above_the_minimum_does_not_stale_the_first_moment(opts,
     for line in (0, 5, 31):
         for state in POLARITIES:
             shot = kernel(line=line, encoding_state=state)
-            assert measure_moment(shot, 1, 'y', origin_s=origin, start_s=0.0,
+            assert measure_moment(shot, 1, 'y', origin_s=origin, start_s=origin,
                                   end_s=echo) == pytest.approx(state * delta() / 2.0, abs=1e-11)
-            assert measure_moment(shot, 0, 'y', origin_s=origin, start_s=0.0,
+            assert measure_moment(shot, 0, 'y', origin_s=origin, start_s=origin,
                                   end_s=echo) == pytest.approx(kernel.pe.k_per_m(line),
                                                                abs=1e-6 * max(1.0, abs(
                                                                    kernel.pe.k_per_m(line))))

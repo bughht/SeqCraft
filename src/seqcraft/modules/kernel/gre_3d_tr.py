@@ -65,12 +65,13 @@ from typing import TYPE_CHECKING
 import pypulseq as pp
 
 from ...augmentation import FlowCompensation, VelocityEncoding
+from ...design import _augment
+from ...design import joint as _joint
 from ...design.events import derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...design.timing import EPS
 from ...errors import ConfigurationError, format_error
-from .. import _augment, _joint
 from .._support import ceil_raster, require_positive
 from ..encoding.phase_encoding import PhaseEncode
 from ..readout.cartesian_line import CartesianLine
@@ -190,9 +191,14 @@ class GRE3DTR(Module):
         :meth:`build` then requires ``encoding_state`` to be one of ``velocity_encode.states``,
         and refuses one when there is no velocity encoding to give it meaning.
 
-        Only on an axis designed jointly (``'y'`` or ``'z'``).  A readout axis is realised by a solve that
-        nulls its first moment rather than aiming it at a value, which a difference between two
-        acquisitions needs.
+        Only on an axis this repetition designs jointly -- ``'y'`` or ``'z'``, not ``'x'``.  The
+        readout axis is realised by a solve that nulls its first moment rather than aiming it at a
+        value, and a difference between two acquisitions needs a target.  That is the current
+        realisation's scope, **not** a claim that readout-axis velocity encoding is impossible.
+
+        On ``'z'`` the repetition designs the slice rephasing anyway, so it carries the encoding
+        as well: ``k_z`` still returns to zero at the echo and the two states come out at
+        ``+-delta_m1 / 2``.
 
         Composing the two on one axis is not a conflict: `flow_comp` constrains the mean over the
         states and this constrains their separation, so the pair comes out at half the difference
@@ -667,10 +673,19 @@ class GRE3DTR(Module):
                     resolved[0][key], resolved[1][key] if 1 in claimed else None)
 
         def fixed(state: object, schedule: _joint.Schedule) -> tuple[float, float]:
-            """A selective slab's own lobe carries the fine scan's ``ms`` on `z`."""
+            """
+            A selective slab's own lobe carries the fine scan's ``ms`` on `z`.
+
+            Integrated from the **semantic origin**, not from the start of the block.  Half the
+            selection lobe plays before the RF centre and dephases nothing, because there is no
+            transverse magnetisation yet -- so counting it nulls the wrong interval, and a
+            selective slab asked for a first moment of zero would get one measured over an
+            interval no spin experiences while `k_z` sat half a slab lobe away from its target.
+            On `y` the two starts agree, because nothing plays there earlier.
+            """
             return tuple(  # type: ignore[return-value]
                 _joint.measure_moment(excitation, order, axis, origin_s=schedule.origin_s,
-                                      start_s=0.0, end_s=schedule.endpoint_s)
+                                      start_s=schedule.origin_s, end_s=schedule.endpoint_s)
                 for order in _joint.ORDERS
             )
 

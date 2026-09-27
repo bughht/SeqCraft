@@ -40,17 +40,17 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pypulseq as pp
 
-from ..design.events import knots_of, pwl_moment
-from ..design.logic import flatten
 from ..errors import ConfigurationError, format_error
+from .events import knots_of, pwl_moment
+from .logic import flatten
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from pypulseq.opts import Opts
 
-    from ..design.events import Event
-    from ..design.logic import LogicBlock
+    from .events import Event
+    from .logic import LogicBlock
 
 __all__ = [
     'ORDERS',
@@ -149,7 +149,7 @@ def group_by_axis(claims: Iterable[object]) -> dict[str, tuple[object, ...]]:
 
 def placed(event: Event, at_s: float) -> LogicBlock:
     """One event in a block at `at_s` -- for measuring a fixed contribution where it will play."""
-    from ..design.logic import LogicBlock as _LogicBlock
+    from .logic import LogicBlock as _LogicBlock
     return _LogicBlock().add(at_s, event)
 
 
@@ -385,10 +385,19 @@ def realise_two_lobes(axis: str, target: tuple[float, float], fixed: tuple[float
     ``split = 0.5`` is PR #39's equal-duration shape.  Letting the split move is one extra degree
     of freedom and costs nothing but a search over a raster-aligned fraction -- which is what
     :func:`realise_split_search` does with it.
+
+    **The boundary between the two lobes is snapped onto the gradient raster**, because it is an
+    instant the sequence has to be able to name.  Halving an odd number of raster steps does not
+    land on one: a 1450 us window split evenly asks for two 725 us lobes, and the compiler
+    rightly refuses the second for starting off-raster.  The snap moves the boundary by less than
+    one step and the areas are solved against the durations that result, so the moments stay
+    exact rather than being corrected afterwards.
     """
     if target[1] is None:
         return None       # under-determined: nothing constrains the second degree of freedom
-    first_s = schedule.window_s * split
+    raster = float(opts.grad_raster_time)
+    steps = max(int(round(schedule.window_s * split / raster)), 1)
+    first_s = steps * raster
     second_s = schedule.window_s - first_s
     if min(first_s, second_s) <= 0.0:
         return None
@@ -408,19 +417,35 @@ def realise_base_plus_bipolar(axis: str, target: tuple[float, float],
     The decoupled basis `wave-gre-flow-comp` uses.  Same span as :func:`realise_two_lobes` and the
     same two degrees of freedom, but the columns are orthogonal in what they do, which changes
     which target values push a lobe over the limit first.
+
+    **The boundary between the halves is snapped onto the gradient raster**, for the reason
+    :func:`realise_two_lobes` gives: halving an odd number of raster steps does not land on one,
+    and an event may only begin where the sequence can name an instant.  The two pieces are then
+    generally unequal, so the base's own first moment is its area times the *duration-weighted*
+    centre of the two rather than the window centre, and the bipolar is solved against the actual
+    separation.  Both reduce to the equal-halves algebra when the window is even.
     """
     if target[1] is None:
         return None       # under-determined: nothing constrains the second degree of freedom
-    half = schedule.window_s / 2.0
-    if half <= 0.0:
+    raster = float(opts.grad_raster_time)
+    first_s = max(int(round(schedule.window_s / (2.0 * raster))), 1) * raster
+    second_s = schedule.window_s - first_s
+    if min(first_s, second_s) <= 0.0:
         return None
+
     area = target[0] - fixed[0]
-    base_centre = schedule.window_start_s + schedule.window_s / 2.0 - schedule.origin_s
-    # A zero-area bipolar of lobes +-b over the window has m1 = -b * half.
+    centres = (schedule.window_start_s + first_s / 2.0 - schedule.origin_s,
+               schedule.window_start_s + first_s + second_s / 2.0 - schedule.origin_s)
+    # A base lobe of constant amplitude across the window carries its area in proportion to the
+    # two durations, so its first moment is the area times the duration-weighted centre.
+    shares = (first_s / schedule.window_s, second_s / schedule.window_s)
+    base_centre = shares[0] * centres[0] + shares[1] * centres[1]
+    # A zero-area bipolar puts +b on the first piece and -b on the second, whatever their
+    # durations, so its whole first moment is b * (c0 - c1).
     residual = target[1] - fixed[1] - area * base_centre
-    bipolar = -residual / half
-    return _assemble(axis, [(area / 2.0 + bipolar, half), (area / 2.0 - bipolar, half)],
-                     opts, 'base+bipolar')
+    bipolar = residual / (centres[0] - centres[1])
+    return _assemble(axis, [(area * shares[0] + bipolar, first_s),
+                            (area * shares[1] - bipolar, second_s)], opts, 'base+bipolar')
 
 
 def realise_split_search(axis: str, target: tuple[float, float], fixed: tuple[float, float],

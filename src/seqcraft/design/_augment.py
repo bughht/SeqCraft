@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 
 from ..augmentation import FlowCompensation, VelocityEncoding
 from ..errors import ConfigurationError, format_error
-from ._joint import CommonModeClaim, DifferenceClaim
+from .joint import CommonModeClaim, DifferenceClaim
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
