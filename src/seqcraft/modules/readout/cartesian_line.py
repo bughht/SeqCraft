@@ -628,32 +628,6 @@ class CartesianLine(Module):
         return self.num_samples - 1 - self.pre_echo_samples
 
     @property
-    def transition_events(self) -> tuple[tuple[Event, ...], ...]:
-        """
-        What plays between the lobes, one entry per distinct interval, in the order they repeat.
-
-        Empty unless the train compensates every echo.  One entry under ``'monopolar'``, because
-        every interval there is the same waveform; two under ``'bipolar'``, alternating, because
-        ``k = 0`` is not the same sample index on a forward and a reverse lobe.
-
-        Exposed so a caller can measure the interval rather than trust that it was solved.
-        """
-        return self._transitions or ()
-
-    @property
-    def transition_duration_s(self) -> float:
-        """
-        Seconds between one lobe's end and the next one's start -- the same for every interval.
-
-        Zero for an uncompensated bipolar train, whose lobes abut.  The fly-back's duration for
-        an uncompensated monopolar one.  For a compensated train it is what nulling the
-        interval's first moment cost, and :attr:`echo_spacing_s` is this plus the lobe.
-        """
-        if self.echoes == 1:
-            return 0.0
-        return float(sum(pp.calc_duration(event) for event in self._transition_for(0)))
-
-    @property
     def flyback_area_per_m(self) -> float:
         """
         The fly-back's area, 1/m -- exactly minus the **whole** lobe's area.  Monopolar only.
@@ -664,8 +638,9 @@ class CartesianLine(Module):
 
         On an all-echo compensated train the fly-back is several lobes rather than one and this
         is their **total**, which is still exactly minus the lobe's area, because that is what
-        returns k to where the prephaser left it.  :attr:`transition_events` is where to read the
-        individual lobes.
+        returns k to where the prephaser left it.  The individual lobes are not exposed: what
+        shape the interval is realised as is this module's business, and a caller that needs to
+        know should measure the block it emitted.
         """
         return float(sum(float(event.area) for event in self._require_flyback()))
 
@@ -673,7 +648,7 @@ class CartesianLine(Module):
     def flyback_duration_s(self) -> float:
         """Seconds the fly-back occupies.  Monopolar only; ``echo_spacing_s`` lengthens it."""
         self._require_flyback()
-        return self.transition_duration_s
+        return self._transition_duration_s
 
     # ----------------------------------------------------------------------- assembly
     def build(
@@ -1210,6 +1185,23 @@ class CartesianLine(Module):
                      'configuration error -- please report the protocol that reached it'],
                 )
                 raise ConfigurationError(msg)
+
+    @property
+    def _transition_duration_s(self) -> float:
+        """
+        Seconds between one lobe's end and the next one's start -- the same for every interval.
+
+        Zero for an uncompensated bipolar train, whose lobes abut.  The fly-back's duration for
+        an uncompensated monopolar one.  For a compensated train it is what nulling the
+        interval's first moment cost, and :attr:`echo_spacing_s` is this plus the lobe.
+
+        Private, with :attr:`echo_spacing_s` and :attr:`min_echo_spacing_s` as the public timing
+        surface.  How the interval is realised -- one lobe, two, a balanced pair, or whatever a
+        later family produces -- is not a promise this module makes.
+        """
+        if self.echoes == 1:
+            return 0.0
+        return float(sum(pp.calc_duration(event) for event in self._transition_for(0)))
 
     def _transition_for(self, echo: int) -> tuple[Event, ...]:
         """

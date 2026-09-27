@@ -43,7 +43,13 @@ waveform and one solve serves it; a bipolar train alternates between two, becaus
 the same sample index on a forward and a reverse lobe — the same fact `te_s` exists for.
 
 The timing is **derived from the waveform** rather than from a formula, so it moves with the
-amplifier: across 80/40/32 mT/m the compensated bipolar minimum is 3120/3300/3730 us.
+amplifier -- and which limit binds it differs by polarity. Holding `max_grad` at 40 mT/m and
+varying the slew rate over 200/150/100 T/m/s moves the minimum for both, 2510/2580/2670 us
+monopolar and 3160/3300/3520 us bipolar. Holding `max_slew` at 150 T/m/s and varying `max_grad`
+over 80/40/32 mT/m moves **only** the bipolar one, 3280/3300/3340 us: its transition is a balanced
+pair carrying hundreds of 1/m and it reaches the ceiling, where the monopolar transition carries
+one readout lobe's area at this protocol and is nowhere near it, so the monopolar minimum is
+purely slew-limited and does not move at all.
 `echo_spacing_s=None` is the shortest the implemented realisation family can carry the guarantee
 at under the supplied `Opts` — not a claim that no shorter waveform exists — and a hard request
 below it is refused with that minimum named. PNS is not part of this: it stays an after-the-fact

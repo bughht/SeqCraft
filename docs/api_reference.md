@@ -1105,6 +1105,15 @@ Flow compensation works on every axis because each one keeps the zeroth-moment j
 — `k = 0` on the readout, the line's own `k` on the phase encode, a rephased slice — and gains the
 first-moment one on top.
 
+**On a multi-echo acquisition it means every acquired echo**, not the first one only, and there is
+no option to ask for less. On any axis that is silent across the train — the phase-encode and
+slice axes of a 2D gradient echo both are — that costs nothing, because a first moment about a
+fixed origin stops accruing where the gradient is zero. On the readout axis it costs echo spacing,
+because the condition has to be carried from one echo to the next by the waveform between the
+lobes, and `min_echo_spacing_s` on the readout reports what it came to. A monopolar train reshapes
+the fly-back it already has; a bipolar train's lobes abut, so it has to make room for a transition
+and pays considerably more.
+
 Velocity encoding needs more than that. It asks for a first moment that **differs between two
 acquisitions**, and the readout axis is realised by a solve that nulls its first moment rather
 than aiming it at a value. That is the current realisation's scope, not a claim that readout-axis
