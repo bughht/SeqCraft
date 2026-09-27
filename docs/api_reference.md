@@ -1089,12 +1089,12 @@ tr = sc.modules.GRE3DTR(
 
 Three things follow, and each is a refusal rather than a surprise:
 
-**Which axes work is the repetition's answer, not the intent's.** `GRE2DTR` carries a moment
-requirement on `y` — its own phase-encode winder — and on `x`, where `CartesianLine` solves it
-locally; its `z` gradient is the slice rephaser, which `Excitation` owns, so a claim there is
-refused. `GRE3DTR` owns `y` and `z`, because its z winder already carries the partition encode.
-The same `FlowCompensation(axis='z')` value is therefore honoured by one and refused by the other,
-which is why the check cannot live on the value.
+**Which axes work is the repetition's answer, not the intent's.** `GRE2DTR` and `GRE3DTR` both
+carry a first-moment requirement on `x`, `y` and `z`, in any combination — each axis keeps the
+zeroth-moment job it already had and gains the first-moment one. A `PhysicalDesignScope` carries
+it on whichever axes its `axes` lists, and refuses the rest. The same `FlowCompensation` value can
+therefore be honoured by one repetition and refused by another, which is why the check cannot live
+on the value.
 
 **A state is required exactly when velocity encoding is present.** `tr(line=..., encoding_state=s)`
 for one of `venc.states`, and passing one where nothing generates a pair is refused too — an

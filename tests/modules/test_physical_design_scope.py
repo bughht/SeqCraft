@@ -867,3 +867,70 @@ def test_a_repeated_axis_is_refused_rather_than_deduplicated(opts, axes) -> None
             after=lambda a: arm(angle_rad=a, prephase=False),
             echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
             axes=axes, states=angles)
+
+
+# ------------------------------------------------------------ the public state boundary
+def test_an_unknown_state_is_refused_rather_than_a_key_error(opts) -> None:
+    """
+    Asking for a state the family was not designed for is ordinary misuse, and should read that way.
+
+    Falling through to the internal per-state dictionary would surface as a `KeyError` naming a
+    private wrapper type, which tells the caller nothing about what they did.
+    """
+    scope_, _exc, _arm, angles = public_scope(opts, axes=('x', 'y'))
+    design = scope_.design(opts=opts, flow_comp=sc.FlowCompensation(axis='x'))
+
+    with pytest.raises(sc.errors.ConfigurationError) as raised:
+        design.build(99.0)
+
+    said = str(raised.value)
+    assert '99.0' in said, 'the refusal repeats what was asked for'
+    assert repr(angles[0]) in said, 'and says what is available'
+
+
+def test_a_multi_state_family_refuses_the_no_argument_form(opts) -> None:
+    """With more than one state there is nothing to default to, so it says so."""
+    scope_, _exc, _arm, _angles = public_scope(opts, axes=('x',))
+    design = scope_.design(opts=opts, flow_comp=sc.FlowCompensation(axis='x'))
+
+    with pytest.raises(sc.errors.ConfigurationError, match='has to be told which one'):
+        design.build()
+
+
+def test_a_single_state_family_keeps_the_no_argument_form(opts) -> None:
+    """
+    One state is unambiguous, whether it was named or left to the default.
+
+    Both spellings are kept: a family that happens to have one member should not have to repeat
+    its name at every call.
+    """
+    exc, arm, _angles = spiral_pieces(opts)
+    common = dict(origin_s=exc.time_to_center(), before=exc(rephase=False),
+                  echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
+                  axes=('x',), min_window_s=arm.prephaser_duration_s)
+
+    named = sc.PhysicalDesignScope(**common, after=lambda a: arm(angle_rad=a, prephase=False),
+                                   states=(0.0,))
+    defaulted = sc.PhysicalDesignScope(**common, after=arm(angle_rad=0.0, prephase=False))
+
+    for scope_ in (named, defaulted):
+        design = scope_.design(opts=opts, flow_comp=sc.FlowCompensation(axis='x'))
+        assert design.build().duration > 0.0
+
+
+@pytest.mark.parametrize('states', [(0, 0, 1), (0.0, 1.0, 0.0), ((1, 2), (3, 4), (1, 2))])
+def test_a_repeated_state_is_refused_rather_than_collapsed(opts, states) -> None:
+    """
+    A state is the identity of one member of the family, and one design is kept per state.
+
+    Collapsing a duplicate would quietly change how many repetitions the caller gets, which is
+    worse than refusing a probable typo.  Tuple-valued states are covered too, since they are
+    compared by equality like any other.
+    """
+    exc, arm, _angles = spiral_pieces(opts)
+    with pytest.raises(sc.errors.ConfigurationError, match='names the same state twice'):
+        sc.PhysicalDesignScope(
+            origin_s=exc.time_to_center(), before=exc(),
+            after=lambda _s: arm(angle_rad=0.0, prephase=False),
+            echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
+            axes=('x',), states=states)

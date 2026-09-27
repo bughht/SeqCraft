@@ -51,6 +51,10 @@ an adapter onto it with no change to its public surface; `GRE3DTR` keeps its own
 kernel class**, composed in the notebook, reaching the same designer. Its moment requirement
 rotates with the interleaf on both in-plane axes at once, which no packaged kernel produces.
 
+`GRE2DTR` and `GRE3DTR` both flow-compensate `x`, `y` and `z` in any combination. Each axis keeps
+the zeroth-moment job it already had — `k = 0` on the readout, the line's own `k` on the phase
+encode, a rephased slice — and gains the first-moment condition on top of it.
+
 **Bug fix, `GRE3DTR` with a selective slab.** Asking for flow compensation on `z` reported
 success over the wrong interval: the fixed contribution was integrated from the start of the
 repetition rather than from the excitation, so it included the half of the selection lobe that

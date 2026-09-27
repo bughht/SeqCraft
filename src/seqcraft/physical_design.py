@@ -192,6 +192,16 @@ class PhysicalDesignScope:
                      'a state is an identity SeqCraft never looks inside -- it only has to be '
                      'usable as a key'],
                 )
+        seen: list[Any] = []
+        for state in states:
+            if any(state == other for other in seen):
+                _refuse(f'states names the same state twice: {state!r}.',
+                        {'repeated': repr(state), 'states': states},
+                        ['a state is the identity of one member of the family, and one design '
+                         'is kept per state',
+                         'the duplicate is not dropped for you, because it is more likely a '
+                         'typo than an intention'])
+            seen.append(state)
         object.__setattr__(self, 'states', states)
 
         for name in ('origin_s', 'echo_in_after_s', 'min_window_s'):
@@ -309,7 +319,27 @@ class PhysicalDesign:
 
     # ------------------------------------------------------------------ internals
     def _key(self, state: Any, encoding_state: int | None) -> _Key:
-        """The internal key for one state, refusing an encoding state in either direction."""
+        """The internal key for one state, refusing anything this family does not have."""
+        known = self.scope.states
+        if state is _ONLY and len(known) != 1:
+            _refuse(
+                'this family has more than one state, so build() has to be told which one.',
+                {'states': known},
+                [f'pass one of them, e.g. build({known[0]!r})',
+                 'the no-argument form is for a family that comes in a single state'],
+            )
+        if state is _ONLY:
+            # Exactly one state, whatever it is called: no argument is unambiguous.
+            state = known[0]
+        if not any(state == other for other in known):
+            _refuse(
+                f'{state!r} is not one of this family\'s states.',
+                {'given': repr(state), 'states': known},
+                ['build() realises a state the scope was designed for, and this one was not '
+                 'among them',
+                 'states are compared by equality, so a value that merely looks similar is a '
+                 'different state'],
+            )
         if self._encoding == (_ONLY,):
             if encoding_state is not None:
                 _augment.refuse_state_mismatch('this scope', self._encoding, encoding_state)

@@ -13,11 +13,11 @@ The split they exist to hold:
 
 So an intent validates only what is knowable without a sequence -- that an axis name is a logical
 gradient channel, that a venc is positive -- and nothing about which axes a given repetition can
-actually carry a moment claim on.  It cannot know that: the same
-:class:`FlowCompensation` is honoured by :class:`~seqcraft.modules.GRE3DTR` on ``z`` and refused by
-:class:`~seqcraft.modules.GRE2DTR`, whose ``z`` gradient is a slice rephaser that
-:class:`~seqcraft.modules.Excitation` realises for itself.  Capability belongs to the repetition,
-which is the only thing that knows what it will emit.
+actually carry a moment claim on.  It cannot know that: a packaged kernel designs the axes it has
+pre-echo freedom on, and a :class:`~seqcraft.PhysicalDesignScope` designs whichever the caller
+listed in its `axes`, so the same :class:`FlowCompensation` value can be honoured by one and
+refused by another.  Capability belongs to whatever will emit the waveform, which is the only
+thing that knows what it will emit.
 
 **This is a closed set.**  There is no base class, no protocol and no registration point, and a
 third augmentation is a SeqCraft-owned type added here with its own keyword -- not something a

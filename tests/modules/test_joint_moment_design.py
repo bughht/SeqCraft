@@ -467,15 +467,16 @@ def test_capability_is_a_property_of_the_repetition_not_of_the_claim(opts) -> No
     """
     The same claim is fine on one repetition and refused on another, and nothing inspects a type.
 
-    `z` is owned by `GRE3DTR`, whose z winder carries the partition encode, and not by `GRE2DTR`,
-    whose z gradient is the slice rephaser that `Excitation` owns.  A check keyed on the claim --
-    its class, or the augmentation that made it -- could not tell those apart.
+    Both shipped kernels design all three axes, so the pair below is two hypothetical owners
+    rather than two real ones -- which is the point: the answer comes from the table the caller
+    was handed, not from the claim.  A check keyed on the claim, on its class or on the
+    augmentation that made it, could not tell one owner from another at all.
     """
     claim = CommonModeClaim('z', 1)
 
-    require_owned_axes([claim], ('y', 'z'), component='GRE3DTR')
+    require_owned_axes([claim], ('y', 'z'), component='OwnsZ')
     with pytest.raises(sc.errors.ConfigurationError):
-        require_owned_axes([claim], ('y',), component='GRE2DTR')
+        require_owned_axes([claim], ('y',), component='DoesNotOwnZ')
 
 
 # ----------------------------------------------------------------- the public surface

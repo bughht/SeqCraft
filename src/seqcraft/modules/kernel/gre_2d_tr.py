@@ -148,10 +148,13 @@ class GRE2DTR(Module):
     flow_comp
         Ask that the **common-mode** first gradient moment be zero at the echo:
         :class:`~seqcraft.FlowCompensation`, or ``None``.  Its `axis` may name one axis or
-        several, and each is refused unless this repetition owns an adjustable window there --
-        ``'x'`` and ``'y'`` here, not ``'z'``, whose gradient is the slice rephaser :class:`~seqcraft.modules.Excitation` realises for itself.  The refusal names what that axis carries here instead.
+        several: ``'x'``, ``'y'``, ``'z'`` and any combination of them.
 
-        Which part of the repetition reshapes to deliver it is not the caller's problem: ``'x'`` is solved by this repetition's :class:`~seqcraft.modules.CartesianLine`, which owns the readout prephaser, and ``'y'`` is designed together with the phase-encode area that shares its window.
+        Each axis keeps the zeroth-moment job it already had, and gains the first-moment one:
+        ``'x'`` still puts ``k = 0`` at the echo, ``'y'`` still reaches the line's own ``k``, and
+        ``'z'`` still finishes rephasing the slice.  Which pre-echo gradients deliver that is not
+        the caller's problem.  Compensating several axes costs more echo time than any one alone,
+        because their pre-echo gradients share an interval and the longest sets it.
     velocity_encode
         Ask that the first moment **differ** between two acquired states:
         :class:`~seqcraft.VelocityEncoding`, or ``None``.  This makes the repetition two-state, so
@@ -557,11 +560,14 @@ class GRE2DTR(Module):
         return routed
 
     def _why_unowned(self, axis: str) -> str:
-        """The sequence-specific reason an axis has no owner here."""
-        if axis == 'z':
-            return ('this repetition\'s z gradient is the slice rephaser, which Excitation '
-                    'realises for itself; GRE3DTR does own z, because its z winder carries the '
-                    'partition encode')
+        """
+        The sequence-specific reason an axis has no owner here.
+
+        No **logical** axis reaches this any more -- this repetition designs all three -- so it
+        speaks for an axis name that is not a gradient channel of this sequence at all.  It stays
+        because the routing table is the thing that decides, and a table with an axis missing
+        should say why rather than what.
+        """
         return f'{axis!r} is not an axis this repetition plays an adjustable gradient on'
 
     def _encode(self, line: int, encoding_state: object) -> LogicBlock:
