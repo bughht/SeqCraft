@@ -191,9 +191,14 @@ class GRE3DTR(Module):
         :meth:`build` then requires ``encoding_state`` to be one of ``velocity_encode.states``,
         and refuses one when there is no velocity encoding to give it meaning.
 
-        Only on an axis designed jointly (``'y'`` or ``'z'``).  A readout axis is realised by a solve that
-        nulls its first moment rather than aiming it at a value, which a difference between two
-        acquisitions needs.
+        Only on an axis this repetition designs jointly -- ``'y'`` or ``'z'``, not ``'x'``.  The
+        readout axis is realised by a solve that nulls its first moment rather than aiming it at a
+        value, and a difference between two acquisitions needs a target.  That is the current
+        realisation's scope, **not** a claim that readout-axis velocity encoding is impossible.
+
+        On ``'z'`` the repetition designs the slice rephasing anyway, so it carries the encoding
+        as well: ``k_z`` still returns to zero at the echo and the two states come out at
+        ``+-delta_m1 / 2``.
 
         Composing the two on one axis is not a conflict: `flow_comp` constrains the mean over the
         states and this constrains their separation, so the pair comes out at half the difference

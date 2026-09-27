@@ -1089,12 +1089,32 @@ tr = sc.modules.GRE3DTR(
 
 Three things follow, and each is a refusal rather than a surprise:
 
-**Which axes work is the repetition's answer, not the intent's.** `GRE2DTR` and `GRE3DTR` both
-carry a first-moment requirement on `x`, `y` and `z`, in any combination — each axis keeps the
-zeroth-moment job it already had and gains the first-moment one. A `PhysicalDesignScope` carries
-it on whichever axes its `axes` lists, and refuses the rest. The same `FlowCompensation` value can
-therefore be honoured by one repetition and refused by another, which is why the check cannot live
-on the value.
+**Which axes work is the repetition's answer, not the intent's**, and the two intents do not have
+the same answer:
+
+| | `x` | `y` | `z` |
+|---|---|---|---|
+| `FlowCompensation` on `GRE2DTR` | yes | yes | yes |
+| `FlowCompensation` on `GRE3DTR` | yes | yes | yes |
+| `VelocityEncoding` on `GRE2DTR` | **no** | yes | yes |
+| `VelocityEncoding` on `GRE3DTR` | **no** | yes | yes |
+
+A `PhysicalDesignScope` carries either on whichever axes its `axes` lists, and refuses the rest.
+
+Flow compensation works on every axis because each one keeps the zeroth-moment job it already had
+— `k = 0` on the readout, the line's own `k` on the phase encode, a rephased slice — and gains the
+first-moment one on top.
+
+Velocity encoding needs more than that. It asks for a first moment that **differs between two
+acquisitions**, and the readout axis is realised by a solve that nulls its first moment rather
+than aiming it at a value. That is the current realisation's scope, not a claim that readout-axis
+velocity encoding is impossible; extending it would need no change to the routing.
+
+The table is about **ownership**, not feasibility: an axis listed here, or in a scope's `axes`,
+still refuses a particular request that no schedule can realise within the scanner's limits.
+
+The same `FlowCompensation` value can therefore be honoured by one repetition and refused by
+another, which is why the check cannot live on the value.
 
 **A state is required exactly when velocity encoding is present.** `tr(line=..., encoding_state=s)`
 for one of `venc.states`, and passing one where nothing generates a pair is refused too — an

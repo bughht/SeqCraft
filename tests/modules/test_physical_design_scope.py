@@ -934,3 +934,66 @@ def test_a_repeated_state_is_refused_rather_than_collapsed(opts, states) -> None
             after=lambda _s: arm(angle_rad=0.0, prephase=False),
             echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
             axes=('x',), states=states)
+
+
+# ------------------------------------------------- velocity encoding, per kernel and axis
+@pytest.mark.parametrize('axis', ['y', 'z'])
+def test_gre2dtr_velocity_encodes_every_axis_it_designs_jointly(opts, axis) -> None:
+    """
+    `z` carries the encoding as well, now that the repetition designs the slice rephasing.
+
+    Taking that winder over is what makes it possible: the same waveform returns `k_z` to zero at
+    the echo *and* separates the two states, which a realised rephaser worked around could not
+    do.  Measured on the complete emitted repetition, both states, from the RF effective centre
+    to the achieved echo.
+    """
+    venc = sc.VelocityEncoding(venc_m_s=1.5, axis=axis)
+    kernel = sc.modules.GRE2DTR(opts=opts, fov_mm=FOV_MM, matrix=(32, 32),
+                                thickness_mm=THICKNESS_MM, velocity_encode=venc)
+    origin, echo = kernel.exc.time_to_center(), kernel.time_to_echo()
+
+    def moment(state, order):
+        shot = kernel(line=6, encoding_state=state)
+        return joint.measure_moment(shot, order, axis, origin_s=origin,
+                                    start_s=origin, end_s=echo)
+
+    for state in venc.states:
+        assert abs(moment(state, 0) - (0.0 if axis == 'z' else kernel.pe.k_per_m(6))) < 1e-6, (
+            f'state {state} moved k off the value this axis owes'
+        )
+        assert moment(state, 1) == pytest.approx(state * venc.delta_m1_s_per_m / 2.0, rel=1e-9)
+
+    assert moment(+1, 1) - moment(-1, 1) == pytest.approx(venc.delta_m1_s_per_m, rel=1e-9)
+
+
+def test_a_velocity_encoded_slice_axis_compiles(opts) -> None:
+    """The emitted repetition is a legal sequence, not only a correct set of moments."""
+    venc = sc.VelocityEncoding(venc_m_s=1.5, axis='z')
+    kernel = sc.modules.GRE2DTR(opts=opts, fov_mm=FOV_MM, matrix=(32, 32),
+                                thickness_mm=THICKNESS_MM, velocity_encode=venc)
+
+    seq = sc.compile(kernel(line=6, encoding_state=+1), opts)
+    assert len(seq.block_events) > 0
+
+
+@pytest.mark.parametrize('kernel_of', [
+    lambda opts, ve: sc.modules.GRE2DTR(opts=opts, fov_mm=FOV_MM, matrix=(32, 32),
+                                        thickness_mm=THICKNESS_MM, velocity_encode=ve),
+    lambda opts, ve: sc.modules.GRE3DTR(opts=opts, fov_mm=(FOV_MM, FOV_MM, 120.0),
+                                        matrix=(32, 32, 8), velocity_encode=ve),
+])
+def test_the_readout_axis_still_refuses_velocity_encoding(opts, kernel_of) -> None:
+    """
+    `x` remains out of scope on both kernels, and for a reason that is not impossibility.
+
+    The readout's solve nulls its first moment; it has no way to aim it at a value, which is what
+    a difference between two acquisitions needs.  Extending it would make this work with no
+    change to the routing, so the refusal must not say it cannot be done.
+    """
+    with pytest.raises(sc.errors.ConfigurationError) as raised:
+        kernel_of(opts, sc.VelocityEncoding(venc_m_s=1.5, axis='x'))
+
+    said = str(raised.value)
+    assert 'cannot velocity encode' in said and "'x'" in said
+    assert 'one repetition at a time' in said
+    assert 'impossible' not in said and 'cannot be done' not in said

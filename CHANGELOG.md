@@ -55,6 +55,20 @@ rotates with the interleaf on both in-plane axes at once, which no packaged kern
 the zeroth-moment job it already had — `k = 0` on the readout, the line's own `k` on the phase
 encode, a rephased slice — and gains the first-moment condition on top of it.
 
+**Velocity encoding now also works on `z`**, on both kernels, because the repetition designs the
+slice rephasing itself: one waveform returns `k_z` to zero at the echo *and* separates the two
+states at `±Δm1/2`. The capability is not the same for the two intents:
+
+```text
+                     x     y     z
+FlowCompensation    yes   yes   yes
+VelocityEncoding     no   yes   yes
+```
+
+`x` stays out for velocity encoding on both kernels: the readout's solve nulls its first moment
+rather than aiming it at a value, and a difference between two acquisitions needs a target. That
+is the current realisation's scope, not a claim that it is impossible.
+
 **Bug fix, `GRE3DTR` with a selective slab.** Asking for flow compensation on `z` reported
 success over the wrong interval: the fixed contribution was integrated from the start of the
 repetition rather than from the excitation, so it included the half of the selection lobe that
