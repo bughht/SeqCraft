@@ -46,6 +46,7 @@ finished block and rewrites it, and nothing outside the declared region is read 
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -166,7 +167,15 @@ class PhysicalDesignScope:
         if not names:
             _refuse('a physical-design scope needs at least one axis to design on.',
                     {'axes': self.axes}, ["pass axes='y', or a tuple such as axes=('x', 'y')"])
-        object.__setattr__(self, 'axes', tuple(require_axis(n, 'axes') for n in names))
+        axes = tuple(require_axis(n, 'axes') for n in names)
+        if len(set(axes)) != len(axes):
+            repeated = sorted({a for a in axes if axes.count(a) > 1})
+            _refuse(f'axes names the same axis twice: {axes}.',
+                    {'axes': axes, 'repeated': tuple(repeated)},
+                    ['one entry per axis -- naming it twice asks for the same region twice',
+                     'the duplicate is not dropped for you, because it is more likely a typo '
+                     'than an intention'])
+        object.__setattr__(self, 'axes', axes)
 
         states = tuple(self.states)
         if not states:
@@ -187,6 +196,12 @@ class PhysicalDesignScope:
 
         for name in ('origin_s', 'echo_in_after_s', 'min_window_s'):
             value = float(getattr(self, name))
+            if not math.isfinite(value):
+                _refuse(f'{name} is {value:g}, which is not a finite number of seconds.',
+                        {name: value},
+                        ['a time has to be a real number before anything can be placed at it',
+                         'a non-finite value usually means an earlier division or subtraction '
+                         'produced one'])
             if value < 0.0:
                 _refuse(f'{name} = {value:g} s is negative.', {name: value},
                         [f'{name} is measured forward from the start of what you emit'])
@@ -357,9 +372,39 @@ def _geometry(scope: PhysicalDesignScope, opts: Opts) -> _scope.ScopeGeometry:
             ['`before` may vary in waveform between states, but not in duration',
              'pad the shorter ones to a common duration, or move what varies into `after`'],
         )
+    window_start_s = float(raster.ceil(max(durations.values())))
+    if scope.origin_s > window_start_s + 1e-12:
+        _refuse(
+            'the semantic origin is after the designed region starts.',
+            {'origin_s': f'{scope.origin_s * 1e6:.3f} us',
+             'region starts at': f'{window_start_s * 1e6:.3f} us'},
+            ['`origin_s` is where the pathway begins, and `before` is what plays between there '
+             'and the designed region -- so it has to fall inside `before`',
+             'a scope whose region starts before its own origin is not the decomposition this '
+             'representation supports'],
+        )
+
+    # The echo is declared as an offset into `after`, so `after` has to be long enough to contain
+    # it.  Otherwise the design reports an echo time whose instant falls past the end of the block
+    # it was measured into, and a caller appending anything there would be placing events before
+    # an echo that has, as far as they can tell, already happened.
+    for state in scope.states:
+        tail = _piece(scope.after, state).duration
+        if tail + 1e-12 < scope.echo_in_after_s:
+            _refuse(
+                'the declared echo falls outside the block that is supposed to contain it.',
+                {'state': repr(state),
+                 'after(state) lasts': f'{tail * 1e6:.3f} us',
+                 'echo_in_after_s': f'{scope.echo_in_after_s * 1e6:.3f} us'},
+                ['`echo_in_after_s` is measured from the start of `after`, so it has to be '
+                 'inside it',
+                 'if a module reports its echo for a configuration that includes a region this '
+                 'scope has taken over, subtract that region -- see `echo_in_after_s`'],
+            )
+
     return _scope.ScopeGeometry(
         origin_s=scope.origin_s,
-        window_start_s=float(raster.ceil(max(durations.values()))),
+        window_start_s=window_start_s,
         tail_s=scope.echo_in_after_s,
     )
 
@@ -375,6 +420,14 @@ def _requirement(scope: PhysicalDesignScope, axis: str, keys: Sequence[_Key],
     targets: dict[_Key, tuple[float, float | None]] = {}
     for key in keys:
         base = float(k_at_echo(key.state, axis))
+        if not math.isfinite(base):
+            _refuse(
+                f'k_at_echo returned {base:g}, which is not a finite k-space position.',
+                {'state': repr(key.state), 'axis': axis, 'returned': base},
+                ['`k_at_echo(state, axis)` is a k-space position in 1/m, and every state and '
+                 'axis needs one',
+                 'return 0.0 for an axis this family does not encode on'],
+            )
         first = None
         if wants_m1:
             first = resolve_claims(claims, tuple(encoding), axis=axis, order=1,

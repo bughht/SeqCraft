@@ -56,6 +56,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from . import joint
+from .timing import Raster
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -225,8 +226,13 @@ def design_scope(geometry: ScopeGeometry, requirements: Sequence[AxisRequirement
         floor = geometry.echo_at(0.0)
         wanted_s = floor + max(math.ceil((wanted_s - floor) / raster - 1e-9), 0) * raster
 
+    # `min_window_s` is a floor, so it is quantised UP: a 14 us minimum on a 10 us raster starts
+    # the search at 20 us, never at 10.  Rounding to nearest would search below the minimum the
+    # caller declared and could return a window shorter than they asked for.
+    first_step = max(int(Raster(raster).count(Raster(raster).ceil(min_window_s))), 1)
+
     exhausted = True
-    for steps in range(max(int(round(min_window_s / raster)), 1), joint.SEARCH_LIMIT_WINDOWS):
+    for steps in range(first_step, joint.SEARCH_LIMIT_WINDOWS):
         window = steps * raster
         fill = 0.0
         if wanted_s is not None:

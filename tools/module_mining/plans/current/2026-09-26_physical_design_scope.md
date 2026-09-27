@@ -45,8 +45,9 @@ PUBLIC     seqcraft/physical_design.py
            necessarily a whole TR, and `.build(state)` returns exactly before + designed + after
            -- a spoiler or a TR fill is the caller's to add.
 
-INTERNAL   seqcraft/design/scope.py    ScopeGeometry, AxisRequirement, design_scope
-           seqcraft/design/joint.py    Schedule, JointProblem, claims, realisation families
+INTERNAL   seqcraft/design/_augment.py  intent -> claims, capability refusals
+           seqcraft/design/scope.py     ScopeGeometry, AxisRequirement, design_scope
+           seqcraft/design/joint.py     Schedule, JointProblem, claims, realisation families
 ```
 
 The public layer is a **translation**, not a second designer. It derives the two callables the
@@ -203,6 +204,26 @@ signal being designed for, because the transverse magnetisation does not exist y
 That reasoning belongs to *that pathway*, not to MRI in general. A refocusing pulse creates
 several coherence pathways with different histories, and none of that is modelled. The wording in
 the docstrings and the API reference says so rather than stating a universal rule.
+
+### What a declaration is checked for
+
+Refused where it is written, rather than found later as a residual or a compiler error:
+
+```text
+at declaration      axes non-empty, legal, and not repeated
+                    states non-empty and hashable
+                    origin_s / echo_in_after_s / min_window_s finite and non-negative
+                    design_states non-empty when given, and a subset of states
+
+at design time      origin_s falls inside `before`, not after the region starts
+                    `before` may vary in waveform between states, not in duration
+                    `after(state)` contains the declared echo, for every state
+                    k_at_echo returns a finite number for every state and axis
+```
+
+`min_window_s` is a **floor**, so it is quantised upward: a 14 us minimum on a 10 us raster
+starts the search at 20 us. Rounding to nearest would search below the minimum the caller
+declared.
 
 ## 8. Edge boundaries
 

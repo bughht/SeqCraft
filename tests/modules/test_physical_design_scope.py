@@ -708,3 +708,162 @@ def test_whatever_the_cascade_returns_lands_on_the_gradient_raster(opts, steps) 
             at += float(pp.calc_duration(event))
         assert at / raster == pytest.approx(round(at / raster), abs=1e-9)
     assert found, f'{steps} raster steps realised nothing, so this proved nothing'
+
+
+# -------------------------------------------------- a declared minimum is a floor, not a hint
+@pytest.mark.parametrize('min_window_s, expected_us', [
+    (0.0, 10.0), (10e-6, 10.0), (10.1e-6, 20.0), (14e-6, 20.0),
+    (19.9e-6, 20.0), (20e-6, 20.0), (25e-6, 30.0),
+])
+def test_the_minimum_window_is_quantised_up_never_down(opts, min_window_s, expected_us) -> None:
+    """
+    `min_window_s` is a floor, so it is rounded **up** onto the raster.
+
+    Rounding to nearest would start the search below the minimum the caller declared -- a 14 us
+    floor on a 10 us raster would begin at 10 -- and could hand back a window shorter than they
+    asked for.  Measured against a target that fits at any length, so the floor alone decides.
+    """
+    geometry = scope.ScopeGeometry(origin_s=0.5e-3, window_start_s=1.0e-3, tail_s=1.0e-3)
+    anything = scope.AxisRequirement(
+        axis='y', states=('only',), design_states=('only',),
+        target=lambda _state: (0.0, None), fixed=lambda _state, _schedule: (0.0, 0.0))
+
+    designed = scope.design_scope(geometry, [anything], opts, min_window_s=min_window_s)
+
+    assert designed.window_s * 1e6 == pytest.approx(expected_us, abs=1e-9)
+    assert designed.window_s >= min_window_s - 1e-15, 'never below the declared floor'
+
+
+def test_a_binding_floor_reaches_the_public_surface(opts) -> None:
+    """The same rule through the declaration a caller actually writes."""
+    scope_, _exc, arm, _angles = public_scope(opts)
+    floor = sc.PhysicalDesignScope(
+        origin_s=scope_.origin_s, before=scope_.before, after=scope_.after,
+        echo_in_after_s=scope_.echo_in_after_s, axes=scope_.axes, states=scope_.states,
+        design_states=scope_.design_states, min_window_s=arm.prephaser_duration_s + 1e-9,
+    )
+    design = floor.design(opts=opts, flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+    assert design.window_s >= floor.min_window_s
+
+
+# ----------------------------------------------------------- the rest of the geometry
+def test_an_origin_after_the_designed_region_is_refused(opts) -> None:
+    """
+    `before` is what plays between the pathway's origin and the designed region.
+
+    An origin later than where the region starts is not that decomposition, and integrating
+    moments over it would quietly measure an interval running backwards through `before`.
+    """
+    exc, arm, angles = spiral_pieces(opts)
+    late = sc.PhysicalDesignScope(
+        origin_s=exc().duration + 1e-3,                     # after `before` has finished
+        before=exc(), after=lambda a: arm(angle_rad=a, prephase=False),
+        echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
+        axes=('x', 'y'), states=angles,
+    )
+    with pytest.raises(sc.errors.ConfigurationError) as raised:
+        late.design(opts=opts, flow_comp=sc.FlowCompensation(axis='x'))
+
+    said = str(raised.value)
+    assert 'semantic origin is after the designed region starts' in said
+    assert 'has to fall inside `before`' in said
+
+
+@pytest.mark.parametrize('slack_s, allowed', [(0.0, True), (-20e-6, True), (+20e-6, False)])
+def test_the_declared_echo_has_to_be_inside_after(opts, slack_s, allowed) -> None:
+    """
+    Exactly at the end of `after` is fine; past it is not.
+
+    Without this the design reports an echo time whose instant falls after the block it was
+    measured into has ended, and a caller appending anything there would be placing events
+    before an echo that has, as far as they can tell, already happened.
+    """
+    exc, arm, angles = spiral_pieces(opts)
+    tail = arm(angle_rad=0.0, prephase=False).duration
+    declared = sc.PhysicalDesignScope(
+        origin_s=exc.time_to_center(), before=exc(rephase=False),
+        after=lambda a: arm(angle_rad=a, prephase=False),
+        echo_in_after_s=tail + slack_s, axes=('x', 'y'), states=angles,
+        min_window_s=arm.prephaser_duration_s,
+    )
+    if allowed:
+        declared.design(opts=opts, flow_comp=sc.FlowCompensation(axis='x'))
+        return
+    with pytest.raises(sc.errors.ConfigurationError) as raised:
+        declared.design(opts=opts, flow_comp=sc.FlowCompensation(axis='x'))
+    assert 'outside the block that is supposed to contain it' in str(raised.value)
+
+
+def test_one_short_state_is_enough_to_refuse_and_it_is_named(opts) -> None:
+    """
+    `after` may differ in duration between states -- only the echo has to be inside each one.
+
+    So the check is per state, and the refusal says which one failed rather than leaving the
+    caller to find it.
+    """
+    exc, arm, angles = spiral_pieces(opts)
+    short = sc.modules.SpiralReadout(opts=opts, fov_mm=FOV_MM, matrix=MATRIX, shots=SHOTS * 2,
+                                     dwell_s=4e-6, variant='in')
+    echo = arm.time_to_echo(0) - arm.prephaser_duration_s
+
+    mixed = sc.PhysicalDesignScope(
+        origin_s=exc.time_to_center(), before=exc(rephase=False),
+        after=lambda a: (short if a > 3.0 else arm)(angle_rad=a, prephase=False),
+        echo_in_after_s=echo, axes=('x', 'y'), states=angles,
+        min_window_s=arm.prephaser_duration_s,
+    )
+    with pytest.raises(sc.errors.ConfigurationError) as raised:
+        mixed.design(opts=opts, flow_comp=sc.FlowCompensation(axis='x'))
+
+    said = str(raised.value)
+    assert 'outside the block' in said
+    assert 'state' in said and 'after(state) lasts' in said
+
+
+# -------------------------------------------------------------- finite numbers only
+@pytest.mark.parametrize('field, value', [
+    ('origin_s', float('nan')), ('origin_s', float('inf')),
+    ('echo_in_after_s', float('nan')), ('echo_in_after_s', float('inf')),
+    ('min_window_s', float('nan')), ('min_window_s', float('-inf')),
+])
+def test_a_non_finite_time_is_refused_before_it_reaches_arithmetic(opts, field, value) -> None:
+    """NaN and infinity should be a sentence, not a strange raster or search failure later."""
+    exc, arm, angles = spiral_pieces(opts)
+    good = dict(origin_s=exc.time_to_center(), before=exc(),
+                after=lambda a: arm(angle_rad=a, prephase=False),
+                echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
+                axes=('x',), states=angles)
+
+    with pytest.raises(sc.errors.ConfigurationError, match='not a finite number of seconds'):
+        sc.PhysicalDesignScope(**{**good, field: value})
+
+
+@pytest.mark.parametrize('bad', [float('nan'), float('inf')])
+def test_a_non_finite_k_target_names_the_state_and_the_axis(opts, bad) -> None:
+    """`k_at_echo` is called per state and per axis, so a refusal has to say which pair."""
+    scope_, _exc, _arm, angles = public_scope(opts, axes=('x', 'y'))
+    broken = sc.PhysicalDesignScope(
+        origin_s=scope_.origin_s, before=scope_.before, after=scope_.after,
+        echo_in_after_s=scope_.echo_in_after_s, axes=scope_.axes, states=scope_.states,
+        k_at_echo=lambda state, axis: bad if axis == 'y' else 0.0,
+        min_window_s=scope_.min_window_s,
+    )
+    with pytest.raises(sc.errors.ConfigurationError) as raised:
+        broken.design(opts=opts, flow_comp=sc.FlowCompensation(axis='x'))
+
+    said = str(raised.value)
+    assert 'not a finite k-space position' in said
+    assert 'axis' in said and 'y' in said, 'the refusal names which axis asked'
+    assert repr(angles[0]) in said, 'and which state it was asked for'
+
+
+@pytest.mark.parametrize('axes', [('x', 'x'), ('y', 'z', 'y')])
+def test_a_repeated_axis_is_refused_rather_than_deduplicated(opts, axes) -> None:
+    """Silently dropping the duplicate would hide a typo that looks like an intention."""
+    exc, arm, angles = spiral_pieces(opts)
+    with pytest.raises(sc.errors.ConfigurationError, match='names the same axis twice'):
+        sc.PhysicalDesignScope(
+            origin_s=exc.time_to_center(), before=exc(),
+            after=lambda a: arm(angle_rad=a, prephase=False),
+            echo_in_after_s=arm.time_to_echo(0) - arm.prephaser_duration_s,
+            axes=axes, states=angles)
