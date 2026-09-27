@@ -84,13 +84,13 @@ tr = sc.modules.GRE3DTR(
 They are **values, not modules**: no `opts`, nothing built, and constructing one commits to
 nothing. A caller says what physics they want; the repetition answers whether and how.
 
-**Which axes work is the repetition's answer.** `GRE2DTR` carries a first-moment requirement on
-`y`, its own phase-encode winder, and on `x`, where `CartesianLine` solves it locally with the
-analytic two-lobe prephaser. Its `z` gradient is the slice rephaser, which `Excitation` owns, so a
-claim there is refused before anything is designed — naming what that axis carries rather than
-saying "unsupported". `GRE3DTR` owns `y` and `z`, because its z winder already carries the
-partition encode. The same `FlowCompensation(axis='z')` value is honoured by one and refused by the
-other, which is why that check cannot live on the value.
+**Which axes work is the repetition's answer.** `GRE2DTR` and `GRE3DTR` both carry a first-moment
+requirement on `x`, `y` and `z`, in any combination: each axis keeps the zeroth-moment job it
+already had — `k = 0` on the readout, the line's own `k` on the phase encode, a rephased slice —
+and gains the first-moment one. A repetition with no pre-echo freedom on some axis refuses a claim
+there before anything is designed, naming what that axis carries rather than saying "unsupported".
+The same `FlowCompensation` value can therefore be honoured by one repetition and refused by
+another, which is why that check cannot live on the value.
 
 The two routes are invisible from outside. `flow_comp=sc.FlowCompensation(axis=('x', 'y'))` sends
 one axis to a leaf's closed-form solve and the other to the repetition designer, and the emitted

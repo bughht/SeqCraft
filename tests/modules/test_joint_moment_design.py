@@ -386,12 +386,15 @@ def test_a_meaningless_axis_is_refused_by_the_intent_itself(opts) -> None:
 
 def test_a_refusal_names_the_augmentation_that_was_actually_asked_for(opts) -> None:
     """
-    `z` is unowned on `GRE2DTR` for both augmentations, and they must not share a message.
+    Two augmentations refused for the same reason must not share one message.
 
     The refusal used to read "cannot apply flow compensation" whatever had been asked, so a caller
-    who passed `velocity_encode=` was pointed at a keyword they had not used. Which axes an
-    augmentation may name is the repetition's answer; *which augmentation asked* is not something
-    the message may get wrong.
+    who passed `velocity_encode=` was pointed at a keyword they had not used.  Which axes an
+    augmentation may name is the owner's answer; *which augmentation asked* is not something the
+    message may get wrong.
+
+    The owner below is hypothetical, because the axis it lacks is what makes the case -- both
+    shipped kernels design all three.
     """
     owners = {'y': 'joint', 'x': 'readout'}
     why = 'its z gradient is realised by the excitation'
