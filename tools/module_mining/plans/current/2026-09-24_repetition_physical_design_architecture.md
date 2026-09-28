@@ -818,10 +818,11 @@ sequence admissibility envelope      the final summed waveform must fit this
 constituent design profiles          what a given component is designed under
 ```
 
-The reference implementation declares a broad sequence envelope and then designs different
-constituents under different, tighter policies — gentle readouts may use a larger fraction of the
-envelope, while short aggressive transitions (blips, ramps, prephasers, spoilers, flow-compensation
-lobes) are held well below it to limit PNS and gradient stress.
+The `HarmonizedMRI/wave-gre-flow-comp` stress case at `0e1ec51` declares a broad sequence
+envelope and then designs different constituents under different, tighter profiles — gentle
+readouts may use a larger fraction of the envelope, while short aggressive transitions (blips,
+ramps, prephasers, spoilers, flow-compensation lobes) are held well below it to limit PNS and
+gradient stress.
 
 Measured from the admitted stress case at `0e1ec51`. **These numbers are test input, not a
 proposed API** — they are one author's derating choices for one sequence, recorded so the stress
