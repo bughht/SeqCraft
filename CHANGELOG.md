@@ -761,7 +761,7 @@ of the public physical abstraction.
 **The chemical-shift sign is the failure that looks fine.** `shift_ppm` is signed and relative to
 water; fat is below it. Get the sign wrong and you get legal Pulseq, legal timing, legal gradients,
 a correct-looking waveform — and water saturated instead of fat, with nothing downstream noticing.
-The two published references reach the same number by different routes, one carrying the sign in
+`write_epi_se_rs.py` and `writeEpiSpinEchoRS.m` reach the same number by different routes, one carrying the sign in
 the ppm constant and the other applying it at the point of use, so an implementation that mixed
 the conventions would be exactly this wrong. The module converts once, reports `offset_hz`, and
 the tests trace `shift_ppm -> offset_hz -> emitted rf.freq_offset` as far as the **compiled
@@ -856,7 +856,7 @@ the partition responsible and its combined moment.
 inheriting `Excitation`'s 3 ms shaped sinc. A non-selective excitation with a shaped pulse is the
 worst of both — it spends a soft pulse's duration and selects nothing — and it was putting 3 ms
 into every echo time for it. Measured at the reference geometry, the minimum TE drops from 4.377
-to **2.977 ms**. Every official Pulseq 3D reference uses a block pulse for the same reason.
+to **2.977 ms**. The non-selective implementations in the GRE3D reference set use a block pulse for the same reason.
 
 A slab still gets a shaped sinc, and `rf_pulse=` overrides either — a shaped but spatially
 non-selective excitation is a real thing to want. Asking for a time-bandwidth product without a
@@ -929,8 +929,9 @@ a probe sequence and reads its trajectory back to discover where its own centre 
 
 **The block `build` returns is already oriented**, so the module's semantic properties and its
 emitted events have one owner rather than two. One canonical spoke is designed along x and fresh
-rotated copies are derived per call — with the stored `area` scaled too, which both references
-that extend a readout's flat time warn in a comment is otherwise left wrong. A spoke along an axis
+rotated copies are derived per call — with the stored `area` scaled too, which
+`writeFastRadialGradientEcho.m` and OpenMRF `RAD`, both of which spoil by extending the readout's flat time, warn
+in a comment is otherwise left wrong. A spoke along an axis
 emits one gradient, not one plus a 1e-11 Hz/m ghost.
 
 No kernel and no trajectory layer. A radial GRE is currently `Excitation` → `RadialReadout` →
@@ -941,7 +942,7 @@ waveform exists.
 
 Extracted the same way as the last one: the references were measured first, and the
 rotation-equivariance test — that the spoke at φ is the spoke at 0 rotated — was written against
-the official PyPulseq reference and passed there **before this module existed**, so it cannot be
+`write_radial_gre.py` and passed there **before this module existed**, so it cannot be
 encoding this module's behaviour. It now passes against the package at ~1e-14 /m, across eight
 sweep cases spanning two matrices, two fields of view, three dwell times and the full
 partial-Fourier range.

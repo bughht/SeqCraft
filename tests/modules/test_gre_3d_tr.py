@@ -367,7 +367,7 @@ def test_a_slab_smaller_than_the_fov_is_allowed(scanner) -> None:
 def test_no_slab_means_a_hard_pulse(scanner, nonselective) -> None:
     """
     A non-selective excitation with a shaped pulse is the worst of both: it spends a soft
-    pulse's duration and selects nothing.  Every official Pulseq 3D reference uses a block
+    pulse's duration and selects nothing.  The non-selective implementations in the GRE3D reference set use a block
     pulse, and ``writeGradientEcho3D.m``'s is 0.2 ms.
     """
     assert nonselective.exc.pulse == 'block'

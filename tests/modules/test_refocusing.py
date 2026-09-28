@@ -183,7 +183,8 @@ def test_time_to_crusher_is_where_the_trailing_window_begins(se_opts: Opts) -> N
 # -------------------------------------------------------------------------- the failure mode
 def _naive_refocusing(opts: Opts, *, window_s: float, duration_s: float = 4e-3):
     """
-    The references' design: the same crusher trapezoid twice, and a plateau merely long enough.
+    ``writeTSE.m`` and ``write_tse.py``'s design: the same crusher trapezoid twice, and a
+    plateau merely long enough.
 
     Two errors, and both compile.  The plateau covers the dead time and the ringdown without being
     *symmetrised* about the pulse, and the crusher area is taken from half the plateau's **total**

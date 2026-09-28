@@ -74,6 +74,11 @@ SUFFIXES = {'.py', '.md', '.ipynb', '.rst', '.txt', '.toml', '.yaml', '.yml'}
 #: time a paragraph is re-wrapped.  Ordinary prose in both guides is still checked, which is the
 #: property a per-file exemption would have thrown away.
 #:
+#: The rule is positional, so it exempts *anything* inside a fence in those two files, not only the
+#: intended examples.  That is the price of not rotting: the sentence-matching version it replaced
+#: had to repeat every example in this file and broke three times in one editing session.  Fenced
+#: content in the two guides is reviewed by people rather than by this.
+#:
 #: The checker and its own tests are exempt wholesale: they quote every pattern by construction.
 TEACHING_FILES: dict[str, str] = {
     'tools/check_prose_attribution.py': 'whole file',

@@ -1559,13 +1559,14 @@ compile a probe sequence and read its trajectory back to find out where its own 
 **The block is already oriented.** A caller does not rotate what `build` returns, because the
 module's semantic properties describe the oriented spoke and a trajectory whose orientation lived
 somewhere else would have two owners. Internally one canonical spoke is designed along x and
-fresh rotated copies are derived per call — including the stored `area`, which both references
-that extend a readout's flat time warn is otherwise left wrong.
+fresh rotated copies are derived per call — including the stored `area`, which
+`writeFastRadialGradientEcho.m` and OpenMRF `RAD`, both of which spoil by extending the readout's flat
+time, warn is otherwise left wrong.
 
 What stays with the caller: how many spokes, which angles, in what order, golden-angle or
 equal-increment or randomised, and the excitation, spoiling and TR around them.
 `tests/modules/test_radial_readout.py` asserts the trajectory, and the rotation-equivariance test
-there is the same one that passed against the official PyPulseq reference before this module
+there is the same one that passed against `write_radial_gre.py` before this module
 existed.
 
 

@@ -202,7 +202,8 @@ class Refocusing(Module):
         ``None`` derives each transition's ramp from ``opts.max_slew`` by a short fixed point.
         **It buys no echo spacing at all** -- measured, exactly zero, because the spacing depends on
         the crusher *window* and not on its ramps -- so this argument exists for slew headroom.  The
-        references' fixed ``250e-6`` is that number frozen at one system.
+        fixed ``250e-6`` in ``write_tse.py`` and ``writeTSE.m`` is that number frozen at one
+        system.
     axis
         Selection axis.  ``None`` means ``'z'`` when selective, and is the only legal value when
         not.

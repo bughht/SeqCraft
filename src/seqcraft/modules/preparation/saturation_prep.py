@@ -149,7 +149,8 @@ class SaturationPrep(Module):
     spoil_cycles_per_voxel, spoil_axis, spoil_voxel_mm
         The spoiler.  `spoil_voxel_mm` is **required**: there is no length anywhere in this module
         to count cycles against, and guessing one would silently under- or over-spoil.  What
-        matters physically is the product, so a caller wanting the references' "spoil to 0.1 mm"
+        matters physically is the product, so a caller wanting ``write_epi_se_rs.py``'s
+        "spoil to 0.1 mm"
         passes ``spoil_voxel_mm=0.1`` and leaves the cycles at 1.
     tag
         Optional identity, as for any :class:`~seqcraft.Module`.

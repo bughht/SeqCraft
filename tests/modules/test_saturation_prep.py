@@ -78,7 +78,7 @@ def test_the_compiled_sequence_carries_the_offset_we_computed(opts: pp.Opts) -> 
 
 
 def test_the_offset_scales_with_field_and_nothing_else_does(opts: pp.Opts) -> None:
-    """Metamorphic, and definable against the references before this module existed."""
+    """Metamorphic, and definable against ``write_epi_se_rs.py`` before this module existed."""
     low = prep(opts)
     high = prep(pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
                         rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6,
@@ -148,7 +148,7 @@ def test_the_spoiler_follows_the_pulse(opts: pp.Opts) -> None:
 
 
 def test_the_spoiler_moment_is_the_product_asked_for(opts: pp.Opts) -> None:
-    """``cycles / voxel_m``, which is the references' ``area = 1/1e-4`` at 0.1 mm."""
+    """``cycles / voxel_m``, which is ``write_epi_se_rs.py``'s ``area = 1/1e-4`` at 0.1 mm."""
     module = prep(opts, spoil_cycles_per_voxel=1.0, spoil_voxel_mm=0.1)
     trap = next(e for _, e, _ in sc.flatten(module()) if getattr(e, 'type', '') == 'trap')
     assert float(trap.area) == pytest.approx(1.0 / 1e-4)
