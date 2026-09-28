@@ -3,10 +3,12 @@
 
 A wrong chemical-shift sign produces legal Pulseq, legal timing, legal gradients and a correct
 waveform, and saturates water instead of fat.  Nothing downstream notices: the sequence compiles,
-every k-space check passes, and the image comes back with the wrong tissue suppressed.  The two
-reference implementations reach the same number by different routes -- one carries the sign in the
-ppm constant, the other applies it at the point of use -- so an implementation that mixed the
-conventions would be exactly this wrong.
+every k-space check passes, and the image comes back with the wrong tissue suppressed.
+``write_epi_se_rs.py`` and ``writeEpiSpinEchoRS.m`` reach the same number by different routes --
+one carries the sign in the ppm constant, the other applies it at the point of use -- so an
+implementation that mixed the conventions would be exactly this wrong.  The saturation reference
+inventory records those two as **one design witness**, one ported from the other, rather than as
+independent corroboration.
 
 So the tests trace the whole chain, ``shift_ppm -> offset_hz -> emitted rf.freq_offset``, as far as
 the *compiled* sequence rather than stopping at the constructor.  The rest is the module's other
