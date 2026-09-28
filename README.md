@@ -494,10 +494,9 @@ files that have to be reproducible six months later — and when it does not fit
 is already the pypulseq object.
 
 **Vendor data stays out of this repository.** Siemens `.asc` descriptors carry proprietary
-coefficients, so nothing here looks for one: `sc.hardware.load_hardware('/path/to/scanner.asc')`
-reads a file you hand it and keeps only its name and hash. `sc.hardware.synthetic_hardware()` is
-the vendor-free illustrative model PNS checks use otherwise — not a real scanner, not an upper
-bound, and never to be used to clear a sequence for human scanning.
+coefficients, so `sc.hardware.load_hardware()` reads them only through `$SEQCRAFT_ASC_DIR`.
+`sc.hardware.synthetic_hardware()` is a vendor-free stand-in for PNS checks — not a real scanner,
+and never to be used to clear a sequence for human scanning.
 
 ## Licence
 

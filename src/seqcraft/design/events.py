@@ -297,10 +297,9 @@ def pwl_moment(times: np.ndarray, amps: np.ndarray, order: int = 0) -> float:
     """
     Return the exact ``integral g(t) * t**order dt`` of a piecewise-linear waveform.
 
-    Exact on each piecewise-linear segment, not quadrature of a raster-sampled curve.  On one
-    segment ``g(t) * t**order`` is a polynomial of degree ``order + 1``, and `k`-node
-    Gauss-Legendre is exact to degree ``2k - 1`` -- so a handful of nodes integrates it with no
-    discretisation error at all.
+    Closed form, not quadrature of a sampled curve.  On one segment ``g(t) * t**order`` is a
+    polynomial of degree ``order + 1``, and `k`-node Gauss-Legendre is exact to degree
+    ``2k - 1`` -- so a handful of nodes integrates it with no discretisation error at all.
 
     Why this matters rather than being a nicety: the trapezoidal rule on raster samples is
     exact for ``order == 0`` and *only* then.  Using it for m1 made the tree side and the

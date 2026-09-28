@@ -374,10 +374,8 @@ def pns(tree: LogicBlock, opts: Opts, hardware: SimpleNamespace) -> dict[str, An
     pypulseq's implementation is validated against vendor behaviour, and a second one that can
     silently drift is the wrong thing to own.
 
-    ``synthetic_hardware()`` is a vendor-free **illustrative** stand-in for CI, taken from
-    pypulseq's public example model.  It is **not** a real scanner, it is not an upper bound, and
-    it must never be used to clear a human scan.  A real model may differ from it in absolute
-    peak, in which axis dominates, and in how it ranks one waveform against another.
+    ``synthetic_hardware()`` is a conservative vendor-free stand-in for CI.  It is **not** a real
+    scanner and must never be used to clear a human scan.
     """
     seq = compile_sequence(tree, opts)
     ok, pns_norm, components, t = seq.calculate_pns(hardware, do_plots=False)
