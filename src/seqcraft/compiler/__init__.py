@@ -78,7 +78,8 @@ a sequence and a report.  ``seq.write(...)``, ``seq.plot()``, ``seq.block_events
 ``seq.definitions`` are pypulseq's own and are what the rest of the ecosystem already reads.
 
 That is only tenable because **every legality failure raises**.  A returned object carrying a
-report is a way of not noticing: it writes a ``.seq`` the console refuses an hour later, and the
+report is a way of not noticing: it writes a ``.seq`` whose problem surfaces when someone tries
+to run it rather than when it was built, and the
 explanation is on an object nobody looked at.  What the compile *did* rather than refused -- summed
 two gradients on an axis, resampled one onto the raster -- is a
 :class:`~seqcraft.errors.SeqCraftWarning`, one per category, so the standard ``warnings`` machinery
@@ -374,7 +375,7 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     check_label_addresses(seq)
 
     # pypulseq's own timing audit, run here rather than offered as a method: a `.seq` that fails
-    # it is one the console will refuse, so there is nothing to hand back.
+    # it is not a sequence anyone can run, so there is nothing to hand back.
     timing_ok, complaints = seq.check_timing()
     if not timing_ok:
         fatal = [

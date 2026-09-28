@@ -1535,7 +1535,8 @@ expensive part behind a named switch.
 
 Two things are **named rather than worked around**. The `z` **crusher balance** is not simulable
 here: a slab four voxels thick has nothing for a slice gradient to dephase across within a voxel, so
-an unbalanced crusher simulates as perfectly fine and is wrong on a scanner — which is why it is
+an unbalanced crusher simulates as perfectly fine while leaving a residual that alternates sign
+echo to echo — which is why it is
 asserted arithmetically, with the alternating failure mode as its own test. And MRzero's phase-graph
 model is **insensitive to the CPMG phase relation**: sweeping the refocusing phase from 0° to 90° at
 `B1 = 0.8` changes the echo magnitudes by 6 × 10⁻⁸. Both notebooks say so where a reader would
@@ -1729,7 +1730,7 @@ seq.write('gre.seq')                  # was: out.write(path) -> WriteResult
 The old shape had one failure mode and it was the same one `pSeq_Base.get_report()` had, one
 indirection later: findings on an object nobody has to look at. `get_report()` printed and returned
 `None`; `CompiledSequence.check()` returned a `Report` that a caller could simply not call. Either
-way the sequence is written, and the console refuses it an hour later.
+way the sequence is written, and the problem surfaces only when someone tries to run it.
 
 **Nothing about the emitted bytes changed.** `build_gre` and `build_se` write `.seq` files with the
 same sha256 as before the revision began, and every structural field of
@@ -2242,7 +2243,7 @@ not testing it.
 ### Fixed — `assert_pure` could not see the bug it was written for
 
 It hashed the stored events, called the builder **twice**, and compared. The canonical mutation it
-exists to catch — the reference implementation's `self.gx.amplitude = -self.gx.amplitude` inside a
+exists to catch — `pSeq_Base`'s `self.gx.amplitude = -self.gx.amplitude` inside a
 readout loop — is an involution, so two calls left every hash where it started and the check passed.
 Now checked after each call.
 

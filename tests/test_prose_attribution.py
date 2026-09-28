@@ -39,6 +39,16 @@ MUST_FAIL = [
     'the kind of artefact that gets blamed on the scanner',
     'MRzero reports one sign and a scanner may use either',
     'our copy had drifted from it',
+    # --- found by review after the first sweep: the same semantic families, different grammar.
+    # Each of these was live on the branch while the checker reported the repository clean.
+    'The four site constants are required because no vendor database has them.',
+    'It depends on the coil loading, so no vendor database can know it.',
+    'These are on no spec sheet and no vendor database has them.',
+    'the configuration that makes writeTSE.m correct by accident',
+    'writeTSE.m sets both to the same 100 us, so it gets this right by accident',
+    'a sequence that compiles and validates cleanly before the console refuses it',
+    'it writes a .seq the console refuses an hour later',
+    'an unbalanced crusher simulates as perfectly fine and is wrong on a scanner',
 ]
 
 #: Sentences the repository should be able to write.  Several deliberately contain the review
@@ -62,6 +72,8 @@ MUST_PASS = [
     'This establishes the first-moment condition at every acquired echo.',
     # Near-misses that must not fire.
     'The reference frame is the RF effective centre.',
+    'A test asserts the gap, so the claim cannot become true by accident.',
+    'Two parts cannot be built against different limits by accident.',
     'Every echo is a k = 0 crossing.',
     'It is wrong to assume the echo sits at the midpoint.',
 ]
@@ -133,21 +145,51 @@ def test_review_triggers_are_reported_but_never_block(tmp_path) -> None:
     assert review
 
 
-def test_the_exemption_list_is_exactly_these_four_files() -> None:
+def test_the_exemption_list_is_exactly_these_four_paths() -> None:
     """
-    **The one way this checker can be defeated is by adding files here**, so the list is pinned.
+    **The one way this checker can be defeated is by adding entries here**, so it is pinned.
 
-    Each of the four quotes the blocked formulations as its subject: the checker defines them,
-    its tests exercise them, and the two authoring guides teach the rule by showing what it
-    rejects.  Anything else added here is a decision to stop checking a file, and should be an
-    argument in a pull request rather than a quiet edit.
+    They are repository-relative paths rather than basenames: a basename would hand the same
+    exemption to any future file that happened to share a name.  The two guides carry an explicit
+    phrase list rather than a blanket pass, so prose elsewhere in them is still checked.
     """
-    assert prose.SELF_REFERENTIAL == {
-        'check_prose_attribution.py',
-        'test_prose_attribution.py',
-        'writing_a_module.md',
-        'writing_examples.md',
+    assert set(prose.TEACHING_EXAMPLES) == {
+        'tools/check_prose_attribution.py',
+        'tests/test_prose_attribution.py',
+        'docs/writing_a_module.md',
+        'docs/writing_examples.md',
     }
+    assert prose.TEACHING_EXAMPLES['docs/writing_a_module.md'] is not None
+    assert prose.TEACHING_EXAMPLES['docs/writing_examples.md'] is not None
+
+
+def test_a_guide_is_exempt_only_for_the_phrases_it_teaches() -> None:
+    """
+    **The exemption is per phrase, not per file.**
+
+    An unsupported claim added elsewhere in one of the authoring guides has to fail, or the two
+    documents that define the rule would be the only two exempt from it.
+    """
+    guide = prose.ROOT / 'docs' / 'writing_a_module.md'
+
+    taught = prose.exempt(guide, 'right on a scanner',
+                          'then `right on a scanner` widens one observation into a population')
+    untaught = prose.exempt(guide, 'the console refuses',
+                            'the file gets written and the console refuses it an hour later')
+
+    assert taught is True
+    assert untaught is False
+
+
+def test_a_file_that_merely_shares_a_name_is_not_exempt(tmp_path) -> None:
+    """A basename list would have let this through; a path list does not."""
+    impostor = tmp_path / 'docs' / 'writing_examples.md'
+    impostor.parent.mkdir(parents=True)
+    impostor.write_text('that is right on a scanner\n', encoding='utf-8')
+
+    blocking, _ = prose.scan([str(impostor)])
+
+    assert blocking, 'a file outside the repository inherited a teaching exemption'
 
 
 def test_the_repository_has_no_blocking_attribution_issues() -> None:
@@ -155,3 +197,58 @@ def test_the_repository_has_no_blocking_attribution_issues() -> None:
     blocking, _ = prose.scan([])
 
     assert not blocking, '\n\n'.join(blocking)
+
+
+# --------------------------------------------------------------------- reading files safely
+def test_a_notebook_that_will_not_parse_is_reported_rather_than_skipped(tmp_path) -> None:
+    """
+    **Fail closed.**
+
+    Silently skipping an unparseable notebook makes it indistinguishable from a clean one, which
+    is precisely the reading a lint must never offer.
+    """
+    broken = tmp_path / 'broken.ipynb'
+    broken.write_text('{"cells": [ this is not json', encoding='utf-8')
+
+    blocking, _ = prose.scan([str(broken)])
+
+    assert len(blocking) == 1
+    assert 'broken.ipynb' in blocking[0]
+    assert 'unreadable' in blocking[0]
+
+
+def test_a_cell_whose_source_is_one_string_is_read_as_lines(tmp_path) -> None:
+    """
+    nbformat permits ``source`` as a string as well as a list of them.
+
+    Iterating a string walks it character by character, so every line would be one character long
+    and nothing would ever match -- a false negative that looks exactly like a clean file.
+    """
+    notebook = {'cells': [{'cell_type': 'markdown', 'metadata': {},
+                           'source': 'intro\nthat is right on a scanner\n'}],
+                'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}
+    target = tmp_path / 'one_string.ipynb'
+    target.write_text(json.dumps(notebook), encoding='utf-8')
+
+    blocking, _ = prose.scan([str(target)])
+
+    assert len(blocking) == 1, 'a string source was not read as lines'
+
+
+def test_review_can_be_scoped_to_the_lines_a_branch_changed() -> None:
+    """
+    Review over the whole tree is thousands of lines, and nobody reads thousands of lines.
+
+    Scoping is what makes the second level usable at all, so the helper that does it is asserted
+    rather than assumed: it must return a mapping, and a notebook must map to ``None`` meaning
+    "all of its prose", because a notebook's diff is over JSON lines that have nothing to do with
+    the cell positions its prose is reported at.
+    """
+    touched = prose.changed_lines('HEAD')
+
+    assert touched is None or isinstance(touched, dict)
+    if touched:
+        for path, lines in touched.items():
+            assert lines is None or isinstance(lines, set)
+            if path.endswith('.ipynb'):
+                assert lines is None

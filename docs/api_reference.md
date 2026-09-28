@@ -588,8 +588,8 @@ from_scanner(manufacturer, model, gradient=None, *,
 
 Looks `max_grad`, `max_slew` and `B0` up in
 [PulseqSystems](https://github.com/nimpulseq/PulseqSystems) so they need not be copied off a spec
-sheet. The four site constants are **required keyword arguments** because no vendor database has
-them — they belong to the installation.
+sheet. The four site constants are **required keyword arguments** because `get_pulseq_specs`
+does not return them — they belong to the installation.
 
 ```python
 opts = sc.opts.from_scanner(

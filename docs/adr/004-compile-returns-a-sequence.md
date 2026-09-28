@@ -14,8 +14,7 @@ provenance, the definitions, and the questions you ask afterwards — `check()`,
 `kspace()`, `pns()`, `write()`. Findings were `Issue` values with a severity, and the contract was
 "hard failures raise, soft findings report".
 
-That split was inherited from a real problem. The reference implementation's `get_report()` did
-this:
+That split was inherited from a real problem. `pSeq_Base`'s `get_report()` did this:
 
 ```python
 ok, error_report = self.seq.check_timing()
@@ -33,7 +32,7 @@ renderable, writable into the provenance sidecar.
 **The answer was one indirection short.** A `Report` a caller can decline to read fails the same
 way `print` does. `out.check()` had to be *called*; `raise_if_failed()` had to be called after it.
 Neither happens in a notebook cell that ends with `out`. The failure mode was unchanged: a `.seq`
-gets written, the console refuses it an hour later, and the explanation is on an object nobody
+gets written, the problem surfaces only when someone tries to run it, and the explanation is on an object nobody
 looked at.
 
 Three further observations decided it.

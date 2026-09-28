@@ -42,10 +42,11 @@ def se_opts() -> Opts:
 
 @pytest.fixture(scope='module')
 def symmetric_opts(se_opts: Opts) -> Opts:
-    """The references' scanner: ``rf_dead_time == rf_ringdown_time``, so the plateau is symmetric.
+    """``rf_dead_time == rf_ringdown_time``, so the selection plateau is symmetric.
 
-    This is the configuration that makes ``writeTSE.m``'s two-identical-trapezoids design correct
-    **by accident**, which is why the balance is asserted on both.
+    ``writeTSE.m``, as examined, uses equal dead time and ringdown.  Under that configuration its
+    two-identical-trapezoids design leaves no residual, so the asymmetry this file is about is
+    not exercised there -- which is why the balance is asserted under both configurations.
     """
     return sc.opts.derate(se_opts, rf_ringdown_time=100e-6)
 
@@ -251,9 +252,10 @@ def test_two_identical_crushers_alternate_k_z_and_the_solve_does_not(se_opts: Op
 
 def test_a_symmetric_plateau_hides_it(symmetric_opts: Opts) -> None:
     """
-    ``writeTSE.m`` sets its dead time and ringdown to the same 100 us, so it gets this right by
-    accident.  Change either and the sequence is quietly wrong -- which is the argument for the
-    module doing the arithmetic rather than the protocol happening to.
+    ``writeTSE.m``, as examined, sets dead time and ringdown to the same 100 us.  Under that
+    configuration the plateau is symmetric and the residual tested here is zero.  Change either
+    independently and it is not -- which is the argument for the module doing the arithmetic
+    rather than for it depending on the protocol's configuration.
     """
     symmetric_opts = _any_b1(symmetric_opts)
     module = refocusing(symmetric_opts)

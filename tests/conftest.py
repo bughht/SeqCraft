@@ -48,7 +48,7 @@ def opts() -> Opts:
     Built with the ordinary ``pp.Opts`` constructor, because that is what seqcraft asks a user to
     do -- there is no scanner class to build it from.  The dead times are stated rather than
     defaulted for the reason the docs give: pypulseq defaults all three to zero, and a sequence
-    built on those compiles and validates cleanly before the console refuses it.
+    built on those compiles and validates cleanly here, so nothing reports them as unset.
     """
     return Opts(
         max_grad=40, grad_unit='mT/m',

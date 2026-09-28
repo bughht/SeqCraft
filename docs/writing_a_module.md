@@ -394,9 +394,14 @@ not allowed  The public PNS reference model was wrong.
 
 Both sentences describe the same measurement. Only the first says whose defect it is.
 
-`tools/check_prose_attribution.py` blocks a short list of specific formulations that have appeared
-here, and prints a longer list of words worth re-reading without failing on them. It is a floor,
-not a substitute for the questions below.
+`tools/check_prose_attribution.py` blocks the formulations that have appeared here, generalised to
+the families they belong to, and prints a longer list of words worth re-reading without failing on
+them. Run `--review` on a branch to see the second level for the lines you changed.
+
+**It is a floor, and a green run proves only what it checks.** The blocking list is the set of
+mistakes already made once; a new way of saying the same thing passes. The review level finds
+words, not claims — it cannot tell a supported "SeqCraft had a bug here" from an unsupported one.
+`salvage/` is audited once and then excluded. The questions below are the actual rule.
 
 ### The questions
 
@@ -406,11 +411,28 @@ For any sentence about behaviour, especially external behaviour:
 who exactly is the subject?
 what exact evidence supports it?
 is the sentence stronger than that evidence?
-am I describing observed behaviour, or assigning blame or intent?
+am I reporting an observed behaviour or defect, or inferring intent or motive?
 ```
 
-If the first three cannot be answered immediately, rewrite the sentence. If the fourth is "blame
-or intent", rewrite it regardless of how confident you are.
+If the first three cannot be answered immediately, rewrite the sentence. The fourth is the one
+with a categorical answer: **an observed defect is reportable, an inferred motive is not**, and no
+amount of confidence converts the second into the first.
+
+So all of these are fine, when the evidence is there:
+
+```text
+SeqCraft had a bug here: the spoiler area was computed from the wrong voxel size.
+pSeq_Base's get_report() printed its result and returned None.
+writeTSE.m, as examined, uses equal dead time and ringdown.
+```
+
+and none of these is, however sure you are:
+
+```text
+... gets it right by accident
+... avoids it only by
+... had no idea that
+```
 
 ### What that means in practice
 

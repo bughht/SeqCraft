@@ -32,8 +32,8 @@ module library exists, they move into it.
 
 Examples
 --------
-A 146 matrix at partial Fourier 0.75 with twofold acceleration -- the reference
-implementation's own numbers:
+A 146 matrix at partial Fourier 0.75 with twofold acceleration -- ``pSeq_Base``'s own
+numbers:
 
 >>> center_index(146)
 73

@@ -5,7 +5,7 @@ The two operations ``pp.Opts`` does not do for itself.
 ``Opts`` from another by hand silently loses sixteen fields to the process-global default, and
 :func:`from_scanner`, because the vendor amplitudes are data somebody else maintains -- and
 because a lookup that returned an ``Opts`` with pypulseq's zero dead times in it would be the
-shortest available path to a file the console refuses.
+shortest available path to a file nobody can run.
 """
 
 from __future__ import annotations

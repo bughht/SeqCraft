@@ -272,7 +272,7 @@ seq = sc.compile(tree, opts)          # opts is a pypulseq.Opts, not a seqcraft 
 
 That line either returns a legal `pypulseq.Sequence` or throws. There is nothing to check
 afterwards, which is the point: an object carrying findings is an object whose findings can go
-unread, and the failure mode is a `.seq` the console refuses an hour later.
+unread, and the failure mode is a `.seq` where the problem surfaces when someone tries to run the file rather than when it was built.
 
 ### It raises
 
