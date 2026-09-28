@@ -19,7 +19,7 @@ It went with the result wrapper. Nothing replaced it, so **a `.seq` written toda
 what produced it.** `seq.write(path)` is pypulseq's own writer and writes the `.seq` alone.
 
 That is a real regression and it is worth naming precisely, because the sidecar was solving a real
-problem. The reference implementation's archived files carried no b-value, no diffusion directions,
+problem. `pSeq_Base`'s archived files carried no b-value, no diffusion directions,
 no moment order, no acceleration and no partial-Fourier fraction anywhere in `[DEFINITIONS]`; those
 survived only as substrings of a filename built by a forty-line `seq_file_name += ...` ladder in a
 notebook cell. The parameter set that produced a given `.seq` was unrecoverable, and two files

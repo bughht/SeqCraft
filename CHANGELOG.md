@@ -1423,14 +1423,15 @@ assert refoc.time_to_center() == refoc().duration / 2               # exactly, t
 
 A refocusing pulse conjugates k, so between consecutive refocusing centres **each axis's gradient
 area before the echo equals its area after it**. Everything in the design is one consequence of
-that, and the two worth writing down are the two the references get wrong.
+that, and the two worth writing down are the two that a symmetric plateau hides.
 
 **"Equal-area crushers" means measured to the RF's *effective centre*, not the same trapezoid
 twice.** The selection plateau's own halves are unequal whenever the transmit dead time and the
 ringdown differ, or the pulse is asymmetric. On a 100 µs / 30 µs system that residual is 11.2 1/m —
 and since $k_n = -k_{n-1} + \delta$ it **alternates sign echo to echo**: the odd/even modulation an
-FSE is famous for, which reads as a hardware fault. `writeTSE.m` and `write_tse.py` avoid it only by
-setting their dead time and ringdown to the same 100 µs.
+FSE is famous for, which reads as a hardware fault. `writeTSE.m` and `write_tse.py`, as examined,
+set dead time and ringdown to the same 100 µs; under that configuration the residual is zero and
+the asymmetric case is not exercised.
 
 **Two fixes, because they fix different halves.** The plateau is *symmetrised* about the effective
 centre (`time_to_center() == duration / 2`, which is what puts the echo at the midpoint between two
@@ -1619,9 +1620,10 @@ spoiling problem — turning the extra spoiler axes off moves the image backgrou
 milliseconds, for two tissues — which validates the inversion, `time_to_center` and the TI
 placement in one measurement. It also found that **MRzero applies a pulse as an instantaneous
 rotation by its integrated envelope**, so an adiabatic inversion does not invert there at all: a
-10 ms hyperbolic secant arrives as 289°. `IRPrep` keeps `'hypsec'` as its default because that is
-right on a scanner; the examples pass `'block'` and say why, and `time_to_center` absorbs the
-4.5 ms difference without any other number in the timeline moving.
+10 ms hyperbolic secant arrives as 289°. `IRPrep` retains `'hypsec'` as its default, since the
+limitation is in the simulator's pulse model rather than in the realisation; the examples pass
+`'block'` and say why, and `time_to_center` absorbs the 4.5 ms difference without any other number
+in the timeline moving.
 
 ### One thing the compiler caught on its own
 
@@ -2046,7 +2048,7 @@ extra `seqcraft[systems]`). There is deliberately **no wrapper around the `Opts`
 build one the ordinary way. `from_scanner` takes `rf_dead_time`, `rf_ringdown_time`, `adc_dead_time`
 and `max_b1` as *required* keyword arguments, because a vendor database cannot supply them and
 pypulseq defaults the first three to **zero** — a sequence built on those compiles cleanly,
-validates cleanly, and is refused or silently mangled at the console.
+validates cleanly, so nothing in this package reports them as unset.
 
 `load_hardware` / `synthetic_hardware` moved to `sc.hardware`, out of `core`. `load_hardware` now
 returns just the model, with its provenance string on `.source`; the acoustic-resonance bands it

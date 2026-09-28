@@ -201,8 +201,9 @@ modulation an FSE is famous for.
 R1's `Refocusing` removes the assumption in two independent steps: it symmetrises the plateau
 about the measured effective centre
 (`t_plateau = 2*max(dead + centre, duration - centre + ringdown)`), and it then solves the two
-crusher amplitudes by integrating the emitted waveform. Its module docstring states the case
-directly: *"The pulseq and pypulseq TSE demos get it right by accident."*
+crusher amplitudes by integrating the emitted waveform. The distinction is the conditionality:
+the demo construction is exact under the configuration those demos use, and R1's does not depend
+on that configuration holding.
 
 By hand, for R3: the first-interval z balance requires
 `a_ex*(tExwd + dG)/2 == GSex.area/2`, which holds exactly; and the x balance requires

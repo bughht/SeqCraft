@@ -24,7 +24,7 @@ raise :class:`~seqcraft.errors.HardwareLimitError` and the third
 :class:`~seqcraft.errors.CompileError`.
 
 They live here rather than on what a compile returns because a check nobody has to call is a
-check nobody calls.  The reference implementation's ``get_report()`` printed and returned
+check nobody calls.  ``pSeq_Base``'s ``get_report()`` printed its result and returned
 ``None``; its successor returned an object with a ``check()`` method, which is the same failure
 one indirection later.
 """

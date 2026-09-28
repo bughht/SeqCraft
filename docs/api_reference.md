@@ -548,9 +548,9 @@ opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s', B
 ```
 
 > **Set the dead times.** pypulseq defaults `rf_dead_time`, `rf_ringdown_time` and `adc_dead_time` to
-> **zero**, which is wrong on every real scanner: the sequence compiles cleanly, validates cleanly,
-> and is refused or silently mangled at the console. They are properties of your *installation*, so
-> no preset and no vendor database can supply them.
+> **zero**. A sequence built on those zeros compiles cleanly and validates cleanly, so nothing
+> here will tell you they are unset. They are properties of your *installation* rather than of a
+> scanner model, and the PulseqSystems lookup does not carry them.
 
 The eight fields the compiler reads:
 
@@ -631,7 +631,7 @@ Lowering `adiabaticity` is not free — it is what B1 robustness is bought with 
 say so.
 
 `from_scanner` requires `max_b1` for the same reason it requires the dead times: it belongs to the
-transmit chain and the coil loading, so no vendor database can supply it. Take it from the
+transmit chain and the coil loading, so the PulseqSystems lookup does not carry it. Take it from the
 reference voltage the scanner reports, and keep a margin.
 
 ## 2.3 `sc.hardware` — PNS response models

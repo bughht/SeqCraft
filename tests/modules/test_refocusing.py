@@ -7,11 +7,12 @@ itself -- so a signed k at an ADC sample is a statement about physics rather tha
 module's algebra.  It is checked first, in five raw blocks, because an oracle nothing checks is an
 assumption.
 
-The second is the *failure mode*, asserted as its own test.  A module rewritten to be wrong in a new
-way still passes a test that only asserts the fix, and the wrong version here is not exotic: it is
-what every reference implementation writes -- the same crusher trapezoid twice.  Its symptom is a
-``k_z`` that **alternates sign echo to echo**, which is the odd/even modulation an FSE is famous for
-and which reads as a hardware fault rather than as a design error.
+The second is the *failure mode*, asserted as its own test.  A module rewritten to be wrong in a
+new way still passes a test that only asserts the fix, and the shape asserted here -- the same
+crusher trapezoid twice -- is the natural one to write: it is what the pulseq and pypulseq TSE
+demos emit, and it is exact whenever the RF centre sits at the plateau midpoint.  Where it does
+not, the symptom is a ``k_z`` that **alternates sign echo to echo**: the odd/even modulation an
+FSE is famous for, which reads as a hardware fault rather than as a design error.
 """
 
 from __future__ import annotations
@@ -100,8 +101,8 @@ def test_kspace_conjugates_at_a_refocusing_pulse(se_opts: Opts) -> None:
 
 
 # ------------------------------------------------------------------------------ the invariant
-#: Three pulses.  The first is what hides the bug -- a symmetric plateau makes the naive design
-#: correct -- and the second and third are what the references get wrong.
+#: Three pulses.  The first is the configuration under which the same-trapezoid-twice design is
+#: exact -- a symmetric plateau -- and the second and third are the ones that leave a residual.
 PULSES = {
     'symmetric sinc, dead != ringdown': ({}, 'se_opts'),
     'symmetric sinc, dead == ringdown': ({}, 'symmetric_opts'),

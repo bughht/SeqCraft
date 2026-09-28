@@ -29,9 +29,9 @@ rather than to the magnet, and no vendor database has them.
 
 That gap is the reason :func:`from_scanner` takes the four site constants as **required keyword
 arguments**.  pypulseq defaults ``rf_dead_time``, ``rf_ringdown_time`` and ``adc_dead_time`` to
-**zero** -- wrong on every real scanner -- and a sequence built on those defaults compiles cleanly,
-validates cleanly, and is refused or silently mangled at the console.  A lookup that returned an
-``Opts`` with three zeros in it would be the shortest path to that file.
+**zero**, and a sequence built on those defaults compiles cleanly and validates cleanly here --
+nothing in this package will tell you they are unset.  A lookup that returned an ``Opts`` with
+three zeros in it would be the shortest path to shipping one.
 
 Examples
 --------
@@ -215,9 +215,9 @@ def from_scanner(
         only for models that have more than one.  An unknown name raises with the alternatives
         listed.
     rf_dead_time, rf_ringdown_time, adc_dead_time
-        Seconds.  **Required, because the database cannot supply them and no correct default
-        exists.**  pypulseq defaults all three to zero, which is wrong on every real scanner and
-        produces a file the console refuses.
+        Seconds.  **Required, because the PulseqSystems lookup does not carry them and no
+        default would be right for an arbitrary installation.**  pypulseq defaults all three to
+        zero, which no check here will flag.
     max_b1
         Peak transmit amplitude to design against, in Hz -- ``sc.convert(20, 'uT', 'Hz')``.
         Required for the same reason: it belongs to the transmit chain and the loading, so no

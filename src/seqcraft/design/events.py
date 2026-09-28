@@ -406,10 +406,11 @@ def check_limits(
         by default.
 
         It becomes a hard constraint as soon as the sequence itself applies a rotation,
-        because a rotation can concentrate the whole vector onto one physical axis.  That is
-        the general form of a real bug in the reference implementation: it never normalised
-        its diffusion direction vectors, so ``[1, 1, 0]`` silently requested
-        ``sqrt(2) * Gmax`` and ``[1, 1, 1]`` requested ``sqrt(3) * Gmax``.
+        because a rotation can concentrate the whole vector onto one physical axis.  An
+        un-normalised direction vector is the usual way that happens: taken as given,
+        ``[1, 1, 0]`` asks for ``sqrt(2) * Gmax`` and ``[1, 1, 1]`` for ``sqrt(3) * Gmax``,
+        with nothing per-axis exceeded at any point.  Hence
+        :class:`~seqcraft.modules.DiffusionSEPrep` normalising what it is handed.
 
     Parameters
     ----------
