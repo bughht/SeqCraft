@@ -8,11 +8,6 @@
 ```text
 plans/
     current/
-        2026-09-28_pns_aware_physical_design_spike.md
-                                                Phase A: where PNS belongs in the physical-design
-                                                loop, on public synthetic hardware only.  The
-                                                `admissible` seam is kept; it needs a reason, not
-                                                a bool.  No public API
         2026-09-27_megre_flow_compensation_evidence.md
                                                 what first-moment nulling means across a
                                                 multi-echo train, measured before anything was

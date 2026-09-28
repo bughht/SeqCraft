@@ -37,7 +37,7 @@ _SKIP = {
     'convert(value, from_unit': 'a signature, not a call',
     'from_scanner(manufacturer': 'a signature, not a call',
     'sc.opts.from_scanner(': 'needs the `systems` extra and a real scanner name',
-    'load_hardware(': 'requires an external vendor ASC file',
+    "load_hardware('CimaX.asc')": 'needs a vendor .asc via $SEQCRAFT_ASC_DIR',
     'sc.plot_block(': 'needs matplotlib, and would open a figure',
     'seq.plot()': "pypulseq's own plotter; would open a figure",
     'lb.nodes[2].start += 40e-6': 'a table of idioms, not a script',
