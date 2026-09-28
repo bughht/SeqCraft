@@ -55,7 +55,7 @@ it yet"*, which is handed a fully realised candidate.
 
 So: is that seam the right place, and is it sufficient?
 
-## 2. Everything fails the synthetic model at ordinary limits
+## 2. Every family sits near the illustrative limit at ordinary limits
 
 At 40 mT/m / 150 T/m/s, against the corrected model, every family sits close to the example
 model's stimulation limit and several cross it. That is a statement about this illustrative model
@@ -224,7 +224,7 @@ handed context it does not currently have**, which is a larger change than this 
    convergent lever on the owned region, but it cannot say *"my region is already negligible and
    the peak is not mine"*, so an unreachable target exhausts the search and refuses misleadingly.
 3. **Can one evaluator serve `PhysicalDesignScope` and leaf-local designers?** Conceptually yes,
-   practically not yet: a leaf sees 36–69 % of its repetition. Not this spike's problem to solve.
+   practically not yet: a leaf sees 57–84 % of its repetition. Not this spike's problem to solve.
 4. **How should failure request redesign without post-hoc mutation?** It already does — rejecting
    a candidate returns to the search, which realises again at a longer window. Nothing is
    stretched. The gap is a *stopping* rule, not a redesign mechanism.
@@ -243,7 +243,8 @@ handed context it does not currently have**, which is a larger change than this 
    are the spoiler, the compensated winder and the spiral arm; all three were identified by hand
    from `t` and `components`. That identification is what a global failure would need automated.
 9. **Is new public API required yet?** **No.**
-10. **What should Phase B measure?** See §10.
+10. **What remains before this can drive production timing?** See §10 for what is undecided
+    and §11 for validating against real hardware.
 
 ## 9. Recommendation: small internal generalisation, no public API
 
@@ -293,7 +294,7 @@ That work does not belong in this repository, and its results do not either. The
 under:
 
 ```text
-the .asc stays outside the repository, read-only, resolved through $SEQCRAFT_ASC_DIR
+the .asc stays outside the repository, read-only, and its path is passed explicitly
 no raw coefficients, no mirror of the file, no perturbed "generic scanner" default
 no field name relied on by name unless it is identifiable from public pypulseq or SAFE source
 scanner-specific findings stay wherever the study was done, not here
