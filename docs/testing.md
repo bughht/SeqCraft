@@ -59,8 +59,8 @@ examples rather than doctests, so the former empty pytest invocation is not a ga
 ## Tiers outside pull-request CI
 
 Simulation and reconstruction notebooks require MRzeroCore, Torch, SigPy, and artifacts generated
-by the build notebooks. Vendor hardware checks additionally require site-confidential `.asc` files
-provided through `SEQCRAFT_ASC_DIR`. Those tiers run on a controlled lab or nightly environment,
+by the build notebooks. Vendor hardware checks additionally require a site's own `.asc` file,
+which the caller passes explicitly and which is never committed here. Those tiers run on a controlled lab or nightly environment,
 not on public GitHub-hosted runners.
 
 The public CI result therefore proves the compiler, the `Module` contract, documentation snippets,

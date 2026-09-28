@@ -19,7 +19,7 @@ Function       Basis                                                  Exact?
 ``sample``     uniform raster grid, **interpolated**                   **no**
 ``moments``    ``knots_of`` + ``pwl_moment`` over ``flatten(tree)``    **yes**
 ``kspace``     compiled, then ``calculate_kspacePP()``                 yes, at true ADC times
-``pns``        compiled, then ``calculate_pns()``                      pypulseq's validated SAFE
+``pns``        compiled, then ``calculate_pns()``                      model-based prediction
 ``b_value``    running integral of ``sample``'s raster grid            **no**, numerical
 =============  =====================================================  =========================
 
@@ -369,13 +369,18 @@ def pns(tree: LogicBlock, opts: Opts, hardware: SimpleNamespace) -> dict[str, An
     **The full return matters.**  When ``ok`` is ``False``, ``peak`` says how much but ``norm``
     and ``t`` say *where*, which is what you need to fix it.
 
-    This delegates rather than reimplementing.  ``dG/dt`` convolved with three exponentials is
-    about sixty lines and looks reachable from :func:`sample`, but it is a *safety* calculation,
-    pypulseq's implementation is validated against vendor behaviour, and a second one that can
-    silently drift is the wrong thing to own.
+    This delegates to pypulseq's SAFE implementation rather than reimplementing it.  ``dG/dt``
+    convolved with three exponentials is about sixty lines and looks reachable from
+    :func:`sample`, but it is a *safety* calculation, and a second implementation that can
+    disagree with the first is the wrong thing to own.
 
-    ``synthetic_hardware()`` is a conservative vendor-free stand-in for CI.  It is **not** a real
-    scanner and must never be used to clear a human scan.
+    **This is a model-based prediction, not a measurement**: what it returns depends on the
+    response model you hand it as much as on the waveform.  ``synthetic_hardware()`` is a
+    vendor-free **example** model whose parameters come from pypulseq's public
+    ``safe_example_hw()``.  It is not scanner-specific, no upper-bound or worst-case claim is
+    made for it, and it must never be used to clear a human scan.  A site model may give a
+    different absolute peak, a different dominant axis and a different ranking of one waveform
+    against another -- two response models disagreeing, not either one being wrong.
     """
     seq = compile_sequence(tree, opts)
     ok, pns_norm, components, t = seq.calculate_pns(hardware, do_plots=False)
