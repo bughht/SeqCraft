@@ -196,6 +196,64 @@ def test_the_synthetic_hardware_says_it_is_not_a_real_scanner() -> None:
     assert 'human scan' in repr(hw)
 
 
+#: Every SAFE field ``Sequence.calculate_pns`` reads, per axis.  Named here rather than
+#: discovered, because a field silently dropped upstream would make a `vars()` comparison pass
+#: while the model quietly lost a term.
+SAFE_FIELDS = ('tau1', 'tau2', 'tau3', 'a1', 'a2', 'a3',
+               'stim_limit', 'stim_thresh', 'g_scale')
+
+
+def test_the_synthetic_hardware_matches_the_public_model_it_names() -> None:
+    """
+    **It is pypulseq's ``safe_example_hw()``, field for field, and this is what keeps it so.**
+
+    The values were once a second hand-maintained copy of that table, and the copy had drifted:
+    ``y`` and ``z`` carried ``x``'s time constants and all three ``g_scale`` values differed from
+    upstream.  Nothing caught it, because nothing compared the two.
+
+    The comparison is against the returned object rather than against numbers written here, so
+    that upstream changing its example model shows up as a decision to make rather than as a
+    test that silently encodes the old values.
+    """
+    from pypulseq.utils.safe_pns_prediction import safe_example_hw
+
+    ours, upstream = sc.hardware.synthetic_hardware(), safe_example_hw()
+
+    for axis in ('x', 'y', 'z'):
+        mine, theirs = getattr(ours, axis), getattr(upstream, axis)
+        for field in SAFE_FIELDS:
+            assert getattr(mine, field) == getattr(theirs, field), f'{axis}.{field}'
+        # And nothing upstream reads that we have quietly dropped.
+        assert set(vars(theirs)) <= set(vars(mine)), f'{axis} is missing an upstream field'
+
+
+def test_the_synthetic_axes_are_not_all_the_same_axis() -> None:
+    """
+    The specific shape the drift had, pinned so it cannot come back unnoticed.
+
+    Every real response model gives each axis its own time constants, and so does the upstream
+    example.  A model that applies one axis's ``tau`` to all three is not a weaker approximation
+    of that -- it is a different model, and it was the reason an earlier PNS study read the
+    phase-encode axis as dominant.
+    """
+    hw = sc.hardware.synthetic_hardware()
+    taus = {axis: tuple(getattr(getattr(hw, axis), f) for f in ('tau1', 'tau2', 'tau3'))
+            for axis in ('x', 'y', 'z')}
+
+    assert len(set(taus.values())) == 3, f'axes share time constants: {taus}'
+
+
+def test_the_synthetic_model_is_a_copy_and_not_the_upstream_object() -> None:
+    """Mutating one must not reach the other, however upstream chooses to build it."""
+    from pypulseq.utils.safe_pns_prediction import safe_example_hw
+
+    ours = sc.hardware.synthetic_hardware()
+    ours.x.stim_limit = 999.0
+
+    assert safe_example_hw().x.stim_limit != 999.0
+    assert sc.hardware.synthetic_hardware().x.stim_limit != 999.0
+
+
 # ------------------------------------------------------------------------------------ b_value
 def _spin_echo(opts, te_s: float):
     """A bare slice-selective spin echo: excitation, refocusing, nothing else."""

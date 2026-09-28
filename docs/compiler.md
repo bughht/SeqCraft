@@ -191,32 +191,26 @@ questions — one about an instant, the other about a history, and a waveform ca
 instantaneous limit while accumulating a PNS response several times over threshold. Measure it with
 `sc.pns(tree, opts, hw)` against a real hardware model rather than reading it off the warnings.
 
-**And `synthetic_hardware()` cannot give you a verdict.** It exists so CI always has *a* model and it
-is deliberately conservative. On the DTI example it reports **2.44** while the site's own Cima.X
-descriptor reports **0.95** — the difference between "not runnable" and "passes with a thin margin".
-Acting on the synthetic number would mean derating the diffusion lobes and lengthening TE to fix a
-problem the scanner does not have. Load the vendor `.asc` with `sc.hardware.load_hardware()` and
-`$SEQCRAFT_ASC_DIR`; the file stays outside the repository, and only its name and sha256 are recorded.
+**And `synthetic_hardware()` cannot give you a verdict.** It exists so CI always has *a* model, and
+it is an *illustrative* one — pypulseq's public `safe_example_hw()` — not a bound and not
+representative of any particular scanner. An illustrative response model may differ from site
+hardware in the absolute peak, in which axis dominates, and in how it ranks one waveform against
+another, so a number from it is a smoke test that the calculation ran, not a verdict on whether a
+sequence is runnable. Load the vendor `.asc` with `sc.hardware.load_hardware()` and
+`$SEQCRAFT_ASC_DIR` for anything scanner-specific; the file stays outside the repository, and only
+its name and sha256 are recorded.
 
-Which term dominates is not guessable, it moves as the sequence changes, and **the two models rank
-the terms differently** — so this cannot be reasoned about, only measured. On the DTI example against
-the real descriptor:
+Which term dominates is not guessable and it moves as the sequence changes, so it cannot be
+reasoned about, only measured — and measured against the model you actually care about. Two things
+that catch people out, and both are properties of the response rather than of any one model:
 
-| change | peak PNS |
-|---|---|
-| slew 0.65, spoil on z, single shot | 0.95 |
-| slew 0.80 | 1.12 |
-| spoil on x, y **and** z | 1.50 |
-| density 0.25 instead of 1.0 (4× shorter readout) | 0.92 |
+**PNS is not proportional to how long a gradient plays.** It responds to how hard the gradients
+slew over the recent past, so shortening a readout several-fold can leave the peak almost
+unmoved, while spoiling on three axes instead of one can push it over.
 
-Sampling density moves it by 0.03 across a fourfold change in readout length, because PNS responds to
-how hard the gradients slew over the recent past rather than to how long the readout lasts. Spoiling
-on three axes instead of one is what pushes it over. The synthetic model ranked those two the other
-way round.
-
-Attribution is also not additive. With everything at 0.65 the peak sits inside the spiral; derate the
-readout alone and the peak *moves* onto the refocusing crushers, so the gradient that limits you
-changes as you tune. `origin(block_index)` at the peak time is how you find out which one it is.
+**Attribution is not additive.** Derate the one gradient you think is responsible and the peak may
+*move* onto a different one, so the gradient that limits you changes as you tune.
+`origin(block_index)` at the peak time is how you find out which one it is.
 
 One further caveat: a `.asc` also declares forbidden acoustic resonance bands, and nothing in seqcraft
 checks them. A spiral is a narrowband gradient waveform and can sit squarely inside one.

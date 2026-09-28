@@ -10,7 +10,8 @@ in the compile path reads it, which is why it is not on the ``Opts``:
 **No vendor hardware file is ever read from inside this repository.**  Siemens ``.asc`` gradient
 descriptors carry proprietary PNS/CNS response coefficients and forbidden acoustic-resonance
 bands.  :func:`load_hardware` resolves them through the ``SEQCRAFT_ASC_DIR`` environment variable
-only, and :func:`synthetic_hardware` provides a vendor-free stand-in so PNS checks can run in CI.
+only, and :func:`synthetic_hardware` provides a vendor-free **illustrative** stand-in, taken from
+pypulseq's public example model, so PNS checks can run in CI.
 
 Examples
 --------
@@ -49,18 +50,27 @@ class _SyntheticHardware(SimpleNamespace):
 
 def synthetic_hardware(name: str = 'synthetic_generic') -> SimpleNamespace:
     """
-    Return a vendor-free PNS hardware model for tests and CI.
+    Return a vendor-free PNS hardware model for tests, examples and CI.
 
-    Shaped like the output of ``pypulseq.utils.siemens.asc_to_hw`` so it can be handed
-    straight to ``Sequence.calculate_pns``, but the coefficients are the illustrative
-    values from pypulseq's own ``safe_pns_prediction.safe_example_hw()`` reference
-    implementation, not measurements from any scanner.
+    **Derived from pypulseq's public reference implementation**,
+    ``safe_pns_prediction.safe_example_hw()``, rather than copied from it: every SAFE field
+    ``Sequence.calculate_pns`` reads is taken from the upstream object, and this adds only
+    SeqCraft's own metadata on top.  A second, hand-maintained table of the same coefficients had
+    already drifted from the one it named -- ``y`` and ``z`` carried ``x``'s time constants and
+    all three ``g_scale`` values differed -- which is exactly the failure delegating removes.
+    :func:`tests.scanner.test_hardware` compares the two objects field by field so a future drift
+    cannot be silent.
 
     .. warning::
 
-       **This is not a real scanner.**  It is a conservative vendor-free stand-in so that PNS
-       checks can run without a vendor file, and it **must never be used to clear a sequence for
-       human scanning**.  Use :func:`load_hardware` with the site's own ``.asc`` for that.
+       **This is not a real scanner.**  It is an *illustrative example* response model, so that
+       PNS checks can run without a vendor file, and it **must never be used to clear a sequence
+       for human scanning**.  Use :func:`load_hardware` with the site's own ``.asc`` for that.
+
+       It is illustrative, not conservative: it is **not** an upper bound, a worst case or a
+       safety margin, and it is not representative of any particular scanner.  A real model may
+       differ from it in absolute peak, in which axis dominates, and in how it ranks one waveform
+       against another.
 
        The object carries ``is_synthetic=True`` and says so in its ``repr``, so the caveat travels
        with the model rather than living in the docstring of whatever happens to consume it.
@@ -70,36 +80,30 @@ def synthetic_hardware(name: str = 'synthetic_generic') -> SimpleNamespace:
     >>> hw = synthetic_hardware()
     >>> hw.name
     'synthetic_generic'
-    >>> hw.x.stim_limit
-    30.0
     >>> hw.is_synthetic
     True
+    >>> hw.x.stim_limit
+    30.0
     >>> hw
     <synthetic PNS hardware 'synthetic_generic' -- illustrative coefficients, NOT a real
     scanner; never use it to clear a human scan>
     """
+    from pypulseq.utils.safe_pns_prediction import safe_example_hw  # noqa: PLC0415
 
-    def axis(stim_limit: float, stim_thresh: float, g_scale: float) -> SimpleNamespace:
-        return SimpleNamespace(
-            tau1=0.20,
-            tau2=0.03,
-            tau3=3.0,
-            a1=0.4,
-            a2=0.10,
-            a3=0.50,
-            stim_limit=stim_limit,
-            stim_thresh=stim_thresh,
-            g_scale=g_scale,
-        )
-
+    # Copied per axis rather than handed over: `safe_example_hw` builds a fresh object today, but
+    # nothing promises that, and a caller mutating a shared upstream singleton would be a hard
+    # bug to find.
+    upstream = safe_example_hw()
+    axes = {
+        axis: SimpleNamespace(**vars(getattr(upstream, axis)))
+        for axis in ('x', 'y', 'z')
+    }
     return _SyntheticHardware(
         name=name,
         checkID=0,
-        x=axis(30.0, 24.0, 0.4),
-        y=axis(15.0, 12.0, 0.7),
-        z=axis(25.0, 20.0, 0.3),
         acoustic_resonances=(),
         is_synthetic=True,
+        **axes,
     )
 
 
@@ -115,7 +119,7 @@ def load_hardware(
     Parameters
     ----------
     filename
-        Bare file name, e.g. ``'CimaX.asc'``.  A path containing directory separators is
+        Bare file name, e.g. ``'scanner.asc'``.  A path containing directory separators is
         rejected: the whole point is that the location comes from the environment.
     cardiac_model
         Pass ``True`` for the CNS (cardiac) response model instead of PNS.

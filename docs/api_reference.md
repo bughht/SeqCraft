@@ -649,11 +649,15 @@ assert hw.is_synthetic is True
 assert 'NOT a real scanner' in repr(hw)
 ```
 
-> **`synthetic_hardware()` is not a real scanner.** It is a conservative stand-in so PNS checks can
-> run without a vendor file, shaped like `pypulseq.utils.siemens.asc_to_hw`'s output but carrying
-> the illustrative coefficients from pypulseq's own `safe_example_hw()`. It **must never be used to
-> clear a human scan.** On one DTI example it reported 2.44 where the site's own descriptor reported
-> 0.95 — the difference between "not runnable" and "passes with a thin margin".
+> **`synthetic_hardware()` is not a real scanner.** It is an *illustrative* stand-in so PNS checks
+> can run without a vendor file: shaped like `pypulseq.utils.siemens.asc_to_hw`'s output, and
+> derived field for field from pypulseq's public `safe_example_hw()` rather than kept as a second
+> copy of it. It **must never be used to clear a human scan.**
+>
+> It is illustrative, not conservative — not an upper bound, not a worst case, and not
+> representative of any particular scanner. A site model may differ from it in the absolute peak,
+> in which axis dominates, and in how it ranks one waveform against another, so use the site's own
+> descriptor for anything scanner-specific.
 >
 > The caveat travels with the object: `is_synthetic=True` and a `repr` that says so.
 
@@ -666,7 +670,7 @@ raises `ConfigurationError`. The returned model carries `.source`, a provenance 
 `'<filename> sha256:<12 hex>'` — the file *name* and hash only, never the contents.
 
 ```python
-hw = sc.hardware.load_hardware('CimaX.asc')             # needs $SEQCRAFT_ASC_DIR
+hw = sc.hardware.load_hardware('scanner.asc')           # needs $SEQCRAFT_ASC_DIR
 ```
 
 ---

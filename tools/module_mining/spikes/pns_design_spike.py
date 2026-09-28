@@ -100,7 +100,8 @@ def report_families():
         axis = 'xyz'[int(np.argmax(components))]
         print(f'{name:<27}{local:8.3f}{overall:8.3f}{overall / local:7.3f}'
               f'{at * 1e3:9.2f}ms{axis:>15}')
-    print('\n   nothing passes at 40 mT/m / 150 T/m/s: the synthetic model is conservative.')
+    print('\n   peaks are against the illustrative public example model, not a scanner.')
+    print('   the dominant axis is x almost everywhere: the spoiler, at the end of TR.')
 
 
 # ------------------------------------------------------------------ 2. which axis costs it
@@ -116,7 +117,8 @@ def report_axes():
         print(f'{str(axes):<16}{local:8.3f}{overall:8.3f}{at * 1e3:9.2f}ms'
               f'{components[0]:7.3f}{components[1]:7.3f}{components[2]:7.3f}'
               f'{kernel.ro.echo_spacing_s * 1e6:9.1f}')
-    print('\n   compensating x LOWERS the peak; compensating y triples it.')
+    print('\n   compensating x lowers the peak.  Compensating y leaves the LOCAL peak alone and')
+    print('   raises the GLOBAL one, so its cost is accumulation across repetitions, not one TR.')
 
 
 # ------------------------------------------------------------------ 3. what PNS costs in timing
@@ -139,7 +141,8 @@ def report_slew():
               f'{mark(peak(one(done(line=N // 4)), opts)[0]):>11}'
               f'{mark(peak(stack(done, opts), opts)[0]):>10}'
               f'{done.ro.echo_spacing_s * 1e6:11.1f}{done.tr_s * 1e3:10.2f}')
-    print('\n   * passes.  At 50 T/m/s the local design passes and the assembled scan does not.')
+    print('\n   * passes.  At 150 T/m/s the compensated repetition passes and its scan does not,')
+    print('   which is the local-pass / global-fail case -- here at the default slew rate.')
 
 
 # ------------------------------------------------------------------ 4. the admissible seam
@@ -227,7 +230,26 @@ def report_leaf():
         leaf, _, _ = peak(one(kernel.ro()))
         whole, _, _ = peak(one(kernel(line=N // 4)))
         print(f'{tag:<28}{leaf:15.3f}{whole:12.3f}{leaf / whole:12.2f}')
-    print('\n   a leaf sees a third to two thirds of what its repetition plays.')
+    print('\n   a leaf sees somewhat over half to five sixths of what its repetition plays.')
+
+
+def report_fill():
+    """Widening the owned region against spending the same time as TE fill."""
+    print('\n\n6. extra elapsed time as TE fill, rather than as a wider owned region\n')
+    print(f'{"flow_comp":>16}{"TE/ms":>9}{"local":>9}{"global":>9}{"peak at":>11}{"dominant":>10}')
+    for axes in ('y', ('x', 'y', 'z')):
+        for te in (None, 5.5e-3, 9e-3, 16e-3):
+            extra = {} if te is None else {'te_s': te}
+            kernel = gre(echoes=4, polarity='monopolar',
+                         flow_comp=sc.FlowCompensation(axis=axes), **extra)
+            local, _, _ = peak(one(kernel(line=N // 4)))
+            overall, at, components = peak(stack(kernel))
+            print(f'{str(axes):>16}{kernel.te_s * 1e3:9.3f}{local:9.3f}{overall:9.3f}'
+                  f'{at * 1e3:10.2f}ms{"xyz"[int(np.argmax(components))]:>10}')
+        print()
+    print('   fill moves the peak in BOTH directions depending on what is compensated -- worse on')
+    print('   y alone, better on x+y+z.  Widening the owned region (section 4) only ever reduced')
+    print('   what the owner contributes, so the two interventions are not interchangeable.')
 
 
 def main():
@@ -239,6 +261,7 @@ def main():
     report_slew()
     report_seam()
     report_leaf()
+    report_fill()
 
 
 if __name__ == '__main__':

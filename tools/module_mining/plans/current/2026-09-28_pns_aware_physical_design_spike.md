@@ -5,16 +5,46 @@
 > The two copies are identical today and there is nothing keeping them that way; see
 > [`../README.md`](../../README.md) for which one to edit.
 
-**Status:** evidence spike complete. **No production change is proposed and no public API is
-recommended yet.** The only code added is a re-runnable harness under
-`tools/module_mining/spikes/`, explicitly marked experimental.
-**Date:** 2026-09-28
+**Status:** evidence spike complete, then **corrected and re-run** — see §0. No public API is
+recommended yet. The code added is a re-runnable harness under `tools/module_mining/spikes/`,
+explicitly marked experimental.
+**Date:** 2026-09-28, revised the same day
 **Measured against:** `main` at `5bf1953` (PR #42 merged)
 **Hardware model:** `sc.hardware.synthetic_hardware()` only — pypulseq's own illustrative
 `safe_example_hw()` coefficients, public provenance, **Level 1**. Nothing here is a
 scanner-specific claim and nothing here clears anything for human scanning.
 
 ---
+
+## 0. The correction, and what it invalidated
+
+**This spike was first run against a `synthetic_hardware()` that did not match the public model
+its own docstring named.** `safe_example_hw()` gives each axis its own time constants;
+SeqCraft's copy had drifted so that `y` and `z` carried **`x`'s** `tau` and `a`, and all three
+`g_scale` values differed from upstream — `y` most of all. Nothing compared the two objects, so
+nothing caught it.
+
+`synthetic_hardware()` now derives from `safe_example_hw()` field by field, and a regression
+compares the two so the drift cannot return silently. Every table below is the **re-run against
+the corrected model**; the first-run numbers are quoted only where the difference is the point.
+
+What that invalidated, and what it did not:
+
+```text
+SUPERSEDED   the phase-encode winder dominating the LOCAL peak, and the size of that effect
+             the local/global ratio of 1.44
+             the particular slew rate at which local-pass / global-fail appeared
+             the ranking of the representative waveform families
+
+STANDS       PNS must evaluate a realised waveform, not a schedule
+             widening an owned region and adding TE fill are different interventions
+             an owner may or may not have a lever that moves the failing peak (RETRY vs STOP)
+             a leaf sees only part of its own repetition
+             feedback returns through design, never by stretching emitted events
+```
+
+The waveform-specific conclusions were the model-dependent ones and they did not survive. The
+architectural conclusions did not depend on the coefficients and did.
 
 ## 1. The question
 
@@ -27,56 +57,58 @@ So: is that seam the right place, and is it sufficient?
 
 ## 2. Everything fails the synthetic model at ordinary limits
 
-At 40 mT/m / 150 T/m/s, every representative waveform exceeds the synthetic model's stimulation
-limit. That is a property of the model being conservative, not of the sequences being wrong.
+At 40 mT/m / 150 T/m/s, against the corrected model, every family sits close to the example
+model's stimulation limit and several cross it. That is a statement about this illustrative model
+and this protocol, not about any scanner.
 
 | family | local | global | g/l | peak at | dominant axis |
 |---|---|---|---|---|---|
-| GRE 2D | 1.131 | 1.211 | 1.07 | 6.00 ms | x |
-| MEGRE monopolar plain | 1.132 | 1.211 | 1.07 | 13.50 ms | x |
-| MEGRE monopolar all-echo FC | 1.792 | 2.572 | **1.44** | 3.97 ms | **y** |
-| MEGRE bipolar plain | 1.168 | 1.213 | 1.04 | 13.50 ms | x |
-| MEGRE bipolar all-echo FC | 1.793 | 2.572 | **1.44** | 3.97 ms | **y** |
-| EPI 2D single shot | 1.968 | 1.968 | 1.00 | — | — |
-| Diffusion SE-EPI b=1000 | 2.085 | 2.085 | 1.00 | — | — |
+| GRE 2D | 0.978 | 0.984 | 1.01 | 6.00 ms | x |
+| MEGRE monopolar plain | 0.977 | 0.982 | 1.01 | 13.50 ms | x |
+| MEGRE monopolar all-echo FC | 0.976 | **1.083** | **1.11** | 14.78 ms | x |
+| MEGRE bipolar plain | 1.010 | 1.015 | 1.01 | 12.26 ms | x |
+| MEGRE bipolar all-echo FC | 1.008 | **1.084** | 1.08 | 16.96 ms | x |
+| EPI 2D single shot | 0.802 | 0.802 | 1.00 | 1.92 ms | y |
+| Diffusion SE-EPI b=1000 | 0.993 | 0.993 | 1.00 | 51.52 ms | x |
+
+**The dominant axis is `x` almost everywhere — the spoiler, at the end of TR** — not the
+phase-encode winder the first run reported.
 
 **Cost:** one repetition takes 7–50 ms to evaluate; a 64-line scan takes 0.22–0.42 s. A local
 check is affordable inside a design search. A global check is not.
 
 ## 3. The peak is not where the sequence work was
 
-The two all-echo compensated trains give **identical** peaks to three decimals despite completely
-different inter-echo waveforms. That is the finding, not a coincidence: the peak is at 3.97 ms,
-**before the first echo**, and it is on `y`.
-
 Decomposing by which axis was compensated, on a four-echo monopolar train:
 
 ```text
 flow_comp axes     local  global   peak at      x      y      z   ESP/us
-None               1.132   1.211    13.50ms  0.821  0.130  0.768   2500.0
-x                  1.126   1.131    14.22ms  0.821  0.060  0.768   2580.0
-y                  2.203   3.482     3.84ms  0.009  2.197  0.154   2500.0
-z                  1.125   1.127    14.53ms  0.821  0.038  0.768   2500.0
-('x', 'y')         2.296   3.490     3.84ms  0.648  2.197  0.154   2580.0
-('x', 'y', 'z')    1.792   2.572     3.97ms  0.399  1.646  0.587   2580.0
+None               0.977   0.982    13.50ms  0.718  0.059  0.660   2500.0
+x                  0.976   0.977    14.22ms  0.718  0.027  0.660   2580.0
+y                  0.976   1.316    14.15ms  0.718  0.024  0.660   2500.0
+z                  0.976   0.976    14.53ms  0.718  0.017  0.660   2500.0
+('x', 'y')         0.976   1.333    14.40ms  0.718  0.023  0.660   2580.0
+('x', 'y', 'z')    0.976   1.083    14.78ms  0.718  0.017  0.660   2580.0
 ```
 
-Three things follow, and none of them is what the sequence work of PR #42 would have predicted:
+Three things follow:
 
-- **Compensating `x` LOWERS the global peak**, 1.211 → 1.131. The inter-echo transitions that PR
-  #42 built — the whole cost of the all-echo contract — are *not* PNS-binding. Spreading the
-  fly-back's area over a longer, gentler waveform is easier on the nerve than the fly-back was.
-- **Compensating `y` is the entire PNS cost**, 1.211 → 3.482. The compensated phase-encode winder
-  is a two-lobe reversal that has to carry a first moment in the interval before the echo.
-- **Adding `z` to `('x','y')` reduces the peak**, 3.490 → 2.572, because the longer echo time it
-  forces lets every axis be realised more gently.
+- **Compensating `x` lowers the global peak**, 0.982 → 0.977. The inter-echo transitions PR #42
+  built — the whole cost of the all-echo contract — are not PNS-binding on this model. Spreading
+  the fly-back's area over a longer, gentler waveform is easier on the nerve than the fly-back was.
+  This is the one waveform-specific result that also held on the first, incorrect model.
+- **Compensating `y` costs nothing locally and 34 % globally**, 0.982 → 1.316, with the *local*
+  peak unmoved at 0.976. So its cost is **accumulation across repetitions**, not anything visible
+  in one TR — which is a different mechanism from the one the first run reported, and a more
+  interesting one.
+- **Adding `z` to `('x','y')` reduces the global peak**, 1.333 → 1.083, because the longer echo
+  time it forces lets every axis be realised more gently.
 
-The uncompensated baseline's peak is at the **end of TR on x and z** — the spoiler, not the
-imaging gradients.
+The baseline peak is at the **end of TR on x** — the spoiler, not the imaging gradients.
 
-This is the concrete justification for the brief's first principle. No function of nominal timing
-parameters predicts that compensating one axis lowers PNS while compensating another triples it.
-The evaluator has to see the realised waveform.
+This remains the concrete justification for the brief's first principle. No function of nominal
+timing parameters predicts that compensating one axis lowers the peak while compensating another
+raises it only in the assembled scan. The evaluator has to see the realised waveform.
 
 ## 4. PNS does change AUTO timing, materially
 
@@ -84,29 +116,33 @@ Holding `max_grad` at 40 mT/m and lowering the slew rate until each becomes admi
 
 ```text
  max_slew  plain local  plain glob   FC local   FC glob  FC ESP/us  FC TR/ms
-      150       1.132       1.211      1.792     2.572      2580.0     16.06
-      100       0.890*      0.928*     1.364     1.914      2670.0     16.78
-       70       0.676*      0.737*     1.017     1.431      2780.0     17.70
-       50       0.504*      0.594*     0.782*    1.066      2940.0     18.94
-       35       0.366*      0.469*     0.573*    0.781*     3480.0     21.55
-       25       0.274*      0.370*     0.445*    0.584*     3620.0     23.18
+      150       0.977*      0.982*     0.976*    1.083      2580.0     16.06
+      100       0.769*      0.771*     0.769*    0.829*     2670.0     16.78
+       70       0.585*      0.586*     0.585*    0.630*     2780.0     17.70
+       50       0.437*      0.438*     0.437*    0.472*     2940.0     18.94
+       35       0.319*      0.320*     0.319*    0.346*     3480.0     21.55
+       25       0.239*      0.240*     0.239*    0.262*     3620.0     23.18
 ```
 
-A plain train is admissible from 100 T/m/s; an all-echo compensated one needs 35. Getting there
-moves the compensated echo spacing from 2580 to 3480 µs — **+35 % over the amplifier-limited
-minimum**. PNS is the binding constraint over a wide and realistic range, not a rare edge case.
+Everything here is admissible from 100 T/m/s downward; the only failure is the assembled
+compensated scan at the default 150. Under this model PNS binds in a narrow band near the default
+rather than across a wide range — which is a weaker statement than the first run supported, and
+the one the corrected evidence actually carries.
 
-## 5. Local does not predict global
+## 5. Local and global are not the same question
 
-Ratios run from 1.00 (single-shot EPI and diffusion, where local *is* global) to **1.44** for the
-all-echo compensated trains. And there is a regime where the distinction bites:
+Ratios run from 1.00 (single-shot EPI and diffusion, where local *is* global) to **1.11** for the
+all-echo compensated trains. The regime where that matters is present at the default slew rate:
 
-> At `max_slew = 50 T/m/s`, the all-echo compensated repetition passes locally (0.782) and the
-> assembled 64-line scan fails (1.066).
+> At `max_slew = 150 T/m/s`, the all-echo compensated repetition passes locally (0.976) and the
+> assembled 64-line scan fails (1.083). Compensating `y` alone is a larger case: local 0.976,
+> global 1.316.
 
-So a locally PNS-admissible design family is **not** a globally admissible scan, exactly as the
-brief anticipated. Local admissibility is useful for finding a candidate family; it cannot be the
-acceptance criterion.
+So a locally PNS-admissible design family is **not** by itself a globally admissible scan. The
+narrow statement the evidence supports is: *local PNS feedback is useful during design, but it is
+not a proof about the assembled sequence unless composability is separately established.* How
+often the two disagree in practice is not something one illustrative model and one protocol can
+say.
 
 ## 6. The seam: the lever converges, the policy does not
 
@@ -120,37 +156,47 @@ candidate:
 ```text
    flow compensation
    window/us  region alone  whole candidate  peak in arm
-        1450         0.862            1.901         True
-        2000         0.665            1.896         True
-        3000         0.528            1.896         True
-        5000         0.350            1.896         True
-        9000         0.223            1.897         True
-       15000         0.135            1.897         True
+        1450         0.718            0.736         True
+        2000         0.554            0.735         True
+        3000         0.436            0.734         True
+        5000         0.283            0.734         True
+        9000         0.169            0.734         True
+       15000         0.101            0.734         True
 ```
 
-- **The region's own contribution falls monotonically**, 0.862 → 0.135, with flow compensation and
-  without it. Widening is a genuinely convergent lever *on what the designer owns*.
-- **The whole candidate does not move at all**, 1.901 → 1.897 over a twentyfold window increase,
+- **The region's own contribution falls monotonically**, 0.718 → 0.101, with flow compensation and
+  without it (0.225 → 0.026). Widening is a genuinely convergent lever *on what the designer owns*.
+- **The whole candidate does not move at all**, 0.736 → 0.734 over a tenfold window increase,
   because the peak is inside the spiral arm — which is `after`, and not the designer's to change.
+
+This is the **STOP** case, and it is the clearest one in the study: the owner's contribution
+collapses by a factor of seven and the number being tested does not move. A **RETRY** case is the
+complement — an owner whose region *is* the dominant contribution, where the same widening would
+move the whole candidate. Both shapes remain visible after the correction.
 
 So the AUTO search walks to its 4000-window ceiling and refuses with *"the requirement may still be
 realisable beyond 40.0 ms; if that is plausible here, raise the search ceiling"*. That advice is
 wrong: no window would ever have worked.
 
-**A distinction worth recording, because it nearly went the other way.** Requesting a longer echo
-time through `te_s=` is *not* the same operation, and it moves PNS the other way:
+**Widening the owned region and spending the same time as TE fill are different interventions**,
+and the corrected model makes the point more sharply than the first run did. An explicit `te_s`
+keeps the solved window and adds fill in front of it, and what that does to the global peak
+depends on what is being compensated:
 
-| TE / ms | winder total \|area\| 1/m | winder peak \|G\| kHz/m | local PNS |
-|---|---|---|---|
-| 3.764 | 534 | 595 | 2.203 |
-| 5.504 | 764 | 652 | 2.408 |
-| 9.004 | 1108 | 711 | 2.519 |
-| 16.004 | 1615 | 907 | 2.640 |
+| requested TE / ms | `flow_comp='y'` global | `flow_comp=('x','y','z')` global |
+|---|---|---|
+| shortest | 1.316 | 1.083 |
+| 5.504 | 1.327 | 1.038 |
+| 9.004 | 1.362 | 0.994 |
+| 16.004 | **1.380** | **1.002** |
 
-An explicit TE keeps the window and spends the extra time as fill, while the first moment the
-winder must cancel grows with the lever arm to the echo — so the same waveform duration has to
-carry more area, and PNS rises. **Widening the window and delaying the echo are opposite
-interventions**, and only the first is a convergent response to a PNS rejection.
+Fill makes the `y`-only case steadily **worse** and the three-axis case **better**, and nothing
+about the timing predicts which. Widening the owned region, by contrast, reduced the owner's
+contribution monotonically in every case tested.
+
+So the durable statement is not *"delaying is harmful"* — the first run's numbers said that and
+they came from the incorrect model. It is: **extra elapsed time alone is not a reliable response
+to a PNS failure, and widening the region the owner actually controls is.**
 
 ## 7. A leaf cannot use the same evaluator on the same terms
 
@@ -159,14 +205,14 @@ the first feasible — so a predicate would drop in structurally. But a leaf see
 
 ```text
 case                          readout alone  repetition  leaf / rep
-MEGRE mono plain                      0.786       1.132        0.69
-MEGRE mono all-echo FC                0.639       1.792        0.36
-MEGRE bipolar all-echo FC             0.967       1.793        0.54
+MEGRE mono plain                      0.688       0.977        0.70
+MEGRE mono all-echo FC                0.559       0.976        0.57
+MEGRE bipolar all-echo FC             0.846       1.008        0.84
 ```
 
-A leaf-local check would pass a readout whose repetition fails, by a factor of up to three. The
-excitation, the winder and the spoiler are all invisible to it — and the spoiler is the peak in
-the uncompensated case. **The same *conceptual* evaluator can serve both, but only if the leaf is
+A leaf-local check sees between 57 % and 84 % of what its repetition plays, so it would pass a
+readout whose repetition fails. The excitation, the winder and the spoiler are all invisible to
+it — and the spoiler is where the peak actually is. **The same *conceptual* evaluator can serve both, but only if the leaf is
 handed context it does not currently have**, which is a larger change than this spike justifies.
 
 ## 8. Answers to the ten questions
@@ -184,12 +230,14 @@ handed context it does not currently have**, which is a larger change than this 
    stretched. The gap is a *stopping* rule, not a redesign mechanism.
 5. **Deterministic and raster-stable?** Yes. The predicate filters candidates the existing raster
    walk produces; it adds no continuous search and no new quantisation.
-6. **Which becomes PNS-limited first?** Not a sequence family — an **axis**. The compensated
-   phase-encode winder, on any train that asks for `y` compensation. EPI and diffusion have the
-   highest absolute peaks (1.97, 2.09) but no repetition structure to accumulate.
-7. **How often does local-pass fail global?** Across the tested range, whenever the ratio exceeds
-   the headroom: 1.00 for single-shot, 1.07 for plain trains, **1.44** for compensated trains, with
-   a demonstrated regime (50 T/m/s) where local passes and global does not.
+6. **Which becomes PNS-limited first?** On this model, the **assembled scan** of an all-echo
+   compensated train — local 0.976, global 1.083 — and `flow_comp='y'` alone is worse globally
+   (1.316) while costing nothing locally. The baseline peak is the spoiler on `x`. Single-shot EPI
+   is the *lowest* of the seven families here (0.802), not the highest.
+7. **How often does local-pass fail global?** The ratio runs 1.00–1.11 across the families, and
+   the disagreement is real at the default slew rate. How often it matters in practice is not
+   something one illustrative model and one protocol can establish, and this record does not
+   claim it is common.
 8. **What provenance is needed?** The peak's **time** and **per-axis components**, which `sc.pns`
    already returns, plus the owning region — which nothing currently records. The three peaks here
    are the spoiler, the compensated winder and the spiral arm; all three were identified by hand
@@ -199,7 +247,11 @@ handed context it does not currently have**, which is a larger change than this 
 
 ## 9. Recommendation: small internal generalisation, no public API
 
-Keep `admissible` where it is and what it is. The one change the evidence justifies is that the
+**The first thing this spike produced was not an architecture change but a correction**, §0: the
+public example model had to be made to match the public source it named before any of the rest
+was worth reading. That is done, and a regression holds it.
+
+After that: keep `admissible` where it is and what it is. The one change the evidence justifies is that the
 predicate should be able to return **why**, not just a bool — enough for `design_scope` to stop
 when the owned region's contribution is already negligible and to refuse naming the region that
 actually drove the peak, instead of advising a longer search.
@@ -211,26 +263,44 @@ abstraction, and no compiler involvement.
 redesign loop driven by whole-sequence failure, or leaf-local PNS. The evidence does not yet say
 what those should look like.
 
+## 9a. Where the numbers in this record come from
+
+Every table is `tools/module_mining/spikes/pns_design_spike.py`, run against
+`synthetic_hardware()` **after** it was corrected to mirror `safe_example_hw()`. The claims are
+scoped to that illustrative public model, this protocol, and the realisation family this readout
+implements. They are not scanner truth, and the model is explicitly not an upper bound.
+
 ## 10. What remains undecided
 
 ```text
 the stopping rule            what "my region is already negligible" should mean numerically
 the global loop              whether local-admissible + a global recheck is a usable workflow, or
-                             whether the 1.44 ratio makes local admissibility not worth having
+                             whether a local/global gap of this size leaves local admissibility
+                             worth having at all
 leaf context                 what a leaf would have to be handed, and whether that is worth it
 the public spelling          nothing decided; no model may ever be implicit
 whether PNS belongs in AUTO  at all, or only as an opt-in that a caller asks for explicitly
 ```
 
-## 11. Phase B, when a private `.asc` is supplied
+## 11. Validating against real hardware
 
-Not started, and not to be started until this is reviewed. When it is: the file stays outside the
-repository, read-only, and the study reports **which SAFE fields are consumed, field-to-model
-mapping, per-axis versus global behaviour, normalised sensitivity and qualitative ranking** —
-never raw coefficients, never a perturbed "generic scanner", and never a field name whose public
-provenance is not established from pypulseq or SAFE source.
+Everything above is one **illustrative** response model, and §0 is the standing warning about
+trusting one: a model that is wrong in a way nobody compares against a reference will produce
+confident, wrong, waveform-specific conclusions. Before any of this drives production timing it
+should be checked against a real descriptor.
 
-The specific question Phase B should answer, given §3: **does a real model agree that the
-compensated phase-encode winder, rather than the readout train, is the PNS-dominant element?** If
-the synthetic and real models disagree on that ranking, the synthetic model is not usable even for
-algorithm development, and §9's recommendation would have to be revisited.
+That work does not belong in this repository, and its results do not either. The rules it runs
+under:
+
+```text
+the .asc stays outside the repository, read-only, resolved through $SEQCRAFT_ASC_DIR
+no raw coefficients, no mirror of the file, no perturbed "generic scanner" default
+no field name relied on by name unless it is identifiable from public pypulseq or SAFE source
+scanner-specific findings stay wherever the study was done, not here
+```
+
+What such a study can usefully return to a public record is **generic**: whether a conclusion is
+model-dependent or structural. The architectural findings in §6 and §7 are structural — they are
+about which gradients an owner controls — and should survive any response model. The
+waveform-specific ones in §2 and §3 are not, and §0 is what happens when that distinction is not
+made.
