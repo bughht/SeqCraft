@@ -7,10 +7,9 @@ constants per axis, a stimulation threshold, and the forbidden acoustic-resonanc
 in the compile path reads it, which is why it is not on the ``Opts``:
 :func:`seqcraft.analysis.pns` takes it as a third argument.
 
-**Nothing here bundles, discovers or implicitly locates a vendor hardware file.**  Siemens
-``.asc`` gradient descriptors carry proprietary PNS/CNS response coefficients and forbidden
-acoustic-resonance bands, so :func:`load_hardware` reads one only when a caller explicitly hands
-it a path -- an ordinary path, which seqcraft does not police -- and :func:`synthetic_hardware`
+**Nothing here bundles, discovers or implicitly locates a vendor hardware file.**  A site's
+``.asc`` gradient descriptor is its own to distribute or not, so :func:`load_hardware` reads one
+only when a caller explicitly hands it a path -- an ordinary path, which seqcraft does not police -- and :func:`synthetic_hardware`
 provides a vendor-free **illustrative** stand-in, taken from pypulseq's public example model, so
 PNS checks can run without any file at all.
 
@@ -125,7 +124,7 @@ def load_hardware(
     SimpleNamespace
         The response model, ready for :func:`seqcraft.pns`.  It carries ``.source``, a provenance
         string of the form ``'<basename> sha256:<12 hex>'`` -- the file's *name* and hash only,
-        never its directory and never its contents, both of which are vendor-confidential.
+        never its directory and never its contents.
 
     Raises
     ------
@@ -139,9 +138,10 @@ def load_hardware(
 
     Notes
     -----
-    Vendor descriptors carry proprietary response coefficients and forbidden acoustic-resonance
-    bands, so one is an **explicit opt-in**: nothing in seqcraft looks for a descriptor on its
-    own, and there is no configured location for them.  A caller who has one passes it; a caller
+    Using a descriptor is an **explicit opt-in**: nothing in seqcraft looks for one on its own,
+    and there is no configured location for them.  Whether a given file may be redistributed is
+    the site's question, not this package's, and keeping them out of the repository means it
+    never has to be answered here.  A caller who has one passes it; a caller
     who has not uses :func:`synthetic_hardware`, and can tell the two apart by reading their own
     code.
     """

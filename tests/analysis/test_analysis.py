@@ -247,15 +247,33 @@ def test_the_synthetic_axes_are_not_all_the_same_axis() -> None:
     assert len(set(taus.values())) == 3, f'axes share time constants: {taus}'
 
 
-def test_the_synthetic_model_is_a_copy_and_not_the_upstream_object() -> None:
-    """Mutating one must not reach the other, however upstream chooses to build it."""
-    from pypulseq.utils.safe_pns_prediction import safe_example_hw
+def test_the_synthetic_model_cannot_be_used_to_mutate_the_upstream_object(monkeypatch) -> None:
+    """
+    **A caller must not be able to reach upstream's object through ours.**
+
+    ``safe_example_hw()`` builds a fresh namespace on every call today, which makes this easy to
+    assert accidentally: compare two independent calls and they differ no matter what
+    :func:`synthetic_hardware` did, even if it returned upstream's object unchanged.  Nothing
+    promises that behaviour, so the test pins the contract instead of the coincidence -- upstream
+    is replaced by a function handing back **one** object every time, and the contract is that
+    ours is not it.
+    """
+    import pypulseq.utils.safe_pns_prediction as upstream_module
+
+    sentinel = upstream_module.safe_example_hw()
+    monkeypatch.setattr(upstream_module, 'safe_example_hw', lambda: sentinel)
 
     ours = sc.hardware.synthetic_hardware()
+
+    assert ours is not sentinel
+    for axis in ('x', 'y', 'z'):
+        assert getattr(ours, axis) is not getattr(sentinel, axis), f'{axis} is the same object'
+
+    before = sentinel.x.stim_limit
     ours.x.stim_limit = 999.0
 
-    assert safe_example_hw().x.stim_limit != 999.0
-    assert sc.hardware.synthetic_hardware().x.stim_limit != 999.0
+    assert sentinel.x.stim_limit == before
+    assert sc.hardware.synthetic_hardware().x.stim_limit == before
 
 
 # ------------------------------------------------------------------------- load_hardware
