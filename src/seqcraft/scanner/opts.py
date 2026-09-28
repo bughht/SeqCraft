@@ -224,7 +224,7 @@ def from_scanner(
         so ``get_pulseq_specs`` does not return it.  Take it from your own installation and keep
         a margin.
     **overrides
-        Any other ``Opts`` field -- ``adc_samples_limit`` (8192 is the common Siemens value), the
+        Any other ``Opts`` field -- ``adc_samples_limit`` (the examples here use 8192), the
         rasters, ``gamma`` for another nucleus.
 
     Returns

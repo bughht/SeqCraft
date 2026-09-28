@@ -15,7 +15,8 @@ name: <WorkingName>            # the boundary decision may still reject the clas
 
 capability:
   summary: >
-    One paragraph of physics.  No API nouns -- describe what the thing does on a scanner, not
+    One paragraph of physics.  No API nouns -- describe what the thing does to the
+    magnetisation, not
     what the class would be called.
   family: <readout|rf|preparation|encoding|kernel|imaging>
 

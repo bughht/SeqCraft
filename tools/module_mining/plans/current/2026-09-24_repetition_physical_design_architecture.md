@@ -876,26 +876,31 @@ the ownership are being settled here.
 
 ### The parameter interface, and what it is not
 
-A SAFE-style model needs a compact per-axis parameter set, not a confidential vendor file:
+A SAFE-style model needs a compact per-axis parameter set, not a whole vendor file:
 
 ```text
 per axis    tau1, tau2, tau3    a1, a2, a3    stim_limit    stim_thresh    g_scale
 ```
 
 The core model uses `tau1..3`, `a1..3`, `stim_limit` and `g_scale`; `stim_thresh` rides along
-because a vendor file carries it and a caller supplying parameters by hand will have it, not
+because a descriptor carries it and a caller supplying parameters by hand will have it, not
 because the model needs it.
 
-so an eventual interface can support either a **local importer** (parse the vendor file privately,
-keep only the compact parameters, never commit the file) or **user-supplied parameters directly**.
-Derived parameters are not automatically non-confidential; users remain responsible for their own
-vendor restrictions.
+So an eventual interface can support either an **importer** the caller points at a descriptor,
+keeping only the compact parameters, or **user-supplied parameters directly**. Seqcraft neither
+bundles, discovers nor implicitly locates such a file: a caller who has one supplies its path.
+It also makes no assumption about whether a descriptor or anything derived from it may be
+redistributed -- that is not a status this document can assign, and keeping the file outside the
+repository means the question does not arise here.
 
-Three modes, each labelled honestly:
+Three modes, each labelled for what it is:
 
 ```text
-no model              static conservative profiles; no scanner-specific number reported
-synthetic reference   development, CI and waveform comparison; NOT scanner-specific
+no model              no scanner-specific number reported.  If a design needs headroom, that
+                      belongs in a design profile, not in altered response coefficients
+example model         pypulseq's public safe_example_hw(): development, CI and waveform
+                      comparison.  Illustrative, NOT scanner-specific, and no upper-bound or
+                      worst-case claim is made for it
 user parameters       a scanner-specific estimate; still NOT a certification
 ```
 

@@ -141,7 +141,8 @@ class SaturationPrep(Module):
         The pulse.  **No defaults**; see the module docstring.  `bandwidth_hz` is the excited
         band's full width, and the module refuses a combination whose band reaches water.
     pulse
-        ``'gauss'`` (both references), ``'sinc'`` or ``'slr'``.  ``'block'`` is not offered.
+        ``'gauss'`` (what ``write_epi_se_rs.py`` and ``writeEpiSpinEchoRS.m``
+        use), ``'sinc'`` or ``'slr'``.  ``'block'`` is not offered.
     pulse_opts
         Forwarded to the chosen factory -- ``{'apodization': 0.42}`` for a gauss.  An unrecognised
         key raises, naming what this `pulse` accepts.

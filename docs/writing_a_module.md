@@ -379,7 +379,8 @@ was sufficient to conclude, are not docstring material; point at the example ins
 
 ## Naming what a claim is about
 
-**The grammatical subject of a defect claim must be the artifact for which the evidence exists.**
+**The grammatical subject of a defect, validation, correctness, historical or behavioural claim
+must be the artifact for which the evidence exists.**
 
 That is one rule, and it is the whole of this section. It is here because the repository has
 repeatedly got it wrong in the same direction — making an external project the subject of a
@@ -438,16 +439,21 @@ and none of these is, however sure you are:
 
 **Historical verbs are evidence claims.** `drifted`, `regressed`, `used to` and `later` assert a
 transition. Use them only when history shows it — `synthetic_hardware()` was said to have
-*drifted* from the model it named, and git showed the two differed in the commit that introduced
-it, so there had been nothing to drift from. `did not match` and `differed` claim only what was
+*drifted* from a model it turned out never to have matched — git showed the two differed in the
+commit that introduced it, so there had been nothing to drift from. `did not match` and `differed` claim only what was
 measured.
 
-**A local measurement is not a universal.** `every real scanner`, `no vendor database`, `every
-reference implementation` and `right on a scanner` all widen one observation into a claim about a
-population nobody examined. Say what the integration you actually use does.
+**A local measurement is not a universal.** Each of these widens one observation into a claim
+about a population nobody examined; say what the integration you actually use does.
 
-**Do not infer intent.** `by accident`, `avoids it only by`, `had no idea`. What is knowable is
-the configuration and its consequence:
+```text
+every real scanner
+no vendor database
+every reference implementation
+right on a scanner
+```
+
+**Do not infer intent.** What is knowable is the configuration and its consequence:
 
 ```text
 observation           writeTSE.m, as examined, sets dead time equal to ringdown
@@ -471,9 +477,31 @@ exact artifact and version  ->  observed behaviour  ->  measured consequence
 That is stronger than blame, because every step is checkable. Do not soften a seqcraft defect
 either: when the evidence is about this package, say so plainly.
 
+**A corpus observation is not automatically universal.** "All references" is a claim you may
+make only when the reference set is defined somewhere and complete for the scope you are claiming
+— and then say which set. The mining records define theirs; `every official Pulseq 3D reference`
+did not, and became `the non-selective implementations in the GRE3D reference set`.
+
+**Scanner and vendor population claims need evidence about that population.** Without it, describe
+the `Opts` you configured, the installation you tested, or the specific source you read. Each of
+these was one observation wearing a quantifier:
+
+```text
+wrong on every real scanner
+no vendor database has them
+right on a scanner
+```
+
+**`validated against X` has to say what was measured.** It is a claim about an experiment, not a
+reputation, and if you cannot name the experiment do not make it.
+
 **A private or site-specific source is evidence only for that study.** A comparison against one
 scanner's descriptor does not establish anything about scanners, vendors, or a public example
 model.
+
+**Precision, not politeness.** None of this is a reason to soften a criticism that the evidence
+supports, or to avoid saying plainly that seqcraft has a bug. A source-specific criticism with a
+named artifact is worth more than a vague one, and far more than none.
 
 ## What to assert in your tests
 

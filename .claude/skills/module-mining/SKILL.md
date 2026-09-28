@@ -540,5 +540,6 @@ evidence about how boundaries have been found, not a rule about what can be owne
 - Do not create a wrapper because a source sequence has a name.
 - Do not treat one reference implementation as unquestionable truth.
 - **Do not claim physical equivalence from source inspection alone.**
-- Verify the comparator before trusting it against a candidate. Its record so far is four wrong to
-  the candidates' zero; every one was caught by measuring something whose answer was already known.
+- Verify the comparator before trusting it against a candidate. It has produced false failures
+  where the candidate was correct, each caught by measuring something whose answer was already
+  known; `tests/module_mining/test_comparator.py` keeps one regression per incident.

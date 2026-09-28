@@ -68,64 +68,31 @@ SKIP_DIRS = {'.git', '.venv', '__pycache__', 'node_modules', 'salvage', 'seq', '
 
 SUFFIXES = {'.py', '.md', '.ipynb', '.rst', '.txt', '.toml', '.yaml', '.yml'}
 
-#: The teaching examples.  A guide is exempt for **one exact match inside one exact sentence**,
-#: not for a phrase anywhere in the file: ``docs/writing_a_module.md`` may write "by accident"
-#: where it is showing what the rule rejects, and nowhere else.
+#: The two authoring guides teach the rule by quoting what it rejects, so those quotations have to
+#: be allowed somewhere.  They are allowed **inside fenced code blocks, in these two files, and
+#: nowhere else** -- a structural rule rather than a list of sentences, so it does not rot the next
+#: time a paragraph is re-wrapped.  Ordinary prose in both guides is still checked, which is the
+#: property a per-file exemption would have thrown away.
 #:
-#: Keyed by repository-relative path -- not basename, or any future file sharing a name would
-#: inherit an exemption it was never granted.  ``None`` means the whole file, which only the
-#: checker and its own tests get, because they quote every pattern by construction.
-TEACHING_EXAMPLES: dict[str, None | tuple[tuple[str, str], ...]] = {
-    'tools/check_prose_attribution.py': None,
-    'tests/test_prose_attribution.py': None,
-    # (the blocked match, a distinctive part of the one sentence it may appear in)
-    'docs/writing_a_module.md': (
-        ('reference model was wrong', 'not allowed  the public pns reference model was wrong'),
-        ('every reference implementation', 'all widen one observation into a claim about a'),
-        ('right on a scanner', 'all widen one observation into a claim about a'),
-        ('right by accident', 'do not write          writetse.m gets it right by accident'),
-        ('right by accident', '... gets it right by accident ... avoids it only by'),
-        ('avoids it only by', 'do not infer intent.** `by accident`, `avoids it only by`'),
-        ('avoids it only by', '... avoids it only by'),
-        ('no vendor database', '`every real scanner`, `no vendor database`, `every reference'),
-        ('drifted from the model', 'was said to have *drifted* from the model it named'),
-    ),
-    'docs/writing_examples.md': (
-        ('wrong on every real scanner', "wrong on every real scanner        one integration's"),
-        ('right on a scanner', 'that is right on a scanner         a simulator limitation'),
-        ('right on a scanner', 'and *"hypsec is right on a scanner"* is'),
-        ('gets blamed on the scanner', 'gets blamed on the scanner         rhetoric'),
-        ('a scanner may use either', 'a scanner may use either           a convention question'),
-    ),
+#: The checker and its own tests are exempt wholesale: they quote every pattern by construction.
+TEACHING_FILES: dict[str, str] = {
+    'tools/check_prose_attribution.py': 'whole file',
+    'tests/test_prose_attribution.py': 'whole file',
+    'docs/writing_a_module.md': 'fenced blocks only',
+    'docs/writing_examples.md': 'fenced blocks only',
 }
 
 
-def _flat(text: str) -> str:
-    """Whitespace-collapsed and lowercased, so a phrase survives being re-wrapped."""
-    return ' '.join(text.lower().split())
-
-
-def exempt(path: Path, matched: str, window: str) -> bool:
-    """
-    Whether **this** match, in **this** sentence, is one the file is allowed to quote.
-
-    Both halves are needed.  Keying on the file alone would exempt every future unsupported claim
-    in the two guides; keying on the phrase alone would exempt the same phrase wherever it was
-    later reused, and would exempt an *unrelated* blocked phrase that happened to share a
-    two-line window with a teaching example.
-    """
+def exempt(path: Path, in_fence: bool) -> bool:
+    """Whether a hit here is a teaching example rather than a claim."""
     try:
         name = path.resolve().relative_to(ROOT).as_posix()
     except ValueError:
         return False
-    if name not in TEACHING_EXAMPLES:
+    rule = TEACHING_FILES.get(name)
+    if rule is None:
         return False
-    allowed = TEACHING_EXAMPLES[name]
-    if allowed is None:
-        return True
-    here = _flat(window)
-    return any(_flat(phrase) == _flat(matched) and _flat(context) in here
-               for phrase, context in allowed)
+    return rule == 'whole file' or in_fence
 
 
 BLOCKING: tuple[tuple[str, str, str], ...] = (
@@ -155,13 +122,21 @@ BLOCKING: tuple[tuple[str, str, str], ...] = (
     (r'(wrong|right) on (a|every real|every) scanner\b',
      'generalises a local observation to scanners in general',
      'say what was demonstrated, and on what'),
-    # Any article: "no vendor database can", "a vendor database cannot", "any vendor database".
-    # The claim is about the category either way, and the category was never examined.
-    (r'\b(a|an|any|no|every|the) (vendor|scanner) database\b',
-     'a claim about vendor databases as a category, which was not examined',
+    # The noun phrase is fine -- "this adapter reads a vendor database selected by the caller"
+    # says nothing about the category.  What is not fine is a claim about what such a database
+    # *can* or *does* hold, which is a claim about a population nobody examined.
+    (r'\b(a|an|any|no|every|the) (vendor|scanner) database\s+'
+     r'(can|cannot|can\'t|could|has|have|lacks?|knows?|supplies|supply|provides?|carries|'
+     r'contains?|returns?)\b',
+     'a coverage claim about vendor databases as a category, which was not examined',
      'name the lookup you actually use and say what it returns'),
-    (r'\bno (spec ?sheet|preset|catalogue|catalog)\b',
-     'a universal claim about sources that were not all examined',
+    # Same shape: "on no spec sheet" is a coverage claim; "no spec sheet was provided" is not.
+    (r'\b(on|in) no (spec ?sheet|preset|catalogue|catalog)\b',
+     'a coverage claim about sources that were not all examined',
+     'name the source you actually consulted'),
+    (r'\bno (spec ?sheet|preset|catalogue|catalog)\s+'
+     r'(can|could|has|have|lists?|carries|contains?|supplies|supply|provides?)\b',
+     'a coverage claim about sources that were not all examined',
      'name the source you actually consulted'),
 
     # --- asserted behaviour of something not observed here -------------------------------------
@@ -212,8 +187,8 @@ class Unreadable(Exception):
         super().__init__(f'{path}: {why}')
 
 
-def prose_of(path: Path) -> Iterator[tuple[int, str]]:
-    """Yield ``(line number, text)`` of the prose in one file.
+def prose_of(path: Path) -> Iterator[tuple[int, str, bool]]:
+    """Yield ``(line number, text, inside a fenced block)`` for the prose in one file.
 
     A notebook is JSON, so its prose is inside cell sources; scanning the raw file would both
     miss escaped newlines and match on base64 image payloads.
@@ -223,7 +198,12 @@ def prose_of(path: Path) -> Iterator[tuple[int, str]]:
     except (UnicodeDecodeError, OSError) as why:
         raise Unreadable(path, str(why)) from why
     if path.suffix != '.ipynb':
-        yield from enumerate(text.splitlines(), start=1)
+        fenced = False
+        for number, line in enumerate(text.splitlines(), start=1):
+            if line.lstrip().startswith('```'):
+                fenced = not fenced
+                continue
+            yield number, line, fenced
         return
     try:
         notebook = json.loads(text)
@@ -238,7 +218,7 @@ def prose_of(path: Path) -> Iterator[tuple[int, str]]:
         for offset, line in enumerate(source):
             # Cell and line, which is what a reader can act on -- notebook files have no useful
             # line numbers of their own.
-            yield (index + 1) * 100000 + offset + 1, line.rstrip('\n')
+            yield (index + 1) * 100000 + offset + 1, line.rstrip('\n'), False
 
 
 def files(paths: list[str]) -> Iterator[Path]:
@@ -281,14 +261,13 @@ def scan(paths: list[str]) -> tuple[list[str], list[str]]:
         except Unreadable as why:
             blocking.append(f'{why}\n    ^ unreadable, so it cannot be checked -- failing closed')
             continue
-        for index, (line, text) in enumerate(lines):
+        for index, (line, text, fenced) in enumerate(lines):
             nxt = lines[index + 1][1] if index + 1 < len(lines) else ''
             window = f'{text} {nxt}'
             for pattern, why, fix in checks:
                 found = pattern.search(window)
                 # Only when it *starts* on this line, so a wrapped phrase is reported once.
-                if found and found.start() <= len(text) and not exempt(path, found.group(0),
-                                                                          window):
+                if found and found.start() <= len(text) and not exempt(path, fenced):
                     blocking.append(
                         f'{where(path, line)}\n'
                         f'    {window.strip()[:130]}\n'

@@ -90,6 +90,12 @@ MUST_PASS = [
     'In the observed run the block was refused with an exact error naming the block type.',
     # The module-mining records define R1/R2/R3 as their reference set, so this is named.
     'The two worth writing down are where the references disagree about the crusher.',
+    # --- the noun phrase is not the problem; the coverage claim is ---------------------------
+    'This adapter reads a vendor database selected by the caller.',
+    'The vendor database URL is configurable.',
+    'A scanner database supplied by the site was used for this comparison.',
+    'No spec sheet was provided for this installation, so the values were measured.',
+    'The preset was taken from a vendor database the site maintains.',
 ]
 
 
@@ -163,42 +169,48 @@ def test_the_exemption_list_is_exactly_these_four_paths() -> None:
     """
     **The one way this checker can be defeated is by adding entries here**, so it is pinned.
 
-    They are repository-relative paths rather than basenames: a basename would hand the same
-    exemption to any future file that happened to share a name.  The two guides carry an explicit
-    phrase list rather than a blanket pass, so prose elsewhere in them is still checked.
+    Repository-relative paths rather than basenames, or any future file sharing a name would
+    inherit the exemption.  And the two guides are exempt only inside fenced blocks, so ordinary
+    prose in the documents that define the rule is still held to it.
     """
-    assert set(prose.TEACHING_EXAMPLES) == {
-        'tools/check_prose_attribution.py',
-        'tests/test_prose_attribution.py',
-        'docs/writing_a_module.md',
-        'docs/writing_examples.md',
+    assert prose.TEACHING_FILES == {
+        'tools/check_prose_attribution.py': 'whole file',
+        'tests/test_prose_attribution.py': 'whole file',
+        'docs/writing_a_module.md': 'fenced blocks only',
+        'docs/writing_examples.md': 'fenced blocks only',
     }
-    assert prose.TEACHING_EXAMPLES['docs/writing_a_module.md'] is not None
-    assert prose.TEACHING_EXAMPLES['docs/writing_examples.md'] is not None
 
 
-def test_a_guide_is_exempt_only_for_the_phrases_it_teaches() -> None:
+def test_a_guide_is_exempt_inside_a_fence_and_not_outside_one() -> None:
     """
-    **The exemption is per phrase, not per file.**
+    **Structural rather than a list of sentences**, so re-wrapping a paragraph cannot silently
+    widen or break the exemption.
 
-    An unsupported claim added elsewhere in one of the authoring guides has to fail, or the two
-    documents that define the rule would be the only two exempt from it.
+    An earlier attempt matched the surrounding text, which meant each teaching example had to be
+    quoted twice -- once in the guide and once in the checker -- and drifted the first time a line
+    moved.
     """
     guide = prose.ROOT / 'docs' / 'writing_a_module.md'
-    teaching = ('`every reference implementation` and `right on a scanner` all widen one '
-                'observation into a claim about a population nobody examined')
 
-    # The phrase, in the sentence it is taught in.
-    assert prose.exempt(guide, 'right on a scanner', teaching) is True
-    # The same phrase, reused somewhere else in the same guide.
-    assert prose.exempt(guide, 'right on a scanner',
-                        'hypsec is the default because that is right on a scanner') is False
-    # A *different* blocked phrase sharing a window with a teaching example must not ride along.
-    assert prose.exempt(guide, 'a vendor database',
-                        teaching + ' and a vendor database cannot supply them') is False
-    # And one the guide never teaches.
-    assert prose.exempt(guide, 'the console refuses',
-                        'the file gets written and the console refuses it an hour later') is False
+    assert prose.exempt(guide, in_fence=True) is True
+    assert prose.exempt(guide, in_fence=False) is False
+    # The checker's own files quote every pattern by construction, fenced or not.
+    assert prose.exempt(prose.ROOT / 'tests' / 'test_prose_attribution.py', in_fence=False) is True
+    # Anything else is checked wherever the text sits.
+    assert prose.exempt(prose.ROOT / 'README.md', in_fence=True) is False
+
+
+def test_an_unsupported_claim_in_a_guide_outside_a_fence_still_fails(tmp_path) -> None:
+    """The documents that define the rule are not the two documents exempt from it."""
+    guide = prose.ROOT / 'docs' / 'writing_a_module.md'
+    original = guide.read_text(encoding='utf-8')
+    try:
+        guide.write_text(original + '\n\nIt is right on a scanner, which settles it.\n',
+                         encoding='utf-8')
+        blocking, _ = prose.scan([str(guide)])
+        assert blocking, 'prose outside a fence in the guide was not checked'
+    finally:
+        guide.write_text(original, encoding='utf-8')
 
 
 def test_a_file_that_merely_shares_a_name_is_not_exempt(tmp_path) -> None:

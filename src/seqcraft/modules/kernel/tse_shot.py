@@ -136,7 +136,8 @@ class TSEShot(Module):
         Receiver bandwidth per pixel.
     partial_fourier
         Readout partial Fourier, as :class:`~seqcraft.modules.CartesianLine` takes it.  A long
-        train with `partial_fourier` below 1 and one shot is what a vendor calls HASTE.
+        train with `partial_fourier` below 1 and one shot is the configuration commonly called
+        HASTE.
     excitation_duration_s, refocus_duration_s
         Pulse durations.  The refocusing default is longer than the excitation's because a 180
         needs twice a 90's peak B1 at the same shape.

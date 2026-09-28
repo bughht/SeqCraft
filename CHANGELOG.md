@@ -826,7 +826,7 @@ a physical quantity rather than a `slab_selective=True` flag, mirroring `Excitat
 
 | | |
 |---|---|
-| `None` | non-selective, as every official Pulseq 3D reference is. The z axis carries a partition encode and nothing else |
+| `None` | non-selective, as `writeGradientEcho3D.m` and `write_3Dt1_mprage.py` are. The z axis carries a partition encode and nothing else |
 | a thickness | slab-selective. The rephasing the slab implies and the partition encoding are two moments on **one axis in one window**, solved as `A_z(p) = A_slab + A_partition(p)` and realised as a single gradient |
 
 Played in sequence those two cost two windows of echo time; `fmrifrey/lps` does exactly that and
@@ -922,7 +922,7 @@ half-open convention, because 0.5 is not degenerate here: it is a sequence famil
 
 **The centre sample is not the ADC midpoint.** A full spoke with an even matrix has its centre one
 sample past the middle, `-32Δk … +31Δk`, which is `PhaseEncode`'s `matrix // 2` convention and the
-official reference's; a centre-out spoke has it at sample zero. `center_sample`,
+`write_radial_gre.py`'s; a centre-out spoke has it at sample zero. `center_sample`,
 `time_to_center()`, `dk_per_m`, `k_first_per_m`, `k_last_per_m` and `k_max_per_m` are the module's
 answers. They exist because of what the alternative looks like: OpenMRF's radial readout compiles
 a probe sequence and reads its trajectory back to discover where its own centre sample landed.
@@ -953,7 +953,7 @@ two list comprehensions over one readout instance. It is **build and trajectory 
 only**. A radial image needs a non-Cartesian reconstruction and the example suite has none to
 reuse, so writing one to complete a `01`/`02` pair would be new reconstruction infrastructure
 justified by a directory listing; the geometric claims are measured on the compiled trajectory
-instead, and the agreement with the official reference above is the stronger evidence anyway.
+instead, and the agreement with `write_radial_gre.py` above is the stronger evidence anyway.
 
 ## Unreleased — a turbo spin echo, split where the information is
 

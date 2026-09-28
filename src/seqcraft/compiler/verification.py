@@ -199,7 +199,8 @@ def check_event_sizes(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] = 
 
     The limit is the vendor interpreter's, not the amplifier's, so it has to be set from the
     installation: :func:`seqcraft.scanner.opts.from_scanner` takes ``adc_samples_limit=`` for
-    exactly this, and 8192 is the common Siemens value.  A readout longer than one event's worth
+    exactly this, and the examples in this repository use 8192.  A readout longer than one
+    event's worth
     has to be split into several ADCs, at the cost of ``adc_dead_time`` between them.
 
     Raises

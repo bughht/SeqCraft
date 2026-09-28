@@ -8,7 +8,7 @@ The z axis
 ----------
 On x and y a 3D repetition is a 2D one.  On z it is not, and there are two cases:
 
-**Non-selective excitation** -- what every official Pulseq 3D reference does
+**Non-selective excitation** -- what ``writeGradientEcho3D.m`` and ``write_3Dt1_mprage.py`` do
 (``writeGradientEcho3D.m``, the MPRAGE variants, ``write_3Dt1_mprage.py``, all block pulses).  The
 z axis carries a partition encode and nothing else.
 
@@ -134,7 +134,8 @@ class GRE3DTR(Module):
     matrix
         ``(nx, ny, nz)`` -- readout samples, phase-encode lines, partitions.
     slab_thickness_mm
-        ``None`` excites non-selectively, which is what every official Pulseq 3D reference does.
+        ``None`` excites non-selectively, as ``writeGradientEcho3D.m`` and
+        ``write_3Dt1_mprage.py`` do.
         A thickness excites a slab and **selects the selective path**, where the rephasing it
         implies is solved together with the partition encoding.
 
@@ -155,10 +156,10 @@ class GRE3DTR(Module):
         **excitation mode choose**: ``'sinc'`` for a slab, and ``'block'`` when there is no slab.
 
         That second half matters.  A non-selective excitation with a shaped pulse is the worst of
-        both -- it spends a soft pulse's duration and selects nothing -- and every official Pulseq
-        3D reference uses a hard block pulse for exactly this reason.  An advanced caller who
-        wants a shaped but spatially non-selective pulse, for a spectrally selective excitation
-        say, can still ask for one here.
+        both -- it spends a soft pulse's duration and selects nothing -- and the non-selective
+        implementations in the GRE3D reference set use a hard block pulse for exactly this
+        reason.  An advanced caller who wants a shaped but spatially non-selective pulse, for a
+        spectrally selective excitation say, can still ask for one here.
     rf_duration_s, rf_time_bw_product
         Forwarded to :class:`~seqcraft.modules.Excitation`.  ``None`` defers to its default --
         **a number here would be a second default that can drift from the first** -- except for a

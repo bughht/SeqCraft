@@ -130,8 +130,8 @@ a scanner may use either           a convention question, answered for a populat
 
 Each has a version that says what was actually shown. A simulator limitation is a fact about the
 simulator: *"MRzero applies a pulse as an instantaneous rotation by its integrated envelope, so a
-10 ms hyperbolic secant arrives as 289°"* is checkable, and *"hypsec is right on a scanner"* is
-not. A sign convention is a property of the pipeline in hand, so say that it must be established
+10 ms hyperbolic secant arrives as 289°"* is checkable; a claim about what the realisation is
+correct for in general is not. A sign convention is a property of the pipeline in hand, so say that it must be established
 for the acquisition and reconstruction being used.
 
 `tools/check_prose_attribution.py` reads notebook cells as well as source and documentation, so

@@ -116,7 +116,8 @@ def in_block_delay(p: PlacedEvent, block_start: float, opts: Opts) -> float:
     a sequence that may run for minutes, so by the last TR the float resolution is coarser than a
     picosecond and ``p.start - block_start`` drifts -- pypulseq then reports an RF delay of
     ``129.9999999986us`` and rejects the block.  And pulseq requires each event's delay to sit on
-    its own raster -- 1 us for RF, 100 ns for ADC and 10 us for gradients on Siemens, whatever
+    its own raster -- the ``rf_raster_time``, ``adc_raster_time`` and ``grad_raster_time`` the
+    ``Opts`` carries, whatever
     the scanner reports elsewhere.  Subtracting in integer ticks and then snapping satisfies both.
 
     Time policy rather than a stage: legalization needs it to delay a gradient that passes
