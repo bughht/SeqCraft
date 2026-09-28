@@ -68,38 +68,52 @@ SKIP_DIRS = {'.git', '.venv', '__pycache__', 'node_modules', 'salvage', 'seq', '
 
 SUFFIXES = {'.py', '.md', '.ipynb', '.rst', '.txt', '.toml', '.yaml', '.yml'}
 
-#: The teaching examples: repository-relative **paths**, each with the exact phrases that file is
-#: allowed to quote.  Not basenames -- ``some/other/writing_examples.md`` would silently inherit
-#: an exemption it was never granted -- and not whole files, so prose elsewhere in the two guides
-#: is still checked.  A phrase not listed here still fails inside these files.
+#: The teaching examples.  A guide is exempt for **one exact match inside one exact sentence**,
+#: not for a phrase anywhere in the file: ``docs/writing_a_module.md`` may write "by accident"
+#: where it is showing what the rule rejects, and nowhere else.
 #:
-#: ``tools/check_prose_attribution.py`` and its test quote every pattern by construction, so they
-#: are exempt wholesale; that is what ``None`` means.
-TEACHING_EXAMPLES: dict[str, frozenset[str] | None] = {
+#: Keyed by repository-relative path -- not basename, or any future file sharing a name would
+#: inherit an exemption it was never granted.  ``None`` means the whole file, which only the
+#: checker and its own tests get, because they quote every pattern by construction.
+TEACHING_EXAMPLES: dict[str, None | tuple[tuple[str, str], ...]] = {
     'tools/check_prose_attribution.py': None,
     'tests/test_prose_attribution.py': None,
-    'docs/writing_a_module.md': frozenset({
-        'The public PNS reference model was wrong.',
-        'every reference implementation',
-        'right on a scanner',
-        'by accident',
-        'avoids it only by',
-        'no vendor database',
-        'writeTSE.m gets it right by accident',
-        'drifted',
-    }),
-    'docs/writing_examples.md': frozenset({
-        'wrong on every real scanner',
-        'that is right on a scanner',
-        'gets blamed on the scanner',
-        'a scanner may use either',
-        'hypsec is right on a scanner',
-    }),
+    # (the blocked match, a distinctive part of the one sentence it may appear in)
+    'docs/writing_a_module.md': (
+        ('reference model was wrong', 'not allowed  the public pns reference model was wrong'),
+        ('every reference implementation', 'all widen one observation into a claim about a'),
+        ('right on a scanner', 'all widen one observation into a claim about a'),
+        ('right by accident', 'do not write          writetse.m gets it right by accident'),
+        ('right by accident', '... gets it right by accident ... avoids it only by'),
+        ('avoids it only by', 'do not infer intent.** `by accident`, `avoids it only by`'),
+        ('avoids it only by', '... avoids it only by'),
+        ('no vendor database', '`every real scanner`, `no vendor database`, `every reference'),
+        ('drifted from the model', 'was said to have *drifted* from the model it named'),
+    ),
+    'docs/writing_examples.md': (
+        ('wrong on every real scanner', "wrong on every real scanner        one integration's"),
+        ('right on a scanner', 'that is right on a scanner         a simulator limitation'),
+        ('right on a scanner', 'and *"hypsec is right on a scanner"* is'),
+        ('gets blamed on the scanner', 'gets blamed on the scanner         rhetoric'),
+        ('a scanner may use either', 'a scanner may use either           a convention question'),
+    ),
 }
 
 
-def exempt(path: Path, matched: str, line_text: str) -> bool:
-    """Whether this hit is one of the phrases `path` is allowed to quote as an example."""
+def _flat(text: str) -> str:
+    """Whitespace-collapsed and lowercased, so a phrase survives being re-wrapped."""
+    return ' '.join(text.lower().split())
+
+
+def exempt(path: Path, matched: str, window: str) -> bool:
+    """
+    Whether **this** match, in **this** sentence, is one the file is allowed to quote.
+
+    Both halves are needed.  Keying on the file alone would exempt every future unsupported claim
+    in the two guides; keying on the phrase alone would exempt the same phrase wherever it was
+    later reused, and would exempt an *unrelated* blocked phrase that happened to share a
+    two-line window with a teaching example.
+    """
     try:
         name = path.resolve().relative_to(ROOT).as_posix()
     except ValueError:
@@ -109,11 +123,11 @@ def exempt(path: Path, matched: str, line_text: str) -> bool:
     allowed = TEACHING_EXAMPLES[name]
     if allowed is None:
         return True
-    return any(phrase.lower() in line_text.lower() for phrase in allowed)
+    here = _flat(window)
+    return any(_flat(phrase) == _flat(matched) and _flat(context) in here
+               for phrase, context in allowed)
 
 
-#: Formulations that fail.  Each is paired with what to write instead -- a checker that only says
-#: "no" teaches nothing, and the replacement is the part that is actually hard.
 BLOCKING: tuple[tuple[str, str, str], ...] = (
     # --- an external artifact made the subject of a defect claim -------------------------------
     (r'(reference|public|upstream|example) model was wrong',
@@ -141,17 +155,23 @@ BLOCKING: tuple[tuple[str, str, str], ...] = (
     (r'(wrong|right) on (a|every real|every) scanner\b',
      'generalises a local observation to scanners in general',
      'say what was demonstrated, and on what'),
-    (r'no (vendor|scanner) database (can|has|have|knows?|carries|contains|provides|supplies)\b',
-     'a universal claim about databases that were not all examined',
+    # Any article: "no vendor database can", "a vendor database cannot", "any vendor database".
+    # The claim is about the category either way, and the category was never examined.
+    (r'\b(a|an|any|no|every|the) (vendor|scanner) database\b',
+     'a claim about vendor databases as a category, which was not examined',
      'name the lookup you actually use and say what it returns'),
-    (r'\bno (spec ?sheet|preset|catalogue|catalog) (has|carries|lists|contains)\b',
+    (r'\bno (spec ?sheet|preset|catalogue|catalog)\b',
      'a universal claim about sources that were not all examined',
      'name the source you actually consulted'),
 
     # --- asserted behaviour of something not observed here -------------------------------------
-    (r'\bthe console (refuses|rejects|will refuse|will reject|silently|mangles?)\b',
-     'asserts console behaviour without naming platform, version or evidence',
-     'name the platform and version, or say where the failure surfaces without asserting it'),
+    # Present or future tense with an article -- "a scanner refuses this", "the console will
+    # reject it" -- claims what scanners do.  A past-tense report of one observed run ("was run,
+    # and in that run the block was refused with <exact error>") is evidence, and passes.
+    (r'\b(a|an|the) (console|scanner|interpreter) (refuses|rejects|will refuse|will reject|'
+     r'silently|mangles?)\b',
+     'asserts scanner or console behaviour as a general rule',
+     'report one observed run with its exact message, or say where the failure surfaces'),
     (r'silently mangle',
      'asserts console behaviour without naming platform, version or evidence',
      'name the platform and version, or drop the claim'),

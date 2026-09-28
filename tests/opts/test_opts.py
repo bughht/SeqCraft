@@ -151,7 +151,8 @@ def test_deriving_an_opts_leaves_the_global_default_alone(opts: Opts) -> None:
 # ----------------------------------------------------------------------------- from_scanner
 def test_from_scanner_requires_the_site_constants() -> None:
     """
-    A vendor database supplies amplitudes.  It cannot supply an installation's dead times.
+    ``get_pulseq_specs`` returns the amplitude and B0 fields; it does not return an
+    installation's dead times.
 
     The lookup being a one-liner must not make them optional -- that would put pypulseq's
     zero-dead-time default back within reach by exactly the shortest path.

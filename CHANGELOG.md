@@ -2047,7 +2047,7 @@ out = sc.compile(tree, opts)                     # is
 which looks a scanner up in [PulseqSystems](https://github.com/nimpulseq/PulseqSystems) (optional
 extra `seqcraft[systems]`). There is deliberately **no wrapper around the `Opts` constructor**:
 build one the ordinary way. `from_scanner` takes `rf_dead_time`, `rf_ringdown_time`, `adc_dead_time`
-and `max_b1` as *required* keyword arguments, because a vendor database cannot supply them and
+and `max_b1` as *required* keyword arguments, because `get_pulseq_specs` does not return them and
 pypulseq defaults the first three to **zero** — a sequence built on those compiles cleanly,
 validates cleanly, so nothing in this package reports them as unset.
 

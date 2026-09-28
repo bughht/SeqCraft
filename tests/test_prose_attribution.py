@@ -49,6 +49,13 @@ MUST_FAIL = [
     'a sequence that compiles and validates cleanly before the console refuses it',
     'it writes a .seq the console refuses an hour later',
     'an unbalanced crusher simulates as perfectly fine and is wrong on a scanner',
+    # --- second review pass: the same families, written with an indefinite article ------------
+    'required keyword arguments, because a vendor database cannot supply them',
+    'A vendor database supplies amplitudes.',
+    'It cannot supply an installation dead times, because any vendor database lacks them.',
+    'These are on no spec sheet, and the lookup does not return them.',
+    'all three are ways a legal-looking tree produces a sequence a scanner refuses',
+    'a scanner will reject a block like this',
 ]
 
 #: Sentences the repository should be able to write.  Several deliberately contain the review
@@ -76,6 +83,13 @@ MUST_PASS = [
     'Two parts cannot be built against different limits by accident.',
     'Every echo is a k = 0 crossing.',
     'It is wrong to assume the echo sits at the midpoint.',
+    # An observed event with an exact message is evidence, not a population claim, and must
+    # survive: this is the shape `compiler/verification.py` uses for the 67 388-sample readout.
+    'Nothing checked them until a 67 388-sample spiral readout reached a scanner, which refused '
+    'the block with `fRTEBFinish() failed for block type: ArbX ArbY ADC`.',
+    'In the observed run the block was refused with an exact error naming the block type.',
+    # The module-mining records define R1/R2/R3 as their reference set, so this is named.
+    'The two worth writing down are where the references disagree about the crusher.',
 ]
 
 
@@ -171,14 +185,20 @@ def test_a_guide_is_exempt_only_for_the_phrases_it_teaches() -> None:
     documents that define the rule would be the only two exempt from it.
     """
     guide = prose.ROOT / 'docs' / 'writing_a_module.md'
+    teaching = ('`every reference implementation` and `right on a scanner` all widen one '
+                'observation into a claim about a population nobody examined')
 
-    taught = prose.exempt(guide, 'right on a scanner',
-                          'then `right on a scanner` widens one observation into a population')
-    untaught = prose.exempt(guide, 'the console refuses',
-                            'the file gets written and the console refuses it an hour later')
-
-    assert taught is True
-    assert untaught is False
+    # The phrase, in the sentence it is taught in.
+    assert prose.exempt(guide, 'right on a scanner', teaching) is True
+    # The same phrase, reused somewhere else in the same guide.
+    assert prose.exempt(guide, 'right on a scanner',
+                        'hypsec is the default because that is right on a scanner') is False
+    # A *different* blocked phrase sharing a window with a teaching example must not ride along.
+    assert prose.exempt(guide, 'a vendor database',
+                        teaching + ' and a vendor database cannot supply them') is False
+    # And one the guide never teaches.
+    assert prose.exempt(guide, 'the console refuses',
+                        'the file gets written and the console refuses it an hour later') is False
 
 
 def test_a_file_that_merely_shares_a_name_is_not_exempt(tmp_path) -> None:

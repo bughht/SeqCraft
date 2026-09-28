@@ -59,8 +59,8 @@ notebooks).
 > [!IMPORTANT]
 > **Set the dead times.** pypulseq defaults `rf_dead_time`, `rf_ringdown_time` and `adc_dead_time`
 > to **zero**. A sequence built on those zeros compiles cleanly and validates cleanly, so
-> nothing here will tell you they are unset. They belong to your installation, so
-> no preset can supply them.
+> nothing here will tell you they are unset. They belong to your installation, so the
+> PulseqSystems lookup does not return them.
 
 ---
 
