@@ -9,12 +9,11 @@ PLAN*.md
 # coefficients: the PNS/CNS response model and the forbidden acoustic-resonance
 # frequencies and bandwidths.  They are not redistributable.
 #
-# seqcraft locates them at run time via the SEQCRAFT_ASC_DIR environment
-# variable and never reads a path inside this repository.  Tests needing a real
-# hardware model are marked `hardware` and skip with an explicit message when
-# SEQCRAFT_ASC_DIR is unset; everything else uses the synthetic model in
-# seqcraft.verify.hardware.synthetic_hw(), which is checked in and contains no
-# vendor numbers.
+# seqcraft never looks for one: a caller who has a descriptor passes its path to
+# `load_hardware`, and nothing resolves a location on its own.  Tests needing a
+# real hardware model are marked `hardware` and are not part of public CI;
+# everything else uses `seqcraft.hardware.synthetic_hardware()`, which is checked
+# in, derived from pypulseq's public example model, and contains no vendor numbers.
 # ---------------------------------------------------------------------------
 *.asc
 *.ASC
@@ -82,8 +81,8 @@ site/
 Thumbs.db
 *.swp
 
-# Secrets / local environment.  SEQCRAFT_ASC_DIR points at vendor data, so a .env holding it
-# must never be committed -- see the vendor block above.
+# Secrets / local environment.  A .env pointing at vendor data must never be committed --
+# see the vendor block above.
 .env
 .env.*
 !.env.example

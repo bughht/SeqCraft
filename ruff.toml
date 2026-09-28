@@ -30,6 +30,8 @@ ignore = [
 'src/seqcraft/display.py' = ['PLC0415']       # lazy matplotlib import is the whole point
 'tests/**' = ['ANN', 'D', 'S101', 'PLR2004', 'T201', 'INP001', 'SLF001']
 'examples/**' = ['ALL']
+# Evidence spikes print their tables and read the internals they are there to evaluate.
+'tools/module_mining/spikes/**' = ['T201', 'SLF001']
 'salvage/matlab-frontend/**' = ['ALL']        # parked whole, frozen at d27217d; not maintained
 
 [format]

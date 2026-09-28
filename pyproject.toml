@@ -82,7 +82,7 @@ markers = [
   'slow: full-size builds; not run in the fast tier',
   'bloch: needs MRzeroCore (seqcraft[sim])',
   'crossval: needs an external parser or reference file',
-  'hardware: needs a vendor .asc file via SEQCRAFT_ASC_DIR (never committed)',
+  'hardware: needs an explicitly supplied external vendor .asc file (never committed)',
   'viz: needs matplotlib/seqeyes (seqcraft[viz])',
 ]
 filterwarnings = [

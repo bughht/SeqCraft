@@ -649,24 +649,34 @@ assert hw.is_synthetic is True
 assert 'NOT a real scanner' in repr(hw)
 ```
 
-> **`synthetic_hardware()` is not a real scanner.** It is a conservative stand-in so PNS checks can
-> run without a vendor file, shaped like `pypulseq.utils.siemens.asc_to_hw`'s output but carrying
-> the illustrative coefficients from pypulseq's own `safe_example_hw()`. It **must never be used to
-> clear a human scan.** On one DTI example it reported 2.44 where the site's own descriptor reported
-> 0.95 — the difference between "not runnable" and "passes with a thin margin".
+> **`synthetic_hardware()` is not a real scanner.** It is an *illustrative* stand-in so PNS checks
+> can run without a vendor file: shaped like `pypulseq.utils.siemens.asc_to_hw`'s output, and
+> derived field for field from pypulseq's public `safe_example_hw()` rather than kept as a second
+> copy of it. It **must never be used to clear a human scan.**
+>
+> It is illustrative, not conservative — not an upper bound, not a worst case, and not
+> representative of any particular scanner. A site model may differ from it in the absolute peak,
+> in which axis dominates, and in how it ranks one waveform against another, so use the site's own
+> descriptor for anything scanner-specific.
 >
 > The caveat travels with the object: `is_synthetic=True` and a `repr` that says so.
 
-### `load_hardware(filename, *, cardiac_model=False, directory=None) -> SimpleNamespace`
+### `load_hardware(path, *, cardiac_model=False) -> SimpleNamespace`
 
-**No vendor hardware file is ever read from inside this repository.** Siemens `.asc` descriptors
-carry proprietary response coefficients, so this resolves them through the `SEQCRAFT_ASC_DIR`
-environment variable only (`ASC_ENV_VAR` is that name). `filename` must be a bare name; a path
-raises `ConfigurationError`. The returned model carries `.source`, a provenance string of the form
-`'<filename> sha256:<12 hex>'` — the file *name* and hash only, never the contents.
+**SeqCraft does not bundle, discover or implicitly locate vendor hardware files.** Siemens
+`.asc` descriptors carry proprietary response coefficients, so using one is an explicit opt-in:
+you pass the path, seqcraft reads the file, and nothing about its location is retained. `path` is
+an ordinary string or `Path`, resolved the way Python resolves any other — the runtime does not
+police where it points. Keeping vendor descriptors outside the repository is policy, enforced by
+`.gitignore` rather than by this function.
+
+The returned model carries `.source`, a provenance string of the form
+`'<basename> sha256:<12 hex>'` — the file's *name* and hash only, never its directory and never
+its contents. A missing path raises `ConfigurationError`, and the message points at
+`synthetic_hardware()` for the case where there is no file to pass.
 
 ```python
-hw = sc.hardware.load_hardware('CimaX.asc')             # needs $SEQCRAFT_ASC_DIR
+hw = sc.hardware.load_hardware('/path/to/scanner.asc')
 ```
 
 ---
@@ -1934,7 +1944,6 @@ at import.
 | Name | Where | Kind |
 |---|---|---|
 | `ADDRESS_KEYS` | `design.events` | constant |
-| `ASC_ENV_VAR` | `scanner.hardware` | constant |
 | `AXES` | `design.events` | constant |
 | `BARRIER` | `design.logic` | constant |
 | `CartesianLine` | `modules` | class |
