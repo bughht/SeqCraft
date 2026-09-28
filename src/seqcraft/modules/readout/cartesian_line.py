@@ -1145,7 +1145,7 @@ class CartesianLine(Module):
 
     def _shortest_transition(self, raster: float) -> tuple[float, tuple[tuple[Event, ...], ...]]:
         """Walk the raster upward and return the first duration every parity can be served at."""
-        for steps in range(1, _TRANSITION_SEARCH_STEPS):
+        for steps in range(1, _TRANSITION_SEARCH_STEPS + 1):
             transition_s = steps * raster
             solved = self._solve_transitions(transition_s)
             if solved is not None:

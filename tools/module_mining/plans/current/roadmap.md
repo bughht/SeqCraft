@@ -212,10 +212,15 @@ current pass.** Both are named as *MRI capabilities*; neither name implies a cla
 
 The worked example is
 [`2026-09-27_megre_flow_compensation_evidence.md`](2026-09-27_megre_flow_compensation_evidence.md).
-"MEGRE flow compensation" looked like a solver feature. Measured, it turned out to be a per-axis,
-per-polarity **contract** question — already satisfied on the silent axes, unreachable from the
-adjustable window on the readout axis, and relocated to the readout's own fly-back on the one case
-where it is reachable at all. Naming the abstraction first would have produced the wrong one.
+"MEGRE flow compensation" looked like a solver feature. Measured, it turned out to be a **contract**
+question first — what "compensated" should mean when there are several echoes — and then a
+question about where the gradients that make the later echoes live. Naming the abstraction first
+would have produced the wrong one.
+
+The durable conclusion, now that it is built: **the multi-echo readout-axis problem stayed local
+to `CartesianLine`. Monopolar and bipolar needed different local transition families — one
+reshapes the fly-back it already has, the other creates a balanced inter-lobe transition — and
+`PhysicalDesignScope` did not need to change.** The silent axes needed nothing at all.
 
 ## PR decomposition
 
