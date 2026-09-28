@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased — the PNS model says what it is, and a scanner file is something you pass
+
+`sc.hardware.synthetic_hardware()` named pypulseq's `safe_pns_prediction.safe_example_hw()` as the
+source of its coefficients and had drifted from it: the `y` and `z` axes carried **`x`**'s time
+constants, and all three `g_scale` values differed. It now derives from that function field by
+field rather than keeping a second table, copying per axis so nothing can mutate an upstream
+object. A regression compares the two, so upstream changes propagate on their own while a
+SeqCraft-side divergence cannot.
+
+That drift had consequences. Every waveform-specific conclusion in the PNS architecture spike was
+measured against it, and with `y`'s `g_scale` more than double upstream's it read the phase-encode
+winder as the dominant stimulation site. Re-measured: the dominant axis is `x` almost everywhere —
+the spoiler, at the end of TR — `flow_comp='y'` leaves the single-repetition peak untouched and
+costs 34 % in the assembled scan instead, and single-shot EPI is the *lowest* of seven
+representative families rather than near the top. `gre_epi_2d/01`'s PNS column moves from
+218/251/290 % to 88/102/117 %; the relative conclusion it draws is unchanged.
+
+**The model is illustrative, not conservative.** Every claim otherwise is gone. It is not an upper
+bound, not a worst case, and not representative of any particular scanner, and a real model may
+differ from it in absolute peak, dominant axis and waveform ranking. Two documents carried a worked
+numeric comparison against a named site descriptor; that is scanner-specific and is replaced with
+the general principle.
+
+**`load_hardware` takes a path now.**
+
+```python
+hw = sc.hardware.load_hardware('/path/to/scanner.asc')
+```
+
+`SEQCRAFT_ASC_DIR` and the `ASC_ENV_VAR` constant are **removed**, along with the bare-filename
+rule and the `directory=` keyword. They existed to serve a private exploration workflow and had no
+business in a public API: nothing in seqcraft looks for a descriptor on its own, so a caller who
+has one passes it and a caller who has not uses the illustrative model. `.source` still carries the
+**basename** and sha256 only — a provenance string that quoted the directory would put a site's
+filesystem layout into every record that repeated it.
+
+`sc.pns(tree, opts, hardware)` still requires the model explicitly. There is deliberately no
+implicit default, so reading the call tells you whether the answer is illustrative or
+scanner-specific.
+
 ## Unreleased — flow compensation means every echo of a train
 
 `FlowCompensation` on a multi-echo acquisition now nulls the first moment at **every acquired
@@ -2911,23 +2951,20 @@ Each of these was found by measurement, and each has a regression test.
   Notebook 2 acquires the axes *plus* the 12 face diagonals, at both polarities: condition number
   `sqrt(2)`, better than a repulsion-optimised set of the same size. Direction schemes live in the
   notebook, not the package -- `MonopolarDiffusion` takes a unit vector and produces gradients.
-- **`synthetic_hardware()` is not a stand-in for a PNS verdict.** On the DTI sequence it reports
-  2.44x the stimulation limit while the real Cima.X descriptor reports **0.95x** -- the difference
-  between "not runnable" and "passes". Acting on the synthetic number would mean derating the
-  diffusion lobes and lengthening TE to fix a problem the scanner does not have. Notebook 2 now loads
-  the vendor `.asc` when `SEQCRAFT_ASC_DIR` points at one and labels the synthetic result as unfit for
-  judging runnability. The file is never copied into the repository; only its name and sha256 are
-  recorded.
-- **PNS attribution is not additive, and the two models disagree about which term dominates.** With
-  everything at slew 0.65 the peak sits in the spiral; derate the readout alone and it *moves* onto
-  the refocusing crushers, so the limiting gradient changes as you tune. Against the real descriptor,
-  spoiling on three axes instead of one takes the peak from 0.95 to 1.50 -- from passing to over --
-  while sampling density changes it by 0.03 across a 4x difference in readout length. The synthetic
-  model ranked those two the other way round. Both facts are measurements, and neither is guessable.
-- **The vector-norm warning is not a proxy for peripheral nerve stimulation.** In the DTI example it
-  pointed at the three-axis spoiler while the actual PNS was dominated by the spiral: dropping the
-  spoiler to one axis changed PNS by 3 %, while derating the slew from 0.65 to 0.15 was what cleared
-  it. Measure PNS with `CompiledSequence.pns()` against your own hardware model.
+- **`synthetic_hardware()` is not a stand-in for a PNS verdict.** It is an illustrative model, so
+  a number from it says the calculation ran, not whether a sequence is runnable: a site model may
+  differ in absolute peak, in which axis dominates and in how it ranks one design against another.
+  Notebook 2 labels the synthetic result as unfit for judging runnability, and a caller with a
+  vendor `.asc` passes its path explicitly. The file is never copied into the repository; only its
+  name and sha256 are recorded.
+- **PNS attribution is not additive, and two response models may disagree about which term
+  dominates.** Derate the one gradient you think is responsible and the peak can *move* onto
+  another, so the limiting gradient changes as you tune. Measure it against the model you actually
+  care about.
+- **The vector-norm warning is not a proxy for peripheral nerve stimulation.** They answer
+  different questions -- one about an instant, the other about a history -- so a waveform can sit
+  inside every instantaneous limit and still accumulate a large PNS response. Measure PNS with
+  `CompiledSequence.pns()` against your own hardware model.
 - Simulation and reconstruction helpers live in `examples/lib/`, **not** in the package.
 
 ### Tests
