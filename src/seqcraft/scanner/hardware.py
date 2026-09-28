@@ -55,8 +55,8 @@ def synthetic_hardware(name: str = 'synthetic_generic') -> SimpleNamespace:
     The response parameters are taken from pypulseq's public example hardware model,
     ``safe_pns_prediction.safe_example_hw()``: every SAFE field ``Sequence.calculate_pns`` reads
     comes from the object that function returns, and seqcraft adds only its own labelling and
-    provenance semantics.  **Seqcraft keeps no second table of these coefficients**, so there is
-    nothing here that can disagree with the model it names.
+    provenance semantics.  **SeqCraft derives these fields from the returned upstream object
+    rather than maintaining an independently maintained coefficient table.**
 
     .. warning::
 
