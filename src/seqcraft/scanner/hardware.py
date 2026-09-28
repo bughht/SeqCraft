@@ -7,11 +7,15 @@ constants per axis, a stimulation threshold, and the forbidden acoustic-resonanc
 in the compile path reads it, which is why it is not on the ``Opts``:
 :func:`seqcraft.analysis.pns` takes it as a third argument.
 
-**No vendor hardware file is ever read from inside this repository.**  Siemens ``.asc`` gradient
-descriptors carry proprietary PNS/CNS response coefficients and forbidden acoustic-resonance
-bands.  :func:`load_hardware` reads one only when a caller explicitly hands it a path, and
-:func:`synthetic_hardware` provides a vendor-free **illustrative** stand-in, taken from pypulseq's
-public example model, so PNS checks can run without any file at all.
+**Nothing here bundles, discovers or implicitly locates a vendor hardware file.**  Siemens
+``.asc`` gradient descriptors carry proprietary PNS/CNS response coefficients and forbidden
+acoustic-resonance bands, so :func:`load_hardware` reads one only when a caller explicitly hands
+it a path -- an ordinary path, which seqcraft does not police -- and :func:`synthetic_hardware`
+provides a vendor-free **illustrative** stand-in, taken from pypulseq's public example model, so
+PNS checks can run without any file at all.
+
+Where such a file *lives* is repository policy rather than a runtime rule: vendor descriptors
+belong outside this tree and ``.asc`` is gitignored.
 
 Examples
 --------

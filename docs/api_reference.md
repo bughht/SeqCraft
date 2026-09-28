@@ -663,10 +663,12 @@ assert 'NOT a real scanner' in repr(hw)
 
 ### `load_hardware(path, *, cardiac_model=False) -> SimpleNamespace`
 
-**No vendor hardware file is ever read from inside this repository, and none is ever looked for.**
-Siemens `.asc` descriptors carry proprietary response coefficients, so using one is an explicit
-opt-in: you pass the path, seqcraft reads the file, and nothing about its location is retained.
-`path` is an ordinary string or `Path`, resolved the way Python resolves any other.
+**SeqCraft does not bundle, discover or implicitly locate vendor hardware files.** Siemens
+`.asc` descriptors carry proprietary response coefficients, so using one is an explicit opt-in:
+you pass the path, seqcraft reads the file, and nothing about its location is retained. `path` is
+an ordinary string or `Path`, resolved the way Python resolves any other — the runtime does not
+police where it points. Keeping vendor descriptors outside the repository is policy, enforced by
+`.gitignore` rather than by this function.
 
 The returned model carries `.source`, a provenance string of the form
 `'<basename> sha256:<12 hex>'` — the file's *name* and hash only, never its directory and never
