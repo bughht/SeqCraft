@@ -958,10 +958,13 @@ if not r['ok']:
     print(f'peak stimulation at {worst_at * 1e3:.1f} ms')
 ```
 
-It **delegates** rather than reimplementing. `dG/dt` convolved with three exponentials is about
-sixty lines and looks reachable from `sample`, but it is a *safety* calculation, pypulseq's
-implementation is validated against vendor behaviour, and a second one that can silently drift is
-the wrong thing to own.
+It **delegates** to pypulseq's SAFE implementation rather than reimplementing it. `dG/dt`
+convolved with three exponentials is about sixty lines and looks reachable from `sample`, but it
+is a *safety* calculation, and a second implementation that can disagree with the first is the
+wrong thing to own.
+
+It is a **model-based prediction**, not a measurement: what comes back depends on the response
+model you supply as much as on the waveform.
 
 > **Never used to clear a human scan with a synthetic model.** See §2.3.
 
@@ -1003,7 +1006,7 @@ The single most important thing to get right in this module:
 | `sample` | uniform raster grid, **interpolated** | **No** — for looking, and for approximate numeric work |
 | `moments` | `knots_of` + `pwl_moment` over `flatten(tree)` | **Yes** — never routed through `sample` |
 | `kspace` | compiled, then `calculate_kspacePP()` | **Yes**, at true ADC sample times |
-| `pns` | compiled, then `calculate_pns()` | pypulseq's validated SAFE model |
+| `pns` | compiled, then `calculate_pns()` | **Not an exactness question** — a model-based prediction, via pypulseq's SAFE implementation |
 | `b_value` | `sample`, then the running integral on its raster grid | **No** — numerical integration; how close depends on the waveform |
 
 `moments` looks like it could be built on `sample` now that they sit together. It must not be — and

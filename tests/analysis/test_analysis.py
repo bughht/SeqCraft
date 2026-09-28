@@ -210,14 +210,14 @@ def test_the_synthetic_hardware_matches_the_public_model_it_names() -> None:
     """
     **It is pypulseq's ``safe_example_hw()``, field for field, and this is what keeps it so.**
 
-    The values were once a second hand-maintained copy of that table, and the copy had drifted:
-    ``y`` and ``z`` carried ``x``'s time constants and all three ``g_scale`` values differed from
-    upstream.  Nothing caught it, because nothing compared the two.
+    An earlier hand-maintained SeqCraft reconstruction did not preserve ``safe_example_hw()``'s
+    axis-specific fields: ``y`` and ``z`` carried ``x``'s time constants and all three
+    ``g_scale`` values differed from the returned model.  Nothing compared the two objects, so
+    nothing reported it.
 
-    The implementation delegates, so an upstream change to the example model propagates on its
-    own; what this catches is **SeqCraft-side divergence** from the object upstream returns. It
-    compares the two objects rather than pinning numbers here, because a table written into a
-    test is the same second copy that drifted in the first place.
+    This compares the returned objects directly, so SeqCraft cannot silently reintroduce a
+    second, different coefficient table.  Comparing objects rather than pinning numbers here is
+    the point: a table written into a test would be another copy able to disagree.
     """
     from pypulseq.utils.safe_pns_prediction import safe_example_hw
 
@@ -233,12 +233,12 @@ def test_the_synthetic_hardware_matches_the_public_model_it_names() -> None:
 
 def test_the_synthetic_axes_are_not_all_the_same_axis() -> None:
     """
-    The specific shape the drift had, pinned so it cannot come back unnoticed.
+    ``safe_example_hw()`` gives the three axes distinct response parameters.
 
-    pypulseq's ``safe_example_hw()`` gives each axis its own time constants.  A model that
-    applies one axis's ``tau`` to all three is not a weaker approximation of that -- it is a
-    different model, and it was the reason an earlier PNS study read the phase-encode axis as
-    dominant.
+    Pinned through SeqCraft so an accidental shared-axis template cannot replace those returned
+    values.  A model that applies one axis's ``tau`` to all three is not a weaker approximation
+    of that one -- it is a different model, and it is what an earlier PNS study was measured
+    against when it read the phase-encode axis as dominant.
     """
     hw = sc.hardware.synthetic_hardware()
     taus = {axis: tuple(getattr(getattr(hw, axis), f) for f in ('tau1', 'tau2', 'tau3'))

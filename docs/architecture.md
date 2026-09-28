@@ -242,7 +242,7 @@ one; `kspace` and `pns` compile internally.
 | `sample(tree, opts)` | uniform raster grid, **interpolated** | **No** — for looking, and for approximate numeric work |
 | `moments(tree, order=0)` | `knots_of` + `pwl_moment` over `flatten(tree)` | **Yes** — never routed through `sample` |
 | `kspace(tree, opts)` | compiled, then `calculate_kspacePP()` | Yes, at true ADC sample times |
-| `pns(tree, opts, hw)` | compiled, then `calculate_pns()` | pypulseq's validated SAFE model |
+| `pns(tree, opts, hw)` | compiled, then `calculate_pns()` | **Not an exactness question** — a model-based prediction, via pypulseq's SAFE implementation |
 
 `moments` looks like it could be built on `sample` now that they sit in one file. It must not be,
 and the reason is subtler than "sampling is lossy". Linear interpolation errs *antisymmetrically*

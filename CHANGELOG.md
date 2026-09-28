@@ -2,19 +2,20 @@
 
 ## Unreleased — the PNS model says what it is, and a scanner file is something you pass
 
-`sc.hardware.synthetic_hardware()` named pypulseq's `safe_pns_prediction.safe_example_hw()` as the
-source of its coefficients and had drifted from it: the `y` and `z` axes carried **`x`**'s time
-constants, and all three `g_scale` values differed. It now derives from that function field by
-field rather than keeping a second table, copying per axis so nothing can mutate an upstream
-object. A regression compares the two, so upstream changes propagate on their own while a
-SeqCraft-side divergence cannot.
+`sc.hardware.synthetic_hardware()` documented pypulseq's `safe_pns_prediction.safe_example_hw()`
+as the source of its response parameters, but SeqCraft maintained a separate local reconstruction
+that did not preserve the returned model's axis-specific values: `y` and `z` carried **`x`**'s
+time constants, and all three `g_scale` values differed. It now derives those fields from the
+object `safe_example_hw()` returns, copying per axis so nothing can mutate it. **SeqCraft owns no
+second coefficient table**, and a regression compares the two objects directly.
 
-That drift had consequences. Every waveform-specific conclusion in the PNS architecture spike was
-measured against it, and with `y`'s `g_scale` more than double upstream's it read the phase-encode
-winder as the dominant stimulation site. Re-measured: the dominant axis is `x` almost everywhere —
-the spoiler, at the end of TR — `flow_comp='y'` leaves the single-repetition peak untouched and
-costs 34 % in the assembled scan instead, and single-shot EPI is the *lowest* of seven
-representative families rather than near the top. `gre_epi_2d/01`'s PNS column moves from
+That mismatch shaped what the PNS architecture spike measured. Every waveform-specific conclusion
+in it came from the earlier SeqCraft implementation, whose `y` axis had more than double the
+`g_scale` of the model it named, and it read the phase-encode winder as the dominant stimulation
+site. Re-run against the current `safe_example_hw()`-derived model: the dominant axis is `x`
+almost everywhere — the spoiler, at the end of TR — `flow_comp='y'` leaves the single-repetition
+peak untouched and costs 34 % in the assembled scan instead, and single-shot EPI is the *lowest*
+of seven representative families rather than near the top. `gre_epi_2d/01`'s PNS column moves from
 218/251/290 % to 88/102/117 %; the relative conclusion it draws is unchanged.
 
 **The model is illustrative, not conservative.** Every claim otherwise is gone. It is not an upper

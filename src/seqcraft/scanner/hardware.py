@@ -52,25 +52,21 @@ def synthetic_hardware(name: str = 'synthetic_generic') -> SimpleNamespace:
     """
     Return a vendor-free PNS hardware model for tests, examples and CI.
 
-    **Derived from pypulseq's public reference implementation**,
-    ``safe_pns_prediction.safe_example_hw()``, rather than copied from it: every SAFE field
-    ``Sequence.calculate_pns`` reads is taken from the upstream object, and this adds only
-    SeqCraft's own metadata on top.  A second, hand-maintained table of the same coefficients had
-    already drifted from the one it named -- ``y`` and ``z`` carried ``x``'s time constants and
-    all three ``g_scale`` values differed -- which is exactly the failure delegating removes.
-    A regression in ``tests/analysis/test_analysis.py`` compares the two objects field by field,
-    so upstream changes propagate on their own while a SeqCraft-side divergence cannot.
+    The response parameters are taken from pypulseq's public example hardware model,
+    ``safe_pns_prediction.safe_example_hw()``: every SAFE field ``Sequence.calculate_pns`` reads
+    comes from the object that function returns, and seqcraft adds only its own labelling and
+    provenance semantics.  **Seqcraft keeps no second table of these coefficients**, so there is
+    nothing here that can disagree with the model it names.
 
     .. warning::
 
-       **This is not a real scanner.**  It is an *illustrative example* response model, so that
-       PNS checks can run without a vendor file, and it **must never be used to clear a sequence
-       for human scanning**.  Use :func:`load_hardware` with the site's own ``.asc`` for that.
+       **This is not a scanner-specific model.**  It is an *example* response model, so that PNS
+       checks can run without a vendor file, and it **must never be used to clear a sequence for
+       human scanning**.  Use :func:`load_hardware` with the site's own ``.asc`` for that.
 
-       It is illustrative, not conservative: it is **not** an upper bound, a worst case or a
-       safety margin, and it is not representative of any particular scanner.  A real model may
-       differ from it in absolute peak, in which axis dominates, and in how it ranks one waveform
-       against another.
+       **No upper-bound, worst-case or conservatism claim is made.**  A site model may differ
+       from it in absolute peak, in which axis dominates, and in how it ranks one waveform
+       against another; that is two response models disagreeing, not either one being wrong.
 
        The object carries ``is_synthetic=True`` and says so in its ``repr``, so the caveat travels
        with the model rather than living in the docstring of whatever happens to consume it.

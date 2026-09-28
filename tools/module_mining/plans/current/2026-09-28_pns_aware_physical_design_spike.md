@@ -16,17 +16,25 @@ scanner-specific claim and nothing here clears anything for human scanning.
 
 ---
 
-## 0. The correction, and what it invalidated
+## 0. Model provenance correction and re-run
 
-**This spike was first run against a `synthetic_hardware()` that did not match the public model
-its own docstring named.** `safe_example_hw()` gives each axis its own time constants;
-SeqCraft's copy had drifted so that `y` and `z` carried **`x`'s** `tau` and `a`, and all three
-`g_scale` values differed from upstream — `y` most of all. Nothing compared the two objects, so
-nothing caught it.
+**The first run used SeqCraft's earlier hand-maintained `synthetic_hardware()` implementation.**
+That implementation did not match the pypulseq `safe_example_hw()` example model named in its
+documentation: `safe_example_hw()` gives the three axes distinct response parameters, and the
+SeqCraft reconstruction applied **`x`'s** `tau` and `a` to `y` and `z` and used different
+`g_scale` values on all three — `y` most of all. Nothing compared the two objects, so nothing
+reported it. Git history shows the two differed from the first commit that introduced the
+function, so this was a mismatch from the start rather than a later divergence.
 
-`synthetic_hardware()` now derives from `safe_example_hw()` field by field, and a regression
-compares the two so the drift cannot return silently. Every table below is the **re-run against
-the corrected model**; the first-run numbers are quoted only where the difference is the point.
+`synthetic_hardware()` now derives its response parameters from `safe_example_hw()`, eliminating
+SeqCraft's second coefficient table, and a regression compares the returned objects directly.
+Every table below was therefore **repeated using the current SeqCraft model derived from that
+public example model**; first-run numbers are quoted only where the difference is the point.
+
+Note what this is *not*. The two response models involved — pypulseq's example model and any site
+descriptor — are different models and are expected to give different estimates; neither is
+established as wrong by disagreeing with the other. What was wrong was SeqCraft describing one
+model and supplying another.
 
 What that invalidated, and what it did not:
 
@@ -57,8 +65,8 @@ So: is that seam the right place, and is it sufficient?
 
 ## 2. Every family sits near the illustrative limit at ordinary limits
 
-At 40 mT/m / 150 T/m/s, against the corrected model, every family sits close to the example
-model's stimulation limit and several cross it. That is a statement about this illustrative model
+At 40 mT/m / 150 T/m/s, against the current `safe_example_hw()`-derived model, every family sits
+close to the example model's stimulation limit and several cross it. That is a statement about this illustrative model
 and this protocol, not about any scanner.
 
 | family | local | global | g/l | peak at | dominant axis |
@@ -96,7 +104,7 @@ Three things follow:
 - **Compensating `x` lowers the global peak**, 0.982 → 0.977. The inter-echo transitions PR #42
   built — the whole cost of the all-echo contract — are not PNS-binding on this model. Spreading
   the fly-back's area over a longer, gentler waveform is easier on the nerve than the fly-back was.
-  This is the one waveform-specific result that also held on the first, incorrect model.
+  This is the one waveform-specific result that also held in the first run.
 - **Compensating `y` costs nothing locally and 34 % globally**, 0.982 → 1.316, with the *local*
   peak unmoved at 0.976. So its cost is **accumulation across repetitions**, not anything visible
   in one TR — which is a different mechanism from the one the first run reported, and a more
@@ -179,7 +187,7 @@ realisable beyond 40.0 ms; if that is plausible here, raise the search ceiling"*
 wrong: no window would ever have worked.
 
 **Widening the owned region and spending the same time as TE fill are different interventions**,
-and the corrected model makes the point more sharply than the first run did. An explicit `te_s`
+and the current model makes the point more sharply than the first run did. An explicit `te_s`
 keeps the solved window and adds fill in front of it, and what that does to the global peak
 depends on what is being compensated:
 
@@ -194,8 +202,8 @@ Fill makes the `y`-only case steadily **worse** and the three-axis case **better
 about the timing predicts which. Widening the owned region, by contrast, reduced the owner's
 contribution monotonically in every case tested.
 
-So the durable statement is not *"delaying is harmful"* — the first run's numbers said that and
-they came from the incorrect model. It is: **extra elapsed time alone is not a reliable response
+So the durable statement is not *"delaying is harmful"* — that came from the first run, against
+the earlier SeqCraft implementation. It is: **extra elapsed time alone is not a reliable response
 to a PNS failure, and widening the region the owner actually controls is.**
 
 ## 7. A leaf cannot use the same evaluator on the same terms
@@ -285,10 +293,12 @@ whether PNS belongs in AUTO  at all, or only as an opt-in that a caller asks for
 
 ## 11. Validating against real hardware
 
-Everything above is one **illustrative** response model, and §0 is the standing warning about
-trusting one: a model that is wrong in a way nobody compares against a reference will produce
-confident, wrong, waveform-specific conclusions. Before any of this drives production timing it
-should be checked against a real descriptor.
+Everything above is one **example** response model, and §0 is the standing warning: a locally
+maintained reconstruction whose provenance is never checked can produce confident,
+model-dependent conclusions. If SeqCraft claims to expose an external example model, it should
+compare the returned fields directly rather than maintain a second parameter table. Before any of
+this drives production timing it should also be checked against a site descriptor — and a
+disagreement there is two models disagreeing, not proof that either is wrong.
 
 That work does not belong in this repository, and its results do not either. The rules it runs
 under:
