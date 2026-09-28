@@ -4,7 +4,6 @@
 > 2026-09-20, so that the pull request carries the evidence behind the modules it adds.
 > The two copies are identical today and there is nothing keeping them that way; see
 > [`../README.md`](../../README.md) for which one to edit.
-
 **v0 is a baseline, not a final theory.** Module Mining Skill v0 merged as PR #31 and is frozen:
 the workflow, the schema, the vocabulary and the three prospective calibrations. Everything below
 starts from that merged `main`.
@@ -177,8 +176,8 @@ order the current roadmap sets.
 |---|---|---|---|
 | **T2Prep** | `plans/t2prep/` | **SHIPPED 2026-09-23** | implemented as the first stage of [`current/2026-09-23_post_v0_implementation_to_authoring_roadmap.md`](2026-09-23_post_v0_implementation_to_authoring_roadmap.md). Layer 1/2/3 all GREEN |
 | **VelocityEncode** | `plans/flow_moments/velocity_encoding.yaml` | **SHIPPED 2026-09-24** | the appended bipolar form, as Stage B of the implementation roadmap. Layer 1/2/3 all GREEN. The merged form is still deferred and is the same boundary FlowComp and bSSFPTR wait on |
-| **FlowComp** | `plans/flow_moments/flow_compensation.yaml` | `EXTEND_EXISTING` | depends on how joint realization is finally expressed |
-| **bSSFPTR** | `plans/bssfp/` | `NEW_KERNEL` | same dependency, plus the open question of whether its 220 µs is joint physical design or semantics-preserving compiler fusion |
+| **FlowComp** | `plans/flow_moments/flow_compensation.yaml` | **SHIPPED 2026-09-26** | `sc.FlowCompensation` on x/y/z, via `PhysicalDesignScope`. Its multi-echo contract was measured separately — see [`2026-09-27_megre_flow_compensation_evidence.md`](2026-09-27_megre_flow_compensation_evidence.md) |
+| **bSSFPTR** | `plans/bssfp/` | `NEW_KERNEL` | **future candidate only — nothing is being built.** The joint-realization dependency it waited on has shipped; the open question of whether its 220 µs is joint physical design or semantics-preserving compiler fusion is unchanged and unanswered |
 
 Building all four now would either dilute the architectural point or produce code likely to be
 reshaped immediately afterwards.
@@ -193,6 +192,35 @@ a joint owner can get everything it needs before child `LogicBlock`s are built.
 
 Afterwards the queue is revisited, in the likely order T2Prep, VelocityEncode, FlowComp, bSSFPTR —
 **and not forced through one mechanism if the physical evidence says otherwise.**
+
+## Capability candidates — recorded, not scheduled
+
+**These are recorded so they are not lost. No code exists for either, and none is planned by any
+current pass.** Both are named as *MRI capabilities*; neither name implies a class, a module or a
+`PhysicalDesignScope` usage.
+
+| capability | what it is | what would have to be evidenced first |
+|---|---|---|
+| **bSSFPTR** | a balanced steady-state free precession repetition — balanced moments on every axis every TR, RF phase cycling, and timing ownership that spans the repetition rather than ending at an echo | whether the balance condition is joint physical design or semantics-preserving compiler fusion; what the steady state requires of dummy repetitions; whether "balanced" is one contract or a per-axis family, as MEGRE's turned out to be |
+| **B1 mapping** | measuring the transmit field, so that flip angle is a measured quantity rather than a nominal one | which B1-mapping family (double-angle, Bloch-Siegert, AFI, DREAM) the evidence supports; what the reconstruction contract is; and, before anything else, that MRzero's graph path is nominal-B1 only — a B1 sweep through `compute_graph` measures the pre-pass, not the physics, so a B1 capability needs a validator that does not share that limitation |
+
+## How a roadmap item is stated
+
+> **Roadmap items are MRI capabilities first.** Module, kernel, function, example, or
+> `PhysicalDesignScope` usage is decided only after the physical contract and reuse boundary are
+> evidenced.
+
+The worked example is
+[`2026-09-27_megre_flow_compensation_evidence.md`](2026-09-27_megre_flow_compensation_evidence.md).
+"MEGRE flow compensation" looked like a solver feature. Measured, it turned out to be a **contract**
+question first — what "compensated" should mean when there are several echoes — and then a
+question about where the gradients that make the later echoes live. Naming the abstraction first
+would have produced the wrong one.
+
+The durable conclusion, now that it is built: **the multi-echo readout-axis problem stayed local
+to `CartesianLine`. Monopolar and bipolar needed different local transition families — one
+reshapes the fly-back it already has, the other creates a balanced inter-lobe transition — and
+`PhysicalDesignScope` did not need to change.** The silent axes needed nothing at all.
 
 ## PR decomposition
 

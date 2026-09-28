@@ -35,6 +35,7 @@ _NOTEBOOKS = (
     Path('pc_gre_2d/01_build.ipynb'),
     Path('gre_2d/03_flow_comp.ipynb'),
     Path('gre_spiral_2d/03_flow_comp.ipynb'),
+    Path('megre_2d/03_flow_comp.ipynb'),
 )
 
 

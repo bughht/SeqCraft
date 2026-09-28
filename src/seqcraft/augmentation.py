@@ -64,6 +64,16 @@ class FlowCompensation:
     two independent constraints on the same moment, which is what lets the two compose without a
     precedence rule.
 
+    **On a multi-echo acquisition this means every acquired echo**, not the first one only.  A
+    train reads the line several times and the gradients that make the later echoes play after
+    the first, so a condition met once does not survive on its own.  Where an axis is silent
+    across the train -- the phase-encode and slice axes of a 2D gradient echo are -- it does
+    survive, and costs nothing.  Where it is not, the readout axis carries the condition from one
+    echo to the next by nulling each inter-echo interval's zeroth *and* first moment, which takes
+    echo spacing: read ``min_echo_spacing_s`` on the readout for what it came to.  That cost is
+    part of the design rather than a reason to weaken the guarantee, and there is deliberately no
+    option to ask for less.
+
     Parameters
     ----------
     axis

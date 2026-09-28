@@ -69,6 +69,37 @@ def moment_to_echo(module, order: int, echo_index: int = 0) -> float:
     return float(total)
 
 
+def readout_spans(module, line: int | None = None):
+    """Every readout-axis gradient in the emitted block, as ``(start, end, event)``, in order."""
+    build = {} if line is None else {'line': line}
+    spans = []
+    for start, event, _ in flatten(module(**build)):
+        if getattr(event, 'type', None) not in ('trap', 'grad'):
+            continue
+        if getattr(event, 'channel', None) != module.axis:
+            continue
+        times, _ = knots_of(event, start)
+        spans.append((float(times[0]), float(times[-1]), event))
+    return sorted(spans)
+
+
+def between_the_lobes(module):
+    """
+    The events the block actually plays between two consecutive readout lobes, and the gap.
+
+    Read off the emitted `LogicBlock` rather than asked of the module, because what is being
+    checked is what the sequence will play -- a design that solved a transition and then failed to
+    emit it would answer this correctly and scan wrong.  A lobe is identified by carrying an echo,
+    which is the one property of it that does not depend on how the train was built.
+    """
+    spans = readout_spans(module)
+    carries = [any(lo <= echo <= hi for echo in module.te_s) for lo, hi, _ in spans]
+    first = carries.index(True)
+    following = carries.index(True, first + 1)
+    gap = spans[following][0] - spans[first][1]
+    return [event for _, _, event in spans[first + 1:following]], gap
+
+
 def tolerance(module, order: int) -> float:
     """
     What "zero" means for an `order`-th moment on this readout.
@@ -295,21 +326,74 @@ def test_a_requested_duration_is_honoured_and_still_nulls_the_moment(opts, echoe
 
 
 @pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
-def test_the_first_echo_is_compensated_and_later_echoes_are_not(opts, polarity: str) -> None:
+@pytest.mark.parametrize('echoes', (2, 3, 5))
+def test_every_acquired_echo_is_compensated(opts, polarity: str, echoes: int) -> None:
     """
-    **The documented limitation, measured on both later echoes.**
+    **The contract, measured at every echo rather than only the first.**
 
-    The winder is solved against the first echo, and later echoes of a train accumulate their own
-    first moment from the lobes between them. So this option compensates the first echo and does
-    not promise the rest of the train -- which is worth locking down, because a multi-echo
-    protocol that assumed otherwise would look fine and be uncompensated everywhere but the
-    start.
+    The winder solves the first echo; the waveform between each pair of lobes carries the
+    condition to the next one, by nulling the interval's zeroth *and* first moment.  Asserted at
+    every echo of trains of three different lengths, because a design that served the first
+    interval and drifted afterwards would pass a two-echo check.
+
+    Both moments, because they are one condition: ``m0 = 0`` is what makes the instant an echo at
+    all, and asserting ``m1`` at an instant that is not ``k = 0`` would measure nothing.
+    """
+    module = line(opts, echoes=echoes, polarity=polarity, _null_moment_order=1)
+
+    assert len(module.te_s) == echoes
+    for echo in range(echoes):
+        assert moment_to_echo(module, 0, echo) == pytest.approx(0.0, abs=tolerance(module, 0))
+        assert moment_to_echo(module, 1, echo) == pytest.approx(0.0, abs=tolerance(module, 1))
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_an_uncompensated_train_still_drifts(opts, polarity: str) -> None:
+    """
+    The control: without the option the later echoes are **not** compensated, as they never were.
+
+    Worth keeping now that the compensated path passes, because a measurement that cannot fail
+    proves nothing -- this is what says the assertion above is reading the design and not the
+    tolerance.
+    """
+    module = line(opts, echoes=3, polarity=polarity)
+
+    for echo in range(3):
+        assert abs(moment_to_echo(module, 1, echo)) > tolerance(module, 1) * 1e6
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_the_transition_nulls_the_interval_and_not_itself(opts, polarity: str) -> None:
+    """
+    **What the waveform between the lobes is solved against.**
+
+    The condition is on the interval ``[TE_i, TE_i+1]`` as a whole -- the post-echo tail of one
+    lobe, the transition, and the pre-echo head of the next -- not on the transition's own first
+    moment, which is a different and weaker statement.  So the transition's own ``m1`` about its
+    own start is deliberately **not** zero, and this says so, because a future reader who
+    "simplifies" it to the weaker condition would break every echo but the first.
     """
     module = line(opts, echoes=3, polarity=polarity, _null_moment_order=1)
+    # Referenced to the interval's origin -- the echo -- which is where the window starts from,
+    # not to the transition's own first knot.  The two differ by `window_start * m0`, which is
+    # the whole reason a "the fly-back nulls its own first moment" shortcut is wrong.
+    echo_s = module._echo_in_lobe_s(0)
+    at = module._lobe_s
+    own_m0 = own_m1 = 0.0
+    events, gap = between_the_lobes(module)
+    for event in events:
+        knots, amps = knots_of(event, at)
+        own_m0 += float(pwl_moment(knots - echo_s, amps, 0))
+        own_m1 += float(pwl_moment(knots - echo_s, amps, 1))
+        at += float(pp.calc_duration(event))
 
-    assert moment_to_echo(module, 1, 0) == pytest.approx(0.0, abs=tolerance(module, 1))
-    for echo in (1, 2):
-        assert abs(moment_to_echo(module, 1, echo)) > tolerance(module, 1) * 1e6
+    fixed_m0, fixed_m1 = module._interval_fixed(0, gap)
+    assert own_m0 == pytest.approx(-fixed_m0, rel=1e-9, abs=1e-9)
+    assert own_m1 == pytest.approx(-fixed_m1, rel=1e-9)
+
+    # And about its own start it is *not* zero, which is the weaker condition it is not solving.
+    about_itself = own_m1 - (module._lobe_s - echo_s) * own_m0
+    assert abs(about_itself) > tolerance(module, 1) * 1e6
 
 
 @pytest.mark.parametrize('geometry', list(GEOMETRIES))
@@ -374,3 +458,264 @@ def test_a_prephaser_too_short_for_the_compensated_areas_is_refused(opts) -> Non
     assert f'{floor:.6g}' in str(caught.value)
     assert line(opts, _null_moment_order=1, prephaser_duration_s=floor).prephaser_duration_s == (
         pytest.approx(floor, abs=1e-12))
+
+
+# ---------------------------------------------------- the timing an all-echo train has to buy
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_the_automatic_spacing_is_the_shortest_that_works(opts, polarity: str) -> None:
+    """
+    ``echo_spacing_s=None`` is the shortest period this realisation family can compensate at.
+
+    Shortest is asserted the only way it can be: one gradient raster step below it, the design
+    refuses.  That is a statement about *this* family and these ``Opts``, not a claim that no
+    waveform anywhere is shorter, which is why the refusal says so too.
+    """
+    module = line(opts, echoes=4, polarity=polarity, _null_moment_order=1)
+    minimum = module.min_echo_spacing_s
+
+    assert module.echo_spacing_s == pytest.approx(minimum, abs=1e-12)
+    with pytest.raises(sc.ConfigurationError):
+        line(opts, echoes=4, polarity=polarity, _null_moment_order=1,
+             echo_spacing_s=minimum - float(opts.grad_raster_time))
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_the_automatic_spacing_lands_on_the_raster(opts, polarity: str) -> None:
+    """An ESP off the gradient raster is a block the compiler refuses, however good the physics."""
+    module = line(opts, echoes=4, polarity=polarity, _null_moment_order=1)
+    raster = float(opts.grad_raster_time)
+
+    assert module.echo_spacing_s / raster == pytest.approx(round(module.echo_spacing_s / raster))
+    # And every gradient in the emitted block starts on the raster, which is the property the
+    # compiler will actually refuse on -- a legal period built out of off-raster pieces is the
+    # failure that a period check alone would miss.
+    for start, _, _ in readout_spans(module):
+        assert start / raster == pytest.approx(round(start / raster), abs=1e-6)
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_a_spacing_that_is_too_short_reports_the_minimum(opts, polarity: str) -> None:
+    """
+    A refusal that does not say what would have worked makes the caller guess.
+
+    The number in the message is the one that works, so it can be pasted back in -- asserted by
+    pasting it back in.
+    """
+    module = line(opts, echoes=4, polarity=polarity, _null_moment_order=1)
+
+    with pytest.raises(sc.ConfigurationError) as raised:
+        line(opts, echoes=4, polarity=polarity, _null_moment_order=1, echo_spacing_s=200e-6)
+    assert 'min_echo_spacing_s' in str(raised.value)
+    assert f'{module.min_echo_spacing_s:.6g}' in str(raised.value)
+    assert line(opts, echoes=4, polarity=polarity, _null_moment_order=1,
+                echo_spacing_s=module.min_echo_spacing_s) is not None
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_a_longer_requested_spacing_is_honoured_and_still_compensated(opts,
+                                                                      polarity: str) -> None:
+    """A hard timing request is a request, not a hint -- and it does not cost the physics."""
+    module = line(opts, echoes=4, polarity=polarity, _null_moment_order=1)
+    wanted = module.min_echo_spacing_s + 500e-6
+    longer = line(opts, echoes=4, polarity=polarity, _null_moment_order=1, echo_spacing_s=wanted)
+
+    assert longer.echo_spacing_s == pytest.approx(wanted, abs=1e-12)
+    assert between_the_lobes(longer)[1] > between_the_lobes(module)[1]
+    for echo in range(4):
+        assert moment_to_echo(longer, 0, echo) == pytest.approx(0.0, abs=tolerance(longer, 0))
+        assert moment_to_echo(longer, 1, echo) == pytest.approx(0.0, abs=tolerance(longer, 1))
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_compensation_costs_echo_spacing(opts, polarity: str) -> None:
+    """
+    The guarantee is paid for in time, and the payment is visible rather than silent.
+
+    Both polarities pay; the bipolar train pays far more, because its lobes abut and the
+    transition it needs has to be created rather than reshaped.
+    """
+    plain = line(opts, echoes=4, polarity=polarity)
+    compensated = line(opts, echoes=4, polarity=polarity, _null_moment_order=1)
+
+    assert compensated.echo_spacing_s > plain.echo_spacing_s
+    assert between_the_lobes(compensated)[1] > between_the_lobes(plain)[1]
+
+
+def system(max_grad: float, max_slew: float) -> pp.Opts:
+    """A scanner differing from the session fixture only in the two amplifier limits."""
+    return pp.Opts(max_grad=max_grad, grad_unit='mT/m', max_slew=max_slew, slew_unit='T/m/s',
+                   B0=3.0, rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_the_minimum_spacing_depends_on_the_hardware(opts, derated_opts, polarity: str) -> None:
+    """
+    A weaker amplifier needs longer to carry the same moment, and the design says so.
+
+    This is the property that makes the timing *derived* rather than a formula: nothing in the
+    module knows what a scanner can do except ``Opts``.
+    """
+    strong = line(opts, echoes=4, polarity=polarity, _null_moment_order=1)
+    weak = line(derated_opts, echoes=4, polarity=polarity, _null_moment_order=1)
+
+    assert weak.min_echo_spacing_s > strong.min_echo_spacing_s
+    for echo in range(4):
+        assert moment_to_echo(weak, 1, echo) == pytest.approx(0.0, abs=tolerance(weak, 1))
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_the_minimum_spacing_moves_with_the_slew_rate_alone(polarity: str) -> None:
+    """
+    **Hold ``max_grad`` fixed and vary ``max_slew`` only**, and the minimum still moves.
+
+    A timing formula built on amplitude would not notice: the areas the transition has to carry
+    are unchanged here, and only how fast a lobe may be reached differs.  That it moves is what
+    says the minimum comes from realising a waveform against the supplied ``Opts`` rather than
+    from arithmetic on the gradient limit.
+
+    Monotone, too -- more slew is never worse -- which is the direction a reader would assume and
+    is therefore worth pinning.
+    """
+    spacings = [
+        line(system(40, slew), echoes=4, polarity=polarity,
+             _null_moment_order=1).min_echo_spacing_s
+        for slew in (200.0, 150.0, 100.0)
+    ]
+
+    assert spacings == sorted(spacings), 'a slower slew rate never shortens the minimum'
+    assert spacings[-1] > spacings[0], 'and over this range it genuinely lengthens it'
+
+
+def test_the_gradient_limit_binds_the_bipolar_transition_and_not_the_monopolar_one() -> None:
+    """
+    The other half of the statement, with ``max_slew`` held fixed instead -- and the two
+    polarities answer differently, which is worth having measured rather than assumed.
+
+    A bipolar transition carries hundreds of ``1/m`` in a balanced pair, so it reaches the
+    amplifier's ceiling and a lower ``max_grad`` lengthens it. A monopolar transition carries one
+    readout lobe's area at this protocol, which is nowhere near the ceiling -- so ``max_grad`` is
+    simply not the binding constraint there and the minimum does not move at all.
+
+    Asserting the *insensitivity* is the point. "Minimum timing depends on the hardware" is true
+    but vague; which limit binds which waveform is the fact a protocol decision would rest on,
+    and a formula that multiplied everything by ``max_grad`` would fail this rather than the
+    test above.
+    """
+    def minimum(polarity: str, max_grad: float) -> float:
+        return line(system(max_grad, 150.0), echoes=4, polarity=polarity,
+                    _null_moment_order=1).min_echo_spacing_s
+
+    bipolar = [minimum('bipolar', grad) for grad in (80.0, 40.0, 32.0)]
+    monopolar = [minimum('monopolar', grad) for grad in (80.0, 40.0, 32.0)]
+
+    assert bipolar == sorted(bipolar) and bipolar[-1] > bipolar[0]
+    assert monopolar[0] == pytest.approx(monopolar[-1], abs=1e-12)
+    # And it is genuinely slew that binds it, which the test above measures on both polarities.
+    assert minimum('monopolar', 40.0) != pytest.approx(
+        line(system(40.0, 100.0), echoes=4, polarity='monopolar',
+             _null_moment_order=1).min_echo_spacing_s)
+
+
+# ------------------------------------------------- what a reconstruction still has to be able to do
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_the_sampling_semantics_survive_compensation(opts, polarity: str) -> None:
+    """
+    The transition changes the gradients between echoes and **nothing a reconstruction reads**.
+
+    Echo count, which sample is ``k = 0``, which lobes are reversed and the dwell all come back
+    unchanged; only the period moves, and ``te_s`` moves with it.  A compensated train whose
+    ``REV`` flags had quietly stopped matching its lobes would reconstruct mirrored.
+    """
+    plain = line(opts, echoes=4, polarity=polarity)
+    compensated = line(opts, echoes=4, polarity=polarity, _null_moment_order=1)
+
+    assert compensated.num_samples == plain.num_samples
+    assert compensated.dwell_s == plain.dwell_s
+    assert compensated.pre_echo_samples == plain.pre_echo_samples
+    for echo in range(4):
+        assert compensated.echo_sample(echo) == plain.echo_sample(echo)
+        assert compensated.polarity_of(echo) == plain.polarity_of(echo)
+    assert float(compensated.gx.amplitude) == pytest.approx(float(plain.gx.amplitude))
+    assert float(compensated.gx.area) == pytest.approx(float(plain.gx.area))
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_the_echo_times_are_the_period_plus_the_echo_in_its_lobe(opts, polarity: str) -> None:
+    """
+    ``te_s`` stays the arithmetic it was, because one transition duration serves the whole train.
+
+    A per-interval duration would have been the cheaper design and would have made the echo times
+    a cumulative sum instead -- so this asserts the property that choice bought.
+    """
+    module = line(opts, echoes=5, polarity=polarity, _null_moment_order=1)
+    spacing = np.diff(module.te_s)
+
+    assert len(module.te_s) == 5
+    if polarity == 'monopolar':
+        assert spacing == pytest.approx(module.echo_spacing_s, abs=1e-12)
+    else:
+        # Still alternating by two dwells: that is the sample grid, which compensation does not
+        # touch.  It is `te_s`'s whole reason for existing, and it survives.
+        assert np.ptp(spacing) == pytest.approx(2 * module.dwell_s, abs=1e-9)
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_the_compensated_train_compiles(opts, polarity: str) -> None:
+    """Legal physics that the compiler refuses is not a design, it is a proposal."""
+    module = line(opts, echoes=4, polarity=polarity, _null_moment_order=1)
+
+    sequence = sc.compile(sc.LogicBlock('train').add(0.0, module()), opts)
+
+    assert sequence.block_events
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_every_readout_axis_gradient_is_still_a_trapezoid(opts, polarity: str) -> None:
+    """
+    A transition of two adjacent lobes merges into one extended gradient without a barrier.
+
+    That is legal, simulates fine and is reported only as a merge warning -- and it changes the
+    waveform the moments were solved for, so it is asserted rather than hoped for.
+    """
+    module = line(opts, echoes=4, polarity=polarity, _null_moment_order=1)
+    sequence = sc.compile(sc.LogicBlock('train').add(0.0, module()), opts)
+
+    for index in range(1, len(sequence.block_events) + 1):
+        gradient = getattr(sequence.get_block(index), module.axis, None)
+        if gradient is not None:
+            assert gradient.type == 'trap', f'block {index} is a {gradient.type}'
+
+
+@pytest.mark.parametrize('polarity', ('monopolar', 'bipolar'))
+def test_a_dummy_repetition_plays_the_compensated_train(opts, polarity: str) -> None:
+    """
+    **A dummy has to drive the magnetisation towards the steady state that is then acquired.**
+
+    `acquire=False` dropping the ADC and the labels is already asserted for an ordinary train.
+    What is new here is that the compensated waveform survives it: the reshaped winder and every
+    inter-echo transition are in the dummy too, event for event and at the same instants.
+
+    A dummy that quietly played the *uncompensated* train would be a longer-echo-spacing sequence
+    with different gradients establishing a different steady state, and because dummies produce no
+    data nothing downstream would show it directly -- the acquired images would simply keep a
+    transient the dummies were there to remove.
+    """
+    module = line(opts, echoes=4, polarity=polarity, _null_moment_order=1)
+    live, dummy = module(), module(acquire=False)
+
+    def waveforms(tree):
+        return [(round(start, 12), knots_of(event, start)[1].tobytes())
+                for start, event, _ in flatten(tree)
+                if getattr(event, 'type', None) in ('trap', 'grad')]
+
+    def count(tree, kind):
+        return sum(getattr(event, 'type', None) == kind for _, event, _ in flatten(tree))
+
+    assert dummy.duration == pytest.approx(live.duration, abs=1e-15)
+    assert waveforms(dummy) == waveforms(live)
+    assert count(dummy, 'adc') == 0 and count(live, 'adc') == 4
+    assert count(dummy, 'labelset') == 0
+    # And it really is the compensated train on both sides, not two matching uncompensated ones.
+    assert len(module.prephaser_lobes) == 2
+    assert between_the_lobes(module)[1] > between_the_lobes(
+        line(opts, echoes=4, polarity=polarity))[1]
