@@ -2964,7 +2964,7 @@ Each of these was found by measurement, and each has a regression test.
 - **The vector-norm warning is not a proxy for peripheral nerve stimulation.** They answer
   different questions -- one about an instant, the other about a history -- so a waveform can sit
   inside every instantaneous limit and still accumulate a large PNS response. Measure PNS with
-  `CompiledSequence.pns()` against your own hardware model.
+  `sc.pns(tree, opts, hardware)` against your own hardware model.
 - Simulation and reconstruction helpers live in `examples/lib/`, **not** in the package.
 
 ### Tests
