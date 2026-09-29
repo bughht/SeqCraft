@@ -1141,7 +1141,7 @@ def test_a_legal_sample_count_is_unchanged(opts) -> None:
 
 def test_an_odd_matrix_raises_with_the_numbers_that_produced_it(opts) -> None:
     """
-    65 samples on a scanner wanting multiples of four.
+    65 samples with ``adc_samples_divisor = 4``.
 
     Refused **here** rather than by the compiler, because this is the layer that computes the
     count: the compiler's version of this arrives after the caller has built a sequence and names

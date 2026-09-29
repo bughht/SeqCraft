@@ -108,6 +108,37 @@ historical *software* bug because it was instructive during development does not
 
 ---
 
+## Claims about other projects, scanners and vendors
+
+A notebook teaches the sequence. It is not the place to characterise what another project,
+scanner or vendor gets wrong — and the failure mode here is not rudeness, it is claiming more than
+was measured.
+
+**[`writing_a_module.md`](writing_a_module.md) has the rule and the questions**; it applies to
+notebook prose unchanged. The short form:
+
+> The grammatical subject of a defect claim must be the artifact for which the evidence exists.
+
+Three shapes that keep appearing in notebooks specifically:
+
+```text
+wrong on every real scanner        one integration's defaults, widened to every scanner
+that is right on a scanner         a simulator limitation, restated as scanner behaviour
+gets blamed on the scanner         rhetoric standing in for the artefact and its consequence
+a scanner may use either           a convention question, answered for a population
+```
+
+Each has a version that says what was actually shown. A simulator limitation is a fact about the
+simulator: *"MRzero applies a pulse as an instantaneous rotation by its integrated envelope, so a
+10 ms hyperbolic secant arrives as 289°"* is checkable; a claim about what the realisation is
+correct for in general is not. A sign convention is a property of the pipeline in hand, so say that it must be established
+for the acquisition and reconstruction being used.
+
+`tools/check_prose_attribution.py` reads notebook cells as well as source and documentation, so
+these are caught in `.ipynb` JSON too.
+
+---
+
 ## What a simulation notebook is allowed to cost
 
 MRzero's inner loop is dense complex linear algebra and it takes every core it is offered — sixteen

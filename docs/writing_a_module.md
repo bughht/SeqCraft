@@ -377,6 +377,132 @@ was sufficient to conclude, are not docstring material; point at the example ins
 
 ---
 
+## Naming what a claim is about
+
+**The grammatical subject of a defect, validation, correctness, historical or behavioural claim
+must be the artifact for which the evidence exists.**
+
+That is one rule, and it is the whole of this section. It is here because the repository has
+repeatedly got it wrong in the same direction — making an external project the subject of a
+sentence whose evidence is about seqcraft:
+
+```text
+evidence     seqcraft's synthetic_hardware() did not match pypulseq's safe_example_hw()
+
+allowed      SeqCraft's synthetic_hardware() did not match safe_example_hw().
+not allowed  The public PNS reference model was wrong.
+```
+
+Both sentences describe the same measurement. Only the first says whose defect it is.
+
+`tools/check_prose_attribution.py` blocks the formulations that have appeared here, generalised to
+the families they belong to, and prints a longer list of words worth re-reading without failing on
+them. Run `--review` on a branch to see the second level for the lines you changed.
+
+**It is a floor, and a green run proves only what it checks.** The blocking list is the set of
+mistakes already made once; a new way of saying the same thing passes. The review level finds
+words, not claims — it cannot tell a supported "SeqCraft had a bug here" from an unsupported one.
+`salvage/` is audited once and then excluded. The questions below are the actual rule.
+
+### The questions
+
+For any sentence about behaviour, especially external behaviour:
+
+```text
+who exactly is the subject?
+what exact evidence supports it?
+is the sentence stronger than that evidence?
+am I reporting an observed behaviour or defect, or inferring intent or motive?
+```
+
+If the first three cannot be answered immediately, rewrite the sentence. The fourth is the one
+with a categorical answer: **an observed defect is reportable, an inferred motive is not**, and no
+amount of confidence converts the second into the first.
+
+So all of these are fine, when the evidence is there:
+
+```text
+SeqCraft had a bug here: the spoiler area was computed from the wrong voxel size.
+pSeq_Base's get_report() printed its result and returned None.
+writeTSE.m, as examined, uses equal dead time and ringdown.
+```
+
+and none of these is, however sure you are:
+
+```text
+... gets it right by accident
+... avoids it only by
+... had no idea that
+```
+
+### What that means in practice
+
+**Historical verbs are evidence claims.** `drifted`, `regressed`, `used to` and `later` assert a
+transition. Use them only when history shows it — `synthetic_hardware()` was said to have
+*drifted* from a model it turned out never to have matched — git showed the two differed in the
+commit that introduced it, so there had been nothing to drift from. `did not match` and `differed` claim only what was
+measured.
+
+**A local measurement is not a universal.** Each of these widens one observation into a claim
+about a population nobody examined; say what the integration you actually use does.
+
+```text
+every real scanner
+no vendor database
+every reference implementation
+right on a scanner
+```
+
+**Do not infer intent.** What is knowable is the configuration and its consequence:
+
+```text
+observation           writeTSE.m, as examined, sets dead time equal to ringdown
+consequence           under that configuration the residual is zero, so the asymmetric case
+                      is not exercised there
+do not write          writeTSE.m gets it right by accident
+```
+
+**Name the artifact, not the category.** `the reference implementation`, `the references`, `the
+source`, `upstream` — when several distinct artifacts exist, these say nothing a reader can check.
+Name the file, the function and the version if it is material.
+
+**Criticism is allowed; it has to be earned.** Where an external implementation genuinely matters,
+the shape that works is:
+
+```text
+exact artifact and version  ->  observed behaviour  ->  measured consequence
+                            ->  why seqcraft does something else
+```
+
+That is stronger than blame, because every step is checkable. Do not soften a seqcraft defect
+either: when the evidence is about this package, say so plainly.
+
+**A corpus observation is not automatically universal.** "All references" is a claim you may
+make only when the reference set is defined somewhere and complete for the scope you are claiming
+— and then say which set. The mining records define theirs; `every official Pulseq 3D reference`
+did not, and became `the non-selective implementations in the GRE3D reference set`.
+
+**Scanner and vendor population claims need evidence about that population.** Without it, describe
+the `Opts` you configured, the installation you tested, or the specific source you read. Each of
+these was one observation wearing a quantifier:
+
+```text
+wrong on every real scanner
+no vendor database has them
+right on a scanner
+```
+
+**`validated against X` has to say what was measured.** It is a claim about an experiment, not a
+reputation, and if you cannot name the experiment do not make it.
+
+**A private or site-specific source is evidence only for that study.** A comparison against one
+scanner's descriptor does not establish anything about scanners, vendors, or a public example
+model.
+
+**Precision, not politeness.** None of this is a reason to soften a criticism that the evidence
+supports, or to avoid saying plainly that seqcraft has a bug. A source-specific criticism with a
+named artifact is worth more than a vague one, and far more than none.
+
 ## What to assert in your tests
 
 **Compile it on its own.** That is one line, and it is most of the suite seqcraft used to ship:
@@ -396,7 +522,7 @@ waveform, which is the only place two individually legal gradients on one axis c
 **Then check purity, because the compiler structurally cannot.** It validates a tree. It never sees
 the second call. A component that designs once and assembles per TR is called once per TR, so
 self-mutation, accumulation and nondeterminism are invisible to `sc.compile` by construction — each
-individual call hands it a tree that is perfectly legal. The reference implementation's
+individual call hands it a tree that is perfectly legal. `pSeq_Base`'s
 `self.gx.amplitude = -self.gx.amplitude` inside a readout loop compiles cleanly every TR and
 produces a plausible but wrong image.
 

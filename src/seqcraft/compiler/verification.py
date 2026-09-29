@@ -19,12 +19,13 @@ before anything is raised, because seeing every affected axis at once beats stop
 :func:`check_label_addresses`) ask what only a built :class:`pypulseq.Sequence` can answer: does
 any one event exceed the interpreter's sample limit, does any RF event's peak exceed the transmit
 limit, and do two imaging ADCs write the same k-space address?  None is an internal invariant --
-all three are ways a legal-looking tree produces a sequence a scanner refuses -- so the first two
-raise :class:`~seqcraft.errors.HardwareLimitError` and the third
+all three are constraints that can only be evaluated on the built sequence, so seqcraft raises on
+them before returning it rather than handing back something it knows to be unusable: the first two
+:class:`~seqcraft.errors.HardwareLimitError` and the third
 :class:`~seqcraft.errors.CompileError`.
 
 They live here rather than on what a compile returns because a check nobody has to call is a
-check nobody calls.  The reference implementation's ``get_report()`` printed and returned
+check nobody calls.  ``pSeq_Base``'s ``get_report()`` printed its result and returned
 ``None``; its successor returned an object with a ``check()`` method, which is the same failure
 one indirection later.
 """
@@ -192,13 +193,14 @@ def check_event_sizes(seq: Any, opts: Any, origins: Sequence[tuple[str, ...]] = 
     Check every ADC and RF event against the interpreter's per-event sample limits.
 
     These limits live in ``Opts`` as ``adc_samples_limit`` and ``rf_samples_limit`` and default to
-    ``0``, pypulseq's "no limit".  Nothing checked them until a 67 388-sample spiral readout
-    reached a scanner, which refused the block with ``fRTEBFinish() failed for block type:
+    ``0``, pypulseq's "no limit".  Nothing checked them until a 67 388-sample spiral readout was
+    run, and in that run the block was refused with ``fRTEBFinish() failed for block type:
     ArbX ArbY ADC`` -- a message that names the block type and says nothing about samples.
 
     The limit is the vendor interpreter's, not the amplifier's, so it has to be set from the
     installation: :func:`seqcraft.scanner.opts.from_scanner` takes ``adc_samples_limit=`` for
-    exactly this, and 8192 is the common Siemens value.  A readout longer than one event's worth
+    exactly this, and the examples in this repository use 8192.  A readout longer than one
+    event's worth
     has to be split into several ADCs, at the cost of ``adc_dead_time`` between them.
 
     Raises

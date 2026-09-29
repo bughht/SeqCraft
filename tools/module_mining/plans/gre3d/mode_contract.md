@@ -25,7 +25,7 @@ non-selective   = the same thing with Gz removed
 So the non-selective mode emitted the slab path's **3 ms shaped sinc with no selection gradient**:
 a soft pulse that selected nothing and spent three milliseconds of every echo time doing it. It
 satisfied every k-space invariant, compiled legally, passed its notebook, and was not the
-experiment its own mode name promised. Every official Pulseq 3D reference uses a short hard block
+experiment its own mode name promised. The non-selective implementations in the GRE3D reference set use a short hard block
 pulse.
 
 Both modes are now derived from their own contract.

@@ -84,7 +84,8 @@ during the compile, so nothing has to survive until write time to put them there
 artifact.
 
 That is only tenable because **every legality failure raises**. A returned object carrying a report
-is a way of not noticing: it writes a `.seq` the console refuses an hour later, and the explanation
+is a way of not noticing: it writes a `.seq` whose problem surfaces when someone tries to run it
+rather than when it was built, and the explanation
 is on an object nobody looked at. What the compile *did* rather than refused — summed two gradients
 on an axis, resampled one onto the raster — is a `SeqCraftWarning`, one aggregated line per
 category, so the standard `warnings` machinery decides what happens to it.

@@ -68,6 +68,11 @@ jobs:
       - name: api reference
         run: python tools/check_api_reference.py
 
+      # Blocks a short list of specific unsupported attributions; the broad review words it also
+      # tracks are printed by `--review` and never fail.  See docs/writing_a_module.md.
+      - name: prose attribution
+        run: python tools/check_prose_attribution.py
+
   examples:
     runs-on: ubuntu-latest
     steps:

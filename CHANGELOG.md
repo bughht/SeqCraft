@@ -761,7 +761,7 @@ of the public physical abstraction.
 **The chemical-shift sign is the failure that looks fine.** `shift_ppm` is signed and relative to
 water; fat is below it. Get the sign wrong and you get legal Pulseq, legal timing, legal gradients,
 a correct-looking waveform — and water saturated instead of fat, with nothing downstream noticing.
-The two published references reach the same number by different routes, one carrying the sign in
+`write_epi_se_rs.py` and `writeEpiSpinEchoRS.m` reach the same number by different routes, one carrying the sign in
 the ppm constant and the other applying it at the point of use, so an implementation that mixed
 the conventions would be exactly this wrong. The module converts once, reports `offset_hz`, and
 the tests trace `shift_ppm -> offset_hz -> emitted rf.freq_offset` as far as the **compiled
@@ -826,7 +826,7 @@ a physical quantity rather than a `slab_selective=True` flag, mirroring `Excitat
 
 | | |
 |---|---|
-| `None` | non-selective, as every official Pulseq 3D reference is. The z axis carries a partition encode and nothing else |
+| `None` | non-selective, as `writeGradientEcho3D.m` and `write_3Dt1_mprage.py` are. The z axis carries a partition encode and nothing else |
 | a thickness | slab-selective. The rephasing the slab implies and the partition encoding are two moments on **one axis in one window**, solved as `A_z(p) = A_slab + A_partition(p)` and realised as a single gradient |
 
 Played in sequence those two cost two windows of echo time; `fmrifrey/lps` does exactly that and
@@ -856,7 +856,7 @@ the partition responsible and its combined moment.
 inheriting `Excitation`'s 3 ms shaped sinc. A non-selective excitation with a shaped pulse is the
 worst of both — it spends a soft pulse's duration and selects nothing — and it was putting 3 ms
 into every echo time for it. Measured at the reference geometry, the minimum TE drops from 4.377
-to **2.977 ms**. Every official Pulseq 3D reference uses a block pulse for the same reason.
+to **2.977 ms**. The non-selective implementations in the GRE3D reference set use a block pulse for the same reason.
 
 A slab still gets a shaped sinc, and `rf_pulse=` overrides either — a shaped but spatially
 non-selective excitation is a real thing to want. Asking for a time-bandwidth product without a
@@ -922,15 +922,16 @@ half-open convention, because 0.5 is not degenerate here: it is a sequence famil
 
 **The centre sample is not the ADC midpoint.** A full spoke with an even matrix has its centre one
 sample past the middle, `-32Δk … +31Δk`, which is `PhaseEncode`'s `matrix // 2` convention and the
-official reference's; a centre-out spoke has it at sample zero. `center_sample`,
+`write_radial_gre.py`'s; a centre-out spoke has it at sample zero. `center_sample`,
 `time_to_center()`, `dk_per_m`, `k_first_per_m`, `k_last_per_m` and `k_max_per_m` are the module's
 answers. They exist because of what the alternative looks like: OpenMRF's radial readout compiles
 a probe sequence and reads its trajectory back to discover where its own centre sample landed.
 
 **The block `build` returns is already oriented**, so the module's semantic properties and its
 emitted events have one owner rather than two. One canonical spoke is designed along x and fresh
-rotated copies are derived per call — with the stored `area` scaled too, which both references
-that extend a readout's flat time warn in a comment is otherwise left wrong. A spoke along an axis
+rotated copies are derived per call — with the stored `area` scaled too, which
+`writeFastRadialGradientEcho.m` and OpenMRF `RAD`, both of which spoil by extending the readout's flat time, warn
+in a comment is otherwise left wrong. A spoke along an axis
 emits one gradient, not one plus a 1e-11 Hz/m ghost.
 
 No kernel and no trajectory layer. A radial GRE is currently `Excitation` → `RadialReadout` →
@@ -941,7 +942,7 @@ waveform exists.
 
 Extracted the same way as the last one: the references were measured first, and the
 rotation-equivariance test — that the spoke at φ is the spoke at 0 rotated — was written against
-the official PyPulseq reference and passed there **before this module existed**, so it cannot be
+`write_radial_gre.py` and passed there **before this module existed**, so it cannot be
 encoding this module's behaviour. It now passes against the package at ~1e-14 /m, across eight
 sweep cases spanning two matrices, two fields of view, three dwell times and the full
 partial-Fourier range.
@@ -953,7 +954,7 @@ two list comprehensions over one readout instance. It is **build and trajectory 
 only**. A radial image needs a non-Cartesian reconstruction and the example suite has none to
 reuse, so writing one to complete a `01`/`02` pair would be new reconstruction infrastructure
 justified by a directory listing; the geometric claims are measured on the compiled trajectory
-instead, and the agreement with the official reference above is the stronger evidence anyway.
+instead, and the agreement with `write_radial_gre.py` above is the stronger evidence anyway.
 
 ## Unreleased — a turbo spin echo, split where the information is
 
@@ -1423,14 +1424,15 @@ assert refoc.time_to_center() == refoc().duration / 2               # exactly, t
 
 A refocusing pulse conjugates k, so between consecutive refocusing centres **each axis's gradient
 area before the echo equals its area after it**. Everything in the design is one consequence of
-that, and the two worth writing down are the two the references get wrong.
+that, and the two worth writing down are the two that a symmetric plateau hides.
 
 **"Equal-area crushers" means measured to the RF's *effective centre*, not the same trapezoid
 twice.** The selection plateau's own halves are unequal whenever the transmit dead time and the
 ringdown differ, or the pulse is asymmetric. On a 100 µs / 30 µs system that residual is 11.2 1/m —
 and since $k_n = -k_{n-1} + \delta$ it **alternates sign echo to echo**: the odd/even modulation an
-FSE is famous for, which reads as a hardware fault. `writeTSE.m` and `write_tse.py` avoid it only by
-setting their dead time and ringdown to the same 100 µs.
+FSE is famous for, which reads as a hardware fault. `writeTSE.m` and `write_tse.py`, as examined,
+set dead time and ringdown to the same 100 µs; under that configuration the residual is zero and
+the asymmetric case is not exercised.
 
 **Two fixes, because they fix different halves.** The plateau is *symmetrised* about the effective
 centre (`time_to_center() == duration / 2`, which is what puts the echo at the midpoint between two
@@ -1534,7 +1536,8 @@ expensive part behind a named switch.
 
 Two things are **named rather than worked around**. The `z` **crusher balance** is not simulable
 here: a slab four voxels thick has nothing for a slice gradient to dephase across within a voxel, so
-an unbalanced crusher simulates as perfectly fine and is wrong on a scanner — which is why it is
+an unbalanced crusher simulates as perfectly fine while leaving a residual that alternates sign
+echo to echo — which is why it is
 asserted arithmetically, with the alternating failure mode as its own test. And MRzero's phase-graph
 model is **insensitive to the CPMG phase relation**: sweeping the refocusing phase from 0° to 90° at
 `B1 = 0.8` changes the echo magnitudes by 6 × 10⁻⁸. Both notebooks say so where a reader would
@@ -1619,9 +1622,10 @@ spoiling problem — turning the extra spoiler axes off moves the image backgrou
 milliseconds, for two tissues — which validates the inversion, `time_to_center` and the TI
 placement in one measurement. It also found that **MRzero applies a pulse as an instantaneous
 rotation by its integrated envelope**, so an adiabatic inversion does not invert there at all: a
-10 ms hyperbolic secant arrives as 289°. `IRPrep` keeps `'hypsec'` as its default because that is
-right on a scanner; the examples pass `'block'` and say why, and `time_to_center` absorbs the
-4.5 ms difference without any other number in the timeline moving.
+10 ms hyperbolic secant arrives as 289°. `IRPrep` retains `'hypsec'` as its default, since the
+limitation is in the simulator's pulse model rather than in the realisation; the examples pass
+`'block'` and say why, and `time_to_center` absorbs the 4.5 ms difference without any other number
+in the timeline moving.
 
 ### One thing the compiler caught on its own
 
@@ -1727,7 +1731,7 @@ seq.write('gre.seq')                  # was: out.write(path) -> WriteResult
 The old shape had one failure mode and it was the same one `pSeq_Base.get_report()` had, one
 indirection later: findings on an object nobody has to look at. `get_report()` printed and returned
 `None`; `CompiledSequence.check()` returned a `Report` that a caller could simply not call. Either
-way the sequence is written, and the console refuses it an hour later.
+way the sequence is written, and the problem surfaces only when someone tries to run it.
 
 **Nothing about the emitted bytes changed.** `build_gre` and `build_se` write `.seq` files with the
 same sha256 as before the revision began, and every structural field of
@@ -2044,9 +2048,9 @@ out = sc.compile(tree, opts)                     # is
 which looks a scanner up in [PulseqSystems](https://github.com/nimpulseq/PulseqSystems) (optional
 extra `seqcraft[systems]`). There is deliberately **no wrapper around the `Opts` constructor**:
 build one the ordinary way. `from_scanner` takes `rf_dead_time`, `rf_ringdown_time`, `adc_dead_time`
-and `max_b1` as *required* keyword arguments, because a vendor database cannot supply them and
+and `max_b1` as *required* keyword arguments, because `get_pulseq_specs` does not return them and
 pypulseq defaults the first three to **zero** — a sequence built on those compiles cleanly,
-validates cleanly, and is refused or silently mangled at the console.
+validates cleanly, so nothing in this package reports them as unset.
 
 `load_hardware` / `synthetic_hardware` moved to `sc.hardware`, out of `core`. `load_hardware` now
 returns just the model, with its provenance string on `.source`; the acoustic-resonance bands it
@@ -2240,7 +2244,7 @@ not testing it.
 ### Fixed — `assert_pure` could not see the bug it was written for
 
 It hashed the stored events, called the builder **twice**, and compared. The canonical mutation it
-exists to catch — the reference implementation's `self.gx.amplitude = -self.gx.amplitude` inside a
+exists to catch — `pSeq_Base`'s `self.gx.amplitude = -self.gx.amplitude` inside a
 readout loop — is an involution, so two calls left every hash where it started and the check passed.
 Now checked after each call.
 

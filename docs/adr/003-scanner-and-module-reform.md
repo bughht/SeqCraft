@@ -96,7 +96,7 @@ What is genuinely lost, stated rather than discovered later:
 Rejected as redundant: `Opts(**specs)` already works, and `Opts` already raises `TypeError` on a
 mistyped keyword. The requirement survives where it is not redundant — inside `from_scanner`, whose
 vendor lookup *cannot* supply dead times, so returning an `Opts` with three zeros in it would be the
-shortest available path to a file the console refuses.
+shortest available path to a file nobody can run.
 
 **An `Interpreter` or `Site` value object** carrying the site constants. Rejected: a frozen
 dataclass whose only job is to carry nine numbers into one function is the kind of thing this reform

@@ -7,11 +7,12 @@ itself -- so a signed k at an ADC sample is a statement about physics rather tha
 module's algebra.  It is checked first, in five raw blocks, because an oracle nothing checks is an
 assumption.
 
-The second is the *failure mode*, asserted as its own test.  A module rewritten to be wrong in a new
-way still passes a test that only asserts the fix, and the wrong version here is not exotic: it is
-what every reference implementation writes -- the same crusher trapezoid twice.  Its symptom is a
-``k_z`` that **alternates sign echo to echo**, which is the odd/even modulation an FSE is famous for
-and which reads as a hardware fault rather than as a design error.
+The second is the *failure mode*, asserted as its own test.  A module rewritten to be wrong in a
+new way still passes a test that only asserts the fix, and the shape asserted here -- the same
+crusher trapezoid twice -- is the natural one to write: it is what the pulseq and pypulseq TSE
+demos emit, and it is exact whenever the RF centre sits at the plateau midpoint.  Where it does
+not, the symptom is a ``k_z`` that **alternates sign echo to echo**: the odd/even modulation an
+FSE is famous for, which reads as a hardware fault rather than as a design error.
 """
 
 from __future__ import annotations
@@ -41,10 +42,11 @@ def se_opts() -> Opts:
 
 @pytest.fixture(scope='module')
 def symmetric_opts(se_opts: Opts) -> Opts:
-    """The references' scanner: ``rf_dead_time == rf_ringdown_time``, so the plateau is symmetric.
+    """``rf_dead_time == rf_ringdown_time``, so the selection plateau is symmetric.
 
-    This is the configuration that makes ``writeTSE.m``'s two-identical-trapezoids design correct
-    **by accident**, which is why the balance is asserted on both.
+    ``writeTSE.m``, as examined, uses equal dead time and ringdown.  Under that configuration its
+    two-identical-trapezoids design leaves no residual, so the asymmetry this file is about is
+    not exercised there -- which is why the balance is asserted under both configurations.
     """
     return sc.opts.derate(se_opts, rf_ringdown_time=100e-6)
 
@@ -100,8 +102,8 @@ def test_kspace_conjugates_at_a_refocusing_pulse(se_opts: Opts) -> None:
 
 
 # ------------------------------------------------------------------------------ the invariant
-#: Three pulses.  The first is what hides the bug -- a symmetric plateau makes the naive design
-#: correct -- and the second and third are what the references get wrong.
+#: Three pulses.  The first is the configuration under which the same-trapezoid-twice design is
+#: exact -- a symmetric plateau -- and the second and third are the ones that leave a residual.
 PULSES = {
     'symmetric sinc, dead != ringdown': ({}, 'se_opts'),
     'symmetric sinc, dead == ringdown': ({}, 'symmetric_opts'),
@@ -181,7 +183,8 @@ def test_time_to_crusher_is_where_the_trailing_window_begins(se_opts: Opts) -> N
 # -------------------------------------------------------------------------- the failure mode
 def _naive_refocusing(opts: Opts, *, window_s: float, duration_s: float = 4e-3):
     """
-    The references' design: the same crusher trapezoid twice, and a plateau merely long enough.
+    ``writeTSE.m`` and ``write_tse.py``'s design: the same crusher trapezoid twice, and a
+    plateau merely long enough.
 
     Two errors, and both compile.  The plateau covers the dead time and the ringdown without being
     *symmetrised* about the pulse, and the crusher area is taken from half the plateau's **total**
@@ -250,9 +253,10 @@ def test_two_identical_crushers_alternate_k_z_and_the_solve_does_not(se_opts: Op
 
 def test_a_symmetric_plateau_hides_it(symmetric_opts: Opts) -> None:
     """
-    ``writeTSE.m`` sets its dead time and ringdown to the same 100 us, so it gets this right by
-    accident.  Change either and the sequence is quietly wrong -- which is the argument for the
-    module doing the arithmetic rather than the protocol happening to.
+    ``writeTSE.m``, as examined, sets dead time and ringdown to the same 100 us.  Under that
+    configuration the plateau is symmetric and the residual tested here is zero.  Change either
+    independently and it is not -- which is the argument for the module doing the arithmetic
+    rather than for it depending on the protocol's configuration.
     """
     symmetric_opts = _any_b1(symmetric_opts)
     module = refocusing(symmetric_opts)

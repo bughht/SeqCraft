@@ -43,9 +43,10 @@ change a waveform to make it legal it **warns**.  There is no report object to i
 result wrapper to unpack.
 
 **Set the dead times.**  pypulseq defaults ``rf_dead_time``, ``rf_ringdown_time`` and
-``adc_dead_time`` to zero, which is wrong on every real scanner: the sequence compiles cleanly,
-validates cleanly, and is refused or silently mangled at the console.  They are properties of your
-installation, not of the scanner model, so no preset and no vendor database can supply them.
+``adc_dead_time`` to zero.  A sequence built on those zeros compiles cleanly and validates
+cleanly here, so nothing in this package will tell you they are unset.  They are properties of an
+installation rather than of a scanner model, and the PulseqSystems lookup seqcraft uses does not
+carry them.
 :func:`seqcraft.scanner.opts.from_scanner` looks the amplitudes up in PulseqSystems and requires
 the rest.
 

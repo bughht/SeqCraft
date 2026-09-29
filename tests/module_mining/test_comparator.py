@@ -1,8 +1,10 @@
 """
 The comparator, against answers known independently of any candidate.
 
-**This suite exists because the comparator has been wrong three times and the candidates none.**
-Each time the failing measurement looked exactly like a physics bug in the module under test:
+**This suite exists because the comparator has produced false failures where the candidate was
+correct**, and the cases below are the regression record of them -- this list, rather than a count
+kept in prose somewhere else, is what says how many there have been.  Each time the failing
+measurement looked exactly like a physics bug in the module under test:
 
 - an echo location that reported ``kx`` alternating +-1.947 1/m, which is a textbook odd/even
   artefact and was floating-point noise choosing between two samples half a k-step either side of

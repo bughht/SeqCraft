@@ -787,7 +787,7 @@ class CartesianLine(Module):
         """
         Return `count`, refusing a sampling geometry the receiver cannot digitise.
 
-        A scanner accepts ADC sample counts in multiples of ``opts.adc_samples_divisor``, and the
+        The computed sample count must be divisible by ``opts.adc_samples_divisor``, and the
         requirement is on the **count**, not on the parity of the matrix: ``matrix=65`` at
         ``partial_fourier=1.0`` gives 65 samples, and an even matrix gives an illegal count just
         as easily -- 0.6 of 128 is 77, which is why ``examples/fse_2d`` runs HASTE at 0.625.

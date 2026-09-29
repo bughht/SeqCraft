@@ -54,7 +54,7 @@ must remain invariant:
 > **A mode may not be implemented as "another mode minus one event" unless reference evidence
 > establishes that equivalence.**
 
-Every official Pulseq 3D reference uses a block pulse for non-selective excitation. One look at
+The non-selective implementations in the GRE3D reference set use a block pulse for non-selective excitation. One look at
 the evidence column would have settled it before any code existed. Worked example:
 `tools/module_mining/plans/gre3d/mode_contract.md`.
 

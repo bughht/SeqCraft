@@ -136,7 +136,7 @@ contract:                             # [VERBATIM] historical key was `working_h
       selection_gradient: absent
       intrinsic_rephasing: none required
       encoding_role: z carries a partition encode and nothing else
-      reference_evidence: every official Pulseq 3D reference uses a block pulse
+      reference_evidence: the non-selective implementations in the GRE3D reference set use a block pulse
       user_overridable: rf_pulse=
     - name: slab-selective
       rf_family: shaped sinc

@@ -297,7 +297,7 @@ def check_limits(
     Measure amplitude and slew on a compiled block; raise on a per-axis violation.
 
     Raised rather than reported, because there is no legal sequence to hand back.  A returned
-    object carrying a note is a way of not noticing: it writes a ``.seq`` the console refuses an
+    object carrying a note is a way of not noticing: it writes a ``.seq`` whose problem surfaces an
     hour later, and the report explaining why is on an object nobody looked at.
 
     The vector norm across simultaneous axes is the exception, and stays a **warning**: two axes

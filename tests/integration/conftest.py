@@ -94,7 +94,7 @@ def geometry_definitions(
     library wants one.
 
     The one rule worth stating: ``kSpaceCenterLine`` here and the ``LIN`` label values below come
-    from the same expression, ``matrix // 2``.  The reference implementation wrote
+    from the same expression, ``matrix // 2``.  ``pSeq_Base`` wrote
     ``kSpaceCenterLine = Ny/2 = 73.0`` while its navigator computed 36.5, and the two disagreeing
     is precisely the failure that costs an image.
     """

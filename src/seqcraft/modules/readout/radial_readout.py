@@ -36,7 +36,7 @@ is no evidence for what the geometry should mean.
 by one -- 64 samples run ``-32*dk ... +31*dk`` -- which is the same convention
 :class:`~seqcraft.modules.PhaseEncode` uses for ``center_line = matrix // 2``.  It is not tidied
 up here, because consistency between modules is worth more than a symmetric-looking spoke, and
-because the official reference does exactly this.
+because pypulseq's ``write_radial_gre.py`` does exactly this.
 
 What it does not own
 --------------------

@@ -38,7 +38,8 @@ selection plateau's own halves are unequal whenever
   them, and ``(dead - ringdown)/2`` of plateau lands on one side only; or
 * the pulse is asymmetric -- a minimum-phase SLR 180's centre is nowhere near its midpoint.
 
-On a scanner with ``rf_dead_time = 100 us`` and ``rf_ringdown_time = 30 us``, a 4 ms TBW-4 sinc
+With ``rf_dead_time = 100 us`` and ``rf_ringdown_time = 30 us`` in the ``Opts`` used here, a
+4 ms TBW-4 sinc
 over a 6.25 mm slab leaves a residual of ``a_sel * (dead - ringdown) / 2`` = **5.6 1/m**, 0.035
 cycles across the slab.  Small -- and it **alternates sign echo to echo**, because
 :math:`k_n = -k_{n-1} + \delta`, which is exactly the odd/even modulation an FSE is famous for and
@@ -201,7 +202,8 @@ class Refocusing(Module):
         ``None`` derives each transition's ramp from ``opts.max_slew`` by a short fixed point.
         **It buys no echo spacing at all** -- measured, exactly zero, because the spacing depends on
         the crusher *window* and not on its ramps -- so this argument exists for slew headroom.  The
-        references' fixed ``250e-6`` is that number frozen at one system.
+        fixed ``250e-6`` in ``write_tse.py`` and ``writeTSE.m`` is that number frozen at one
+        system.
     axis
         Selection axis.  ``None`` means ``'z'`` when selective, and is the only legal value when
         not.

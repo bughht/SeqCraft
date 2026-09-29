@@ -20,7 +20,8 @@ One equation
     y_{j}(t) = \sum_r x(r) \exp\bigl( -2 \pi i (k_j(t) \cdot r + \Delta f(r)\, t) \bigr)
 
 ``j`` interleaves, and ``t`` measured **from the echo** -- never absolute, and never inferred.
-Both terms carry the same sign, which is the scanner's convention; written with a minus on the
+Both terms carry the same sign, which is the convention of the signal model above and of the
+acquisition it is reconstructing; written with a minus on the
 second, an off-resonance correction adds exactly the phase it is meant to remove and the result
 reads as *"correction does not help"* rather than as a sign error.  That is how a sign error
 survives being tested.

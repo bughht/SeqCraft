@@ -58,9 +58,9 @@ notebooks).
 
 > [!IMPORTANT]
 > **Set the dead times.** pypulseq defaults `rf_dead_time`, `rf_ringdown_time` and `adc_dead_time`
-> to **zero**, which is wrong on every real scanner: the sequence compiles cleanly, validates
-> cleanly, and is refused or silently mangled at the console. They belong to your installation, so
-> no preset can supply them.
+> to **zero**. A sequence built on those zeros compiles cleanly and validates cleanly, so
+> nothing here will tell you they are unset. They belong to your installation, so the
+> PulseqSystems lookup does not return them.
 
 ---
 
@@ -352,8 +352,9 @@ inversions — an MPRAGE — is the same tree one level deeper, and
 conjugates k, so between consecutive refocusing centres every axis's gradient area before the echo
 has to equal its area after it — measured to the RF's **effective centre**, not to the middle of the
 block. Getting that wrong leaves a residual that alternates sign echo to echo and reads as a
-hardware fault, and both pulseq reference implementations avoid it only by setting their transmit
-dead time and ringdown to the same number:
+hardware fault. The pulseq and pypulseq TSE demos, as examined, set transmit dead time and
+ringdown to the same value, and under that configuration the residual is zero — so the asymmetric
+case is not exercised there:
 
 ```python
 refoc = sc.modules.Refocusing(opts=opts, thickness_mm=6.25, crush_voxel_mm=5.0)

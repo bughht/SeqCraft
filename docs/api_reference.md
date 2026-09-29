@@ -548,9 +548,9 @@ opts = pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s', B
 ```
 
 > **Set the dead times.** pypulseq defaults `rf_dead_time`, `rf_ringdown_time` and `adc_dead_time` to
-> **zero**, which is wrong on every real scanner: the sequence compiles cleanly, validates cleanly,
-> and is refused or silently mangled at the console. They are properties of your *installation*, so
-> no preset and no vendor database can supply them.
+> **zero**. A sequence built on those zeros compiles cleanly and validates cleanly, so nothing
+> here will tell you they are unset. They are properties of your *installation* rather than of a
+> scanner model, and the PulseqSystems lookup does not carry them.
 
 The eight fields the compiler reads:
 
@@ -588,8 +588,8 @@ from_scanner(manufacturer, model, gradient=None, *,
 
 Looks `max_grad`, `max_slew` and `B0` up in
 [PulseqSystems](https://github.com/nimpulseq/PulseqSystems) so they need not be copied off a spec
-sheet. The four site constants are **required keyword arguments** because no vendor database has
-them — they belong to the installation.
+sheet. The four site constants are **required keyword arguments** because `get_pulseq_specs`
+does not return them — they belong to the installation.
 
 ```python
 opts = sc.opts.from_scanner(
@@ -631,7 +631,7 @@ Lowering `adiabaticity` is not free — it is what B1 robustness is bought with 
 say so.
 
 `from_scanner` requires `max_b1` for the same reason it requires the dead times: it belongs to the
-transmit chain and the coil loading, so no vendor database can supply it. Take it from the
+transmit chain and the coil loading, so the PulseqSystems lookup does not carry it. Take it from the
 reference voltage the scanner reports, and keep a margin.
 
 ## 2.3 `sc.hardware` — PNS response models
@@ -1559,13 +1559,14 @@ compile a probe sequence and read its trajectory back to find out where its own 
 **The block is already oriented.** A caller does not rotate what `build` returns, because the
 module's semantic properties describe the oriented spoke and a trajectory whose orientation lived
 somewhere else would have two owners. Internally one canonical spoke is designed along x and
-fresh rotated copies are derived per call — including the stored `area`, which both references
-that extend a readout's flat time warn is otherwise left wrong.
+fresh rotated copies are derived per call — including the stored `area`, which
+`writeFastRadialGradientEcho.m` and OpenMRF `RAD`, both of which spoil by extending the readout's flat
+time, warn is otherwise left wrong.
 
 What stays with the caller: how many spokes, which angles, in what order, golden-angle or
 equal-increment or randomised, and the excitation, spoiling and TR around them.
 `tests/modules/test_radial_readout.py` asserts the trajectory, and the rotation-equivariance test
-there is the same one that passed against the official PyPulseq reference before this module
+there is the same one that passed against `write_radial_gre.py` before this module
 existed.
 
 
@@ -1590,12 +1591,12 @@ between them — a physical quantity rather than a `slab_selective=True` flag, m
 
 | | |
 |---|---|
-| `slab_thickness_mm=None` | non-selective, which is what every official Pulseq 3D reference does. The z axis carries a partition encode and nothing else |
+| `slab_thickness_mm=None` | non-selective, as `writeGradientEcho3D.m` and `write_3Dt1_mprage.py` are. The z axis carries a partition encode and nothing else |
 | `slab_thickness_mm=…` | slab-selective. The rephasing the slab implies and the partition encoding are two moments on **one axis in one window**, and the kernel solves `A_z(p) = A_slab + A_partition(p)` as a single gradient |
 
 **The mode chooses the pulse.** With no slab the default is a short hard `'block'` pulse, because
 a non-selective excitation with a shaped one spends a soft pulse's duration and selects nothing —
-every official Pulseq 3D reference uses a block pulse, and `writeGradientEcho3D.m`'s is 0.2 ms. A
+the non-selective implementations in the GRE3D reference set use a block pulse, and `writeGradientEcho3D.m`'s is 0.2 ms. A
 slab gets a shaped `'sinc'`. `rf_pulse=` overrides either, for a shaped but spatially
 non-selective excitation.
 

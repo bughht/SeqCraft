@@ -129,9 +129,11 @@ Three different jobs, deliberately not conflated:
 | **does a promoted module still hold its accepted invariants?** | `tests/modules/`, beside every other module test |
 | **do the external references still agree?** | **here**, run by hand or on a schedule — non-blocking |
 
-The first is blocking because **the comparator has been wrong four times and the candidates
-none**. Its tests use answers known independently of any candidate: an analytic gradient moment, a
-synthetic rotation, a seeded error of chosen size, and each of the four historical bugs as a
+The first is blocking because **the comparator has produced false failures where the candidate
+was correct**; `tests/module_mining/test_comparator.py` keeps one regression per incident, and that
+suite rather than this sentence is the record of how many. Its tests use answers known
+independently of any candidate: an analytic gradient moment, a synthetic rotation, a seeded error
+of chosen size, and each historical bug as a
 regression test -- the echo located by `argmin|kx|` on a reference with no DC sample, an equal-area
 rule applied to the phase axis, bare spokes stacked so their trajectories accumulated, and a shot
 index assumed to exist for a leaf with no excitation.

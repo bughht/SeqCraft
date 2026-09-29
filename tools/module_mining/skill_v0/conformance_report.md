@@ -107,7 +107,7 @@ with declared modes and no `emitted_inspection` entry. Applied to the original m
 > non-selective mode, inherited 3 ms shaped sinc, selection gradient removed
 
 the mode table's **RF family** row differs between modes while the **reference evidence** row says
-every official Pulseq 3D reference uses a block pulse. The contradiction is visible in the table
+the non-selective implementations in the GRE3D reference set use a block pulse. The contradiction is visible in the table
 before any code exists, and rule A's prohibition — *a mode may not be "another mode minus one
 event" unless reference evidence establishes that equivalence* — names the exact reasoning that
 produced it.

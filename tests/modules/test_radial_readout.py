@@ -28,7 +28,7 @@ DWELL_S = 20e-6
 
 @pytest.fixture(scope='module')
 def spoke(opts):
-    """A full spoke on the official reference's geometry."""
+    """A full spoke on ``write_radial_gre.py``'s geometry."""
     return sc.modules.RadialReadout(opts=opts, fov_mm=FOV_MM, matrix=MATRIX, dwell_s=DWELL_S)
 
 
@@ -91,7 +91,7 @@ def test_partial_fourier_walks_the_centre_to_the_first_sample(
 def test_the_full_spoke_is_asymmetric_by_one_sample(opts, spoke) -> None:
     """
     ``-32*dk ... +31*dk`` at an even matrix, which is ``PhaseEncode``'s ``matrix // 2`` convention
-    and the official reference's.  Deliberately not tidied into something symmetric.
+    and ``write_radial_gre.py``'s.  Deliberately not tidied into something symmetric.
     """
     assert spoke.k_first_per_m == pytest.approx(-32 * spoke.dk_per_m)
     assert spoke.k_last_per_m == pytest.approx(+31 * spoke.dk_per_m)

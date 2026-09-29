@@ -13,7 +13,7 @@ golden-angle increments, and the RF-spoiling phase.
 **Every derived quantity is a closed form of the loop counter, never an accumulator.**
 That is a hard rule with a concrete payoff: the phase of excitation *n* can be computed
 without replaying excitations 0..n-1, so a single TR can be rebuilt in isolation for
-debugging, and two runs of the same loop cannot drift apart.  The reference implementation
+debugging, and two runs of the same loop cannot drift apart.  ``pSeq_Base``
 kept ``self.rf_spoil_idx`` and ``self.rf_spoil_phase`` on the module, which made the same
 builder produce different sequences on a second call, and tracked readout polarity in
 ``self.ROpolarity`` and ``self.nav_sign_track`` for the same reason.

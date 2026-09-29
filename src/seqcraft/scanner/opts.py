@@ -25,13 +25,13 @@ multi-regime ``System`` needed a cross-regime consistency check to guarantee.
 `PulseqSystems <https://github.com/nimpulseq/PulseqSystems>`_ carries vendor ``max_grad``,
 ``max_slew`` and ``B0``, so those need not be copied off a spec sheet into your code.  It carries
 nothing else, though: rasters, dead times, ringdown and sample limits belong to the *installation*
-rather than to the magnet, and no vendor database has them.
+rather than to the magnet, and ``get_pulseq_specs`` does not return them.
 
 That gap is the reason :func:`from_scanner` takes the four site constants as **required keyword
 arguments**.  pypulseq defaults ``rf_dead_time``, ``rf_ringdown_time`` and ``adc_dead_time`` to
-**zero** -- wrong on every real scanner -- and a sequence built on those defaults compiles cleanly,
-validates cleanly, and is refused or silently mangled at the console.  A lookup that returned an
-``Opts`` with three zeros in it would be the shortest path to that file.
+**zero**, and a sequence built on those defaults compiles cleanly and validates cleanly here --
+nothing in this package will tell you they are unset.  A lookup that returned an ``Opts`` with
+three zeros in it would be the shortest path to shipping one.
 
 Examples
 --------
@@ -215,16 +215,16 @@ def from_scanner(
         only for models that have more than one.  An unknown name raises with the alternatives
         listed.
     rf_dead_time, rf_ringdown_time, adc_dead_time
-        Seconds.  **Required, because the database cannot supply them and no correct default
-        exists.**  pypulseq defaults all three to zero, which is wrong on every real scanner and
-        produces a file the console refuses.
+        Seconds.  **Required, because the PulseqSystems lookup does not carry them and no
+        default would be right for an arbitrary installation.**  pypulseq defaults all three to
+        zero, which no check here will flag.
     max_b1
         Peak transmit amplitude to design against, in Hz -- ``sc.convert(20, 'uT', 'Hz')``.
-        Required for the same reason: it belongs to the transmit chain and the loading, so no
-        vendor database can know it.  Take it from the reference voltage the scanner reports and
-        keep a margin; a 4 ms 180 degree SLR peaks at 15.4 uT and was rejected at 362 V.
+        Required for the same reason: it belongs to the transmit chain and the coil loading,
+        so ``get_pulseq_specs`` does not return it.  Take it from your own installation and keep
+        a margin.
     **overrides
-        Any other ``Opts`` field -- ``adc_samples_limit`` (8192 is the common Siemens value), the
+        Any other ``Opts`` field -- ``adc_samples_limit`` (the examples here use 8192), the
         rasters, ``gamma`` for another nucleus.
 
     Returns

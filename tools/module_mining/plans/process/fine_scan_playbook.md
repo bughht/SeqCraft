@@ -804,7 +804,7 @@ non-selective   = the same thing with Gz removed
 
 The result was spatially non-selective and it still played the slab path's **3 ms shaped sinc**.
 It satisfied every k-space and timing invariant, compiled legally, and put three milliseconds into
-every echo time for a pulse that selected nothing. Every official Pulseq 3D reference uses a short
+every echo time for a pulse that selected nothing. The non-selective implementations in the GRE3D reference set use a short
 hard block pulse instead.
 
 > **Alternative physical modes must be re-derived from their own physical contract. Do not

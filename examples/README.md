@@ -199,7 +199,7 @@ plain    block 1 rf: use='excitation'   freq_offset=     +0.0 Hz
 A sign error in the chemical shift produces legal Pulseq, legal timing, legal gradients and a
 perfectly ordinary waveform, and saturates **water**. Nothing downstream notices — the sequence
 compiles, every k-space check passes, and the image comes back with the wrong tissue suppressed.
-The two published references reach the same number by different routes, one carrying the sign in
+`write_epi_se_rs.py` and `writeEpiSpinEchoRS.m` reach the same number by different routes, one carrying the sign in
 the ppm constant and the other applying it at the point of use, so an implementation that mixed
 the conventions would be exactly this wrong. That is why the module owns the conversion and why
 the notebook reads the answer off the *compiled sequence* rather than off the constructor.

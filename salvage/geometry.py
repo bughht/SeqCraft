@@ -23,7 +23,7 @@ Keeping ``Geometry`` in the package made it look like a required input, which it
 
 What is worth keeping
 ---------------------
-**One index space, stated once.**  In the reference implementation ``write_seq(fov=220, Ny=80,
+**One index space, stated once.**  In ``pSeq_Base``, ``write_seq(fov=220, Ny=80,
 ...)`` accepted the geometry a second time at write time, separately from the values the gradients
 were sized from, so the metadata in the file could disagree with what was played.  Concretely it
 wrote ``kSpaceCenterLine = Ny/2 = 73.0`` while its own navigator computed the centre line as

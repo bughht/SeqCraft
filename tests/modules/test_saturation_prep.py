@@ -3,10 +3,12 @@
 
 A wrong chemical-shift sign produces legal Pulseq, legal timing, legal gradients and a correct
 waveform, and saturates water instead of fat.  Nothing downstream notices: the sequence compiles,
-every k-space check passes, and the image comes back with the wrong tissue suppressed.  The two
-reference implementations reach the same number by different routes -- one carries the sign in the
-ppm constant, the other applies it at the point of use -- so an implementation that mixed the
-conventions would be exactly this wrong.
+every k-space check passes, and the image comes back with the wrong tissue suppressed.
+``write_epi_se_rs.py`` and ``writeEpiSpinEchoRS.m`` reach the same number by different routes --
+one carries the sign in the ppm constant, the other applies it at the point of use -- so an
+implementation that mixed the conventions would be exactly this wrong.  The saturation reference
+inventory records those two as **one design witness**, one ported from the other, rather than as
+independent corroboration.
 
 So the tests trace the whole chain, ``shift_ppm -> offset_hz -> emitted rf.freq_offset``, as far as
 the *compiled* sequence rather than stopping at the constructor.  The rest is the module's other
@@ -78,7 +80,7 @@ def test_the_compiled_sequence_carries_the_offset_we_computed(opts: pp.Opts) -> 
 
 
 def test_the_offset_scales_with_field_and_nothing_else_does(opts: pp.Opts) -> None:
-    """Metamorphic, and definable against the references before this module existed."""
+    """Metamorphic, and definable against ``write_epi_se_rs.py`` before this module existed."""
     low = prep(opts)
     high = prep(pp.Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
                         rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6,
@@ -148,7 +150,7 @@ def test_the_spoiler_follows_the_pulse(opts: pp.Opts) -> None:
 
 
 def test_the_spoiler_moment_is_the_product_asked_for(opts: pp.Opts) -> None:
-    """``cycles / voxel_m``, which is the references' ``area = 1/1e-4`` at 0.1 mm."""
+    """``cycles / voxel_m``, which is ``write_epi_se_rs.py``'s ``area = 1/1e-4`` at 0.1 mm."""
     module = prep(opts, spoil_cycles_per_voxel=1.0, spoil_voxel_mm=0.1)
     trap = next(e for _, e, _ in sc.flatten(module()) if getattr(e, 'type', '') == 'trap')
     assert float(trap.area) == pytest.approx(1.0 / 1e-4)

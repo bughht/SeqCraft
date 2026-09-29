@@ -68,7 +68,7 @@ Three consequences worth knowing:
   between *reservations*, that is an error naming both, rather than something pypulseq rejects
   40 000 blocks later.
 - **In-block delays are quantised onto the event's own raster** — 1 µs for RF, 100 ns for ADC, 10 µs
-  for gradients on Siemens, whatever the scanner reports elsewhere — and computed in integer ticks
+  the rasters `Opts` carries — and computed in integer ticks
   (`design.timing`). A plain subtraction of absolute times drifts:
   at 39 s into a sequence it produced an RF delay of `129.9999999986 µs`, which pypulseq rejects.
 
@@ -272,7 +272,7 @@ seq = sc.compile(tree, opts)          # opts is a pypulseq.Opts, not a seqcraft 
 
 That line either returns a legal `pypulseq.Sequence` or throws. There is nothing to check
 afterwards, which is the point: an object carrying findings is an object whose findings can go
-unread, and the failure mode is a `.seq` the console refuses an hour later.
+unread, and the failure mode is a `.seq` where the problem surfaces when someone tries to run the file rather than when it was built.
 
 ### It raises
 

@@ -31,7 +31,8 @@ zero for a multi-shot protocol.
 
 HASTE is this class
 -------------------
-One shot, a long train and ``partial_fourier`` below 1 is what a vendor calls HASTE; ``echoes=1``
+One shot, a long train and ``partial_fourier`` below 1 is the configuration commonly called
+HASTE; ``echoes=1``
 is a conventional spin echo.  Neither needs a class of its own, and the fine scan that produced
 this module found no physics in either that this composition does not express.
 """
