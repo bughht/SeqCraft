@@ -11,6 +11,21 @@ definition.  ``TE = TR/2`` is the canonical symmetric realisation of it and the 
 not the definition -- an asymmetric echo is still balanced if the net area is still zero, and
 this module will build one when asked.
 
+The timing origin is the **RF effective centre**
+----------------------------------------------
+Every time this module declares is measured from there::
+
+    TE               = echo - RF effective centre of repetition n
+    TR               = RF effective centre of n+1 - RF effective centre of n
+    balance interval = [RF effective centre of n, RF effective centre of n+1]
+
+The effective centre is read from the RF waveform through ``pp.calc_rf_center``, exactly as
+:meth:`Excitation.time_to_center` does.  **It is not the waveform's midpoint**, not the event's
+start, and not the block's start or end: for a minimum-phase or otherwise asymmetric pulse the
+effective centre is nowhere near halfway through the event, and a caller that assumed otherwise
+would be declaring a TE it does not achieve.  :meth:`time_to_rf_center` reports where it lands
+inside the returned block, so nothing downstream has to reconstruct it from a pulse duration.
+
 The interval is **RF centre to RF centre**, which is not the interval the echo lives in and not
 this block's edges either.  For repetition ``n`` it starts at RF centre ``n``, runs through
 everything this repetition plays, and ends at RF centre ``n+1`` -- so it contains the
@@ -55,6 +70,35 @@ half before its own RF centre.  A neighbour that plays no leading winder leaves 
 interval uncancelled, and a spoiled gradient-echo repetition is exactly such a neighbour.  So
 the condition is on the *contract* the neighbour keeps, not on the protocol it was configured
 with.
+
+Balance-compatible is not timing-compatible
+-------------------------------------------
+Those are two properties and they do not come together::
+
+    balance-compatible   neighbouring repetitions satisfy the RF-to-RF M0 contract
+    timing-compatible    they can additionally be stacked by block duration while preserving
+                         the declared RF-centre-to-RF-centre TR
+
+Stacking by block duration puts repetition ``n+1``'s block start at ``start_n + tr_s``, so the
+interval the magnetisation actually sees is::
+
+    block_duration(n) + time_to_rf_center(n+1) - time_to_rf_center(n)
+
+which equals ``tr_s`` only when the two RF-centre offsets agree.  Measured on compiled trains, a
+neighbour differing in `flip_deg`, `line` or -- on the protocols tested -- `bandwidth_hz_px`
+leaves the offset alone and is both; a neighbour differing in `thickness_mm` or `rf_duration_s`
+is balance-compatible and **not** timing-compatible, missing the declared TR by 120 and 500
+microseconds respectively.  `bandwidth_hz_px` reaches the shared window and so could move the
+offset on another protocol; the reliable test is :meth:`time_to_rf_center` itself, not the
+parameter list.
+
+A heterogeneous train is placed from the offsets rather than from the durations::
+
+    start(n+1) = start(n) + tr_s + time_to_rf_center(n) - time_to_rf_center(n+1)
+
+This module does not do that placement for you, and nothing here is an acquisition framework.
+The shipped examples stack by duration, because a continuous acquisition and a start-up
+flip-angle ramp are both timing-compatible.
 
 **The lumped alternative is where matching would have mattered.**  A trailing lobe of
 ``-(A_post + A_pre)`` with no leading winder is also balanced, and for a train of identical
@@ -286,18 +330,22 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         """
         How far this repetition's echo sits from the exact midpoint, seconds.  Signed.
 
-        **Not a design choice, and not avoidable.**  The echo is the ADC sample where ``k = 0``,
-        and that sample sits half a dwell off the readout window's centre, so the time from the
-        RF centre to the echo carries the half-dwell with it.  Every start time this module
-        emits has to land on the gradient raster, so both fills are raster multiples -- which
-        means the difference between the two halves of the repetition moves in whole rasters,
-        while the quantity it has to cancel does not.
+        ``TE = TR/2`` is the canonical target, and the default aims at it.  **For a given
+        readout geometry the exact midpoint may not lie on the available timing lattice**, and
+        when it does not, the default takes the nearest symmetric realisation and reports what
+        it achieved here rather than rounding the declared TE to ``TR/2``.
 
-        Exact symmetry is therefore reachable only when the readout's echo happens to land on
-        the raster.  Otherwise this is at most half a gradient raster: 5 microseconds at the
-        usual 10, against a TE of some thousands.  It is reported rather than hidden, because a
-        quantity that is zero except when it is not is exactly the kind a caller should be able
-        to assert on.
+        Where the offset comes from, on the protocols measured: the echo is the ADC sample where
+        ``k = 0`` and that sample sits half a dwell off the readout window's centre, while both
+        fills are whole numbers of the gradient raster -- so the difference between the two
+        halves moves in raster steps and the quantity it has to cancel need not be one of them.
+        That makes this at most half a gradient raster with the readout placement
+        :class:`~seqcraft.modules.CartesianLine` currently offers: 5 microseconds at the usual
+        10, against a TE of some thousands.  A readout geometry whose echo does land on the
+        raster gives exactly zero.
+
+        It is reported rather than hidden, because a quantity that is zero except when it is not
+        is exactly the kind a caller should be able to assert on.
 
         Examples
         --------
@@ -331,12 +379,54 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
 
     @property
     def tr_s(self) -> float:
-        """The repetition time this block occupies, seconds, RF centre to RF centre."""
+        """
+        The repetition time, seconds: **RF effective centre to RF effective centre**.
+
+        That is the definition.  A block of this module also happens to *last* ``tr_s``, which
+        is what lets a homogeneous train be stacked at ``n * tr_s`` -- but that is a convenience
+        of this composition rather than what TR means, and it stops delivering the declared TR
+        the moment two neighbours disagree on :meth:`time_to_rf_center`.
+        """
         return self._tr_s
 
+    def time_to_rf_center(self) -> float:
+        """
+        Seconds from the start of this module's block to the **RF effective centre**.
+
+        The timing origin of everything this module declares: :attr:`te_s` is measured from
+        here, :attr:`tr_s` is the distance from here to the next repetition's, and the balance
+        interval runs between the same two instants.
+
+        Read from the waveform through :meth:`Excitation.time_to_center`, which is
+        ``pp.calc_rf_center`` plus the pulse's own delay.  **Not the midpoint of the RF event**
+        -- for a minimum-phase pulse those are far apart, and the difference is the error a
+        caller makes by deriving the origin from a pulse duration instead of asking.
+
+        It exists so that nothing downstream has to reconstruct it.  Two repetitions with
+        different offsets cannot be stacked by block duration without moving the RF-to-RF
+        interval; see **Balance-compatible is not timing-compatible** above for the placement a
+        heterogeneous train needs, and the identity below for the one a homogeneous one gets.
+
+        Examples
+        --------
+        >>> from pypulseq.opts import Opts
+        >>> o = Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+        ...          rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6)
+        >>> tr = bSSFP2DTR(opts=o, fov_mm=250.0, matrix=(128, 128), thickness_mm=5.0,
+        ...                flip_deg=35.0, bandwidth_hz_px=800.0)
+        >>> abs(tr.time_to_echo() - (tr.time_to_rf_center() + tr.te_s)) < 1e-12
+        True
+        """
+        return self._lead_s + self.exc.time_to_center()
+
     def time_to_echo(self) -> float:
-        """Seconds from the start of this module's block to ``k = 0``."""
-        return self._lead_s + self.exc.time_to_center() + self._te_s
+        """
+        Seconds from the start of this module's block to ``k = 0``.
+
+        ``time_to_rf_center() + te_s``, and asserted to be, because TE is defined from the
+        effective centre and this is the only other place the same origin is used.
+        """
+        return self.time_to_rf_center() + self._te_s
 
     # ----------------------------------------------------------------------- assembly
     def build(self, *, line: int, phase_deg: float = 0.0, acquire: bool = True,

@@ -487,13 +487,22 @@ evidence_state:
         RF centre and nothing else in the repetition may, because the readout prephaser and the
         phase-encode blip act on magnetisation that does not exist until then.
 
-        The split was chosen.  It balances against a neighbour with a different slice thickness,
-        pulse duration or readout bandwidth -- measured below 1e-12 1/m on compiled trains --
-        while the lumped form is built against an assumed successor and does not.  A start-up
-        ramp, a segmented acquisition and a multi-slice loop are all compositions where that
-        difference is the one that matters.  The lumped form stays available at a known price;
-        a protocol that cannot afford 4% of TR is the evidence that would justify it.  No
-        compiler change was made, and the compiler learned nothing about bSSFP.
+        The split was chosen, on that measurement and nothing broader.  It does not assume the
+        successor's selection-gradient geometry, and balances against a neighbour with a
+        different slice thickness, pulse duration or readout bandwidth -- below 1e-12 1/m on
+        compiled trains -- while the lumped form is built against an assumed successor and would
+        not.  Start-up ramps, segmentation and same-thickness multi-slice are NOT evidence for
+        this choice and are not offered as such: they change RF amplitude, acquisition policy
+        and RF frequency offset respectively, none of which touches the selection gradient, and
+        all three would work under the lumped form too.  The lumped form stays available at a
+        known price; a protocol that cannot afford 4% of TR is the evidence that would justify
+        it.  No compiler change was made, and the compiler learned nothing about bSSFP.
+
+        One thing the timing measurement separated out: balance composability is not timing
+        composability.  A neighbour differing in thickness or RF duration still balances but
+        moves the RF-centre offset, so stacking by block duration misses the declared TR by 120
+        and 500 us respectively.  `time_to_rf_center()` exists so that a composition can place
+        from the offsets instead; the kernel does not do the placement.
       revisit_trigger: >
         C3 concludes.  Then either accept the cost and build the kernel, or build whatever C3
         shows is needed to avoid it.

@@ -21,6 +21,9 @@ import pytest
 import seqcraft as sc
 
 MATRIX = (64, 32)
+#: The one protocol every test varies from, so a neighbour differs in exactly one field.
+SPEC = dict(fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0, flip_deg=35.0,
+            bandwidth_hz_px=800.0)
 #: Areas here are hundreds of 1/m, so this is about twelve orders below the quantity measured.
 ZERO = 1e-9
 
@@ -28,8 +31,7 @@ ZERO = 1e-9
 @pytest.fixture(scope='module')
 def tr(opts):
     """One repetition of a small but complete 2D bSSFP, at the canonical symmetric default."""
-    return sc.modules.bSSFP2DTR(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
-                                flip_deg=35.0, bandwidth_hz_px=800.0)
+    return sc.modules.bSSFP2DTR(opts=opts, **SPEC)
 
 
 # ------------------------------------------------------------------ the measurement apparatus
@@ -319,9 +321,17 @@ def test_balance_survives_a_start_up_flip_ramp(opts) -> None:
     assert np.abs(rf_to_rf_m0(train(opts, *ramp))).max() < ZERO
 
 
-@pytest.mark.parametrize(('field', 'value'), [
-    ('thickness_mm', 8.0), ('rf_duration_s', 2e-3), ('bandwidth_hz_px', 400.0),
-])
+#: Heterogeneous neighbours, and what each one changes.  ``timing`` is whether the neighbour
+#: leaves ``time_to_rf_center()`` alone, which is what simple block stacking needs.
+NEIGHBOURS = [
+    ('flip_deg', 10.0, True),
+    ('bandwidth_hz_px', 400.0, True),
+    ('thickness_mm', 8.0, False),
+    ('rf_duration_s', 2e-3, False),
+]
+
+
+@pytest.mark.parametrize(('field', 'value'), [(f, v) for f, v, _ in NEIGHBOURS])
 def test_balance_survives_a_neighbour_of_different_geometry(opts, tr, field, value) -> None:
     """
     The geometry at the boundary does **not** have to match, and this is why.
@@ -334,12 +344,78 @@ def test_balance_survives_a_neighbour_of_different_geometry(opts, tr, field, val
 
     The lumped realisation would fail every one of these, which is the argument for this split.
     """
-    spec = dict(opts=opts, fov_mm=250.0, matrix=MATRIX, thickness_mm=5.0,
-                flip_deg=35.0, bandwidth_hz_px=800.0)
-    other = sc.modules.bSSFP2DTR(**{**spec, field: value})
+    other = sc.modules.bSSFP2DTR(**{**SPEC, 'opts': opts, field: value})
     seq = train(opts, tr, other, other, lines=[4, 5, 6])
 
     assert np.abs(rf_to_rf_m0(seq)).max() < ZERO
+
+
+# ----------------------------------------------- balance-compatible is not timing-compatible
+def test_the_rf_centre_is_where_te_is_measured_from(tr) -> None:
+    """
+    The identity that keeps the timing origin in one place.
+
+    ``time_to_rf_center`` exists so that nothing downstream reconstructs the origin from a pulse
+    duration or assumes it is halfway through the event -- which for a minimum-phase pulse it is
+    not.
+    """
+    assert tr.time_to_echo() == pytest.approx(tr.time_to_rf_center() + tr.te_s, abs=1e-12)
+    assert tr.time_to_rf_center() == pytest.approx(tr._lead_s + tr.exc.time_to_center())
+
+
+def test_a_homogeneous_train_gets_the_declared_tr_from_block_stacking(opts, tr) -> None:
+    """``block.duration == tr_s`` delivers the declared TR only because the offsets agree."""
+    centres = rf_centres(train(opts, tr, tr, tr))
+
+    assert np.diff(centres) == pytest.approx(tr.tr_s)
+    assert tr(line=1).duration == pytest.approx(tr.tr_s)
+
+
+@pytest.mark.parametrize(('field', 'value', 'timing_compatible'), NEIGHBOURS)
+def test_timing_compatibility_is_measured_rather_than_inferred_from_balance(
+    opts, tr, field, value, timing_compatible,
+) -> None:
+    """
+    Balance-compatible does not imply timing-compatible, and this is where the two part.
+
+    Stacking by block duration puts the next block at ``start + tr_s``, so the interval the
+    magnetisation sees is ``block_duration(n) + c(n+1) - c(n)``.  A neighbour that moves the
+    RF-centre offset therefore misses the declared TR by the difference, **while still
+    balancing** -- the companion test above measures that half.
+
+    The parametrisation carries the expected verdict rather than only the compatible cases, so
+    a change that quietly made one of the incompatible ones agree would fail here instead of
+    passing silently.
+    """
+    other = sc.modules.bSSFP2DTR(**{**SPEC, 'opts': opts, field: value})
+    offset_delta = other.time_to_rf_center() - tr.time_to_rf_center()
+    centres = rf_centres(train(opts, tr, other, other, lines=[4, 5, 6]))
+
+    assert (abs(offset_delta) < 1e-12) is timing_compatible
+    assert centres[1] - centres[0] == pytest.approx(tr.tr_s + offset_delta)
+    if timing_compatible:
+        assert centres[1] - centres[0] == pytest.approx(tr.tr_s)
+
+
+def test_placing_from_the_offsets_restores_the_declared_tr(opts, tr) -> None:
+    """
+    The composition formula a heterogeneous train needs, asserted rather than only documented.
+
+    ``start(n+1) = start(n) + tr_s + c(n) - c(n+1)``.  This module does not do the placement --
+    that would be an acquisition framework, and this is a repetition -- but the contract it
+    documents has to be one that works.
+    """
+    other = sc.modules.bSSFP2DTR(**{**SPEC, 'opts': opts, 'rf_duration_s': 2e-3})
+    train_of = (tr, other, other)
+    scan, at = sc.LogicBlock(), 0.0
+    for k, rep in enumerate(train_of):
+        if k:
+            previous = train_of[k - 1]
+            at += tr.tr_s + previous.time_to_rf_center() - rep.time_to_rf_center()
+        scan.add(at, rep(line=4 + k))
+    centres = rf_centres(sc.compile(scan, opts=opts))
+
+    assert np.diff(centres) == pytest.approx(tr.tr_s)
 
 
 def test_a_neighbour_that_keeps_no_leading_winder_is_outside_the_contract(opts, tr) -> None:

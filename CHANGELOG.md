@@ -8,6 +8,14 @@ and that is the whole definition; `TE = TR/2` is the canonical symmetric realisa
 the default, which is deliberately not what `te_s=None` means on `GRE2DTR`. Passing `te_s`
 asks for an asymmetric realisation, which stays balanced.
 
+**The timing origin is the RF effective centre**, read from the waveform rather than taken as
+the event's midpoint — for a minimum-phase pulse those are far apart. TE is measured from it,
+TR is the distance between consecutive ones, and the balance interval runs between the same two
+instants. `time_to_rf_center()` reports where it falls inside the returned block, with
+`time_to_echo() == time_to_rf_center() + te_s`, so nothing downstream reconstructs it from a
+pulse duration. `tr_s` keeps its meaning as RF-centre-to-RF-centre time; that a homogeneous
+train also has `block.duration == tr_s` is a convenience of that composition.
+
 The interval ends inside the *next* repetition, so the contract is compositional: two
 consecutive repetitions, each discharging its own selection halves, balance between them. The
 trailing lobe cancels the selection gradient's post-centre area and the leading winder cancels
@@ -16,18 +24,29 @@ assumption about the other. Measured on compiled trains, that holds across neigh
 different slice thickness, pulse duration, readout bandwidth, flip angle or `ky`; the one thing
 a neighbour must do is discharge its own pre-centre half.
 
+**Balance-compatible is not timing-compatible.** A neighbour that balances may still move the
+RF-centre offset, and stacking by block duration then misses the declared TR by the difference:
+measured at −120 µs for a different slice thickness and −500 µs for a different pulse duration,
+while flip angle, `ky` and readout bandwidth left it untouched. A heterogeneous train is placed
+from the offsets — `start(n+1) = start(n) + tr_s + c(n) − c(n+1)` — and the kernel documents
+that rather than doing it, because placement is an acquisition's business.
+
 **That composability costs 270–290 µs per repetition, 3.8–4.7 % of TR across four protocols**,
 against the alternative of one trailing lobe carrying both halves. The cost is structural: the
 leading winder has to play before its own RF centre and nothing else in the repetition may,
 because the readout prephaser and the phase-encode blip both act on magnetisation that does not
-exist until then. The cheaper form stays available at a known price, and the compiler was not
-taught anything about bSSFP to reach either.
+exist until then. What the cost buys is the measured property above — not start-up ramps,
+segmentation or same-thickness multi-slice, which change RF amplitude, acquisition policy and
+RF frequency offset respectively and would all work under the cheaper form too. That form stays
+available at a known price, and the compiler was not taught anything about bSSFP to reach
+either.
 
-Exact `TE = TR/2` is not reachable on the raster, and `symmetry_residual_s` reports the signed
-amount rather than rounding it away: the echo is the ADC sample where `k = 0`, half a dwell off
-the readout window's centre, while every fill is a whole number of rasters. The two halves
-therefore differ by at most half a gradient raster — 2.1 µs against a TE of 3342 µs on the
-shipped example.
+`TE = TR/2` is the canonical target. For a given readout geometry the exact midpoint may not
+lie on the available timing lattice; the default then takes the nearest symmetric realisation
+and `symmetry_residual_s` reports the signed amount achieved, rather than the declared TE being
+rounded to `TR/2`. With the readout placement `CartesianLine` currently offers that is at most
+half a gradient raster — 2.1 µs against a TE of 3342 µs on the shipped example — and a readout
+whose echo lands on the raster gives exactly zero.
 
 Steady-state establishment, start-up method and count, segmentation and segment count, `ky` and
 acquisition ordering, restart policy and reconstruction are all **not** owned here. A balanced

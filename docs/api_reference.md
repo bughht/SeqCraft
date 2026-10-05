@@ -1063,7 +1063,7 @@ Re-exported **flat**, so no import path names a folder:
 | `GRE2DTR` | one repetition of a spoiled 2D gradient echo |
 | `GRE2D` | the complete scan |
 | `GRE3DTR` | one repetition of a 3D Cartesian gradient echo — a sibling of `GRE2DTR`, owning the z axis where a slab's rephasing and a partition's encoding become one gradient |
-| `bSSFP2DTR` | one **balanced** repetition of a 2D Cartesian bSSFP acquisition: zero net gradient area on every axis over the RF-centre-to-RF-centre interval, with `TE = TR/2` as the default realisation rather than as the definition. It claims a balanced *waveform* and never a magnetisation in steady state |
+| `bSSFP2DTR` | one **balanced** repetition of a 2D Cartesian bSSFP acquisition: zero net gradient area on every axis over the RF-centre-to-RF-centre interval, with `TE = TR/2` as the default realisation rather than as the definition. Every declared time is measured from the RF *effective* centre, which `time_to_rf_center()` reports. It claims a balanced *waveform* and never a magnetisation in steady state |
 | `TSEShot` | one excitation and its train of refocused Cartesian readouts — the crusher window three axes share, and the moment balance around every refocusing pulse |
 | `FSE2D` | the complete turbo-spin-echo scan: shots, and which lines each one acquires |
 | `DiffusionSEPrep` | a diffusion-weighted spin echo: the excitation, the refocusing pulse, and two equal same-polarity lobes either side of it. `b_s_per_mm2` in; the lobe width, the amplitude and the echo time out |

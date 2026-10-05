@@ -168,6 +168,61 @@ condition inside the module and record what the module had to do for itself; whe
 belongs in the public scope is a question for after two implementations exist, not before one
 does.
 
+### 1.2a The timing origin is the RF effective centre
+
+Every declared time is measured from there, and the module exposes it:
+
+```text
+TE                = echo - RF effective centre of n
+TR                = RF effective centre of n+1 - RF effective centre of n
+balance interval  = [RF effective centre of n, RF effective centre of n+1]
+```
+
+Read from the waveform through `pp.calc_rf_center`, as `Excitation.time_to_center` already
+does — **not** the RF waveform's midpoint, not the event start, and not a `LogicBlock`
+boundary. For a minimum-phase pulse the effective centre is nowhere near halfway through the
+event. `bSSFP2DTR.time_to_rf_center()` reports where it lands inside the returned block, with
+the identity `time_to_echo() == time_to_rf_center() + te_s`, so `bSSFP3DTR` and the
+sequence-authoring work never have to reconstruct it from a pulse duration.
+
+**`tr_s` keeps its semantic meaning**: the requested or achieved RF-centre-to-RF-centre
+repetition time. That a homogeneous train also satisfies `block.duration == tr_s` is a
+convenience of this composition, not the definition of TR.
+
+### 1.2b Balance-compatible is not timing-compatible
+
+*Measured 2026-10-05; these are two properties and they come apart.*
+
+```text
+balance-compatible   neighbouring repetitions satisfy the RF-to-RF M0 contract
+timing-compatible    they can additionally be stacked by block duration while preserving the
+                     declared RF-centre-to-RF-centre TR
+```
+
+Stacking by block duration gives an actual interval of
+`block_duration(n) + c(n+1) - c(n)`, which is `tr_s` only when the offsets agree:
+
+```text
+neighbour differs in     balance    offset moves    actual TR - declared
+   flip_deg                 yes          no                    0 us
+   ky                       yes          no                    0 us
+   bandwidth_hz_px          yes          no                    0 us
+   thickness_mm             yes         yes                 -120 us
+   rf_duration_s            yes         yes                 -500 us
+```
+
+`bandwidth_hz_px` reaches the shared window and so could move the offset on another protocol;
+the reliable test is `time_to_rf_center()` itself rather than the parameter list. A
+heterogeneous train is placed from the offsets:
+
+```text
+start(n+1) = start(n) + tr_s + time_to_rf_center(n) - time_to_rf_center(n+1)
+```
+
+**No acquisition framework in this pull request.** The case is measured and the contract is
+documented; the shipped notebooks stack by duration, because a continuous acquisition and a
+start-up flip-angle ramp are both timing-compatible.
+
 ### 1.3 Balanced is not the same as in steady state
 
 A repetition whose waveform satisfies the balance condition can be emitted, compiled, measured
@@ -372,11 +427,18 @@ can move earlier to share the window. The lead window is therefore exclusive tim
 what the saving is made of. The record's 220 microseconds is the same effect on another
 protocol.
 
-**C is chosen**, because what the 4% buys is the composability measured in §1.2: the split
-realisation balances against a neighbour with a different slice thickness, pulse duration or
-readout bandwidth, and the lumped one is built against an assumed successor and does not. A
-start-up ramp, a segmented acquisition and a multi-slice loop are all compositions where that
-matters, and all three are things a bSSFP caller writes.
+**C is chosen on the measurement, and on nothing broader than it.** What the 4% buys is the
+property §1.2 measures: the split realisation does not assume the successor's selection-gradient
+geometry, and balances against a neighbour differing in slice thickness, pulse duration or
+readout bandwidth. The lumped realisation is built against an assumed successor and would not.
+
+*Scoped 2026-10-05.* This section previously offered start-up ramps, segmentation and
+multi-slice loops as the compositions that need it. They are not evidence for C, and the claim
+is withdrawn: a start-up ramp changes the RF amplitude and leaves the selection gradient alone,
+segmentation changes acquisition policy rather than repetition geometry, and a same-thickness
+multi-slice loop changes the RF frequency offset rather than the gradient. All three are valid
+compositions of this kernel and all three would work under the lumped realisation too. What
+would not is a neighbour whose selection gradient differs, and that is the case measured.
 
 **A stays available and now has a price.** A protocol that cannot afford 4% of TR is the
 evidence that would justify it, and the lumped lobe is a small local change when that protocol
@@ -411,7 +473,7 @@ reports its own correctness is checking its arithmetic, not its output.
 | 1 | balance | build `N + 1` **compatible** consecutive repetitions, compile them, and integrate `Gx`, `Gy`, `Gz` over each of the first `N` RF-centre-to-RF-centre intervals: `M0x = M0y = M0z = 0` |
 | 2 | encoding | `k_y` at the ADC sample at the echo is the requested value |
 | 3 | echo placement | the echo falls at the declared TE from the RF effective centre |
-| 4 | default | with no `te_s`, the declared TE equals `TR/2` |
+| 4 | default | with no `te_s`, the declared TE is the nearest symmetric realisation to `TR/2` on the available timing lattice, and `symmetry_residual_s` reports what it achieved |
 | 5 | definition, not realisation | an explicit asymmetric `te_s` still satisfies claim 1 |
 | 6 | RF phase | the carrier phase across repetitions follows the declared progression |
 | 7 | receiver phase | the ADC phase offset matches the RF phase, repetition by repetition |
@@ -419,6 +481,9 @@ reports its own correctness is checking its arithmetic, not its output.
 | 9 | hardware | amplitudes and slews are within `opts`, and every event lands on its raster |
 | 10 | balance is not steady state | claim 1 holds on the **first** RF-to-RF interval of a two-repetition sequence, where no magnetisation is anywhere near steady state |
 | 11 | balance across unlike neighbours | claim 1 holds for adjacent repetitions with **different `ky`**, and for adjacent repetitions with a **different flip angle and an unchanged selection gradient** |
+| 12 | the timing origin | `time_to_echo() == time_to_rf_center() + te_s`, and `time_to_rf_center()` is the effective centre rather than the event's midpoint |
+| 13 | timing compatibility is measured | for each heterogeneous neighbour of claim 11's family, the actual RF-centre-to-RF-centre interval under block stacking equals `tr_s + c(n+1) - c(n)`, and equals `tr_s` exactly when the offsets agree — with the expected verdict carried per case |
+| 14 | the heterogeneous placement works | placing from the offsets restores the declared TR for a neighbour that is balance-compatible and not timing-compatible |
 
 Claim 10 is not redundant with claim 1. It is the one that makes the distinction in §1.3
 checkable rather than merely stated: balance is a property the waveform has from the first
@@ -471,7 +536,7 @@ the waveform is periodic.
 ### Layer 3
 
 The simulation notebook shows a complete 2D acquisition and must distinguish, in its prose and
-in what it plots, between *the waveform is balanced* (claims 1–11, true of each interval from
+in what it plots, between *the waveform is balanced* (claims 1–14, true of each interval from
 the first) and *steady state has been established* (true only after enough repetitions, and a
 property of the train and the tissue). Showing the approach to steady state is the honest way
 to make the second visible; asserting it from a balanced waveform is the error this notebook
@@ -485,7 +550,7 @@ exists to prevent.
 |---|---|
 | `src/seqcraft/modules/kernel/bssfp_2d_tr.py` | the module |
 | `src/seqcraft/modules/__init__.py` | export, `__all__`, and the folder-map comment |
-| `tests/modules/test_bssfp_2d_tr.py` | claims 1–11 |
+| `tests/modules/test_bssfp_2d_tr.py` | claims 1–14 |
 | `docs/api_reference.md` | the class entry, and the rows in the shipped-module tables |
 | `examples/bssfp_2d/01_build.ipynb` | continuous acquisition first, segmentation second |
 | `examples/bssfp_2d/02_simulate_and_reconstruct.ipynb` | Layer 3 |
