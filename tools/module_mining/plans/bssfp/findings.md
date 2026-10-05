@@ -120,8 +120,28 @@ segmentation changes is how many repetitions share one start-up preparation and 
 is interrupted. §14.1 is dimension-agnostic.
 
 **So a segment boundary carries steady-state physics, not bSSFP physics** — it is where
-start-up preparation is needed again, or where magnetisation must be stored and restored (p. 595). One
-kernel serves 2D and 3D.
+start-up preparation is needed again, or where magnetisation must be stored and restored (p. 595).
+
+**What that does and does not establish.** It establishes that 2D and 3D share the
+*repetition-level* bSSFP invariants:
+
+```text
+the RF-to-RF balance interval
+zero net gradient area per axis over it
+RF and receiver phase progression
+TE semantics
+TR timing semantics
+steady-state establishment living above the repetition
+```
+
+It does **not** establish that they should share one public kernel. The physical realisations
+differ where it matters most — the RF is slice-selective in 2D and slab-selective or
+non-selective in 3D, and `Gz` carries selection plus rephasing plus balance in 2D against
+slab role plus partition encoding plus balance in 3D. Shared invariants are a reason to expect
+shared *private* machinery; they are not by themselves a reason for one class.
+
+*Corrected 2026-10-05. The original sentence read "One kernel serves 2D and 3D", which the
+dimension-agnosticism of the invariants does not support.*
 
 ## 7. The four hypotheses
 

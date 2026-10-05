@@ -8,7 +8,10 @@
 #   python tools/module_mining/schema.py tools/module_mining/plans/bssfp/candidate.yaml
 
 id: balanced-ssfp
-name: bSSFPTR   # the kernel of a layered answer; see boundary_hypotheses
+name: bSSFP2DTR, bSSFP3DTR   # the kernels of a layered answer; see boundary_hypotheses.
+                             # One per dimension, decided 2026-10-05: see the consequence of
+                             # the segmentation finding for why shared invariants are not
+                             # sufficient reason for one public class.
 
 capability:
   family: kernel
@@ -215,16 +218,20 @@ contract:
     answer is layered.**
 
 boundary_hypotheses:
-  selected: D, with A as the kernel
+  selected: D, with A as the kernel, shipped as one public class per dimension
   why: >
     A is the only hypothesis whose correctness condition is both stateable and checkable on one
     instance.  C cannot state its own correctness.  B cannot be expressed.  D is A plus
     composition, and composition is where every witness and the domain source put steady-state
     establishment and ordering.  The selection follows from those conditions and not from the class name -- and
-    the name `bSSFPTR` is kept only because the unit it denotes turned out to be the right one.
+    the name `bSSFPTR` is kept below only because the unit it denotes turned out to be the right
+    one.  It names the *unit of design*, not a single public class: the public API is `bSSFP2DTR`
+    and `bSSFP3DTR` (2026-10-05), because 2D and 3D realise that unit differently on the RF and on
+    `Gz`.  Shared private machinery, if the second implementation shows genuine duplication, is a
+    separate question from how many public classes there are.
   compared:
     - id: A
-      name: RF-to-RF balanced repetition kernel (bSSFPTR)
+      name: RF-to-RF balanced repetition kernel (the bSSFP*TR unit)
       owns: balanced moments over its own interval, TE placement, RF phase, its own minimum TR
       can_determine: all of the above from its own parameters, given the repetition index
       correctness_condition: >
@@ -306,8 +313,13 @@ two_d_versus_three_d:
   consequence: >
     A segment boundary carries **steady-state** physics, not bSSFP repetition physics- it is where
     start-up preparation is needed again, or where the magnetisation must be stored on the longitudinal
-    axis and restored (D1 p. 595).  That belongs to the layer above the kernel, and the same
-    kernel serves 2D and 3D.
+    axis and restored (D1 p. 595).  That belongs to the layer above the kernel.
+
+    2D and 3D share the repetition-level invariants -- the RF-to-RF balance interval, zero net area
+    per axis, RF/receiver phase progression, TE and TR semantics, and steady state living above the
+    repetition.  That does NOT establish one public kernel for both: the RF selection differs, and
+    `Gz` carries selection + rephasing + balance in 2D against slab role + partition encoding +
+    balance in 3D.  Corrected 2026-10-05; this previously read "the same kernel serves 2D and 3D".
 
 acceptance:
   defined_before_extraction: true
@@ -351,8 +363,7 @@ validation:
       test them.  MRzeroCore's bSSFP notebook is in its CI-tested subset, so the oracle exists.
   planned: >
     Layer 1 from acceptance.establishes, all on the emitted lattice.  Layer 2 as a complete
-    acquisition with start-up preparation composed in the notebook, which is also where the 2D and 3D cases
-    are shown to share the kernel.  Layer 3 against MRzeroCore- signal against repetition index
+    acquisition with start-up preparation composed in the notebook.  Layer 3 against MRzeroCore- signal against repetition index
     for a train with and without start-up preparation, which tests the one claim the kernel cannot make.
 
 coverage_classification: null
@@ -441,7 +452,8 @@ evidence_state:
       revisit_trigger: >
         Two schemes turn out to share a correctness condition a caller keeps getting wrong.
     - what: >
-        Implementation of bSSFPTR itself.  **Deferred by review, 2026-09-22.**
+        Implementation of the kernel itself (`bSSFP2DTR`, then `bSSFP3DTR`).
+        **Deferred by review, 2026-09-22; resumed 2026-10-05.**
       why: >
         The boundary finding is accepted -- RF-to-RF is the candidate kernel, steady-state
         establishment sits above it, and segmentation and ordering are acquisition policy.  What
@@ -475,7 +487,7 @@ evidence_state:
         D1 places them above the repetition- two acquisitions separately reconstructed and
         combined.  Acquisition and reconstruction policy.
       revisit_trigger: A candidate is scanned whose subject is phase-cycle combination.
-    - what: Whether GRE2DTR and bSSFPTR share a repetition skeleton.
+    - what: Whether GRE2DTR and the bSSFP kernels share a repetition skeleton.
       why: >
         Table 14.2 factorises gradient-echo sequences into waveform class x RF train class, which
         suggests they do.  Refactoring a shipped kernel on the strength of a table is not
