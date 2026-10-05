@@ -1,0 +1,170 @@
+"""
+``examples/bssfp_2d/01_build.ipynb``, asserted from outside it.
+
+The notebook's own prints would catch a sequence that failed to compile.  What they would not
+catch is a file that compiles, passes every k-space extent check and reconstructs into a plausible
+image while being **unbalanced** -- because an image is not where a missing gradient lobe shows up
+first, and because a train of identical repetitions can hide a z lobe carrying the wrong half.
+
+So this file re-measures, on the written ``.seq`` files:
+
+- **Zero net gradient area on every axis over every RF-centre-to-RF-centre interval.**  The
+  physical definition, integrated from the compiled waveforms between consecutive RF effective
+  centres -- not between block edges, which is a container boundary that merely resembles it.
+- **The declared TR is the interval the magnetisation sees**, which holds here because every
+  repetition in these files reports the same ``time_to_rf_center()``.
+- **The segmented file encodes the same lines as the continuous one.**  Segmentation is a loop in
+  the notebook; if it ever became something that changed the encoding, the two tables would part.
+- **The ``TE`` and ``TR`` in each file's ``[DEFINITIONS]`` match the module's**, because ``02``
+  reads those numbers back and measures against them.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pypulseq as pp
+import pytest
+
+import seqcraft as sc
+
+pytest.importorskip('nbformat', reason='needs seqcraft[dev]')
+
+EXAMPLES = Path(__file__).resolve().parents[2] / 'examples'
+SEQ_DIR = EXAMPLES / 'bssfp_2d' / 'seq'
+FILES = ('bssfp_2d', 'bssfp_2d_segmented')
+
+#: Balance is measured here against **one k-space step**, ``1/FOV``, rather than against zero.
+#:
+#: The tree balances to about 1e-12 1/m -- ``tests/modules/test_bssfp_2d_tr.py`` measures that,
+#: because it measures the design.  This file measures the written ``.seq``, and a Pulseq file
+#: stores gradient amplitudes as rounded decimal text, so a round trip through it leaves a few
+#: parts in 1e6 of the selection gradient's area behind.  Demanding 1e-12 here would be testing
+#: the file format's decimal precision; demanding a fraction of the step that separates two
+#: k-space lines is testing something a reconstruction would notice.
+STEP_FRACTION = 1e-3
+
+
+@pytest.fixture(scope='module')
+def nominal():
+    path = SEQ_DIR / 'bssfp_2d_nominal.npz'
+    if not path.exists():
+        pytest.skip('run examples/bssfp_2d/01_build.ipynb first')
+    return np.load(path)
+
+
+@pytest.fixture(scope='module')
+def written():
+    out = {}
+    for name in FILES:
+        path = SEQ_DIR / f'{name}.seq'
+        if not path.exists():
+            pytest.skip('run examples/bssfp_2d/01_build.ipynb first')
+        seq = pp.Sequence()
+        seq.read(str(path))
+        out[name] = seq
+    return out
+
+
+def rf_centres(seq) -> np.ndarray:
+    """Absolute times of every RF effective centre, seconds."""
+    out, t = [], 0.0
+    for i in range(1, len(seq.block_events) + 1):
+        block = seq.get_block(i)
+        if getattr(block, 'rf', None) is not None:
+            out.append(t + float(block.rf.delay) + float(pp.calc_rf_center(block.rf)[0]))
+        t += float(seq.block_durations[i])
+    return np.array(out)
+
+
+def rf_to_rf_m0(seq) -> np.ndarray:
+    """``M0`` over every RF-centre-to-RF-centre interval: shape ``(N, 3)``, 1/m."""
+    waveforms = seq.waveforms_and_times()[0]
+    centres = rf_centres(seq)
+    rows = []
+    for n in range(len(centres) - 1):
+        a, b = centres[n], centres[n + 1]
+        row = []
+        for axis in range(3):
+            t, g = waveforms[axis][0], waveforms[axis][1]
+            if len(t) == 0:
+                row.append(0.0)
+                continue
+            grid = np.unique(np.concatenate([t[(t > a) & (t < b)], [a, b]]))
+            row.append(float(np.trapezoid(np.interp(grid, t, g, left=0.0, right=0.0), grid)))
+        rows.append(row)
+    return np.array(rows)
+
+
+@pytest.mark.parametrize('name', FILES)
+def test_every_rf_to_rf_interval_is_balanced(written, nominal, name) -> None:
+    """The defining condition, on both written files, measured where it is defined."""
+    m0 = rf_to_rf_m0(written[name])
+    step_per_m = 1.0 / (float(nominal['fov_mm']) * 1e-3)
+
+    assert len(m0) > 50          # the files are whole acquisitions, not a probe
+    assert np.abs(m0).max() < STEP_FRACTION * step_per_m
+
+
+@pytest.mark.parametrize('name', FILES)
+def test_the_rf_to_rf_interval_is_the_declared_tr(written, nominal, name) -> None:
+    """
+    Every repetition in these files has the same RF-centre offset, so stacking by block duration
+    delivers the declared TR.  A notebook that mixed in a repetition of different pulse geometry
+    would need the offsets instead, and this is where that would surface.
+    """
+    intervals = np.diff(rf_centres(written[name]))
+
+    assert intervals == pytest.approx(float(nominal['tr_s']))
+
+
+@pytest.mark.parametrize('name', FILES)
+def test_the_definitions_match_the_module(written, nominal, name) -> None:
+    """``02`` reads TE and TR back out of the file and measures against them."""
+    definitions = written[name].definitions
+
+    assert float(definitions['TE']) == pytest.approx(float(nominal['te_s']), abs=1e-9)
+    assert float(definitions['TR']) == pytest.approx(float(nominal['tr_s']), abs=1e-9)
+
+
+def test_segmentation_changes_the_order_and_not_the_encoding(written, nominal) -> None:
+    """
+    The whole point of segmentation being a loop: it adds start-up repetitions and reorders
+    nothing about what each repetition encodes.
+    """
+    tables = {}
+    for name in FILES:
+        labels = written[name].evaluate_labels(evolution='adc')
+        tables[name] = np.sort(np.atleast_1d(np.asarray(labels['LIN'])))
+
+    assert np.array_equal(tables['bssfp_2d'], tables['bssfp_2d_segmented'])
+    assert len(tables['bssfp_2d']) == len(nominal['lines'])
+
+
+def test_the_notebook_protocol_still_builds_the_same_repetition(nominal) -> None:
+    """
+    The module and the notebook agree on the protocol.
+
+    Built here from the parameters the notebook saved, so a change to either side that moved TE or
+    TR without the other noticing fails before the simulation notebook silently fits the wrong
+    echo times.
+    """
+    opts = pp.Opts(
+        max_grad=24, grad_unit='mT/m', max_slew=120, slew_unit='T/m/s', B0=3.0,
+        rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6,
+    )
+    tr = sc.modules.bSSFP2DTR(
+        opts=opts, fov_mm=float(nominal['fov_mm']),
+        matrix=tuple(int(v) for v in nominal['matrix']),
+        thickness_mm=float(nominal['thickness_mm']),
+        flip_deg=float(nominal['flip_deg']),
+        bandwidth_hz_px=float(nominal['bandwidth_hz_px']),
+    )
+
+    assert tr.te_s == pytest.approx(float(nominal['te_s']), abs=1e-12)
+    assert tr.tr_s == pytest.approx(float(nominal['tr_s']), abs=1e-12)
+    assert tr.time_to_rf_center() == pytest.approx(
+        float(nominal['time_to_rf_center_s']), abs=1e-12)
+    assert tr.symmetry_residual_s == pytest.approx(
+        float(nominal['symmetry_residual_s']), abs=1e-12)
