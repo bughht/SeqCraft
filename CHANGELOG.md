@@ -66,15 +66,17 @@ one moving at constant velocity arrives at the echo carrying `2π v M1`, and the
 repetition's first moment is non-zero on all three axes. `bSSFP2DTR` now takes
 `flow_comp=sc.FlowCompensation(...)` and routes it through the physical-design seam `GRE2DTR`
 already uses — no compiler change and nothing bSSFP-specific below the Module layer. Measured,
-`M1` at the echo falls by three to four orders of magnitude, the balance condition is untouched,
-and TE and TR grow by about 45 % on the shipped protocol.
+`M1` at the echo falls by three to four orders of magnitude, the `M0` balance condition is
+untouched, and TE and TR grow by about 53 % on the shipped protocol — TE 3.225 → 4.925 ms and
+TR 6.450 → 9.850 ms.
 
 **That is echo-time first-moment compensation, and the documentation says so.** Bieri and
 Scheffler (Magn Reson Med 2005;54:901) null the first moment *between excitations*, and state
 that their design does not null it between excitation and echo, because a steady state is
 perturbed by a phase that varies between repetitions rather than by a phase on one acquired line.
-On the shipped protocol `flow_comp=` makes that repetition-to-repetition increment about three
-times larger, which `03_flow_and_motion.ipynb` measures against their criterion. The
+On the shipped protocol `flow_comp=` makes that repetition-to-repetition increment about 3.6
+times larger — 2.66 → 9.63 °/(m/s) — which `03_flow_and_motion.ipynb` measures against their
+criterion. The
 between-excitations condition is not implemented.
 
 Steady-state establishment, start-up method and count, segmentation and segment count, `ky` and

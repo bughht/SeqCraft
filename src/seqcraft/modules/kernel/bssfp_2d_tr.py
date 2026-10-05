@@ -110,9 +110,16 @@ The symmetric realisation, and why the lobes sit where they do
 --------------------------------------------------------------
 Zero net area is the balance condition, and it does not by itself say where in the interval the
 area was played.  The standard symmetric 2D scheme says more than that: the readout and slice
-structures are arranged symmetrically about the echo, which makes them **first-order** balanced
-over the interval as well -- the structure the bSSFP flow literature assumes when it says that
-only the phase-encode axis varies from repetition to repetition.
+structures are arranged symmetrically about the echo.  The bSSFP flow literature describes both
+axes as first-order compensated over the interval on that arrangement, and states that only the
+phase-encode axis varies from repetition to repetition.
+
+**What this implementation realises is not quite that.**  ``z`` meets the strict null -- the
+first moment over the interval is zero to machine precision.  ``x`` follows the same symmetric
+timing but keeps a small residual, because the even-sampled readout puts the echo half a dwell
+off the lobe's centre, so the prephaser and the balancing lobe mirror in time and not in area.
+That residual is the **same for every line**, which is what matters for the steady-state
+condition below.
 
 That symmetry has to be built, not hoped for.  On ``z`` the four terms of the interval are::
 

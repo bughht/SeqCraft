@@ -56,7 +56,8 @@ augmentations:
     composes_with_balance: >
       The designer reshapes what plays between the RF centre and the echo and is handed the same
       TOTAL area on each axis, so the RF-to-RF M0 sum is the one the conventional waveform had.
-      Cost: TE and TR grow about 45% on the shipped protocol.
+      Cost: TE and TR grow about 53% on the shipped protocol -- TE 3.225 -> 4.925 ms and
+      TR 6.450 -> 9.850 ms.
     literature_gap: >
       **Updated 2026-10-05 after the baseline was corrected.**  The default waveform now meets
       the symmetric-realisation structure the literature assumes: over the RF-to-RF interval M1z
@@ -66,8 +67,9 @@ augmentations:
       Two different conditions follow from that, and they do not have the same answer.  For
       strict between-excitation first-moment nulling, z is met and x is NOT -- a small constant
       residual remains.  For the Eq. [2] repetition-to-repetition increment, the constant x
-      residual contributes nothing because it is the same for every line, so the remaining
-      varying term is the phase-encode axis.  Saying "met on x up to a constant" would conflate
+      residual does not contribute to the repetition-to-repetition Eq. [2] increment, because it
+      is the same for every line -- though it can still produce a constant velocity-dependent
+      phase -- so the remaining varying term is the phase-encode axis.  Saying "met on x up to a constant" would conflate
       the two.
 
 
@@ -81,15 +83,17 @@ augmentations:
 
       So the shipped `flow_comp=` states the condition the literature says is NOT the governing
       one.  Measured on the shipped protocol: it nulls M1 at the echo to 1e-4 s/m, and raises the
-      repetition-to-repetition increment of the RF-to-RF first moment from 2.95 to 9.63 deg per
-      (m/s) -- a factor of 3.3 in the wrong direction on Bieri's criterion.
+      repetition-to-repetition increment of the RF-to-RF first moment from 2.66 to 9.63 deg per
+      (m/s) -- a factor of about 3.6 in the wrong direction on Bieri's criterion.
 
       A kernel able to state "M1 = 0 between excitations" is therefore a real and separate
       physical-design question.  **Not implemented, and deliberately not inferred into existence
       from this reading.**  Two things belong with that decision.  M1x over the interval is small
       but non-zero, so strict nulling is not met there either; it is constant across the table and
-      so does not enter the Eq. [2] increment.  And Bieri's "pairing" view order reaches the same
-      goal with no gradient change at all, which is acquisition policy and composes with the
+      so does not enter the Eq. [2] increment.  And Bieri's "pairing" view order addresses the
+      repetition-to-repetition steady-state phase-consistency problem without changing the
+      gradient waveform -- it does NOT make M1 = 0 between excitations, so it is not a substitute
+      for strict nulling.  Being a view order, it is acquisition policy and composes with the
       kernel as it stands.
 
       *Superseded.*  An earlier revision of this entry recorded that M1z over the interval was
