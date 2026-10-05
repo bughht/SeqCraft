@@ -19,6 +19,28 @@ planned_public_realizations:
   - bSSFP3DTR            # a separate change
 
 # What the implementation added beyond the scanned boundary, and why it is not a new abstraction.
+# A timing question raised at review and closed by measurement, 2026-10-05.
+timing_efficiency:
+  question: >
+    The three gradient axes do not begin and end their winder lobes at the same wall-clock times.
+    Is that costing TR -- is there removable idle time that better cross-axis packing would
+    recover without changing G(t), the moments, or the RF and ADC timing?
+  measured: >
+    Idle on every axis at once, with the RF and ADC reservations counted as busy, over the
+    RF-to-RF interval: 40 us of 6450 (0.6%) on the reference protocol, 10 us of 8180 (0.1%) at
+    3 mm / 400 Hz/px, and 40 us of 5790 (0.7%) at 10 mm / 1000 Hz/px.  All of it is raster
+    granularity.
+  conclusion: >
+    The three axes are not forced into identical timing windows, and they do not need to be.  The
+    current waveform satisfies the intended physical conditions -- M0 balanced on every axis, M1z
+    zero over the interval, M1x constant across the table -- and the timing-efficiency check found
+    at most 40 us of removable slack, so no packing optimisation is warranted.  Cross-axis visual
+    alignment is not a correctness criterion; the axes have different jobs and different areas.
+
+    Kept separate from this: the readout's half-dwell echo offset, which is why M1x is small
+    rather than zero.  That is a readout semantics question about where k = 0 falls among the
+    samples, not a cross-axis packing question.
+
 augmentations:
   - name: FlowCompensation
     provides: echo-time first-moment compensation       # NOT the bSSFP literature condition

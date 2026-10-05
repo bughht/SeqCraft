@@ -88,6 +88,13 @@ only so the comparison has both halves at one common TR.
 segmentation are composed around it. `02` is about the magnetisation the train drives, and `03`
 about what a *moving* spin sees — three questions that are easier apart than together.
 
+`bssfp_2d/seq/` holds the two acquisitions `01` writes. The probes `02` and `03` build — single
+lines read hundreds of times, a preparation pulse sampled on its own, one view order against
+another — go in `bssfp_2d/seq/diagnostics/` and are named for what they measure. **None of them
+is a flow-compensated bSSFP sequence**: the only compensated variant among them nulls the first
+moment at the echo, which is a different condition from the between-excitations one `03` Part C
+describes and which is not implemented.
+
 ## `se_2d/` and `fse_2d/`
 
 | | |
