@@ -558,3 +558,101 @@ def test_an_axis_this_repetition_does_not_play_is_refused(opts) -> None:
     """The routing table decides, and a name that is not one of its axes says so."""
     with pytest.raises(sc.errors.ConfigurationError):
         sc.modules.bSSFP2DTR(opts=opts, **SPEC, flow_comp=sc.FlowCompensation(axis='ky'))
+
+
+# ------------------------------------------- the symmetric realisation, measured not assumed
+def m1_rf_to_rf(seq) -> np.ndarray:
+    """First moment on each axis over every RF-centre-to-RF-centre interval, 1/m * s."""
+    waveforms = seq.waveforms_and_times()[0]
+    centres = rf_centres(seq)
+    rows = []
+    for n in range(len(centres) - 1):
+        a, b = centres[n], centres[n + 1]
+        row = []
+        for axis in range(3):
+            t, g = waveforms[axis][0], waveforms[axis][1]
+            if len(t) == 0:
+                row.append(0.0)
+                continue
+            grid = np.unique(np.concatenate([t[(t > a) & (t < b)], [a, b]]))
+            v = np.interp(grid, t, g, left=0.0, right=0.0)
+            row.append(float(np.trapezoid(v * (grid - a), grid)))
+        rows.append(row)
+    return np.array(rows)
+
+
+def test_the_slice_axis_is_first_order_compensated_over_the_interval(opts, tr) -> None:
+    """
+    The structure a symmetric 2D balanced-SSFP scheme is described as having, measured.
+
+    Zero net area does not give it: the slice lobes have to sit the **same distance from their
+    own RF centres**, so that the four z terms of the interval mirror about its midpoint.  When
+    they do, the first moment over the interval vanishes rather than merely the zeroth.
+
+    Checked across the phase-encode table, because nothing on `z` should depend on the line.
+    """
+    for line in (0, MATRIX[1] // 2, MATRIX[1] - 1):
+        m1 = m1_rf_to_rf(train(opts, tr, tr, lines=[line, (line + 1) % MATRIX[1]]))
+
+        assert np.abs(m1[:, 2]).max() < 1e-9
+
+
+def test_the_slice_lobes_sit_symmetrically_about_their_own_pulses(tr) -> None:
+    """
+    The geometry behind the measurement above, asserted where it is decided.
+
+    The pulse's two halves are not equal -- the transmit dead time sits inside the selection
+    lobe but before the RF -- so one side carries a pad.  What has to match is
+    ``half + gap`` on each side, and exactly one of the two gaps is ever non-zero.
+    """
+    post_half = tr._grad_start_s - tr.exc.time_to_center()
+    pre_half = tr.exc.time_to_center()
+
+    assert min(tr._z_gap_s, tr._lead_gap_s) == 0.0
+    assert post_half + tr._z_gap_s == pytest.approx(pre_half + tr._lead_gap_s, abs=1e-12)
+
+
+def test_the_readout_axis_carries_a_constant_first_moment(opts, tr) -> None:
+    """
+    `M1x` over the interval is small, and -- more to the point -- the **same for every line**.
+
+    It is not exactly zero: the prephaser cancels the area before the echo and the balancing
+    lobe the area after it, and those differ by the half-dwell offset of the echo sample, so the
+    two lobes mirror in time but not in area.  A constant per-TR phase satisfies the
+    steady-state condition; what perturbs a steady state is a phase that *varies* between
+    repetitions, which on this waveform is the phase-encode term alone.
+    """
+    values = [m1_rf_to_rf(train(opts, tr, tr, lines=[line, (line + 1) % MATRIX[1]]))[0, 0]
+              for line in (0, MATRIX[1] // 2, MATRIX[1] - 1)]
+
+    assert np.ptp(values) < 1e-12
+    assert abs(values[0]) < 1e-2
+
+
+def test_the_phase_encode_first_moment_is_what_varies(opts, tr) -> None:
+    """
+    `M1y` over the interval is linear in the line index and passes through zero at the centre.
+
+    This is the term a balanced steady state is sensitive to, because it is the one that differs
+    between two consecutively acquired repetitions.
+    """
+    lines = [0, MATRIX[1] // 2, MATRIX[1] - 1]
+    values = [m1_rf_to_rf(train(opts, tr, tr, lines=[line, (line + 1) % MATRIX[1]]))[0, 1]
+              for line in lines]
+
+    assert abs(values[1]) < 1e-12
+    assert values[0] * values[2] < 0.0
+    assert np.ptp(values) > 1e-2
+
+
+@pytest.mark.parametrize(('field', 'value'), [
+    ('thickness_mm', 3.0), ('thickness_mm', 10.0), ('bandwidth_hz_px', 400.0),
+    ('rf_duration_s', 2e-3), ('flip_deg', 15.0),
+])
+def test_the_symmetric_structure_survives_the_protocol(opts, field, value) -> None:
+    """The z symmetry is geometric, so it should not depend on which protocol is asked for."""
+    rep = sc.modules.bSSFP2DTR(**{**SPEC, 'opts': opts, field: value})
+    m1 = m1_rf_to_rf(train(opts, rep, rep, lines=[4, 5]))
+
+    assert np.abs(m1[:, 2]).max() < 1e-9
+    assert abs(rep.symmetry_residual_s) <= opts.grad_raster_time / 2

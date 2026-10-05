@@ -106,19 +106,38 @@ repetitions it is indistinguishable -- but it is built against an assumed succes
 breaks the moment the successor's pulse differs.  The split realised here is the one that does
 not need the assumption.
 
-Balanced is not motion compensated
-----------------------------------
-``M0 = 0`` over the RF-to-RF interval says nothing about the first moment, and a spin moving at
-constant velocity along an axis arrives at the echo with the phase that axis' ``M1`` carries.
-This repetition leaves ``M1`` non-zero on all three axes at the echo, and on ``y`` and ``z`` over
-the interval.
+The symmetric realisation, and why the lobes sit where they do
+--------------------------------------------------------------
+Zero net area is the balance condition, and it does not by itself say where in the interval the
+area was played.  The standard symmetric 2D scheme says more than that: the readout and slice
+structures are arranged symmetrically about the echo, which makes them **first-order** balanced
+over the interval as well -- the structure the bSSFP flow literature assumes when it says that
+only the phase-encode axis varies from repetition to repetition.
 
-Which of those matters depends on the question.  For a balanced *steady state* the quantity is
-how much the RF-to-RF first moment **changes between consecutive repetitions**, which is set by
-the phase-encode step and therefore by view ordering -- see
-``examples/bssfp_2d/03_flow_and_motion.ipynb``, where it is measured against Bieri and
-Scheffler's criterion.  `flow_comp` addresses the echo-time moment instead, which is a different
-and narrower condition.
+That symmetry has to be built, not hoped for.  On ``z`` the four terms of the interval are::
+
+    [+select post][gap_post][-rephase]  ...  [-winder][gap_pre][+select pre]
+
+and they mirror about the midpoint only when ``gap_post + post_half == gap_pre + pre_half``.  The
+pulse's halves are **not** equal -- the transmit dead time sits inside the selection lobe but
+before the RF -- so this module pads the shorter side.  With that pad the first moment over the
+interval is zero on ``z`` to machine precision, and without it the trailing lobe drifts wherever
+the echo time puts it.
+
+What each axis then carries over the RF-to-RF interval::
+
+    z   M1 = 0            the two balancing lobes mirror exactly
+    x   M1 small, and the SAME for every line -- the prephaser cancels the area before the echo
+        and the balancing lobe the area after it, and the half-dwell offset of the echo sample
+        makes those differ a little, so the two lobes mirror in time but not quite in area
+    y   M1 varies with the line, because the blip and its rewind have opposite signs
+
+That last row is the one a steady state is sensitive to.  A constant per-TR phase is harmless --
+the condition is that the phase be the *same* from one repetition to the next -- so what
+perturbs a balanced steady state is the phase-encode term, and how much depends on how far apart
+in k-space two consecutively acquired lines are.  That is view ordering, and it lives in the
+acquisition.  ``examples/bssfp_2d/03_flow_and_motion.ipynb`` measures all of this against Bieri
+and Scheffler's criterion.
 
 What this layer does not own
 ----------------------------
@@ -293,19 +312,36 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         self._a_pre = area_until(self.exc.gz, self.exc.time_to_center())
         self._a_post = -self.exc.rephaser_area_per_m
 
-        # The leading winder has a window of its own, sized from its own area.  It is **not** part
-        # of the shared winder: nothing else in the repetition may play before the RF centre, so
-        # there is nothing for it to overlap with, and tying it to the shared window would make it
-        # grow whenever the readout did.
-        self._lead_s = ceil_raster(self._lobe_duration_s(-self._a_pre), opts.grad_raster_time)
-        self._z_lead = self._lobe('z', -self._a_pre, self._lead_s)
-
-        # The earliest the trailing winder may start, in the excitation block's own frame: the
-        # transmit chain has to be clear of the pulse and the selection gradient has to be done.
+        # The earliest anything may follow the pulse, in the excitation block's own frame: the
+        # transmit chain has to be clear of it and the selection gradient has to be done.
+        raster = float(opts.grad_raster_time)
         self._grad_start_s = ceil_raster(
             max(float(pp.calc_duration(self.exc.gz)), float(pp.calc_duration(self.exc.rf))),
-            opts.grad_raster_time,
+            raster,
         )
+
+        # The two slice balancing lobes, placed so that the z structure is **symmetric about the
+        # echo**.  That symmetry is what makes the slice axis first-order compensated over the
+        # RF-to-RF interval, which is the structure the balanced-SSFP literature describes for a
+        # symmetric 2D scheme -- and zero net area alone does not give it.
+        #
+        # Each lobe has to sit the same distance from its own RF centre:
+        #
+        #     ... [+select post][gap_post][-rephase] ... [-winder][gap_pre][+select pre] ...
+        #
+        # mirrors about the midpoint only when `gap_post + post_half == gap_pre + pre_half`.  The
+        # pulse's own halves are not equal -- the transmit dead time sits inside the selection
+        # lobe but before the RF -- so the shorter side is padded to match the longer one.
+        self._z_window_s = ceil_raster(
+            max(self._lobe_duration_s(-self._a_pre), self._lobe_duration_s(-self._a_post)), raster)
+        post_half = self._grad_start_s - self.exc.time_to_center()
+        pre_half = self.exc.time_to_center()
+        #: Gap between the selection gradient and the trailing lobe, and between the leading lobe
+        #: and the next selection gradient.  One of the two is always zero.
+        self._z_gap_s = ceil_raster(max(pre_half - post_half, 0.0), raster)
+        self._lead_gap_s = ceil_raster(max(post_half - pre_half, 0.0), raster)
+        self._lead_s = self._z_window_s + self._lead_gap_s
+        self._z_lead = self._lobe('z', -self._a_pre, self._z_window_s)
 
         # Who owns a moment requirement on each axis.  All three are this repetition's: `x` is
         # the readout's own prephaser, `y` the encode blip, `z` the trailing balancing lobe.
@@ -321,9 +357,8 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         # axes overlap for free, so each window is its longest participant rather than their sum.
         self.winder_s = ceil_raster(
             max(probe_ro.prephaser_duration_s, probe_pe.min_duration_s,
-                self._lobe_duration_s(-self._a_post),
                 self._lobe_duration_s(-probe_ro.area_after_echo_per_m)),
-            opts.grad_raster_time,
+            raster,
         )
         # The jointly designed winder, when something claimed `y` or `z`.  It reshapes what plays
         # between the RF centre and the echo and leaves the **total** area on each axis alone,
@@ -346,9 +381,10 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
                               duration_s=self.winder_s)
 
         #: ``None`` when the scope designed `z`: the waveform it produced carries the same total
-        #: area, and is emitted in this lobe's place.
+        #: area, and is emitted in its place -- and in the scope's own window rather than in the
+        #: symmetric slot, because a jointly designed waveform is solved against that schedule.
         self._z_tail = (None if 'z' in self._joint
-                        else self._lobe('z', -self._a_post, self.winder_s))
+                        else self._lobe('z', -self._a_post, self._z_window_s))
         self._x_balance = self._lobe('x', -self.ro.area_after_echo_per_m, self.winder_s)
 
         self._ro_duration_s = self.ro().duration
@@ -549,7 +585,9 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
             .add(tail, self._x_balance)
         )
         if self._z_tail is not None:
-            out.add(winder, self._z_tail)
+            # Immediately after the selection gradient plus whatever pad the symmetry needs --
+            # not in the shared winder window, which sits wherever the echo time puts it.
+            out.add(self._lead_s + self._grad_start_s + self._z_gap_s, self._z_tail)
         designed = self._joint_block('z', (0, _augment.ONE_STATE))
         if designed is not None:
             out.add(winder, designed)
@@ -580,10 +618,30 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
             pp.make_trapezoid(channel='z', area=area_per_m, system=self.opts)))
 
     @property
-    def _head_min_s(self) -> float:
-        """TE with no padding: RF centre to echo, at the shortest."""
+    def _z_tail_end_s(self) -> float:
+        """Seconds from the RF effective centre to the end of the trailing slice lobe."""
         return (self._grad_start_s - self.exc.time_to_center()
-                + self._joint_fill_s + self.ro.time_to_echo())
+                + self._z_gap_s + self._z_window_s)
+
+    @property
+    def _head_floor_s(self) -> float:
+        """
+        The smallest head fill the geometry allows, seconds.
+
+        The winder window may start while the trailing slice lobe is still playing -- different
+        axes overlap for free -- but the lobe has to be **finished by the echo**, or slice
+        gradient would still be running when ``k_z`` is supposed to be zero.  Usually zero: the
+        readout is longer than the lobe on every protocol shipped here.
+        """
+        head_without_fill = (self._grad_start_s - self.exc.time_to_center()
+                             + self._joint_fill_s + self.ro.time_to_echo())
+        return max(self._z_tail_end_s - head_without_fill, 0.0)
+
+    @property
+    def _head_min_s(self) -> float:
+        """TE at the shortest: RF centre to echo with only the fill the geometry forces."""
+        return (self._grad_start_s - self.exc.time_to_center()
+                + self._joint_fill_s + self.ro.time_to_echo() + self._head_floor_s)
 
     @property
     def _tail_min_s(self) -> float:
@@ -601,7 +659,7 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         return (self._lead_s + self._grad_start_s + head_fill_s + self._joint_fill_s
                 + self._ro_duration_s + self._tail_s + tail_fill_s)
 
-    def _symmetric_fills(self) -> tuple[float, float]:
+    def _symmetric_fills(self) -> tuple[float, float]:  # noqa: D401
         """
         The shortest pair of fills that puts the echo at the midpoint, as closely as it can go.
 
@@ -613,7 +671,8 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         """
         delta = self._tail_min_s - self._head_min_s
         steps = round(delta / self._raster_s) * self._raster_s
-        return (steps, 0.0) if steps >= 0 else (0.0, -steps)
+        head, tail = (steps, 0.0) if steps >= 0 else (0.0, -steps)
+        return self._head_floor_s + head, tail
 
     def _resolve_timing(self, te_s: float | None, tr_s: float | None) -> tuple[float, float]:
         """Return ``(te, tr)``, having set the two fills that realise them."""
@@ -627,7 +686,8 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
                     else self._require_asymmetric_tr(tr_s, self._head_min_s + head))
         self._head_fill_s = head
         self._tail_fill_s = tail
-        return self._head_min_s + head, self._span_s(head, tail)
+        return (self._grad_start_s - self.exc.time_to_center() + self._joint_fill_s
+                + self.ro.time_to_echo() + head), self._span_s(head, tail)
 
     def _symmetric_fills_within(self, tr_s: float) -> tuple[float, float]:
         """
@@ -637,11 +697,12 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         and `tail` takes the remainder, which keeps the requested TR exact rather than trading
         it for a symmetry the raster cannot deliver anyway.
         """
-        total = tr_s - self._span_s(0.0, 0.0)
+        floor = self._head_floor_s
+        total = tr_s - self._span_s(floor, 0.0)
         delta = self._tail_min_s - self._head_min_s
         head = min(max(round((total + delta) / 2.0 / self._raster_s) * self._raster_s, 0.0),
                    total)
-        return head, total - head
+        return floor + head, total - head
 
     def _require_te(self, te_s: float) -> float:
         """Return the head fill that reaches a requested TE, or refuse and say what can."""
@@ -656,7 +717,7 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
                  'or te_s=None for the symmetric TE = TR/2',
                  'a higher bandwidth_hz_px shortens the readout, and with it min_te_s'],
             ))
-        return ceil_raster(wanted - self.min_te_s, self._raster_s)
+        return self._head_floor_s + ceil_raster(wanted - self.min_te_s, self._raster_s)
 
     def _require_tr(self, tr_s: float) -> float:
         """Return a requested symmetric TR on the raster, or refuse and say what can."""
