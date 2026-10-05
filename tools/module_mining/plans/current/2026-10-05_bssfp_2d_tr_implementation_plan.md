@@ -77,9 +77,10 @@ echo constraints     over [RF centre -> echo]:  k_x = 0, k_y = requested, k_z = 
 balance constraints  over [RF centre -> next RF centre]:  M0 = 0 on x, y and z
 ```
 
-A spoiled gradient echo has only the first set. The second set is what `bSSFP2DTR` adds, and
-it does **not** share an endpoint with the first at either end. For repetition `n` the balance
-interval runs from RF centre `n` to RF centre `n+1`, so what it contains is:
+A spoiled gradient echo has only the first set. The second set is what `bSSFP2DTR` adds. The
+two intervals begin at the same instant and end at different ones: both start at RF centre `n`,
+the echo interval ends at the echo, and the balance interval runs on to RF centre `n+1`. So
+what the balance interval contains is:
 
 ```text
 from   RF centre n        the post-centre half of THIS repetition's selection gradient
@@ -91,21 +92,60 @@ The pre-centre half of *this* repetition's selection gradient is outside the int
 belongs to the interval that ended at RF centre `n`, which is repetition `n-1`'s.
 
 That is why a balanced repetition carries a slice winder on the leading side as well as the
-trailing side. The leading winder is there to close the *previous* repetition's balance, not
-this one's, and it contributes nothing to this repetition's echo condition either, because the
-transverse magnetisation it would act on does not exist until the RF centre. One gradient
-lobe, serving a constraint that belongs to a neighbouring interval and to no pathway of its
-own, is the clearest demonstration available that the two constraint sets are different
-things.
+trailing side — and it is why the z balance is settled by **four** terms contributed by **two**
+repetitions:
 
-**Consequence for ownership.** A single `bSSFP2DTR` instance can still state its own
-correctness condition, because the next repetition's leading half is built by the same instance
-and therefore known to it. What it cannot do is guarantee balance against a neighbour built by
-something else: a neighbour with a different slice thickness, pulse duration or selection
-gradient breaks the interval, and the module should say so in its docstring rather than imply
-a guarantee it cannot hold. A differing *flip angle* does not break it — the flip angle is
-carried by the RF amplitude, not by the selection gradient — which is why a start-up ramp is
-safe and is worth testing.
+```text
+A_post(n)    + R_tail(n)    +    W_lead(n+1)  + A_pre(n+1)   = 0
+\______________________/         \______________________/
+  contributed by n                 contributed by n+1
+```
+
+```text
+A_post(n)     area of repetition n's selection gradient after RF centre n
+R_tail(n)     the trailing z lobe repetition n emits
+W_lead(n+1)   the leading z winder repetition n+1 emits
+A_pre(n+1)    area of repetition n+1's selection gradient before RF centre n+1
+```
+
+For identical symmetric selection gradients `A_post = A_pre = A`, and the natural symmetric
+realisation is:
+
+```text
+R_tail = -A        W_lead = -A        A - A - A + A = 0
+```
+
+**Each balancing lobe cancels one selection half, not two.** Setting
+`R_tail = -(A_post + A_pre)` while the leading winder is still non-zero double-counts the
+neighbour's half, and the interval then carries a net `-A`. The leading winder contributes
+nothing to this repetition's echo condition either — the transverse magnetisation it would act
+on does not exist until the RF centre — so it is a lobe that serves only a balance constraint
+shared with a neighbour, which is the clearest demonstration available that the two constraint
+sets are different things.
+
+**Consequence for ownership: the contract is compositional.** No single emitted repetition is
+self-contained. What `bSSFP2DTR` guarantees is:
+
+> A `bSSFP2DTR` configuration defines a repetition contract such that two **compatible**
+> consecutive repetitions built from that configuration satisfy zero net gradient area on each
+> axis over the RF-centre-to-RF-centre interval between them.
+
+**Compatible** has to be stated, not assumed. Adjacent repetitions must preserve the
+selection-gradient geometry that meets at the boundary:
+
+```text
+required to match        slice thickness
+                         RF duration / pulse design
+                         selection-gradient waveform and timing
+
+free to differ           flip angle, when it changes RF amplitude and leaves Gz unchanged
+                         ky, which is a y-axis encoding; the rewind of n and the blip of n+1
+                         still have to satisfy the y balance across the interval
+```
+
+A neighbour built by something else, or with a different slice thickness or pulse duration,
+is outside what this contract covers. The docstring says that rather than implying a guarantee
+the module cannot hold.
 
 `PhysicalDesignScope` expresses the first set (it designs a window and states `k_at_echo`).
 It does not express the second. **Do not extend it in this pull request.** Realise the balance
@@ -128,7 +168,8 @@ apart, and the Layer 3 notebook must say which of the two it is showing.
 ### 2.1 Owned by `bSSFP2DTR`
 
 - slice-selective excitation, and its flip angle, duration and phase
-- the z axis: selection, rephasing, **and** the leading winder that closes the balance
+- the z axis: selection, the trailing lobe cancelling its own post-centre half, and the
+  leading winder cancelling its own pre-centre half
 - the readout axis: prephasing, the readout itself, and the area that closes the balance
 - the phase-encode axis: the requested `ky` at the echo, and the rewind that closes the balance
 - TE placement, with `TR/2` as the default
@@ -176,18 +217,16 @@ balance condition true for a structural reason that can be stated in one sentenc
 
 | axis | leading side | at the echo | trailing side |
 |---|---|---|---|
-| `z` | winder, closing the *previous* interval's balance for this selection lobe's pre-centre half | `k_z = 0` | rephaser, closing *this* interval's balance for the post-centre half and for the next lobe's pre-centre half |
+| `z` | `W_lead = -A_pre`, cancelling **this** lobe's pre-centre half, inside the interval that ended at this RF centre | `k_z = 0` | `R_tail = -A_post`, cancelling **this** lobe's post-centre half, inside the interval that starts at this RF centre |
 | `x` | prephaser, cancelling the readout's pre-echo area | `k_x = 0` | area equal to `area_after_echo_per_m`, with the opposite sign |
 | `y` | blip to the requested `k_y` | `k_y` as requested | rewind of the same blip |
 
-Read the z row as the three pieces an emitted repetition plays, not as three terms of one
-sum: the leading winder belongs to the balance interval that **ended** at this RF centre, and
-the trailing rephaser has to cancel this lobe's post-centre half *plus* the next lobe's
-pre-centre half. For a train of identical repetitions those two halves are equal, so the
-trailing rephaser carries twice what a spoiled gradient echo's rephaser carries, and the
-leading winder of repetition `n+1` is what the trailing rephaser of `n` would have been if the
-interval stopped at the block edge. The arithmetic is the same either way; the ownership is
-not, and it is the ownership that the test in §6 has to measure.
+Read the z row as three pieces an emitted repetition plays, each settling **its own** selection
+half. Neither balancing lobe reaches across the RF centre to cancel a neighbour's half: the
+leading winder closes the interval that ended at this RF centre and the trailing lobe opens the
+one that starts there, and each carries `-A`, not `-2A`. For a symmetric pulse both lobes have
+the same area, which is also what a spoiled gradient echo's rephaser carries — the extra
+gradient in a balanced repetition is a second lobe, not a larger one.
 
 `CartesianLine` already reports `area_to_echo_per_m`, `area_after_echo_per_m` and
 `prephaser_area_per_m`; `Excitation` already reports `rephaser_area_per_m` and
@@ -311,7 +350,7 @@ reports its own correctness is checking its arithmetic, not its output.
 
 | # | claim | how it is measured |
 |---|---|---|
-| 1 | balance | build at least two consecutive repetitions, compile them, and integrate `Gx`, `Gy`, `Gz` from RF effective centre `n` to RF effective centre `n+1`: `M0x = M0y = M0z = 0` |
+| 1 | balance | build `N + 1` **compatible** consecutive repetitions, compile them, and integrate `Gx`, `Gy`, `Gz` over each of the first `N` RF-centre-to-RF-centre intervals: `M0x = M0y = M0z = 0` |
 | 2 | encoding | `k_y` at the ADC sample at the echo is the requested value |
 | 3 | echo placement | the echo falls at the declared TE from the RF effective centre |
 | 4 | default | with no `te_s`, the declared TE equals `TR/2` |
@@ -321,7 +360,7 @@ reports its own correctness is checking its arithmetic, not its output.
 | 8 | minimum timing | `min_te_s` and `min_tr_s` are achievable, and a shorter request is refused with the achievable value named |
 | 9 | hardware | amplitudes and slews are within `opts`, and every event lands on its raster |
 | 10 | balance is not steady state | claim 1 holds on the **first** RF-to-RF interval of a two-repetition sequence, where no magnetisation is anywhere near steady state |
-| 11 | balance across unlike neighbours | claim 1 holds for a pair with different `ky`, and for a pair whose flip angles differ as a start-up ramp's do |
+| 11 | balance across unlike neighbours | claim 1 holds for adjacent repetitions with **different `ky`**, and for adjacent repetitions with a **different flip angle and an unchanged selection gradient** |
 
 Claim 10 is not redundant with claim 1. It is the one that makes the distinction in §1.3
 checkable rather than merely stated: balance is a property the waveform has from the first
@@ -334,18 +373,34 @@ neighbours the two agree. They stop agreeing when the neighbours differ, so the 
 differ:
 
 ```text
-different ky          distinguishes a y rewind that belongs to the repetition that encoded
-                      it from one that merely returns the block edge to zero
-start-up flip angles  checks that z balance survives a neighbour with a different RF
-                      amplitude, which it should, because the flip angle is carried by the
-                      RF and not by Gz
+different ky                  the y rewind of n and the blip of n+1 still have to satisfy the
+                              y balance across the interval; this separates a rewind that
+                              belongs to the repetition that encoded it from one that merely
+                              returns a block edge to zero
+
+different flip angle,         the z balance has to survive a neighbour with a different RF
+unchanged Gz                  amplitude, because the flip angle is carried by the RF and not
+                              by the selection gradient -- which is what makes a start-up ramp
+                              compatible in the sense of §1.2
 ```
 
-Build `N + 1` repetitions and measure the first `N` intervals; the last repetition has no
-successor and therefore no interval of its own. **The test measures the physical RF-to-RF
-definition, not a module-container boundary that happens to resemble it.** A test written
-against the block edges would pass on a module that is wrong in exactly the way §1.2
-describes.
+Both pairs are **compatible** by §1.2: they differ only in ways the contract allows. A pair
+that differed in slice thickness or pulse duration would be outside the contract, so a failure
+there would say nothing about the module.
+
+The acceptance procedure, stated once:
+
+```text
+build N+1 compatible consecutive repetitions
+measure the first N RF-centre-to-RF-centre intervals
+verify M0x = M0y = M0z = 0
+```
+
+The last repetition has no successor and therefore no interval of its own. **The test measures
+the physical RF-to-RF definition, not a module-container boundary that happens to resemble
+it.** A test written against block edges would pass on a module that is wrong in exactly the
+way §1.2 describes — and, because each balancing lobe cancels one selection half rather than
+two, it would also pass on a module whose trailing lobe double-counts.
 
 ### Layer 3
 
@@ -385,12 +440,14 @@ JSON encoding convention its own file already uses.
 1. Name the class and the file, and get an empty module importing and exported.
 2. Build the symmetric case: z winder, selection, rephaser; x prephaser, readout, balance
    lobe; y blip and rewind. `TE = TR/2`.
-3. Write claims 1, 2, 3 and 4 against **two consecutive compiled repetitions**, measured RF
-   centre to RF centre. Nothing else proceeds until these pass, and nothing in the test may
-   use a `LogicBlock` edge as an interval endpoint.
-4. Write claims 10 and 11 — the two-repetition pair, the differing `ky`, the start-up flip
-   angles — before adding any further parameter. These are the claims that catch the §1.2
-   error, so they are worth more early than late.
+3. Write claims 1, 2, 3 and 4 against `N + 1` **compatible consecutive** compiled
+   repetitions, measuring the first `N` intervals RF centre to RF centre. Nothing else
+   proceeds until these pass, and nothing in the test may use a `LogicBlock` edge as an
+   interval endpoint.
+4. Write claims 10 and 11 — the two-repetition sequence, the differing `ky`, the differing
+   flip angle with unchanged `Gz` — before adding any further parameter. These are the claims
+   that catch both §1.2 errors, the wrong interval and the double-counted half, so they are
+   worth more early than late.
 5. Resolve `te_s=None` / `tr_s=None` to the shortest legal **symmetric** repetition, add
    explicit `te_s`, solve the asymmetric trailing side, and write claim 5.
 6. Add the RF and receiver phase progression, and write claims 6 and 7.

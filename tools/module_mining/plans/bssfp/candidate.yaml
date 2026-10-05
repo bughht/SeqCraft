@@ -246,14 +246,16 @@ boundary_hypotheses:
       owns: balanced moments over its own interval, TE placement, RF phase, its own minimum TR
       can_determine: all of the above from its own parameters, given the repetition index
       correctness_condition: >
-        "The net gradient area on each axis from my RF centre to the next RF centre is zero, and
-        my echo is at my declared TE."  Checkable on one instance in the sense that matters -- the
-        module needs nothing from a caller to state it -- but the interval ends inside the NEXT
-        repetition, so the measurement is made on two adjacent emitted repetitions, and the
-        guarantee holds against a neighbour this module built.  A neighbour with a different
-        selection gradient is outside what one instance can promise.  Corrected 2026-10-05; this
-        previously read "Fully checkable on ONE instance, with no reference to neighbours", which
-        the interval does not support.
+        "Two compatible consecutive repetitions built from this configuration have zero net
+        gradient area on each axis over the RF-centre-to-RF-centre interval between them, and each
+        echo is at the declared TE."  The condition is **compositional**: the interval ends inside
+        the next repetition, each repetition contributes its own selection half and its own
+        balancing lobe, and neither lobe cancels the neighbour's half.  Stateable from the
+        configuration alone -- nothing is needed from a caller -- but measured on an adjacent pair.
+        Compatible means the selection-gradient geometry at the boundary matches: slice thickness,
+        RF duration and pulse design, selection waveform and timing.  Flip angle and ky may differ.
+        Corrected 2026-10-05; this previously read "Fully checkable on ONE instance, with no
+        reference to neighbours", which the interval does not support.
       needs_from_outside: repetition index, encode values, flip angle
       what_becomes_awkward: >
         **Measured, not asserted.**  A module's events cannot continue into the next instance of
