@@ -81,12 +81,12 @@ only so the comparison has both halves at one common TR.
 | | |
 |---|---|
 | [`bssfp_2d/01_build.ipynb`](bssfp_2d/01_build.ipynb) | A complete 2D balanced-SSFP acquisition out of `sc.modules.bSSFP2DTR`: zero net gradient area on every axis measured between consecutive RF effective centres, `TE = TR/2` as the default realisation rather than as the definition, and a start-up flip-angle ramp and a four-segment k-space table written as ordinary loops. **Needs nothing but `seqcraft`.** |
-| [`bssfp_2d/02_simulate_and_reconstruct.ipynb`](bssfp_2d/02_simulate_and_reconstruct.ipynb) | Where a balanced *waveform* stops and a *steady state* begins. Single voxels, every repetition sampled, watching three tissues converge over hundreds of repetitions; the off-resonance response and its nulls at ±1/(2 TR); then the continuous and segmented acquisitions reconstructed and compared line by line. **Needs `seqcraft[sim]`**; about 3.5 minutes. |
+| [`bssfp_2d/02_simulate_and_reconstruct.ipynb`](bssfp_2d/02_simulate_and_reconstruct.ipynb) | Where a balanced *waveform* stops and a *steady state* begins. Single voxels with every repetition sampled, comparing no preparation against `α/2 – TR/2` and a 20-step flip-angle ramp, aligned at the first full-flip repetition; the off-resonance response and its nulls near ±1/(2 TR); then the continuous and interrupted-segmented acquisitions reconstructed and compared line by line on a single-tissue object. **Needs `seqcraft[sim]`**; about 3.5 minutes. |
+| [`bssfp_2d/03_flow_comp.ipynb`](bssfp_2d/03_flow_comp.ipynb) | **Balanced is not motion compensated.** `M0 = 0` is a statement about a stationary spin; a moving one arrives carrying `2π v M1`, and the canonical repetition's first moment is non-zero on all three axes. Measures `M0` and `M1` at the echo and over the RF-to-RF interval, builds the `flow_comp=` variant, and simulates a moving spin against both — with a static control that fixes the sign convention first. **Needs `seqcraft[sim]`**; about a minute. |
 
-The split this directory exists to make visible: `bSSFP2DTR` owns the repetition — balance, TE and
-TR timing, the RF and receiver phase — and the notebook owns the start-up schedule, the `ky`
-ordering and the segmentation. Segmentation needed no kernel parameter and no new class; it is one
-more `for` loop in `01`.
+`01` teaches the repetition: what balance is, where the timing origin is, and how start-up and
+segmentation are composed around it. `02` is about the magnetisation the train drives, and `03`
+about what a *moving* spin sees — three questions that are easier apart than together.
 
 ## `se_2d/` and `fse_2d/`
 

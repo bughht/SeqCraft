@@ -48,10 +48,25 @@ rounded to `TR/2`. With the readout placement `CartesianLine` currently offers t
 half a gradient raster — 2.1 µs against a TE of 3342 µs on the shipped example — and a readout
 whose echo lands on the raster gives exactly zero.
 
+**Balanced is not motion compensated either.** `M0 = 0` is a statement about a stationary spin;
+one moving at constant velocity arrives at the echo carrying `2π v M1`, and the canonical
+repetition's first moment is non-zero on all three axes. `bSSFP2DTR` now takes
+`flow_comp=sc.FlowCompensation(...)` and routes it through the physical-design seam `GRE2DTR`
+already uses — no compiler change and nothing bSSFP-specific below the Module layer. Measured,
+`M1` at the echo falls by three to four orders of magnitude, the single winder lobes become
+bipolar pairs, and TE and TR grow by about 45 % on the shipped protocol. The balance condition is
+untouched: the design reshapes what plays between the RF centre and the echo and leaves the total
+area on each axis alone, so the two requirements compose rather than trade.
+
 Steady-state establishment, start-up method and count, segmentation and segment count, `ky` and
 acquisition ordering, restart policy and reconstruction are all **not** owned here. A balanced
 repetition is not a repetition in steady state, and a segmented acquisition is a loop around
 the repetitions rather than a class.
+
+Three example notebooks: `01_build` for the repetition and the acquisition, `02` for the
+transient and the steady state — comparing no preparation against `α/2 – TR/2` and a 20-step
+flip-angle ramp, aligned at the first full-flip repetition — and `03_flow_comp` for the first
+moments and the motion-robust variant.
 
 ## Unreleased — the PNS model says what it is, and a scanner file is something you pass
 

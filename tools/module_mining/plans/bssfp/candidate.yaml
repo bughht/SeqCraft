@@ -15,8 +15,27 @@ name: balanced SSFP repetition   # the physical unit; see boundary_hypotheses
 # separate public realisations because they realise that unit differently on the RF and on `Gz`.
 # Put a second name in `name:` and the record starts asserting an API shape it did not scan for.
 planned_public_realizations:
-  - bSSFP2DTR
-  - bSSFP3DTR
+  - bSSFP2DTR            # built 2026-10-05, including the flow_comp augmentation
+  - bSSFP3DTR            # a separate change
+
+# What the implementation added beyond the scanned boundary, and why it is not a new abstraction.
+augmentations:
+  - name: FlowCompensation
+    why: >
+      Balanced is M0 = 0 over the RF-to-RF interval, which is a statement about a stationary spin.
+      A spin moving at constant velocity arrives at the echo carrying 2*pi*v*M1, and the canonical
+      repetition's first moment is non-zero on all three axes -- measured, not inferred.  Flow
+      compensation is a strictly stronger requirement, so it is an augmentation of the same kernel
+      rather than a second one.
+    how: >
+      Routed through the physical-design seam `GRE2DTR` already uses: the readout solves its own
+      axis and `y` and `z` go to `design_scope`.  No compiler change, nothing bSSFP-specific below
+      the Module layer, and no new abstraction.
+    composes_with_balance: >
+      The designer reshapes what plays between the RF centre and the echo and is handed the same
+      TOTAL area on each axis, so the RF-to-RF sum is the one the canonical waveform had.  The two
+      requirements live on different intervals and do not trade against each other, which the
+      tests measure.  Cost: TE and TR grow about 45% on the shipped protocol.
 
 capability:
   family: kernel
@@ -394,14 +413,23 @@ validation:
       balance on the written `.seq` files, against a fraction of one k-space step rather than
       against zero, because a Pulseq file stores amplitudes as rounded decimal text.
 
-      Layer 3 -- `examples/bssfp_2d/02_simulate_and_reconstruct.ipynb`, against MRzeroCore.  Signal
-      against repetition index for trains with and without start-up preparation, on single voxels
-      so every number is read off one spin: an unprepared train opens about 4x its final value and
-      the ten-step ramp brings that to 0.4x, while neither settles inside 175 repetitions for white
-      matter.  The off-resonance response and its nulls near +/- 1/(2 TR) are measured, and the
-      continuous and segmented acquisitions are compared line by line.  **This is the layer that
-      tests the claim the kernel does not make**, and it is where the waveform-against-magnetisation
-      distinction is shown rather than asserted.
+      Layer 3 -- `examples/bssfp_2d/02_simulate_and_reconstruct.ipynb` and `03_flow_comp.ipynb`,
+      against MRzeroCore.
+
+      `02` reads the signal of every repetition on single voxels, comparing no preparation against
+      the canonical alpha/2 - TR/2 scheme and a 20-step flip-angle ramp, aligned at the first
+      full-flip repetition because the opening point of a ramped train is a preparation pulse
+      rather than an imaging repetition.  Measured on white matter: the opening excursion is 4.01,
+      2.20 and 2.13 times the final value, and the repetitions needed to stay within 5% are 175,
+      167 and 175 -- both preparations roughly halve the excursion and neither shortens the
+      convergence.  The off-resonance response and its nulls near +/- 1/(2 TR) are measured, and
+      the continuous and interrupted-segmented acquisitions are compared line by line on a
+      single-tissue object.  **This is the layer that tests the claim the kernel does not make.**
+
+      `03` measures the gradient moments the kernel actually has and simulates a moving spin
+      against the canonical and flow-compensated variants, with a static control that fixes the
+      simulator's phase sign from a known non-zero zeroth moment before any velocity is read.  The
+      canonical slope agrees with 2*pi*M1 to 0.1%; the compensated one is flat.
 
 coverage_classification: null
 coverage_flags: [ARCHITECTURE_REVISIT_CANDIDATE]
