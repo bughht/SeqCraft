@@ -36,6 +36,13 @@ augmentations:
       TOTAL area on each axis, so the RF-to-RF M0 sum is the one the conventional waveform had.
       Cost: TE and TR grow about 45% on the shipped protocol.
     literature_gap: >
+      **Updated 2026-10-05 after the baseline was corrected.**  The default waveform now meets
+      the symmetric-realisation structure the literature assumes -- M1z over the interval is zero
+      to 2e-16 and M1x is constant across the phase-encode table -- so the Bieri condition is
+      already satisfied on z, and on x up to a constant per-TR phase that Eq. [1] tolerates.
+      What remains is the phase-encode axis alone.
+
+
       **Open, identified 2026-10-05 from the original papers.**  Bieri and Scheffler (Magn Reson
       Med 2005;54:901) define bSSFP flow compensation on a DIFFERENT interval: their Eq. [1] makes
       the steady-state condition that the per-TR spin phase be CONSTANT across repetitions, their
@@ -419,7 +426,15 @@ validation:
       **`bSSFP2DTR` implemented and validated 2026-10-05.**  `bSSFP3DTR` is a separate change and
       this record's `planned_public_realizations` still lists it as unbuilt.
 
-      Layer 1 -- `tests/modules/test_bssfp_2d_tr.py`, 14 claims on the compiled output.  Every
+      Layer 1 -- `tests/modules/test_bssfp_2d_tr.py`.  Beyond the balance claims it measures the
+      **symmetric realisation**: over the RF-to-RF interval M1z is zero to 1e-9, M1x is identical
+      for every line, and M1y varies with the line -- the structure Bieri and Scheffler assume for
+      a symmetric 2D scheme, which zero net area does not give on its own.  The geometric
+      condition behind it (each balancing lobe the same distance from its own RF centre, with a
+      pad for the pulse's unequal halves) is asserted where it is decided, and a parametrised test
+      checks it survives thickness, bandwidth, pulse duration and flip angle.
+
+      Layer 1 also carries the original claims on the compiled output.  Every
       balance measurement integrates the emitted waveforms between consecutive RF **effective**
       centres, because the interval ends inside the next repetition; the tests build N+1
       repetitions and measure the first N, and none uses a `LogicBlock` edge as an endpoint.
@@ -456,9 +471,12 @@ coverage_classification: null
 coverage_flags: [ARCHITECTURE_REVISIT_CANDIDATE]
 
 status: NEW_KERNEL
-traffic_light: GREEN      # bSSFP2DTR built and validated 2026-10-05;
-                          # bSSFP3DTR is a separate change, tracked in
-                          # planned_public_realizations and open_questions
+traffic_light: GREEN      # bSSFP2DTR built and validated 2026-10-05, including the symmetric
+                          # realisation the bSSFP literature assumes -- see
+                          # validation.layers.done.  bSSFP3DTR is a separate change, tracked in
+                          # planned_public_realizations; Bieri-style between-excitations flow
+                          # compensation is an open question in `augmentations`, not a defect
+                          # in what ships.
 
 decision_summary: >
   The smallest reusable physical boundary whose correctness conditions cannot be separated is the

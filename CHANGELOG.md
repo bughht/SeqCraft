@@ -48,6 +48,19 @@ rounded to `TR/2`. With the readout placement `CartesianLine` currently offers t
 half a gradient raster — 2.1 µs against a TE of 3342 µs on the shipped example — and a readout
 whose echo lands on the raster gives exactly zero.
 
+**The default waveform is the symmetric realisation, not merely a balanced one.** Zero net area
+over the RF-to-RF interval says nothing about where in the interval the area was played, and the
+balanced-SSFP literature assumes more than that: Bieri & Scheffler describe a symmetric 2D
+scheme's readout and slice gradients as zero- *and* first-order compensated within each TR, with
+only the phase-encode axis varying between repetitions. The first implementation did not have
+that — `M1z` over the interval was −0.176 1/m·s, because the slice rephaser sat in the shared
+winder window wherever the echo time put it while the next repetition's winder sat against its own
+selection gradient. Each balancing lobe now sits the same distance from its own RF centre, with a
+pad on one side because the transmit dead time makes the pulse's halves unequal. Measured over
+four protocols: `M0` ≤ 9e-13 on all axes, `M1z` ≤ 2e-15, `M1x` small and identical for every
+line, `M1y` line-dependent. It costs nothing — the shared winder no longer has to hold the slice
+lobe, so TR falls from 6850 to 6450 µs on the shipped protocol.
+
 **Balanced is not motion compensated either.** `M0 = 0` is a statement about a stationary spin;
 one moving at constant velocity arrives at the echo carrying `2π v M1`, and the conventional
 repetition's first moment is non-zero on all three axes. `bSSFP2DTR` now takes
