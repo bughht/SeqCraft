@@ -32,6 +32,7 @@ The folders, and what each one means
                    radial_readout.py   RadialReadout
                    spiral_readout.py   SpiralReadout
       kernel/      diffusion_se.py     DiffusionSEPrep
+                   bssfp_2d_tr.py      bSSFP2DTR    composes leaves; one repeating unit
                    gre_2d_tr.py        GRE2DTR      composes leaves; one repeating unit
                    gre_3d_tr.py        GRE3DTR
                    tse_shot.py         TSEShot
@@ -96,6 +97,7 @@ from .encoding.phase_encoding import PhaseEncode
 from .encoding.velocity_encode import VelocityEncode
 from .imaging.fse_2d import FSE2D
 from .imaging.gre_2d import GRE2D
+from .kernel.bssfp_2d_tr import bSSFP2DTR
 from .kernel.diffusion_se import DiffusionSEPrep
 from .kernel.gre_2d_tr import GRE2DTR
 from .kernel.gre_3d_tr import GRE3DTR
@@ -113,6 +115,7 @@ from .spoiler import spoiler
 
 __all__ = [
     'CartesianLine', 'DiffusionSEPrep', 'EPI2D', 'Excitation', 'FSE2D', 'GRE2D', 'GRE2DTR',
+    'bSSFP2DTR',
     'GRE3DTR', 'IRPrep',
     'PhaseEncode',
     'VelocityEncode',
