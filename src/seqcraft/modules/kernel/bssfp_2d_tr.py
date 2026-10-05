@@ -106,6 +106,14 @@ repetitions it is indistinguishable -- but it is built against an assumed succes
 breaks the moment the successor's pulse differs.  The split realised here is the one that does
 not need the assumption.
 
+Balanced is not motion compensated
+----------------------------------
+``M0 = 0`` over the RF-to-RF interval says nothing about the first moment, and a spin moving at
+constant velocity along an axis arrives at the echo with the phase that axis' ``M1`` carries.
+The canonical repetition leaves ``M1`` non-zero on all three axes; `flow_comp` asks for it to be
+nulled as well, and the shipped example measures both the reduction and what it costs in echo
+time.  Neither realisation is more correct than the other -- they answer different questions.
+
 What this layer does not own
 ----------------------------
 Steady-state establishment of any kind, and every decision attached to it: the start-up or
@@ -125,6 +133,10 @@ from typing import TYPE_CHECKING
 
 import pypulseq as pp
 
+from ...augmentation import FlowCompensation
+from ...design import _augment
+from ...design import joint as _joint
+from ...design import scope as _scope
 from ...design.events import Event, derive
 from ...design.logic import LogicBlock
 from ...design.module import Module
@@ -135,6 +147,8 @@ from ..readout.cartesian_line import CartesianLine
 from ..rf.excitation import Excitation
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from pypulseq.opts import Opts
 
 __all__ = ['bSSFP2DTR']
@@ -180,6 +194,19 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         :class:`~seqcraft.modules.CartesianLine`.  This is one of the cases where an asymmetric
         `te_s` is the point; phase-encode-direction partial Fourier is a different thing and
         does not call for one.
+    flow_comp
+        :class:`~seqcraft.FlowCompensation`, asking that the first gradient moment be zero at
+        the echo on the named axes as well as the zeroth.
+
+        **A balanced repetition is not a flow-compensated one.**  Balance is ``M0 = 0`` over the
+        RF-to-RF interval and says nothing about ``M1``; a spin moving at constant velocity
+        arrives at the echo carrying the phase ``M1`` represents.  Asking for this is a strictly
+        stronger requirement, and it costs echo time.
+
+        The two do not trade against each other.  The designer reshapes what plays between the
+        RF centre and the echo and is handed the same **total** area on each axis, so the
+        RF-to-RF sum is the one the canonical repetition had and the balance condition is
+        untouched -- which the tests measure rather than assume.
     tag
         Optional identity, as for any :class:`~seqcraft.Module`.
 
@@ -231,9 +258,11 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         tr_s: float | None = None,
         bandwidth_hz_px: float = 400.0,
         partial_fourier: float = 1.0,
+        flow_comp: FlowCompensation | None = None,
         tag: str | None = None,
     ) -> None:
         super().__init__(opts=opts, tag=tag)
+        _augment.require_intent_type(flow_comp, FlowCompensation, 'flow_comp')
         fov_x, fov_y = require_pair(fov_mm, 'fov_mm')
         nx, ny = require_pair(matrix, 'matrix')
         self.fov_mm = (fov_x, fov_y)
@@ -250,43 +279,73 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         self._a_pre = area_until(self.exc.gz, self.exc.time_to_center())
         self._a_post = -self.exc.rephaser_area_per_m
 
-        probe_ro = CartesianLine(opts=opts, fov_mm=fov_x, matrix=self.matrix[0], axis='x',
-                                 bandwidth_hz_px=bandwidth_hz_px,
-                                 partial_fourier=partial_fourier)
-        probe_pe = PhaseEncode(opts=opts, fov_mm=fov_y, matrix=self.matrix[1], axis='y')
-        # One window serves every axis on each side of the readout, as it does on GRE2DTR: axes
-        # overlap for free, so the window is the longest participant rather than their sum.  The
-        # trailing z lobe and the x balance lobe are participants the spoiled case does not have.
-        self.winder_s = ceil_raster(
-            max(probe_ro.prephaser_duration_s, probe_pe.min_duration_s,
-                self._lobe_duration_s(-self._a_post), self._lobe_duration_s(-self._a_pre),
-                self._lobe_duration_s(-probe_ro.area_after_echo_per_m)),
-            opts.grad_raster_time,
-        )
-        self.ro = CartesianLine(opts=opts, fov_mm=fov_x, matrix=self.matrix[0], axis='x',
-                                bandwidth_hz_px=bandwidth_hz_px, partial_fourier=partial_fourier,
-                                prephaser_duration_s=self.winder_s)
-        self.pe = PhaseEncode(opts=opts, fov_mm=fov_y, matrix=self.matrix[1], axis='y',
-                              duration_s=self.winder_s)
+        # The leading winder has a window of its own, sized from its own area.  It is **not** part
+        # of the shared winder: nothing else in the repetition may play before the RF centre, so
+        # there is nothing for it to overlap with, and tying it to the shared window would make it
+        # grow whenever the readout did.
+        self._lead_s = ceil_raster(self._lobe_duration_s(-self._a_pre), opts.grad_raster_time)
+        self._z_lead = self._lobe('z', -self._a_pre, self._lead_s)
 
-        # The four z terms.  `_z_lead` closes the interval that ended at this RF centre and
-        # `_z_tail` opens the one that starts there; each carries one half, never both.
-        self._z_lead = self._lobe('z', -self._a_pre, self.winder_s)
-        self._z_tail = self._lobe('z', -self._a_post, self.winder_s)
-        self._x_balance = self._lobe('x', -self.ro.area_after_echo_per_m, self.winder_s)
-
-        # The earliest the trailing winder may start, measured in the excitation block's own
-        # frame: the transmit chain has to be clear of the pulse, and the selection gradient has
-        # to be done.  `rephase=False` throughout -- this module plays both z lobes itself.
+        # The earliest the trailing winder may start, in the excitation block's own frame: the
+        # transmit chain has to be clear of the pulse and the selection gradient has to be done.
         self._grad_start_s = ceil_raster(
             max(float(pp.calc_duration(self.exc.gz)), float(pp.calc_duration(self.exc.rf))),
             opts.grad_raster_time,
         )
+
+        # Who owns a moment requirement on each axis.  All three are this repetition's: `x` is
+        # the readout's own prephaser, `y` the encode blip, `z` the trailing balancing lobe.
+        self._moment_owners: dict[str, str] = {'x': 'readout', 'y': 'joint', 'z': 'joint'}
+        routed = self._route(flow_comp)
+        readout_moment = {'_null_moment_order': 1} if routed.get('x') else {}
+
+        probe_ro = CartesianLine(opts=opts, fov_mm=fov_x, matrix=self.matrix[0], axis='x',
+                                 bandwidth_hz_px=bandwidth_hz_px,
+                                 partial_fourier=partial_fourier, **readout_moment)
+        probe_pe = PhaseEncode(opts=opts, fov_mm=fov_y, matrix=self.matrix[1], axis='y')
+        # One window serves every axis between the pulse and the readout, and one more after it:
+        # axes overlap for free, so each window is its longest participant rather than their sum.
+        self.winder_s = ceil_raster(
+            max(probe_ro.prephaser_duration_s, probe_pe.min_duration_s,
+                self._lobe_duration_s(-self._a_post),
+                self._lobe_duration_s(-probe_ro.area_after_echo_per_m)),
+            opts.grad_raster_time,
+        )
+        # The jointly designed winder, when something claimed `y` or `z`.  It reshapes what plays
+        # between the RF centre and the echo and leaves the **total** area on each axis alone,
+        # which is why the balance condition is unaffected by it.
+        self._joint: dict[str, object] = {}
+        #: The delay the designed schedule puts between the winder and the readout, when an
+        #: explicit echo time needs one.  Zero unless the scope is in use.
+        self._joint_fill_s = 0.0
+        jointly = {a for a, owner in routed.items() if owner == 'joint'}
+        claims, self._encoding_states = _augment.claims_and_states(
+            _augment.flow_comp_for(flow_comp, jointly), None)
+        if claims:
+            self._solve_with_scope(claims, probe_ro, fov_y, bandwidth_hz_px, partial_fourier,
+                                   readout_moment, opts)
+
+        self.ro = CartesianLine(opts=opts, fov_mm=fov_x, matrix=self.matrix[0], axis='x',
+                                bandwidth_hz_px=bandwidth_hz_px, partial_fourier=partial_fourier,
+                                prephaser_duration_s=self.winder_s, **readout_moment)
+        self.pe = PhaseEncode(opts=opts, fov_mm=fov_y, matrix=self.matrix[1], axis='y',
+                              duration_s=self.winder_s)
+
+        #: ``None`` when the scope designed `z`: the waveform it produced carries the same total
+        #: area, and is emitted in this lobe's place.
+        self._z_tail = (None if 'z' in self._joint
+                        else self._lobe('z', -self._a_post, self.winder_s))
+        self._x_balance = self._lobe('x', -self.ro.area_after_echo_per_m, self.winder_s)
+
         self._ro_duration_s = self.ro().duration
-        self._lead_s = self.winder_s
         self._tail_s = self.winder_s
         self._te_s, self._tr_s = self._resolve_timing(te_s, tr_s)
-
+        if self._joint and self._head_fill_s > 1e-12:          # pragma: no cover - guarded above
+            raise ConfigurationError(format_error(
+                'the designed winder would be emitted away from the echo it was designed for.',
+                {'head_fill_s': self._head_fill_s, 'joint_fill_s': self._joint_fill_s},
+                ['this is an internal invariant; please report it with the protocol'],
+            ))
     # ------------------------------------------------------------------ what it knows
     @property
     def center_line(self) -> int:
@@ -459,22 +518,29 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
             )
             raise ConfigurationError(msg)
 
-        head = self._lead_s + self._grad_start_s + self._head_fill_s
-        tail = head + self._ro_duration_s
+        # The winder starts after whatever delay an explicit echo time needs, because that is
+        # where the designed schedule put it -- emitting it earlier would translate a solved
+        # waveform out from under its own moment.  Zero unless the scope is in use.
+        winder = self._lead_s + self._grad_start_s + self._head_fill_s + self._joint_fill_s
+        tail = winder + self._ro_duration_s
         out = (
             LogicBlock()
             # The leading winder first, then the excitation: this lobe belongs to the interval
             # that ENDS at the RF centre just after it.
             .add(0.0, self._z_lead)
             .add(self._lead_s, self.exc(phase_deg=phase_deg, position_mm=z, rephase=False))
-            .add(head, self._z_tail)
-            .add(head, self.pe(line=line))
-            .add(head, self.ro(acquire=acquire, phase_deg=phase_deg, offset_mm=x))
+            .add(winder, self._encode(line))
+            .add(winder, self.ro(acquire=acquire, phase_deg=phase_deg, offset_mm=x))
             .add(tail, self.pe(line=line, rewind=True))
             .add(tail, self._x_balance)
         )
+        if self._z_tail is not None:
+            out.add(winder, self._z_tail)
+        designed = self._joint_block('z', (0, _augment.ONE_STATE))
+        if designed is not None:
+            out.add(winder, designed)
         if acquire:
-            out.add(head, pp.make_label(type='SET', label='LIN', value=int(line)))
+            out.add(winder, pp.make_label(type='SET', label='LIN', value=int(line)))
         fill = self._tr_s - (tail + self._tail_s)
         if fill > 1e-9:
             out.add(tail + self._tail_s, pp.make_delay(fill))
@@ -502,7 +568,8 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
     @property
     def _head_min_s(self) -> float:
         """TE with no padding: RF centre to echo, at the shortest."""
-        return (self._grad_start_s - self.exc.time_to_center()) + self.ro.time_to_echo()
+        return (self._grad_start_s - self.exc.time_to_center()
+                + self._joint_fill_s + self.ro.time_to_echo())
 
     @property
     def _tail_min_s(self) -> float:
@@ -517,8 +584,8 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
 
     def _span_s(self, head_fill_s: float, tail_fill_s: float) -> float:
         """The RF-to-RF duration these two fills produce, seconds -- also the block duration."""
-        return (self._lead_s + self._grad_start_s + head_fill_s + self._ro_duration_s
-                + self._tail_s + tail_fill_s)
+        return (self._lead_s + self._grad_start_s + head_fill_s + self._joint_fill_s
+                + self._ro_duration_s + self._tail_s + tail_fill_s)
 
     def _symmetric_fills(self) -> tuple[float, float]:
         """
@@ -606,3 +673,166 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
                  'or te_s=None, which lets this module choose the symmetric pair'],
             ))
         return ceil_raster(wanted - floor, self._raster_s)
+
+    # ------------------------------------------------------- the jointly designed winder
+    def _solve_with_scope(self, claims, probe_ro, fov_y, bandwidth_hz_px, partial_fourier,
+                          readout_moment, opts) -> None:
+        """
+        Size the designed winder, then re-design it at the echo time it will actually be emitted
+        at.
+
+        Two passes, because the two are coupled: the window sets the shortest symmetric TE, and a
+        waveform whose first moment is nulled at one echo time is not nulled at another.  The
+        designer takes the echo as a request and reports the delay it inserted **between the
+        winder and the readout** to reach it; putting the delay anywhere earlier would translate
+        the solved waveform out from under its own moment.
+
+        Iterated rather than done exactly twice, because a design made for a later echo may
+        choose a different window and move the echo again.  The loop runs until the first half is
+        at least as long as the second, which is the condition under which the symmetric solve
+        needs no padding of its own -- and that is what keeps every microsecond of TE inside the
+        designer's schedule instead of in front of it.
+        """
+        raster = float(opts.grad_raster_time)
+        wanted: float | None = None
+        for _ in range(8):
+            window, fill, designs = self._design_joint(
+                claims, probe_ro, fov_y, self.winder_s, wanted, opts)
+            self.winder_s, self._joint_fill_s, self._joint = (
+                ceil_raster(window, raster), fill, designs)
+            probe = CartesianLine(opts=opts, fov_mm=self.fov_mm[0], matrix=self.matrix[0],
+                                  axis='x', bandwidth_hz_px=bandwidth_hz_px,
+                                  partial_fourier=partial_fourier,
+                                  prephaser_duration_s=self.winder_s, **readout_moment)
+            head, tail = self._halves_with(probe)
+            if head >= tail - 1e-12:
+                return
+            wanted = ceil_raster(tail, raster)
+
+    def _halves_with(self, probe: CartesianLine) -> tuple[float, float]:
+        """``(first half, second half)`` of the repetition at the current window, seconds."""
+        head = (self._grad_start_s - self.exc.time_to_center()
+                + self._joint_fill_s + probe.time_to_echo())
+        tail = (probe().duration - probe.time_to_echo() + self.winder_s + self._lead_s
+                + self.exc.time_to_center())
+        return head, tail
+
+    def _route(self, flow_comp: FlowCompensation | None) -> dict[str, str]:
+        """Which owner handles each requested axis.  Reads only an intent's `axes`."""
+        routed: dict[str, str] = {}
+        component = type(self).__name__
+        for intent, axis in _augment.axes_claimed((flow_comp,)):
+            owner = self._moment_owners.get(axis)
+            if owner is None:
+                _augment.refuse_unowned_axis(
+                    component, intent, axis, self._moment_owners,
+                    f'{axis!r} is not an axis this repetition plays an adjustable gradient on')
+            else:
+                routed[axis] = owner
+        _augment.require_owners_can_serve(
+            component, (flow_comp,), routed,
+            lambda: tuple(a for a, o in self._moment_owners.items() if o == 'joint'))
+        return routed
+
+    def _encode(self, line: int) -> LogicBlock:
+        """The phase-encode waveform: the ordinary blip, or the jointly designed one."""
+        return self._joint_block('y', (line, _augment.ONE_STATE)) or self.pe(line=line)
+
+    def _joint_block(self, axis: str, state: object) -> LogicBlock | None:
+        """One axis' jointly designed waveform, or ``None`` when nothing claimed that axis."""
+        designed = self._joint.get(axis)
+        if designed is None:
+            return None
+        out = LogicBlock('joint')
+        for at, event in _joint.events_for(designed, state):
+            out.add(at - designed.schedule.window_start_s, event)
+        return out
+
+    def _design_joint(self, claims: Sequence[object], probe_ro: CartesianLine, fov_y: float,
+                      local_min_s: float, te_request: float | None,
+                      opts: Opts) -> tuple[float, float, dict[str, object]]:
+        """
+        Adapt this repetition to the shared physical designer, and return the window it chose.
+
+        The designed region is the winder between the RF centre and the readout, exactly as it is
+        for a spoiled gradient echo -- the balance condition lives outside it and is untouched by
+        what happens inside, because the designer is given the same **total** area on each axis
+        and only redistributes it in time.
+        """
+        geometry = _scope.ScopeGeometry(
+            origin_s=self._lead_s + self.exc.time_to_center(),
+            window_start_s=self._lead_s + self._grad_start_s,
+            tail_s=probe_ro.time_to_echo() - probe_ro.prephaser_duration_s,
+        )
+        requirements = [
+            self._axis_requirement(axis, group, probe_ro, fov_y, opts)
+            for axis, group in _joint.group_by_axis(claims).items()
+        ]
+        designed = _scope.design_scope(geometry, requirements, opts, min_window_s=local_min_s,
+                                       te_request_s=te_request)
+        return designed.window_s, designed.fill_s, dict(designed.designs)
+
+    def _axis_requirement(self, axis: str, group: Sequence[object], probe_ro: CartesianLine,
+                          fov_y: float, opts: Opts) -> _scope.AxisRequirement:
+        """What this axis wants at the echo, and what already plays between the two instants."""
+        claimed = {getattr(claim, 'order', None) for claim in group}
+        encode = PhaseEncode(opts=opts, fov_mm=fov_y, matrix=self.matrix[1], axis='y')
+        base = ((lambda index: float(encode.k_per_m(index))) if axis == self._PE_AXIS
+                else (lambda index: 0.0))
+        indices = tuple(range(self.matrix[1])) if axis == self._PE_AXIS else (0,)
+
+        targets: dict[object, tuple[float, float | None]] = {}
+        for index in indices:
+            resolved = {
+                order: _joint.resolve_claims(
+                    group, self._encoding_states, axis=axis, order=order,
+                    base={key: (base(index) if order == 0 else 0.0)
+                          for key in self._encoding_states})
+                for order in _joint.ORDERS
+            }
+            for key in self._encoding_states:
+                targets[(index, key)] = (
+                    resolved[0][key], resolved[1][key] if 1 in claimed else None)
+
+        readout = probe_ro if axis == probe_ro.axis else None
+        # The leading winder and the excitation, as this repetition emits them.  `rephase=False`
+        # always: this module plays both z lobes itself, so the excitation never carries one.
+        before = (LogicBlock()
+                  .add(0.0, self._z_lead)
+                  .add(self._lead_s, self.exc(rephase=False)))
+
+        def fixed(state: object, schedule: _joint.Schedule) -> tuple[float, float]:
+            """
+            What already plays on this axis between the semantic origin and the echo.
+
+            Integrated from the RF **effective centre**, so the leading winder and the pre-centre
+            half of the selection gradient fall outside it -- they act on magnetisation that does
+            not exist yet.  They are in `before` so that the block is the one this repetition
+            emits, and the integration bounds are what excludes them.
+            """
+            moments = [
+                _joint.measure_moment(before, order, axis, origin_s=schedule.origin_s,
+                                      start_s=schedule.origin_s, end_s=schedule.endpoint_s)
+                for order in _joint.ORDERS
+            ]
+            if readout is not None:
+                lobe = _joint.placed(readout.gx, schedule.window_start_s + schedule.window_s)
+                for order in _joint.ORDERS:
+                    moments[order] += _joint.measure_moment(
+                        lobe, order, axis, origin_s=schedule.origin_s,
+                        start_s=schedule.origin_s, end_s=schedule.endpoint_s)
+            return (moments[0], moments[1])
+
+        return _scope.AxisRequirement(
+            axis=axis, states=tuple(targets), design_states=self._design_states(axis, targets),
+            target=lambda state: targets[state], fixed=fixed,
+        )
+
+    def _design_states(self, axis: str, targets: Mapping[object, object]) -> tuple[object, ...]:
+        """Which states to size the schedule from; the designer verifies the rest."""
+        states = tuple(targets)
+        if axis != self._PE_AXIS:
+            return states
+        lines = sorted({index for index, _key in states})
+        ends = {lines[0], lines[-1]}
+        return tuple(state for state in states if state[0] in ends)

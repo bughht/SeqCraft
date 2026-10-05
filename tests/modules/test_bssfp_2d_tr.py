@@ -462,3 +462,99 @@ def test_a_start_up_repetition_loads_the_same_gradients(opts, tr) -> None:
 
     assert areas(tr(line=7, acquire=False)) == areas(tr(line=7, acquire=True))
     assert np.abs(rf_to_rf_m0(train(opts, tr, tr, lines=[7, 8]))).max() < ZERO
+
+
+# ------------------------------------------- flow compensation: a stronger requirement, not a fix
+def m1_at_echo(seq, rep) -> np.ndarray:
+    """First moment on each axis at the echo, about the RF effective centre, 1/m * s."""
+    waveforms = seq.waveforms_and_times()[0]
+    a = rf_centres(seq)[0]
+    b = a + rep.te_s
+    out = []
+    for axis in range(3):
+        t, g = waveforms[axis][0], waveforms[axis][1]
+        grid = np.unique(np.concatenate([t[(t > a) & (t < b)], [a, b]]))
+        v = np.interp(grid, t, g, left=0.0, right=0.0)
+        out.append(float(np.trapezoid(v * (grid - a), grid)))
+    return np.array(out)
+
+
+@pytest.fixture(scope='module')
+def compensated(opts):
+    """The same protocol with the first moment nulled at the echo on all three axes."""
+    return sc.modules.bSSFP2DTR(opts=opts, **SPEC,
+                                flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+
+
+def test_the_canonical_repetition_is_balanced_and_not_flow_compensated(opts, tr) -> None:
+    """
+    Both halves of the distinction, on one waveform.
+
+    Balanced is `M0 = 0` over the RF-to-RF interval; it says nothing about `M1`, and a spin moving
+    at constant velocity arrives at the echo with the phase that `M1` carries.  This is not a
+    defect in the canonical repetition -- flow compensation is a strictly stronger requirement.
+    """
+    seq = train(opts, tr, tr, lines=[20, 21])
+
+    assert np.abs(rf_to_rf_m0(seq)).max() < ZERO
+    assert np.abs(m1_at_echo(seq, tr)).max() > 1e-3
+
+
+def test_flow_compensation_nulls_the_first_moment_at_the_echo(opts, tr, compensated) -> None:
+    """
+    Measured on the emitted waveform, across the phase-encode table.
+
+    Against the canonical repetition's own first moment rather than against an absolute number:
+    what the design achieves is a reduction by some orders of magnitude, and where the floor
+    sits is a property of the solver's realisation tolerance and of the gradient limits.  A test
+    pinned to 1e-4 would pass or fail on a faster gradient for no physical reason.
+    """
+    canonical = np.abs(m1_at_echo(train(opts, tr, tr, lines=[0, 1]), tr)).max()
+
+    for line in (0, MATRIX[1] // 2, MATRIX[1] - 1):
+        seq = train(opts, compensated, compensated,
+                    lines=[line, (line + 1) % MATRIX[1]])
+
+        assert np.abs(m1_at_echo(seq, compensated)).max() < 1e-3 * canonical
+
+
+def test_flow_compensation_leaves_the_balance_condition_alone(opts, compensated) -> None:
+    """
+    The two requirements live on different intervals and do not trade against each other.
+
+    The designer reshapes what plays between the RF centre and the echo and is given the same
+    **total** area on each axis, so the RF-to-RF sum is the one the canonical repetition had.
+    """
+    m0 = rf_to_rf_m0(train(opts, compensated, compensated, compensated, lines=[0, MATRIX[1] // 2, MATRIX[1] - 1]))
+
+    assert np.abs(m0).max() < ZERO
+
+
+def test_flow_compensation_still_encodes_the_requested_line(opts, compensated) -> None:
+    """`M0` is a target of the same design, so nulling `M1` must not move `k` at the echo."""
+    for line in (0, MATRIX[1] - 1):
+        seq = train(opts, compensated, compensated, lines=[line, (line + 1) % MATRIX[1]])
+        centres = rf_centres(seq)
+        k = m0_between(seq, centres[0], centres[0] + echo_time_s(seq, compensated))
+
+        assert k[1] == pytest.approx(compensated.pe.k_per_m(line))
+        assert abs(k[0]) < ZERO
+        assert abs(k[2]) < ZERO
+
+
+def test_flow_compensation_costs_echo_time(opts, tr, compensated) -> None:
+    """
+    Nulling a second moment on three axes needs more waveform, and the repetition says so.
+
+    Asserted as an inequality rather than against a number: the cost is a property of the
+    protocol and the limits, and a test that pinned it would fail on a faster gradient.
+    """
+    assert compensated.te_s > tr.te_s
+    assert compensated.min_tr_s > tr.min_tr_s
+    assert abs(compensated.symmetry_residual_s) <= opts.grad_raster_time / 2
+
+
+def test_an_axis_this_repetition_does_not_play_is_refused(opts) -> None:
+    """The routing table decides, and a name that is not one of its axes says so."""
+    with pytest.raises(sc.errors.ConfigurationError):
+        sc.modules.bSSFP2DTR(opts=opts, **SPEC, flow_comp=sc.FlowCompensation(axis='ky'))
