@@ -88,7 +88,7 @@ Three example notebooks: `01_build` for the repetition and the acquisition, `02`
 transient and the steady state — comparing no preparation against `α/2 – TR/2` and a 20-step
 flip-angle ramp, with the measured decay checked against Scheffler's analytic rate (Magn Reson
 Med 2003;49:781) — and `03_flow_and_motion` for what conventional balanced SSFP does under flow,
-reproducing Bieri & Scheffler's phase-increment criterion across view orderings before any
+evaluating Bieri & Scheffler's Eq. [2] phase-increment metric across view orderings before any
 compensation is applied.
 
 ## Unreleased — the PNS model says what it is, and a scanner file is something you pass
