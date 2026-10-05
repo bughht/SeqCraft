@@ -59,10 +59,16 @@ augmentations:
       Cost: TE and TR grow about 45% on the shipped protocol.
     literature_gap: >
       **Updated 2026-10-05 after the baseline was corrected.**  The default waveform now meets
-      the symmetric-realisation structure the literature assumes -- M1z over the interval is zero
-      to 2e-16 and M1x is constant across the phase-encode table -- so the Bieri condition is
-      already satisfied on z, and on x up to a constant per-TR phase that Eq. [1] tolerates.
-      What remains is the phase-encode axis alone.
+      the symmetric-realisation structure the literature assumes: over the RF-to-RF interval M1z
+      is zero to 2e-16, M1x is 3.2e-3 s/m and identical for every line, and M1y varies with the
+      line.
+
+      Two different conditions follow from that, and they do not have the same answer.  For
+      strict between-excitation first-moment nulling, z is met and x is NOT -- a small constant
+      residual remains.  For the Eq. [2] repetition-to-repetition increment, the constant x
+      residual contributes nothing because it is the same for every line, so the remaining
+      varying term is the phase-encode axis.  Saying "met on x up to a constant" would conflate
+      the two.
 
 
       **Open, identified 2026-10-05 from the original papers.**  Bieri and Scheffler (Magn Reson
@@ -80,12 +86,16 @@ augmentations:
 
       A kernel able to state "M1 = 0 between excitations" is therefore a real and separate
       physical-design question.  **Not implemented, and deliberately not inferred into existence
-      from this reading.**  Two further measurements belong with that decision: M1x over the
-      interval is small but non-zero and M1z is not small, where the literature describes a
-      symmetric 2D scheme's readout and slice as first-order compensated within TR -- this
-      repetition does not place its lobes symmetrically about the interval midpoint.  And Bieri's
-      "pairing" view order reaches the same goal with no gradient change at all, which is
-      acquisition policy and composes with the kernel as it stands.
+      from this reading.**  Two things belong with that decision.  M1x over the interval is small
+      but non-zero, so strict nulling is not met there either; it is constant across the table and
+      so does not enter the Eq. [2] increment.  And Bieri's "pairing" view order reaches the same
+      goal with no gradient change at all, which is acquisition policy and composes with the
+      kernel as it stands.
+
+      *Superseded.*  An earlier revision of this entry recorded that M1z over the interval was
+      not small and that the repetition did not place its lobes symmetrically about the interval
+      midpoint.  That described the pre-correction waveform and is no longer the implementation;
+      the symmetric realisation landed 2026-10-05 and is measured in `validation.layers.done`.
 
 capability:
   family: kernel
@@ -471,8 +481,8 @@ validation:
       balance on the written `.seq` files, against a fraction of one k-space step rather than
       against zero, because a Pulseq file stores amplitudes as rounded decimal text.
 
-      Layer 3 -- `examples/bssfp_2d/02_simulate_and_reconstruct.ipynb` and `03_flow_comp.ipynb`,
-      against MRzeroCore.
+      Layer 3 -- `examples/bssfp_2d/02_simulate_and_reconstruct.ipynb` and
+      `03_flow_and_motion.ipynb`, against MRzeroCore.
 
       `02` reads the signal of every repetition on single voxels, comparing no preparation against
       the canonical alpha/2 - TR/2 scheme and a 20-step flip-angle ramp, aligned at the first

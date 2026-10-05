@@ -132,10 +132,11 @@ What each axis then carries over the RF-to-RF interval::
         makes those differ a little, so the two lobes mirror in time but not quite in area
     y   M1 varies with the line, because the blip and its rewind have opposite signs
 
-That last row is the one a steady state is sensitive to.  A constant per-TR phase is harmless --
-the condition is that the phase be the *same* from one repetition to the next -- so what
-perturbs a balanced steady state is the phase-encode term, and how much depends on how far apart
-in k-space two consecutively acquired lines are.  That is view ordering, and it lives in the
+That last row is the one a steady state is sensitive to.  The condition is that the phase be the
+*same* from one repetition to the next, so a constant per-TR phase is compatible with it -- which
+is not to say a constant velocity phase has no other consequence, only that it does not create
+the repetition-to-repetition variation.  What does create it here is the phase-encode term, and
+how much depends on how far apart in k-space two consecutively acquired lines are.  That is view ordering, and it lives in the
 acquisition.  ``examples/bssfp_2d/03_flow_and_motion.ipynb`` measures all of this against Bieri
 and Scheffler's criterion.
 
@@ -228,9 +229,10 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         first moment *between excitations*, and say explicitly that their design "does not null
         the first moment between the excitation and echo", because what perturbs a steady state
         is a phase that varies from one repetition to the next rather than a phase on one
-        acquired line.  Asking for this here nulls the echo-time moment and leaves the
-        RF-to-RF moment alone -- on the shipped example protocol it makes the
-        repetition-to-repetition increment larger, which
+        acquired line.  **Echo-time first-moment compensation does not
+        constrain the RF-to-RF first moment.**  Reshaping the pre-echo waveform can change it:
+        on the shipped example protocol it increases the repetition-to-repetition phase-encode
+        increment from 2.66 to 9.63 deg/(m/s), which
         ``examples/bssfp_2d/03_flow_and_motion.ipynb`` measures.
 
         What it is good for is the echo-time phase itself: a spin moving at constant velocity
