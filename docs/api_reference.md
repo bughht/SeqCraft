@@ -2005,6 +2005,7 @@ at import.
 | `UnknownFieldError` | `scanner.opts` | exception |
 | `axis_gradient` | `compiler.legalization` | function |
 | `b_value` | `analysis` | function |
+| `bSSFP2DTR` | `modules` | class |
 | `barrier` | `design.logic` | function |
 | `check_event_sizes` | `compiler.verification` | function |
 | `check_exclusive` | `compiler.boundaries` | function |

@@ -21,6 +21,8 @@ So this file re-measures, on the written ``.seq`` files:
 
 from __future__ import annotations
 
+import os
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -29,10 +31,10 @@ import pytest
 
 import seqcraft as sc
 
-pytest.importorskip('nbformat', reason='needs seqcraft[dev]')
+nbformat = pytest.importorskip('nbformat', reason='needs seqcraft[dev]')
 
 EXAMPLES = Path(__file__).resolve().parents[2] / 'examples'
-SEQ_DIR = EXAMPLES / 'bssfp_2d' / 'seq'
+NOTEBOOK = EXAMPLES / 'bssfp_2d' / '01_build.ipynb'
 FILES = ('bssfp_2d', 'bssfp_2d_segmented')
 
 #: Balance is measured here against **one k-space step**, ``1/FOV``, rather than against zero.
@@ -46,25 +48,57 @@ FILES = ('bssfp_2d', 'bssfp_2d_segmented')
 STEP_FRACTION = 1e-3
 
 
-@pytest.fixture(scope='module')
-def nominal():
-    path = SEQ_DIR / 'bssfp_2d_nominal.npz'
-    if not path.exists():
-        pytest.skip('run examples/bssfp_2d/01_build.ipynb first')
-    return np.load(path)
+def _run(notebook: Path, tmp_path_factory) -> Path:
+    """
+    Execute the notebook's code cells into a scratch directory, and return its ``seq/``.
+
+    The files are generated rather than read from the working tree, so this runs in CI on a
+    clean checkout and cannot pass by reading an artefact somebody built months ago.  Figures
+    are skipped; everything else runs, because the last cell is the one that writes the files.
+    """
+    if not notebook.exists():                                       # pragma: no cover
+        pytest.skip(f'{notebook} is not present')
+    sources = [cell.source for cell in nbformat.read(notebook, as_version=4).cells
+               if cell.cell_type == 'code' and 'plt.subplots(' not in cell.source]
+
+    namespace: dict = {'__name__': '__notebook__'}
+    scratch = tmp_path_factory.mktemp('bssfp_2d')
+    here = os.getcwd()
+    os.chdir(scratch)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', sc.SeqCraftWarning)
+            for index, source in enumerate(sources):
+                exec(compile(source, f'{notebook.name}:{index}', 'exec'), namespace)  # noqa: S102
+    finally:
+        os.chdir(here)
+    return scratch / 'seq'
 
 
 @pytest.fixture(scope='module')
-def written():
+def seq_dir(tmp_path_factory) -> Path:
+    return _run(NOTEBOOK, tmp_path_factory)
+
+
+@pytest.fixture(scope='module')
+def nominal(seq_dir):
+    return np.load(seq_dir / 'bssfp_2d_nominal.npz')
+
+
+@pytest.fixture(scope='module')
+def written(seq_dir):
     out = {}
     for name in FILES:
-        path = SEQ_DIR / f'{name}.seq'
-        if not path.exists():
-            pytest.skip('run examples/bssfp_2d/01_build.ipynb first')
         seq = pp.Sequence()
-        seq.read(str(path))
+        seq.read(str(seq_dir / f'{name}.seq'))
         out[name] = seq
     return out
+
+
+def test_the_notebook_writes_both_files(seq_dir) -> None:
+    missing = [name for name in FILES if not (seq_dir / f'{name}.seq').exists()]
+
+    assert not missing, missing
 
 
 def rf_centres(seq) -> np.ndarray:
