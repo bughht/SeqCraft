@@ -141,16 +141,34 @@ def test_every_rf_to_rf_interval_is_balanced(written, nominal, name) -> None:
     assert np.abs(m0).max() < STEP_FRACTION * step_per_m
 
 
-@pytest.mark.parametrize('name', FILES)
-def test_the_rf_to_rf_interval_is_the_declared_tr(written, nominal, name) -> None:
+def test_the_continuous_file_runs_at_the_declared_tr(written, nominal) -> None:
     """
-    Every repetition in these files has the same RF-centre offset, so stacking by block duration
-    delivers the declared TR.  A notebook that mixed in a repetition of different pulse geometry
-    would need the offsets instead, and this is where that would surface.
+    Every repetition has the same RF-centre offset, so stacking by block duration delivers the
+    declared TR.  A notebook that mixed in a repetition of different pulse geometry would need
+    the offsets instead, and this is where that would surface.
     """
-    intervals = np.diff(rf_centres(written[name]))
+    intervals = np.diff(rf_centres(written['bssfp_2d']))
 
     assert intervals == pytest.approx(float(nominal['tr_s']))
+
+
+def test_the_segmented_file_is_the_interrupted_policy(written, nominal) -> None:
+    """
+    Interrupted, not maintained: the train stops between segments and the magnetisation recovers.
+
+    Two policies go by "segmented" and they are different sequences.  This asserts which one the
+    file is -- every interval is either TR or TR plus the recovery delay, and there are exactly
+    as many long ones as there are segment boundaries.  A maintained acquisition would have no
+    long intervals at all and would gate the ADC instead.
+    """
+    tr_s, recovery_s = float(nominal['tr_s']), float(nominal['recovery_s'])
+    segments = int(nominal['segments'])
+    intervals = np.diff(rf_centres(written['bssfp_2d_segmented']))
+    long = np.abs(intervals - (tr_s + recovery_s)) < 1e-9
+    short = np.abs(intervals - tr_s) < 1e-9
+
+    assert np.all(long | short)
+    assert long.sum() == segments - 1
 
 
 @pytest.mark.parametrize('name', FILES)
