@@ -7,7 +7,7 @@ more than one folder, and it is the repeating unit.
 What makes it balanced
 ----------------------
 **The net gradient area on each axis is zero over the RF-to-RF interval.**  That is the
-definition.  ``TE = TR/2`` is the canonical symmetric realisation of it and the default here,
+definition.  ``TE = TR/2`` is the standard symmetric realisation of it and the default here,
 not the definition -- an asymmetric echo is still balanced if the net area is still zero, and
 this module will build one when asked.
 
@@ -110,9 +110,15 @@ Balanced is not motion compensated
 ----------------------------------
 ``M0 = 0`` over the RF-to-RF interval says nothing about the first moment, and a spin moving at
 constant velocity along an axis arrives at the echo with the phase that axis' ``M1`` carries.
-The canonical repetition leaves ``M1`` non-zero on all three axes; `flow_comp` asks for it to be
-nulled as well, and the shipped example measures both the reduction and what it costs in echo
-time.  Neither realisation is more correct than the other -- they answer different questions.
+This repetition leaves ``M1`` non-zero on all three axes at the echo, and on ``y`` and ``z`` over
+the interval.
+
+Which of those matters depends on the question.  For a balanced *steady state* the quantity is
+how much the RF-to-RF first moment **changes between consecutive repetitions**, which is set by
+the phase-encode step and therefore by view ordering -- see
+``examples/bssfp_2d/03_flow_and_motion.ipynb``, where it is measured against Bieri and
+Scheffler's criterion.  `flow_comp` addresses the echo-time moment instead, which is a different
+and narrower condition.
 
 What this layer does not own
 ----------------------------
@@ -179,8 +185,8 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         Echo time, seconds, from the RF effective centre.
 
         ``None`` does **not** mean "the shortest echo this protocol can reach", which is what it
-        means on :class:`~seqcraft.modules.GRE2DTR`.  Here it means ``TR/2``: the canonical
-        symmetric realisation.  Passing a value asks for an asymmetric-TE realisation, which is
+        means on :class:`~seqcraft.modules.GRE2DTR`.  Here it means ``TR/2``: the symmetric timing
+        the standard description of the sequence assumes.  Passing a value asks for an asymmetric-TE realisation, which is
         still balanced and still legal, but is a choice with a contrast consequence rather than
         a default anybody should arrive at by passing nothing.
     tr_s
@@ -195,18 +201,26 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         `te_s` is the point; phase-encode-direction partial Fourier is a different thing and
         does not call for one.
     flow_comp
-        :class:`~seqcraft.FlowCompensation`, asking that the first gradient moment be zero at
-        the echo on the named axes as well as the zeroth.
+        :class:`~seqcraft.FlowCompensation`, asking that the first gradient moment be zero
+        **at the echo** on the named axes as well as the zeroth.
 
-        **A balanced repetition is not a flow-compensated one.**  Balance is ``M0 = 0`` over the
-        RF-to-RF interval and says nothing about ``M1``; a spin moving at constant velocity
-        arrives at the echo carrying the phase ``M1`` represents.  Asking for this is a strictly
-        stronger requirement, and it costs echo time.
+        **This is echo-time first-moment compensation, and it is not the flow compensation the
+        bSSFP literature describes.**  Bieri and Scheffler (Magn Reson Med 2005;54:901) null the
+        first moment *between excitations*, and say explicitly that their design "does not null
+        the first moment between the excitation and echo", because what perturbs a steady state
+        is a phase that varies from one repetition to the next rather than a phase on one
+        acquired line.  Asking for this here nulls the echo-time moment and leaves the
+        RF-to-RF moment alone -- on the shipped example protocol it makes the
+        repetition-to-repetition increment larger, which
+        ``examples/bssfp_2d/03_flow_and_motion.ipynb`` measures.
 
-        The two do not trade against each other.  The designer reshapes what plays between the
-        RF centre and the echo and is handed the same **total** area on each axis, so the
-        RF-to-RF sum is the one the canonical repetition had and the balance condition is
-        untouched -- which the tests measure rather than assume.
+        What it is good for is the echo-time phase itself: a spin moving at constant velocity
+        arrives at the echo carrying ``2*pi*v*M1``, and this removes that term from each acquired
+        line.  What it is not is a drop-in answer to flow artefacts in a bSSFP acquisition.
+
+        Balance is untouched either way.  The designer reshapes what plays between the RF centre
+        and the echo and is handed the same **total** area on each axis, so the RF-to-RF sum is
+        the one the conventional repetition had -- which the tests measure rather than assume.
     tag
         Optional identity, as for any :class:`~seqcraft.Module`.
 
@@ -218,7 +232,7 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
     >>> tr = bSSFP2DTR(opts=o, fov_mm=250.0, matrix=(128, 128), thickness_mm=5.0,
     ...                flip_deg=35.0, bandwidth_hz_px=800.0)
 
-    The canonical symmetric realisation, as closely as the raster permits, and by how much it
+    The standard symmetric realisation, as closely as the raster permits, and by how much it
     misses -- see :attr:`symmetry_residual_s`:
 
     >>> abs(tr.te_s - tr.tr_s / 2) <= o.grad_raster_time / 2
@@ -389,7 +403,7 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         """
         How far this repetition's echo sits from the exact midpoint, seconds.  Signed.
 
-        ``TE = TR/2`` is the canonical target, and the default aims at it.  **For a given
+        ``TE = TR/2`` is the symmetric-timing target, and the default aims at it.  **For a given
         readout geometry the exact midpoint may not lie on the available timing lattice**, and
         when it does not, the default takes the nearest symmetric realisation and reports what
         it achieved here rather than rounding the declared TE to ``TR/2``.
@@ -428,7 +442,7 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         """
         Shortest **symmetric** repetition time, seconds.
 
-        Deliberately not "the shortest repetition that can hold this readout": the canonical
+        Deliberately not "the shortest repetition that can hold this readout": the symmetric
         realisation is the one this module defaults to, so the minimum it reports is the minimum
         of *that* realisation.  An explicit `te_s` asks a different question and relaxes it,
         which is what :attr:`min_te_s` reports against.
@@ -639,7 +653,7 @@ class bSSFP2DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
                  'min_symmetric_te_s': self.min_symmetric_te_s,
                  'bandwidth_hz_px': self.ro.bandwidth_hz_px},
                 [f'pass te_s >= {self.min_te_s:.6g}',
-                 'or te_s=None for the canonical symmetric TE = TR/2',
+                 'or te_s=None for the symmetric TE = TR/2',
                  'a higher bandwidth_hz_px shortens the readout, and with it min_te_s'],
             ))
         return ceil_raster(wanted - self.min_te_s, self._raster_s)

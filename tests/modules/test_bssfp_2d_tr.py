@@ -30,7 +30,7 @@ ZERO = 1e-9
 
 @pytest.fixture(scope='module')
 def tr(opts):
-    """One repetition of a small but complete 2D bSSFP, at the canonical symmetric default."""
+    """One repetition of a small but complete 2D bSSFP, at the standard symmetric default."""
     return sc.modules.bSSFP2DTR(opts=opts, **SPEC)
 
 
@@ -151,7 +151,7 @@ def test_the_echo_arrives_at_the_declared_te(opts, tr) -> None:
 
 
 # ---------------------------------------------------------------- claim 4: the symmetric default
-def test_passing_nothing_gives_the_canonical_symmetric_realisation(tr, opts) -> None:
+def test_passing_nothing_gives_the_standard_symmetric_realisation(tr, opts) -> None:
     """
     ``TE = TR/2``, which is what ``te_s=None`` means here.
 
@@ -486,13 +486,13 @@ def compensated(opts):
                                 flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
 
 
-def test_the_canonical_repetition_is_balanced_and_not_flow_compensated(opts, tr) -> None:
+def test_the_conventional_repetition_is_balanced_and_not_flow_compensated(opts, tr) -> None:
     """
     Both halves of the distinction, on one waveform.
 
     Balanced is `M0 = 0` over the RF-to-RF interval; it says nothing about `M1`, and a spin moving
     at constant velocity arrives at the echo with the phase that `M1` carries.  This is not a
-    defect in the canonical repetition -- flow compensation is a strictly stronger requirement.
+    defect in the conventional repetition -- flow compensation is a strictly stronger requirement.
     """
     seq = train(opts, tr, tr, lines=[20, 21])
 
@@ -504,18 +504,18 @@ def test_flow_compensation_nulls_the_first_moment_at_the_echo(opts, tr, compensa
     """
     Measured on the emitted waveform, across the phase-encode table.
 
-    Against the canonical repetition's own first moment rather than against an absolute number:
+    Against the conventional repetition's own first moment rather than against an absolute number:
     what the design achieves is a reduction by some orders of magnitude, and where the floor
     sits is a property of the solver's realisation tolerance and of the gradient limits.  A test
     pinned to 1e-4 would pass or fail on a faster gradient for no physical reason.
     """
-    canonical = np.abs(m1_at_echo(train(opts, tr, tr, lines=[0, 1]), tr)).max()
+    conventional = np.abs(m1_at_echo(train(opts, tr, tr, lines=[0, 1]), tr)).max()
 
     for line in (0, MATRIX[1] // 2, MATRIX[1] - 1):
         seq = train(opts, compensated, compensated,
                     lines=[line, (line + 1) % MATRIX[1]])
 
-        assert np.abs(m1_at_echo(seq, compensated)).max() < 1e-3 * canonical
+        assert np.abs(m1_at_echo(seq, compensated)).max() < 1e-3 * conventional
 
 
 def test_flow_compensation_leaves_the_balance_condition_alone(opts, compensated) -> None:
@@ -523,7 +523,7 @@ def test_flow_compensation_leaves_the_balance_condition_alone(opts, compensated)
     The two requirements live on different intervals and do not trade against each other.
 
     The designer reshapes what plays between the RF centre and the echo and is given the same
-    **total** area on each axis, so the RF-to-RF sum is the one the canonical repetition had.
+    **total** area on each axis, so the RF-to-RF sum is the one the conventional repetition had.
     """
     m0 = rf_to_rf_m0(train(opts, compensated, compensated, compensated, lines=[0, MATRIX[1] // 2, MATRIX[1] - 1]))
 

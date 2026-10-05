@@ -49,14 +49,20 @@ half a gradient raster — 2.1 µs against a TE of 3342 µs on the shipped examp
 whose echo lands on the raster gives exactly zero.
 
 **Balanced is not motion compensated either.** `M0 = 0` is a statement about a stationary spin;
-one moving at constant velocity arrives at the echo carrying `2π v M1`, and the canonical
+one moving at constant velocity arrives at the echo carrying `2π v M1`, and the conventional
 repetition's first moment is non-zero on all three axes. `bSSFP2DTR` now takes
 `flow_comp=sc.FlowCompensation(...)` and routes it through the physical-design seam `GRE2DTR`
 already uses — no compiler change and nothing bSSFP-specific below the Module layer. Measured,
-`M1` at the echo falls by three to four orders of magnitude, the single winder lobes become
-bipolar pairs, and TE and TR grow by about 45 % on the shipped protocol. The balance condition is
-untouched: the design reshapes what plays between the RF centre and the echo and leaves the total
-area on each axis alone, so the two requirements compose rather than trade.
+`M1` at the echo falls by three to four orders of magnitude, the balance condition is untouched,
+and TE and TR grow by about 45 % on the shipped protocol.
+
+**That is echo-time first-moment compensation, and the documentation says so.** Bieri and
+Scheffler (Magn Reson Med 2005;54:901) null the first moment *between excitations*, and state
+that their design does not null it between excitation and echo, because a steady state is
+perturbed by a phase that varies between repetitions rather than by a phase on one acquired line.
+On the shipped protocol `flow_comp=` makes that repetition-to-repetition increment about three
+times larger, which `03_flow_and_motion.ipynb` measures against their criterion. The
+between-excitations condition is not implemented.
 
 Steady-state establishment, start-up method and count, segmentation and segment count, `ky` and
 acquisition ordering, restart policy and reconstruction are all **not** owned here. A balanced
@@ -65,8 +71,10 @@ the repetitions rather than a class.
 
 Three example notebooks: `01_build` for the repetition and the acquisition, `02` for the
 transient and the steady state — comparing no preparation against `α/2 – TR/2` and a 20-step
-flip-angle ramp, aligned at the first full-flip repetition — and `03_flow_comp` for the first
-moments and the motion-robust variant.
+flip-angle ramp, with the measured decay checked against Scheffler's analytic rate (Magn Reson
+Med 2003;49:781) — and `03_flow_and_motion` for what conventional balanced SSFP does under flow,
+reproducing Bieri & Scheffler's phase-increment criterion across view orderings before any
+compensation is applied.
 
 ## Unreleased — the PNS model says what it is, and a scanner file is something you pass
 

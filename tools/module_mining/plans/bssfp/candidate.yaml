@@ -21,21 +21,42 @@ planned_public_realizations:
 # What the implementation added beyond the scanned boundary, and why it is not a new abstraction.
 augmentations:
   - name: FlowCompensation
+    provides: echo-time first-moment compensation       # NOT the bSSFP literature condition
     why: >
       Balanced is M0 = 0 over the RF-to-RF interval, which is a statement about a stationary spin.
-      A spin moving at constant velocity arrives at the echo carrying 2*pi*v*M1, and the canonical
-      repetition's first moment is non-zero on all three axes -- measured, not inferred.  Flow
-      compensation is a strictly stronger requirement, so it is an augmentation of the same kernel
-      rather than a second one.
+      A spin moving at constant velocity arrives at the echo carrying 2*pi*v*M1, and the
+      conventional repetition's first moment is non-zero on all three axes at the echo -- measured,
+      not inferred.
     how: >
       Routed through the physical-design seam `GRE2DTR` already uses: the readout solves its own
       axis and `y` and `z` go to `design_scope`.  No compiler change, nothing bSSFP-specific below
       the Module layer, and no new abstraction.
     composes_with_balance: >
       The designer reshapes what plays between the RF centre and the echo and is handed the same
-      TOTAL area on each axis, so the RF-to-RF sum is the one the canonical waveform had.  The two
-      requirements live on different intervals and do not trade against each other, which the
-      tests measure.  Cost: TE and TR grow about 45% on the shipped protocol.
+      TOTAL area on each axis, so the RF-to-RF M0 sum is the one the conventional waveform had.
+      Cost: TE and TR grow about 45% on the shipped protocol.
+    literature_gap: >
+      **Open, identified 2026-10-05 from the original papers.**  Bieri and Scheffler (Magn Reson
+      Med 2005;54:901) define bSSFP flow compensation on a DIFFERENT interval: their Eq. [1] makes
+      the steady-state condition that the per-TR spin phase be CONSTANT across repetitions, their
+      Eq. [2] identifies the varying term as the phase-encode first moment over TR, and they state
+      that their compensation "nulls the first moment between excitations, but does not null the
+      first moment between the excitation and echo" -- adding that the TE sensitivity is small and
+      does not perturb steady state.
+
+      So the shipped `flow_comp=` states the condition the literature says is NOT the governing
+      one.  Measured on the shipped protocol: it nulls M1 at the echo to 1e-4 s/m, and raises the
+      repetition-to-repetition increment of the RF-to-RF first moment from 2.95 to 9.63 deg per
+      (m/s) -- a factor of 3.3 in the wrong direction on Bieri's criterion.
+
+      A kernel able to state "M1 = 0 between excitations" is therefore a real and separate
+      physical-design question.  **Not implemented, and deliberately not inferred into existence
+      from this reading.**  Two further measurements belong with that decision: M1x over the
+      interval is small but non-zero and M1z is not small, where the literature describes a
+      symmetric 2D scheme's readout and slice as first-order compensated within TR -- this
+      repetition does not place its lobes symmetrically about the interval midpoint.  And Bieri's
+      "pairing" view order reaches the same goal with no gradient change at all, which is
+      acquisition policy and composes with the kernel as it stands.
 
 capability:
   family: kernel
