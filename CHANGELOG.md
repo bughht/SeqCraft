@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased — a balanced repetition, and what it costs to make one composable
+
+`sc.modules.bSSFP2DTR` builds one balanced repetition of a 2D Cartesian bSSFP acquisition.
+**Balanced means zero net gradient area on each axis over the RF-centre-to-RF-centre interval**,
+and that is the whole definition; `TE = TR/2` is the canonical symmetric realisation of it and
+the default, which is deliberately not what `te_s=None` means on `GRE2DTR`. Passing `te_s`
+asks for an asymmetric realisation, which stays balanced.
+
+The interval ends inside the *next* repetition, so the contract is compositional: two
+consecutive repetitions, each discharging its own selection halves, balance between them. The
+trailing lobe cancels the selection gradient's post-centre area and the leading winder cancels
+its pre-centre area — one half each, never both — so neither repetition is built against an
+assumption about the other. Measured on compiled trains, that holds across neighbours with a
+different slice thickness, pulse duration, readout bandwidth, flip angle or `ky`; the one thing
+a neighbour must do is discharge its own pre-centre half.
+
+**That composability costs 270–290 µs per repetition, 3.8–4.7 % of TR across four protocols**,
+against the alternative of one trailing lobe carrying both halves. The cost is structural: the
+leading winder has to play before its own RF centre and nothing else in the repetition may,
+because the readout prephaser and the phase-encode blip both act on magnetisation that does not
+exist until then. The cheaper form stays available at a known price, and the compiler was not
+taught anything about bSSFP to reach either.
+
+Exact `TE = TR/2` is not reachable on the raster, and `symmetry_residual_s` reports the signed
+amount rather than rounding it away: the echo is the ADC sample where `k = 0`, half a dwell off
+the readout window's centre, while every fill is a whole number of rasters. The two halves
+therefore differ by at most half a gradient raster — 2.1 µs against a TE of 3342 µs on the
+shipped example.
+
+Steady-state establishment, start-up method and count, segmentation and segment count, `ky` and
+acquisition ordering, restart policy and reconstruction are all **not** owned here. A balanced
+repetition is not a repetition in steady state, and a segmented acquisition is a loop around
+the repetitions rather than a class.
+
 ## Unreleased — the PNS model says what it is, and a scanner file is something you pass
 
 `sc.hardware.synthetic_hardware()` documented pypulseq's `safe_pns_prediction.safe_example_hw()`

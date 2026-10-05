@@ -471,15 +471,29 @@ evidence_state:
       revisit_trigger: >
         Two schemes turn out to share a correctness condition a caller keeps getting wrong.
     - what: >
-        Implementation of the kernel itself (`bSSFP2DTR`, then `bSSFP3DTR`).
-        **Deferred by review, 2026-09-22; resumed 2026-10-05.**
+        Implementation of the kernel itself.  **Deferred by review 2026-09-22; `bSSFP2DTR`
+        implemented 2026-10-05.  `bSSFP3DTR` is a separate change.**
       why: >
-        The boundary finding is accepted -- RF-to-RF is the candidate kernel, steady-state
-        establishment sits above it, and segmentation and ordering are acquisition policy.  What
-        is NOT decided is whether to pay the measured 220 us per axis per repetition that forcing
-        gradients to terminate at a module boundary costs.  That cost converges directly with the
-        cross-boundary physical-requirement problem C3 studies, so deciding it now would be
-        deciding it with one of the two relevant cases in hand.
+        The boundary finding was accepted -- RF-to-RF is the kernel, steady-state establishment
+        sits above it, and segmentation and ordering are acquisition policy.  What was NOT
+        decided was whether to pay the measured 220 us per axis per repetition that forcing
+        gradients to terminate at a module boundary costs.
+
+        **Settled 2026-10-05 on the built module.**  The cheaper waveform is the *lumped* z
+        realisation: one trailing lobe of -(A_post + A_pre) and no leading winder, which is what
+        merging a repetition's trailing lobe with its successor's leading winder produces.
+        Against it the composable split costs 270-290 us per repetition, 3.8-4.7% of TR across
+        four protocols, and the cost is structural: the leading winder has to play before its own
+        RF centre and nothing else in the repetition may, because the readout prephaser and the
+        phase-encode blip act on magnetisation that does not exist until then.
+
+        The split was chosen.  It balances against a neighbour with a different slice thickness,
+        pulse duration or readout bandwidth -- measured below 1e-12 1/m on compiled trains --
+        while the lumped form is built against an assumed successor and does not.  A start-up
+        ramp, a segmented acquisition and a multi-slice loop are all compositions where that
+        difference is the one that matters.  The lumped form stays available at a known price;
+        a protocol that cannot afford 4% of TR is the evidence that would justify it.  No
+        compiler change was made, and the compiler learned nothing about bSSFP.
       revisit_trigger: >
         C3 concludes.  Then either accept the cost and build the kernel, or build whatever C3
         shows is needed to avoid it.

@@ -130,22 +130,37 @@ self-contained. What `bSSFP2DTR` guarantees is:
 > consecutive repetitions built from that configuration satisfy zero net gradient area on each
 > axis over the RF-centre-to-RF-centre interval between them.
 
-**Compatible** has to be stated, not assumed. Adjacent repetitions must preserve the
-selection-gradient geometry that meets at the boundary:
+**Compatible** has to be stated, not assumed — and the implementation made the condition
+weaker than this section first claimed. *Corrected 2026-10-05 from measurement.*
+
+Because `R_tail` cancels only `A_post` and `W_lead` only `A_pre`, the interval is two
+independent cancellations rather than one shared sum:
 
 ```text
-required to match        slice thickness
-                         RF duration / pulse design
-                         selection-gradient waveform and timing
-
-free to differ           flip angle, when it changes RF amplitude and leaves Gz unchanged
-                         ky, which is a y-axis encoding; the rewind of n and the blip of n+1
-                         still have to satisfy the y balance across the interval
+A_post(n) - A_post(n)   +   -A_pre(n+1) + A_pre(n+1)   =   0
 ```
 
-A neighbour built by something else, or with a different slice thickness or pulse duration,
-is outside what this contract covers. The docstring says that rather than implying a guarantee
-the module cannot hold.
+Neither repetition is built against an assumption about the other, so the **geometry does not
+have to match**. Measured on compiled trains: a neighbour with a different slice thickness
+(5 mm beside 8 mm), a different pulse duration (3 ms beside 2 ms) or a different readout
+bandwidth (800 beside 400 Hz/px) all balance to below 1e-12 1/m, as do a different flip angle
+and a different `ky`.
+
+```text
+free to differ       slice thickness, RF duration, readout bandwidth, flip angle, ky
+
+required             the neighbour discharges its own pre-centre half before its own RF
+                     centre -- that is, it honours this same contract
+```
+
+The condition is on the **contract the neighbour keeps**, not on the protocol it was configured
+with. A neighbour that plays no leading winder — a spoiled gradient-echo repetition, for
+instance — leaves `A_pre` uncancelled and the interval is short by exactly that.
+
+The earlier, stronger condition was correct for a realisation this module does not use: a
+single trailing lobe of `-(A_post + A_pre)` with no leading winder is also balanced, and is
+indistinguishable for an identical train, but it *is* built against an assumed successor and
+does break when the successor's pulse differs. That is the trade §4 turns out to be about.
 
 `PhysicalDesignScope` expresses the first set (it designs a window and states `k_at_echo`).
 It does not express the second. **Do not extend it in this pull request.** Realise the balance
@@ -324,6 +339,49 @@ a protocol that cannot afford it be the evidence for A.
 
 Under neither outcome does the compiler learn anything candidate-specific.
 
+### 4.4 Outcome: **C**, with the cost measured
+
+*Settled 2026-10-05 on the built module.*
+
+The fused waveform turns out to have a name already: it is the **lumped** z realisation, one
+trailing lobe of `-(A_post + A_pre)` and no leading winder. Merging repetition `n`'s trailing
+lobe with repetition `n+1`'s leading winder produces exactly that lobe, and §4.2 showed the
+compiler will not do the merge for itself.
+
+What the split costs against it, measured on compiled repetitions:
+
+```text
+one lobe of 2A against two lobes of A, at 40 mT/m and 150 T/m/s
+
+   A = 200 1/m     720 us  ->  520 us      saving 200 us
+   A = 407 1/m    1040 us  ->  750 us      saving 290 us
+   A = 800 1/m    1480 us  -> 1210 us      saving 270 us
+
+per repetition, on four protocols
+
+   reference    128 / 800 Hz/px / 5 mm    TR 6680 us   saving 290 us   4.3% of TR
+   short TR      64 / 1200 Hz/px / 5 mm   TR 6220 us   saving 290 us   4.7% of TR
+   thin slice   128 / 800 Hz/px / 3 mm    TR 7320 us   saving 280 us   3.8% of TR
+   thick slice  128 / 800 Hz/px / 8 mm    TR 6280 us   saving 270 us   4.3% of TR
+```
+
+The cost is structural rather than a layout accident. The leading winder has to play before its
+own RF centre, and nothing else in the repetition may: the readout prephaser and the
+phase-encode blip both act on magnetisation that does not exist until the RF centre, so neither
+can move earlier to share the window. The lead window is therefore exclusive time, and it is
+what the saving is made of. The record's 220 microseconds is the same effect on another
+protocol.
+
+**C is chosen**, because what the 4% buys is the composability measured in §1.2: the split
+realisation balances against a neighbour with a different slice thickness, pulse duration or
+readout bandwidth, and the lumped one is built against an assumed successor and does not. A
+start-up ramp, a segmented acquisition and a multi-slice loop are all compositions where that
+matters, and all three are things a bSSFP caller writes.
+
+**A stays available and now has a price.** A protocol that cannot afford 4% of TR is the
+evidence that would justify it, and the lumped lobe is a small local change when that protocol
+arrives. The compiler was not touched and learned nothing about bSSFP.
+
 ---
 
 ## 5. Reuse policy
@@ -396,11 +454,19 @@ measure the first N RF-centre-to-RF-centre intervals
 verify M0x = M0y = M0z = 0
 ```
 
-The last repetition has no successor and therefore no interval of its own. **The test measures
-the physical RF-to-RF definition, not a module-container boundary that happens to resemble
-it.** A test written against block edges would pass on a module that is wrong in exactly the
-way §1.2 describes — and, because each balancing lobe cancels one selection half rather than
-two, it would also pass on a module whose trailing lobe double-counts.
+The last repetition has no successor and therefore no interval of its own.
+
+**The test measures the physical RF-to-RF definition, not a module-container boundary that
+happens to resemble it.** *Corrected 2026-10-05:* this section previously said a block-edge
+test would pass a module that is wrong in the way §1.2 describes. It would not. For a train of
+repetitions built from one configuration the next repetition's leading half equals this one's,
+so the block-edge sum and the RF-to-RF sum are the same number, and both catch the
+double-counting error — measured at 406.7 1/m on both, against 6e-12 for the module as built.
+
+The RF-to-RF form is written anyway, for two reasons that survive: it is the definition, so a
+test that measures it cannot be right by coincidence; and it does not depend on the layout
+choice that makes the two coincide, so it stays correct if the block ever stops being cut where
+the waveform is periodic.
 
 ### Layer 3
 
