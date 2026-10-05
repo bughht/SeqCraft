@@ -1,5 +1,96 @@
 # Changelog
 
+## Unreleased — a balanced repetition, and what it costs to make one composable
+
+`sc.modules.bSSFP2DTR` builds one balanced repetition of a 2D Cartesian bSSFP acquisition.
+**Balanced means zero net gradient area on each axis over the RF-centre-to-RF-centre interval**,
+and that is the whole definition; `TE = TR/2` is the canonical symmetric realisation of it and
+the default, which is deliberately not what `te_s=None` means on `GRE2DTR`. Passing `te_s`
+asks for an asymmetric realisation, which stays balanced.
+
+**The timing origin is the RF effective centre**, read from the waveform rather than taken as
+the event's midpoint — for a minimum-phase pulse those are far apart. TE is measured from it,
+TR is the distance between consecutive ones, and the balance interval runs between the same two
+instants. `time_to_rf_center()` reports where it falls inside the returned block, with
+`time_to_echo() == time_to_rf_center() + te_s`, so nothing downstream reconstructs it from a
+pulse duration. `tr_s` keeps its meaning as RF-centre-to-RF-centre time; that a homogeneous
+train also has `block.duration == tr_s` is a convenience of that composition.
+
+The interval ends inside the *next* repetition, so the contract is compositional: two
+consecutive repetitions, each discharging its own selection halves, balance between them. The
+trailing lobe cancels the selection gradient's post-centre area and the leading winder cancels
+its pre-centre area — one half each, never both — so neither repetition is built against an
+assumption about the other. Measured on compiled trains, that holds across neighbours with a
+different slice thickness, pulse duration, readout bandwidth, flip angle or `ky`; the one thing
+a neighbour must do is discharge its own pre-centre half.
+
+**Balance-compatible is not timing-compatible.** A neighbour that balances may still move the
+RF-centre offset, and stacking by block duration then misses the declared TR by the difference:
+measured at −120 µs for a different slice thickness and −500 µs for a different pulse duration,
+while flip angle, `ky` and readout bandwidth left it untouched. A heterogeneous train is placed
+from the offsets — `start(n+1) = start(n) + tr_s + c(n) − c(n+1)` — and the kernel documents
+that rather than doing it, because placement is an acquisition's business.
+
+**That composability costs 270–290 µs per repetition, 3.8–4.7 % of TR across four protocols**,
+against the alternative of one trailing lobe carrying both halves. The cost is structural: the
+leading winder has to play before its own RF centre and nothing else in the repetition may,
+because the readout prephaser and the phase-encode blip both act on magnetisation that does not
+exist until then. What the cost buys is the measured property above — not start-up ramps,
+segmentation or same-thickness multi-slice, which change RF amplitude, acquisition policy and
+RF frequency offset respectively and would all work under the cheaper form too. That form stays
+available at a known price, and the compiler was not taught anything about bSSFP to reach
+either.
+
+`TE = TR/2` is the canonical target. For a given readout geometry the exact midpoint may not
+lie on the available timing lattice; the default then takes the nearest symmetric realisation
+and `symmetry_residual_s` reports the signed amount achieved, rather than the declared TE being
+rounded to `TR/2`. With the readout placement `CartesianLine` currently offers that is at most
+half a gradient raster — 2.1 µs against a TE of 3342 µs on the shipped example — and a readout
+whose echo lands on the raster gives exactly zero.
+
+**The default waveform is the symmetric realisation, not merely a balanced one.** Zero net area
+over the RF-to-RF interval says nothing about where in the interval the area was played, and the
+balanced-SSFP literature assumes more than that: Bieri & Scheffler describe a symmetric 2D
+scheme's readout and slice gradients as zero- *and* first-order compensated within each TR, with
+only the phase-encode axis varying between repetitions. The first implementation did not have
+that — `M1z` over the interval was −0.176 1/m·s, because the slice rephaser sat in the shared
+winder window wherever the echo time put it while the next repetition's winder sat against its own
+selection gradient. Each balancing lobe now sits the same distance from its own RF centre, with a
+pad on one side because the transmit dead time makes the pulse's halves unequal. Measured over
+four protocols: `M0` ≤ 9e-13 on all axes, `M1z` ≤ 2e-15, `M1x` small and identical for every
+line, `M1y` line-dependent. It costs nothing — the shared winder no longer has to hold the slice
+lobe, so TR falls from 6850 to 6450 µs on the shipped protocol.
+
+**Balanced is not motion compensated either.** `M0 = 0` is a statement about a stationary spin;
+one moving at constant velocity arrives at the echo carrying `2π v M1`, and the conventional
+repetition's first moment is non-zero on all three axes. `bSSFP2DTR` now takes
+`flow_comp=sc.FlowCompensation(...)` and routes it through the physical-design seam `GRE2DTR`
+already uses — no compiler change and nothing bSSFP-specific below the Module layer. Measured,
+`M1` at the echo falls by three to four orders of magnitude, the `M0` balance condition is
+untouched, and TE and TR grow by about 53 % on the shipped protocol — TE 3.225 → 4.925 ms and
+TR 6.450 → 9.850 ms.
+
+**That is echo-time first-moment compensation, and the documentation says so.** Bieri and
+Scheffler (Magn Reson Med 2005;54:901) null the first moment *between excitations*, and state
+that their design does not null it between excitation and echo, because a steady state is
+perturbed by a phase that varies between repetitions rather than by a phase on one acquired line.
+On the shipped protocol `flow_comp=` makes that repetition-to-repetition increment about 3.6
+times larger — 2.66 → 9.63 °/(m/s) — which `03_flow_and_motion.ipynb` measures against their
+criterion. The
+between-excitations condition is not implemented.
+
+Steady-state establishment, start-up method and count, segmentation and segment count, `ky` and
+acquisition ordering, restart policy and reconstruction are all **not** owned here. A balanced
+repetition is not a repetition in steady state, and a segmented acquisition is a loop around
+the repetitions rather than a class.
+
+Three example notebooks: `01_build` for the repetition and the acquisition, `02` for the
+transient and the steady state — comparing no preparation against `α/2 – TR/2` and a 20-step
+flip-angle ramp, with the measured decay checked against Scheffler's analytic rate (Magn Reson
+Med 2003;49:781) — and `03_flow_and_motion` for what conventional balanced SSFP does under flow,
+evaluating Bieri & Scheffler's Eq. [2] phase-increment metric across view orderings before any
+compensation is applied.
+
 ## Unreleased — the PNS model says what it is, and a scanner file is something you pass
 
 `sc.hardware.synthetic_hardware()` documented pypulseq's `safe_pns_prediction.safe_example_hw()`

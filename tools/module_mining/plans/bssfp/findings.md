@@ -120,14 +120,34 @@ segmentation changes is how many repetitions share one start-up preparation and 
 is interrupted. §14.1 is dimension-agnostic.
 
 **So a segment boundary carries steady-state physics, not bSSFP physics** — it is where
-start-up preparation is needed again, or where magnetisation must be stored and restored (p. 595). One
-kernel serves 2D and 3D.
+start-up preparation is needed again, or where magnetisation must be stored and restored (p. 595).
+
+**What that does and does not establish.** It establishes that 2D and 3D share the
+*repetition-level* bSSFP invariants:
+
+```text
+the RF-to-RF balance interval
+zero net gradient area per axis over it
+RF and receiver phase progression
+TE semantics
+TR timing semantics
+steady-state establishment living above the repetition
+```
+
+It does **not** establish that they should share one public kernel. The physical realisations
+differ where it matters most — the RF is slice-selective in 2D and slab-selective or
+non-selective in 3D, and `Gz` carries selection plus rephasing plus balance in 2D against
+slab role plus partition encoding plus balance in 3D. Shared invariants are a reason to expect
+shared *private* machinery; they are not by themselves a reason for one class.
+
+*Corrected 2026-10-05. The original sentence read "One kernel serves 2D and 3D", which the
+dimension-agnosticism of the invariants does not support.*
 
 ## 7. The four hypotheses
 
 | | can it state a condition it can check? | needs from outside | verdict |
 |---|---|---|---|
-| **A** RF-to-RF kernel | **yes, on one instance** | repetition index, encodes, flip angle | **the kernel** |
+| **A** RF-to-RF kernel | **yes, from its own parameters** | repetition index, encodes, flip angle | **the kernel** |
 | **B** balanced requirement | stateable, not checkable alone | every other event on the axis, budget, limits | **not expressible today** |
 | **C** steady-state segment | **no** — its claim is about magnetisation | T1, T2, a simulation | policy, not an abstraction |
 | **D** layered A + composition | yes, as A | as A | **selected** |
@@ -137,24 +157,33 @@ kernel serves 2D and 3D.
 **Implement A as the kernel, in the layered form D.** Expose TE with `TR/2` as the default and the
 T2′ consequence documented — the faithful choice, per the domain source and `mrseq`.
 
-**Implementation is deferred pending C3** (review decision, 2026-09-22). The boundary finding
-stands; what is undecided is whether to pay the measured 220 µs per axis per repetition that
-forcing gradients to terminate at a module boundary costs. That cost converges directly with the
-cross-boundary requirement problem C3 studies, so deciding it now would mean deciding with one of
-the two relevant cases in hand.
+*Implementation was deferred pending C3 (review decision, 2026-09-22) over whether to pay the
+measured 220 µs per axis per repetition that forcing gradients to terminate at a module boundary
+costs.* **That is settled, and `bSSFP2DTR` is built (2026-10-05).** Measured on the module, the
+composable realisation costs 270–290 µs per repetition — 3.8–4.7 % of TR across four protocols —
+against the alternative of one trailing z lobe carrying both selection halves. It was accepted,
+because the split does not assume the successor's selection-gradient geometry and the lumped form
+does. See `candidate.yaml` for the measurement and the choice; `bSSFP3DTR` remains unbuilt.
 
 **That convergence is this scan's most useful result.** bSSFP and velocity encoding reach the same
 missing capability — a requirement realised jointly with its surroundings — from opposite
 directions, and neither was looking for it.
 
-*Added after C3.* The two are not quite the same case, and Phase E should keep them apart. If
-these two lobes can be fused with **no change of physical semantics** — same integrated waveform,
-same RF and ADC timing, same requirements, merely a more efficient continuous representation —
-that is a candidate for a semantics-preserving optimisation in the **compiler**. C3's merged flow
-waveform is *not* of that kind: its shape depends on VENC and on a moment target, so it is
-physics-aware joint design and belongs to a joint owner in the **Module layer**. Which kind
-bSSFP's is has not been established, and the distinction matters more than the microseconds.
-**Recovering the 220 µs by teaching the compiler about bSSFP would be the wrong fix either way.**
+*Added after C3.* The two are not quite the same case, and they have to be kept apart. If these
+two lobes could be fused with **no change of physical semantics** — same emitted `G(t)`, same RF
+and ADC timing, only a different pulseq representation — that would be a candidate for a
+semantics-preserving optimisation in the **compiler**. C3's merged flow waveform is *not* of that
+kind: its shape depends on VENC and on a moment target, so it is physics-aware joint design and
+belongs to a joint owner in the **Module layer**.
+
+**Resolved 2026-10-05: bSSFP's is the second kind.** A minimal reproducer settled it before the
+module was written — two abutting same-polarity trapezoids compile to a waveform that ramps to
+zero between them, and replacing the pair with one lobe of twice the area preserves `M0` to 2e-13
+while changing `M1` by 16 % and the duration by 270 µs. Emitted `G(t)` changes, so it is physical
+redesign. The criterion is deliberately not "preserves every declared requirement", which would
+let the compiler treat an undeclared `M1` as free to change — an MRI-physics judgement it does not
+make. **Recovering the cost by teaching the compiler about bSSFP would be the wrong fix either
+way**, and no compiler change was made.
 
 ## 9. v0
 

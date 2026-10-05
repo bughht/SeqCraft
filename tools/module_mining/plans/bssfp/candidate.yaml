@@ -8,7 +8,98 @@
 #   python tools/module_mining/schema.py tools/module_mining/plans/bssfp/candidate.yaml
 
 id: balanced-ssfp
-name: bSSFPTR   # the kernel of a layered answer; see boundary_hypotheses
+name: balanced SSFP repetition   # the physical unit; see boundary_hypotheses
+
+# The record names ONE capability and ONE boundary.  How many public classes realise it is a
+# separate decision, taken 2026-10-05: the RF-to-RF unit is shared physics, and 2D and 3D get
+# separate public realisations because they realise that unit differently on the RF and on `Gz`.
+# Put a second name in `name:` and the record starts asserting an API shape it did not scan for.
+planned_public_realizations:
+  - bSSFP2DTR            # built 2026-10-05, including the flow_comp augmentation
+  - bSSFP3DTR            # a separate change
+
+# What the implementation added beyond the scanned boundary, and why it is not a new abstraction.
+# A timing question raised at review and closed by measurement, 2026-10-05.
+timing_efficiency:
+  question: >
+    The three gradient axes do not begin and end their winder lobes at the same wall-clock times.
+    Is that costing TR -- is there removable idle time that better cross-axis packing would
+    recover without changing G(t), the moments, or the RF and ADC timing?
+  measured: >
+    Idle on every axis at once, with the RF and ADC reservations counted as busy, over the
+    RF-to-RF interval: 40 us of 6450 (0.6%) on the reference protocol, 10 us of 8180 (0.1%) at
+    3 mm / 400 Hz/px, and 40 us of 5790 (0.7%) at 10 mm / 1000 Hz/px.  All of it is raster
+    granularity.
+  conclusion: >
+    The three axes are not forced into identical timing windows, and they do not need to be.  The
+    current waveform satisfies the intended physical conditions -- M0 balanced on every axis, M1z
+    zero over the interval, M1x constant across the table -- and the timing-efficiency check found
+    at most 40 us of removable slack, so no packing optimisation is warranted.  Cross-axis visual
+    alignment is not a correctness criterion; the axes have different jobs and different areas.
+
+    Kept separate from this: the readout's half-dwell echo offset, which is why M1x is small
+    rather than zero.  That is a readout semantics question about where k = 0 falls among the
+    samples, not a cross-axis packing question.
+
+augmentations:
+  - name: FlowCompensation
+    provides: echo-time first-moment compensation       # NOT the bSSFP literature condition
+    why: >
+      Balanced is M0 = 0 over the RF-to-RF interval, which is a statement about a stationary spin.
+      A spin moving at constant velocity arrives at the echo carrying 2*pi*v*M1, and the
+      conventional repetition's first moment is non-zero on all three axes at the echo -- measured,
+      not inferred.
+    how: >
+      Routed through the physical-design seam `GRE2DTR` already uses: the readout solves its own
+      axis and `y` and `z` go to `design_scope`.  No compiler change, nothing bSSFP-specific below
+      the Module layer, and no new abstraction.
+    composes_with_balance: >
+      The designer reshapes what plays between the RF centre and the echo and is handed the same
+      TOTAL area on each axis, so the RF-to-RF M0 sum is the one the conventional waveform had.
+      Cost: TE and TR grow about 53% on the shipped protocol -- TE 3.225 -> 4.925 ms and
+      TR 6.450 -> 9.850 ms.
+    literature_gap: >
+      **Updated 2026-10-05 after the baseline was corrected.**  The default waveform now meets
+      the symmetric-realisation structure the literature assumes: over the RF-to-RF interval M1z
+      is zero to 2e-16, M1x is 3.2e-3 s/m and identical for every line, and M1y varies with the
+      line.
+
+      Two different conditions follow from that, and they do not have the same answer.  For
+      strict between-excitation first-moment nulling, z is met and x is NOT -- a small constant
+      residual remains.  For the Eq. [2] repetition-to-repetition increment, the constant x
+      residual does not contribute to the repetition-to-repetition Eq. [2] increment, because it
+      is the same for every line -- though it can still produce a constant velocity-dependent
+      phase -- so the remaining varying term is the phase-encode axis.  Saying "met on x up to a constant" would conflate
+      the two.
+
+
+      **Open, identified 2026-10-05 from the original papers.**  Bieri and Scheffler (Magn Reson
+      Med 2005;54:901) define bSSFP flow compensation on a DIFFERENT interval: their Eq. [1] makes
+      the steady-state condition that the per-TR spin phase be CONSTANT across repetitions, their
+      Eq. [2] identifies the varying term as the phase-encode first moment over TR, and they state
+      that their compensation "nulls the first moment between excitations, but does not null the
+      first moment between the excitation and echo" -- adding that the TE sensitivity is small and
+      does not perturb steady state.
+
+      So the shipped `flow_comp=` states the condition the literature says is NOT the governing
+      one.  Measured on the shipped protocol: it nulls M1 at the echo to 1e-4 s/m, and raises the
+      repetition-to-repetition increment of the RF-to-RF first moment from 2.66 to 9.63 deg per
+      (m/s) -- a factor of about 3.6 in the wrong direction on Bieri's criterion.
+
+      A kernel able to state "M1 = 0 between excitations" is therefore a real and separate
+      physical-design question.  **Not implemented, and deliberately not inferred into existence
+      from this reading.**  Two things belong with that decision.  M1x over the interval is small
+      but non-zero, so strict nulling is not met there either; it is constant across the table and
+      so does not enter the Eq. [2] increment.  And Bieri's "pairing" view order addresses the
+      repetition-to-repetition steady-state phase-consistency problem without changing the
+      gradient waveform -- it does NOT make M1 = 0 between excitations, so it is not a substitute
+      for strict nulling.  Being a view order, it is acquisition policy and composes with the
+      kernel as it stands.
+
+      *Superseded.*  An earlier revision of this entry recorded that M1z over the interval was
+      not small and that the repetition did not place its lobes symmetrically about the interval
+      midpoint.  That described the pre-correction waveform and is no longer the implementation;
+      the symmetric realisation landed 2026-10-05 and is measured in `validation.layers.done`.
 
 capability:
   family: kernel
@@ -215,21 +306,39 @@ contract:
     answer is layered.**
 
 boundary_hypotheses:
-  selected: D, with A as the kernel
+  selected: D, with A as the kernel, shipped as one public class per dimension
   why: >
     A is the only hypothesis whose correctness condition is both stateable and checkable on one
     instance.  C cannot state its own correctness.  B cannot be expressed.  D is A plus
     composition, and composition is where every witness and the domain source put steady-state
     establishment and ordering.  The selection follows from those conditions and not from the class name -- and
-    the name `bSSFPTR` is kept only because the unit it denotes turned out to be the right one.
+    the name `bSSFPTR` is kept below only because the unit it denotes turned out to be the right
+    one.  It names the *unit of design*, not a public class.
+
+    The RF-to-RF unit is **shared physics**: 2D and 3D agree on the balance interval, on zero net
+    area per axis over it, on the RF and receiver phase progression, on TE and TR semantics, and
+    on steady state living above the repetition.  They get **separate public realisations**
+    (`planned_public_realizations`, 2026-10-05) because they realise that shared unit differently
+    -- slice-selective against slab-selective or non-selective RF, and `Gz` carrying selection +
+    rephasing + balance against slab role + partition encoding + balance.  Shared private
+    machinery, if the second implementation shows genuine duplication, is a separate question
+    again from how many public classes there are.
   compared:
     - id: A
-      name: RF-to-RF balanced repetition kernel (bSSFPTR)
+      name: RF-to-RF balanced repetition kernel (the bSSFP*TR unit)
       owns: balanced moments over its own interval, TE placement, RF phase, its own minimum TR
       can_determine: all of the above from its own parameters, given the repetition index
       correctness_condition: >
-        "The net gradient area on each axis over my duration is zero, and my echo is at my
-        declared TE."  Fully checkable on ONE instance, with no reference to neighbours.
+        "Two compatible consecutive repetitions built from this configuration have zero net
+        gradient area on each axis over the RF-centre-to-RF-centre interval between them, and each
+        echo is at the declared TE."  The condition is **compositional**: the interval ends inside
+        the next repetition, each repetition contributes its own selection half and its own
+        balancing lobe, and neither lobe cancels the neighbour's half.  Stateable from the
+        configuration alone -- nothing is needed from a caller -- but measured on an adjacent pair.
+        Compatible means the selection-gradient geometry at the boundary matches: slice thickness,
+        RF duration and pulse design, selection waveform and timing.  Flip angle and ky may differ.
+        Corrected 2026-10-05; this previously read "Fully checkable on ONE instance, with no
+        reference to neighbours", which the interval does not support.
       needs_from_outside: repetition index, encode values, flip angle
       what_becomes_awkward: >
         **Measured, not asserted.**  A module's events cannot continue into the next instance of
@@ -306,8 +415,13 @@ two_d_versus_three_d:
   consequence: >
     A segment boundary carries **steady-state** physics, not bSSFP repetition physics- it is where
     start-up preparation is needed again, or where the magnetisation must be stored on the longitudinal
-    axis and restored (D1 p. 595).  That belongs to the layer above the kernel, and the same
-    kernel serves 2D and 3D.
+    axis and restored (D1 p. 595).  That belongs to the layer above the kernel.
+
+    2D and 3D share the repetition-level invariants -- the RF-to-RF balance interval, zero net area
+    per axis, RF/receiver phase progression, TE and TR semantics, and steady state living above the
+    repetition.  That does NOT establish one public kernel for both: the RF selection differs, and
+    `Gz` carries selection + rephasing + balance in 2D against slab role + partition encoding +
+    balance in 3D.  Corrected 2026-10-05; this previously read "the same kernel serves 2D and 3D".
 
 acceptance:
   defined_before_extraction: true
@@ -341,25 +455,64 @@ acceptance:
 
 validation:
   layers:
-    layer_1: NOT_APPLICABLE
-    layer_2: NOT_APPLICABLE
-    layer_3: NOT_APPLICABLE
-    layer_3_reason: >
-      NOT_APPLICABLE because nothing is implemented -- this fine scan stops at the acceptance
-      claim.  Layer 3 is unusually important for this candidate when it is built- the steady-state
-      approach and the T2/T1 contrast are the claims a user cares about and the ONLY layer that can
-      test them.  MRzeroCore's bSSFP notebook is in its CI-tested subset, so the oracle exists.
-  planned: >
-    Layer 1 from acceptance.establishes, all on the emitted lattice.  Layer 2 as a complete
-    acquisition with start-up preparation composed in the notebook, which is also where the 2D and 3D cases
-    are shown to share the kernel.  Layer 3 against MRzeroCore- signal against repetition index
-    for a train with and without start-up preparation, which tests the one claim the kernel cannot make.
+    layer_1: GREEN
+    layer_2: GREEN
+    layer_3: GREEN
+    done: >
+      **`bSSFP2DTR` implemented and validated 2026-10-05.**  `bSSFP3DTR` is a separate change and
+      this record's `planned_public_realizations` still lists it as unbuilt.
+
+      Layer 1 -- `tests/modules/test_bssfp_2d_tr.py`.  Beyond the balance claims it measures the
+      **symmetric realisation**: over the RF-to-RF interval M1z is zero to 1e-9, M1x is identical
+      for every line, and M1y varies with the line -- the structure Bieri and Scheffler assume for
+      a symmetric 2D scheme, which zero net area does not give on its own.  The geometric
+      condition behind it (each balancing lobe the same distance from its own RF centre, with a
+      pad for the pulse's unequal halves) is asserted where it is decided, and a parametrised test
+      checks it survives thickness, bandwidth, pulse duration and flip angle.
+
+      Layer 1 also carries the original claims on the compiled output.  Every
+      balance measurement integrates the emitted waveforms between consecutive RF **effective**
+      centres, because the interval ends inside the next repetition; the tests build N+1
+      repetitions and measure the first N, and none uses a `LogicBlock` edge as an endpoint.
+      Worst |M0| is about 6e-12 1/m against areas of some hundreds.  Non-identical neighbours are
+      covered -- different ky, a start-up flip ramp, and differing slice thickness, pulse duration
+      and readout bandwidth -- as is the negative case, which removes a leading winder and asserts
+      the interval is short by exactly A_pre.
+
+      Layer 2 -- `examples/bssfp_2d/01_build.ipynb`, a complete acquisition with the start-up ramp,
+      the ky loop and a four-segment k-space table composed in the notebook.  Segmentation needed
+      no kernel parameter and no new class.  `tests/modules/test_bssfp_notebooks.py` re-measures
+      balance on the written `.seq` files, against a fraction of one k-space step rather than
+      against zero, because a Pulseq file stores amplitudes as rounded decimal text.
+
+      Layer 3 -- `examples/bssfp_2d/02_simulate_and_reconstruct.ipynb` and
+      `03_flow_and_motion.ipynb`, against MRzeroCore.
+
+      `02` reads the signal of every repetition on single voxels, comparing no preparation against
+      the canonical alpha/2 - TR/2 scheme and a 20-step flip-angle ramp, aligned at the first
+      full-flip repetition because the opening point of a ramped train is a preparation pulse
+      rather than an imaging repetition.  Measured on white matter: the opening excursion is 4.01,
+      2.20 and 2.13 times the final value, and the repetitions needed to stay within 5% are 175,
+      167 and 175 -- both preparations roughly halve the excursion and neither shortens the
+      convergence.  The off-resonance response and its nulls near +/- 1/(2 TR) are measured, and
+      the continuous and interrupted-segmented acquisitions are compared line by line on a
+      single-tissue object.  **This is the layer that tests the claim the kernel does not make.**
+
+      `03` measures the gradient moments the kernel actually has and simulates a moving spin
+      against the canonical and flow-compensated variants, with a static control that fixes the
+      simulator's phase sign from a known non-zero zeroth moment before any velocity is read.  The
+      canonical slope agrees with 2*pi*M1 to 0.1%; the compensated one is flat.
 
 coverage_classification: null
 coverage_flags: [ARCHITECTURE_REVISIT_CANDIDATE]
 
 status: NEW_KERNEL
-traffic_light: APPROVED_FOR_IMPLEMENTATION
+traffic_light: GREEN      # bSSFP2DTR built and validated 2026-10-05, including the symmetric
+                          # realisation the bSSFP literature assumes -- see
+                          # validation.layers.done.  bSSFP3DTR is a separate change, tracked in
+                          # planned_public_realizations; Bieri-style between-excitations flow
+                          # compensation is an open question in `augmentations`, not a defect
+                          # in what ships.
 
 decision_summary: >
   The smallest reusable physical boundary whose correctness conditions cannot be separated is the
@@ -369,8 +522,12 @@ decision_summary: >
 
   The boundary follows from one test applied to four hypotheses- can this thing state a correctness
   condition it can also check?  The RF-to-RF repetition can -- zero net area per axis over its own
-  interval, echo at its declared TE -- and can check it on a single instance with no reference to
-  its neighbours.  A steady-state segment abstraction cannot- its claim is that the magnetisation
+  interval, echo at its declared TE -- stating it from its own configuration, with nothing needed
+  from a caller.  **Superseded 2026-10-05:** this previously added "and can check it on a single
+  instance with no reference to its neighbours", which the interval does not support.  The interval
+  ends inside the successor, so the *measurement* is on an adjacent pair; see
+  `boundary_hypotheses.compared[A].correctness_condition` for the compositional form that replaced
+  it.  A steady-state segment abstraction cannot- its claim is that the magnetisation
   has converged, which no waveform measurement reaches.  A balanced-requirement abstraction cannot
   be expressed at all.  So the kernel is the repetition, and everything the segment would have
   owned is policy that every witness and the domain source already place outside it.
@@ -394,22 +551,31 @@ decision_summary: >
   seams INSIDE one module, measured at constant amplitude across both; what it cannot do is carry
   one across the repetition boundary.
 
-  **That cost is the one thing a reviewer should decide before implementation starts.**  Accepting
-  it ships a correct, composable kernel that is a few per cent slower than a hand-written script.
-  Declining it waits for the capability C3 is about -- and the fact that bSSFP and velocity
-  encoding arrive at the same missing capability from opposite directions is the most useful
-  result of this scan.
+  **Superseded 2026-10-05.**  That cost was the open decision before implementation; it is settled.
+  Measured on the built module, the composable split costs 270-290 us per repetition, 3.8-4.7 % of
+  TR across four protocols, against the lumped realisation.  The split was chosen because it does
+  not assume the successor's selection-gradient geometry -- it balances against a neighbour with a
+  different slice thickness, pulse duration or readout bandwidth, and the lumped form would not.
+  The lumped form stays available at a known price.  No compiler change was made.  The observation
+  that bSSFP and velocity encoding arrive at the same missing capability from opposite directions
+  stands as a finding of this scan, and is not a reason to revisit the choice.
 
 open_questions:
   - >
-    Accept the 220 us per axis per repetition, or wait for a way to express a balanced requirement
-    across the boundary?  This is a product decision, not an evidence question, and it is the only
-    thing blocking implementation.
+    **ANSWERED 2026-10-05.**  Accept the per-repetition boundary cost, or wait for a way to express
+    a balanced requirement across it?  Accepted, at a measured 270-290 us per repetition and
+    3.8-4.7 % of TR.  What the cost buys is that no repetition is built against an assumption about
+    its successor's selection gradient.  Nothing blocks implementation, and `bSSFP2DTR` is built.
+    A protocol that cannot afford 4 % of TR is the evidence that would reopen it.
   - >
-    Should the kernel expose TE independently (R3) or derive TE = TR/2 (R1, R2)?  D1 says TE is
-    free with a contrast consequence, so exposing it is the faithful choice; deriving it is the
-    safer default.  Recommend exposing with TR/2 as the default and the T2-prime consequence
-    documented.
+    **ANSWERED 2026-10-05.**  Should the kernel expose TE independently (R3) or derive TE = TR/2
+    (R1, R2)?  Exposed, with `TR/2` as the default: `te_s=None` resolves to the shortest legal
+    *symmetric* repetition, which is deliberately unlike `GRE2DTR`, where `None` means the earliest
+    reachable echo.  `min_tr_s` reports the minimum of the symmetric realisation and `min_te_s` the
+    earlier asymmetric floor.  One wrinkle the implementation found: for a given readout geometry
+    the exact midpoint need not lie on the available timing lattice, so the default takes the
+    nearest symmetric realisation and `symmetry_residual_s` reports the signed amount achieved
+    rather than the declared TE being rounded to `TR/2`.
   - >
     Does GRE2DTR share anything with this kernel?  Both are "one repetition- excite, encode, read,
     rewind".  They differ in the balance condition and the phase progression -- spoiled GRE is RF
@@ -419,7 +585,7 @@ open_questions:
     its own pass rather than a side effect of this one.
 
 evidence_state:
-  human_review: NEEDED     # the 220 us trade is a decision, not a measurement
+  human_review: DONE       # the boundary-cost trade was reviewed and settled 2026-10-05
   experiment_design_review: DONE
   scanner_validation: NOT_REQUIRED_FOR_CLAIM
   note: >
@@ -441,41 +607,72 @@ evidence_state:
       revisit_trigger: >
         Two schemes turn out to share a correctness condition a caller keeps getting wrong.
     - what: >
-        Implementation of bSSFPTR itself.  **Deferred by review, 2026-09-22.**
+        Implementation of the kernel itself.  **Deferred by review 2026-09-22; `bSSFP2DTR`
+        implemented 2026-10-05.  `bSSFP3DTR` is a separate change.**
       why: >
-        The boundary finding is accepted -- RF-to-RF is the candidate kernel, steady-state
-        establishment sits above it, and segmentation and ordering are acquisition policy.  What
-        is NOT decided is whether to pay the measured 220 us per axis per repetition that forcing
-        gradients to terminate at a module boundary costs.  That cost converges directly with the
-        cross-boundary physical-requirement problem C3 studies, so deciding it now would be
-        deciding it with one of the two relevant cases in hand.
+        The boundary finding was accepted -- RF-to-RF is the kernel, steady-state establishment
+        sits above it, and segmentation and ordering are acquisition policy.  What was NOT
+        decided was whether to pay the measured 220 us per axis per repetition that forcing
+        gradients to terminate at a module boundary costs.
+
+        **Settled 2026-10-05 on the built module.**  The cheaper waveform is the *lumped* z
+        realisation: one trailing lobe of -(A_post + A_pre) and no leading winder, which is what
+        merging a repetition's trailing lobe with its successor's leading winder produces.
+        Against it the composable split costs 270-290 us per repetition, 3.8-4.7% of TR across
+        four protocols, and the cost is structural: the leading winder has to play before its own
+        RF centre and nothing else in the repetition may, because the readout prephaser and the
+        phase-encode blip act on magnetisation that does not exist until then.
+
+        The split was chosen, on that measurement and nothing broader.  It does not assume the
+        successor's selection-gradient geometry, and balances against a neighbour with a
+        different slice thickness, pulse duration or readout bandwidth -- below 1e-12 1/m on
+        compiled trains -- while the lumped form is built against an assumed successor and would
+        not.  Start-up ramps, segmentation and same-thickness multi-slice are NOT evidence for
+        this choice and are not offered as such: they change RF amplitude, acquisition policy
+        and RF frequency offset respectively, none of which touches the selection gradient, and
+        all three would work under the lumped form too.  The lumped form stays available at a
+        known price; a protocol that cannot afford 4% of TR is the evidence that would justify
+        it.  No compiler change was made, and the compiler learned nothing about bSSFP.
+
+        One thing the timing measurement separated out: balance composability is not timing
+        composability.  A neighbour differing in thickness or RF duration still balances but
+        moves the RF-centre offset, so stacking by block duration misses the declared TR by 120
+        and 500 us respectively.  `time_to_rf_center()` exists so that a composition can place
+        from the offsets instead; the kernel does not do the placement.
       revisit_trigger: >
-        C3 concludes.  Then either accept the cost and build the kernel, or build whatever C3
-        shows is needed to avoid it.
+        A protocol arrives that cannot afford the measured 4% of TR.  The lumped realisation is
+        then the small local change, and the price of taking it is in `why` above.
     - what: >
-        Whatever removes the 220 us -- and C3 has narrowed what that is.
+        Whatever removes the per-repetition boundary cost.  **ANSWERED 2026-10-05: it is (b).**
       why: >
-        Two readings, and they lead to different layers.
+        Two readings led to different layers.
         (a) If the rewinder of repetition n and the prephaser of n+1 could be fused with NO change
-        of physical semantics -- same integrated waveform, same RF and ADC timing, same
-        requirements, merely a more efficient continuous representation -- then this is a
-        candidate for a semantics-preserving optimisation in the COMPILER, and no bSSFP physics
-        need go anywhere near it.
+        of physical semantics -- same emitted G(t), same RF and ADC timing, only a different
+        pulseq representation and block partition -- then this would be a candidate for a
+        semantics-preserving optimisation in the COMPILER, and no bSSFP physics need go near it.
         (b) If the efficient form requires choosing the waveform with the balance target in view,
-        it is physics-aware joint design and belongs to a joint owner in the MODULE layer, which
-        is where C3's merged flow waveform lands.
-        **Which of the two this is has not been established**, and the distinction matters more
-        than the microseconds- (a) is a compiler optimisation available to every sequence, (b) is
-        a new kind of kernel.
+        it is physics-aware joint design and belongs to a joint owner in the MODULE layer.
+
+        **It is (b).**  A minimal reproducer settled it before the module was written: two abutting
+        same-polarity trapezoids compile to a waveform that ramps to zero between them, and
+        replacing the pair with one lobe of twice the area preserves M0 to 2e-13 but changes M1 by
+        16% and the duration by 270 us.  Emitted `G(t)` changes, so it is physical redesign and not
+        representation optimisation.  The criterion used is deliberately NOT "preserves every
+        declared requirement", because that would license the compiler to reason that an undeclared
+        M1 is free to change -- an MRI-physics judgement the compiler does not make.
+
+        So the cheaper form lives in the Module layer, where it is the lumped z realisation
+        described in the entry above, and it was not taken.  No compiler change was made.
       revisit_trigger: >
-        Phase E decides the ownership question.  **Do not recover the 220 us by teaching the
-        compiler about bSSFP** -- that would be (b) implemented as (a).
+        **Do not recover the cost by teaching the compiler about bSSFP** -- that would be (b)
+        implemented as (a).  A general representation-only optimisation, one that leaves emitted
+        `G(t)` and RF/ADC timing untouched, is a separate proposal with its own evidence.
     - what: Banding, CISS and multi-acquisition phase cycling.
       why: >
         D1 places them above the repetition- two acquisitions separately reconstructed and
         combined.  Acquisition and reconstruction policy.
       revisit_trigger: A candidate is scanned whose subject is phase-cycle combination.
-    - what: Whether GRE2DTR and bSSFPTR share a repetition skeleton.
+    - what: Whether GRE2DTR and the bSSFP kernels share a repetition skeleton.
       why: >
         Table 14.2 factorises gradient-echo sequences into waveform class x RF train class, which
         suggests they do.  Refactoring a shipped kernel on the strength of a table is not

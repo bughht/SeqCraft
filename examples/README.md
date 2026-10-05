@@ -76,6 +76,25 @@ Both files in the second pair are slab-selective, and `gre_3d_slab_combined.seq`
 physics as `01`'s `gre_3d_slab.seq` — the production combined-z path. It is written separately
 only so the comparison has both halves at one common TR.
 
+## `bssfp_2d/`
+
+| | |
+|---|---|
+| [`bssfp_2d/01_build.ipynb`](bssfp_2d/01_build.ipynb) | A complete 2D balanced-SSFP acquisition out of `sc.modules.bSSFP2DTR`: zero net gradient area on every axis between consecutive RF effective centres, symmetric timing at `TE ≈ TR/2`, and the **symmetric gradient realisation** behind it — `M1z` zero over the interval, `M1x` constant across the table, `M1y` line-dependent, which is the structure the bSSFP literature assumes and which `M0 = 0` alone does not give. Then a 20-step start-up ramp and an interrupted four-segment acquisition as ordinary loops. **Needs nothing but `seqcraft`.** |
+| [`bssfp_2d/02_simulate_and_reconstruct.ipynb`](bssfp_2d/02_simulate_and_reconstruct.ipynb) | Where a balanced *waveform* stops and a *steady state* begins. Single voxels with every repetition sampled, comparing no preparation against `α/2 – TR/2` and a 20-step flip-angle ramp, aligned at the first full-flip repetition; the off-resonance response and its nulls near ±1/(2 TR); then the continuous and interrupted-segmented acquisitions reconstructed and compared line by line on a single-tissue object, with the measured transient compared against Scheffler's analytic decay rate. **Needs `seqcraft[sim]`**; about 4 minutes. |
+| [`bssfp_2d/03_flow_and_motion.ipynb`](bssfp_2d/03_flow_and_motion.ipynb) | **Why conventional balanced SSFP often tolerates ordinary flow, and where that breaks down.** Built on one progression: a single spin tells you the *phase* a gradient moment produces, a voxel of spins tells you whether that phase costs *magnitude*, and a train of lines tells you whether the image is *consistent*. A common velocity can rotate voxel phase without reducing magnitude, while intravoxel phase dispersion can cause cancellation. Then Bieri's per-TR increment and the view-order dependence, the failure modes including outflow, what this means for bSSFP angiography — bright blood from `T2/T1` rather than inflow — and only then explicit compensation and which endpoint condition each kind satisfies. **Needs `seqcraft[sim]`**; about half a minute. |
+
+`01` teaches the repetition: what balance is, where the timing origin is, and how start-up and
+segmentation are composed around it. `02` is about the magnetisation the train drives, and `03`
+about what a *moving* spin sees — three questions that are easier apart than together.
+
+`bssfp_2d/seq/` holds the two acquisitions `01` writes. The probes `02` and `03` build — single
+lines read hundreds of times, a preparation pulse sampled on its own, one view order against
+another — go in `bssfp_2d/seq/diagnostics/` and are named for what they measure. **None of them
+is a flow-compensated bSSFP sequence**: the only compensated variant among them nulls the first
+moment at the echo, which is a different condition from the between-excitations one `03` Part C
+describes and which is not implemented.
+
 ## `se_2d/` and `fse_2d/`
 
 | | |
