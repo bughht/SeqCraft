@@ -35,6 +35,39 @@ these three levels — §5 of `findings.md` and trap (2) in `candidate.yaml` —
 needs reconciling before the tests are written. That reconciliation was anticipated; it turned
 out not to be needed.
 
+### 1.1a What the default argument actually does
+
+`TE = TR/2` is not only the conceptual canonical case. It is the API behaviour, and it is
+**deliberately unlike the GRE-style reading of `None`**:
+
+```text
+te_s=None, tr_s=None        choose the shortest legal SYMMETRIC repetition, then TE = TR/2
+te_s=None, tr_s=explicit    TE = TR/2
+te_s=explicit               the caller is asking for an asymmetric-TE realisation;
+                            solve around that TE and keep RF-to-RF balance
+```
+
+In `GRE2DTR`, `te_s=None` means *the earliest echo this protocol can reach*. Here it does not.
+`tr_s=None` still asks for the shortest legal repetition, but the thing being shortened is the
+**symmetric** one, so the minimum `bSSFP2DTR` reports is the shortest TR whose half is a
+reachable TE — not the shortest TR that can place an echo anywhere. Writing the default as
+"minimum TE" would silently ship an asymmetric acquisition to every caller who passed nothing,
+and asymmetry is a choice with a contrast consequence.
+
+The exception is scoped to the trajectory, not to encoding in general:
+
+```text
+canonical symmetric readout / trajectory      TE = TR/2 by default
+intentional asymmetric acquisition            TE may differ from TR/2
+```
+
+An intentionally asymmetric acquisition is one whose *readout or trajectory* is asymmetric:
+readout-direction partial Fourier (partial echo), an explicitly placed asymmetric echo, or a
+UTE-like trajectory. `CartesianLine.partial_fourier` is readout-direction partial echo, so it
+is one of these. **Phase-encode-direction partial Fourier is not**: it changes which `ky` lines
+are acquired and leaves the echo where it was, so it does not by itself call for an asymmetric
+TE. Nothing in the module should couple the two.
+
 ### 1.2 Two constraint sets, not one
 
 This is the structural difference from `GRE2DTR`, and it drives everything below.
@@ -45,12 +78,34 @@ balance constraints  over [RF centre -> next RF centre]:  M0 = 0 on x, y and z
 ```
 
 A spoiled gradient echo has only the first set. The second set is what `bSSFP2DTR` adds, and
-it reaches **before** the echo as well as after it: the half of the slice-selection lobe that
-plays before the RF centre contributes to the balance condition even though it contributes
-nothing to the echo condition, because the transverse magnetisation it would act on does not
-exist yet. That is why a balanced repetition carries a slice winder on the leading side as
-well as the trailing side, and it is the cleanest available demonstration that the two
-constraint sets are genuinely different things.
+it does **not** share an endpoint with the first at either end. For repetition `n` the balance
+interval runs from RF centre `n` to RF centre `n+1`, so what it contains is:
+
+```text
+from   RF centre n        the post-centre half of THIS repetition's selection gradient
+then                      every gradient played during the repetition
+to     RF centre n+1      the pre-centre half of the NEXT repetition's selection gradient
+```
+
+The pre-centre half of *this* repetition's selection gradient is outside the interval: it
+belongs to the interval that ended at RF centre `n`, which is repetition `n-1`'s.
+
+That is why a balanced repetition carries a slice winder on the leading side as well as the
+trailing side. The leading winder is there to close the *previous* repetition's balance, not
+this one's, and it contributes nothing to this repetition's echo condition either, because the
+transverse magnetisation it would act on does not exist until the RF centre. One gradient
+lobe, serving a constraint that belongs to a neighbouring interval and to no pathway of its
+own, is the clearest demonstration available that the two constraint sets are different
+things.
+
+**Consequence for ownership.** A single `bSSFP2DTR` instance can still state its own
+correctness condition, because the next repetition's leading half is built by the same instance
+and therefore known to it. What it cannot do is guarantee balance against a neighbour built by
+something else: a neighbour with a different slice thickness, pulse duration or selection
+gradient breaks the interval, and the module should say so in its docstring rather than imply
+a guarantee it cannot hold. A differing *flip angle* does not break it — the flip angle is
+carried by the RF amplitude, not by the selection gradient — which is why a start-up ramp is
+safe and is worth testing.
 
 `PhysicalDesignScope` expresses the first set (it designs a window and states `k_at_echo`).
 It does not express the second. **Do not extend it in this pull request.** Realise the balance
@@ -121,16 +176,25 @@ balance condition true for a structural reason that can be stated in one sentenc
 
 | axis | leading side | at the echo | trailing side |
 |---|---|---|---|
-| `z` | winder, closing the balance for the selection lobe's pre-origin half | `k_z = 0` | rephaser, closing the balance for the post-origin half |
+| `z` | winder, closing the *previous* interval's balance for this selection lobe's pre-centre half | `k_z = 0` | rephaser, closing *this* interval's balance for the post-centre half and for the next lobe's pre-centre half |
 | `x` | prephaser, cancelling the readout's pre-echo area | `k_x = 0` | area equal to `area_after_echo_per_m`, with the opposite sign |
 | `y` | blip to the requested `k_y` | `k_y` as requested | rewind of the same blip |
 
+Read the z row as the three pieces an emitted repetition plays, not as three terms of one
+sum: the leading winder belongs to the balance interval that **ended** at this RF centre, and
+the trailing rephaser has to cancel this lobe's post-centre half *plus* the next lobe's
+pre-centre half. For a train of identical repetitions those two halves are equal, so the
+trailing rephaser carries twice what a spoiled gradient echo's rephaser carries, and the
+leading winder of repetition `n+1` is what the trailing rephaser of `n` would have been if the
+interval stopped at the block edge. The arithmetic is the same either way; the ownership is
+not, and it is the ownership that the test in §6 has to measure.
+
 `CartesianLine` already reports `area_to_echo_per_m`, `area_after_echo_per_m` and
 `prephaser_area_per_m`; `Excitation` already reports `rephaser_area_per_m` and
-`rephaser_duration_s`. The leading z winder is the one quantity no existing leaf reports,
-because no shipped module has needed it: for a symmetric pulse it is the same area as the
-rephaser, but **derive it from the selection lobe rather than assuming the pulse is
-symmetric**, and say in the docstring which it is.
+`rephaser_duration_s`. The pre-centre half of the selection lobe is the one quantity no
+existing leaf reports, because no shipped module has needed it: for a symmetric pulse it is
+the same area as the rephaser, but **derive it from the selection lobe rather than assuming
+the pulse is symmetric**, and say in the docstring which it is.
 
 The asymmetric-TE case is where "mirror the head" stops being enough and the trailing side has
 to be solved rather than copied. Build the symmetric case first and the asymmetric case
@@ -139,25 +203,39 @@ against.
 
 ---
 
-## 4. The boundary question, settled from emitted waveforms
+## 4. The boundary cost, and which layer may pay it
 
 `candidate.yaml` defers implementation pending a decision about the cost of forcing gradients
 to terminate at a module boundary — recorded there as 220 µs per axis per repetition for that
 protocol. This pull request settles it, from what the compiler emits rather than from the
 recorded wording.
 
-### 4.1 The two readings to separate
+### 4.1 Where the line between the layers is
 
 ```text
-A  the efficient waveform shape depends on solving the bSSFP timing problem jointly
-   -> joint physical realisation, and it belongs in the kernel / Module layer
+compiler representation optimisation
+    the emitted physical G(t) is UNCHANGED
+    RF and ADC timing are UNCHANGED
+    only the pulseq representation and the block partition change
 
-B  two already-decided physical waveforms can be fused with no change to moments, to RF or
-   ADC timing, to declared requirements or to semantics
-   -> a candidate for a general, semantics-preserving compiler optimisation
+physical redesign / joint realisation
+    anything else -- gradient shape, duration, M1, any higher moment, any other
+    physical property of the waveform
 ```
 
-Nothing in the compiler is to be taught anything called "bSSFP" under either reading.
+The test is the emitted waveform, not the declared requirements. "This rewrite preserves every
+requirement the current module happened to declare" is **not** a sufficient criterion, because
+it licenses the compiler to reason as follows:
+
+```text
+M1 is undeclared here, therefore changing M1 is harmless
+```
+
+That is an MRI-physics judgement about which moments matter for a pathway, and the compiler is
+the layer that does not make those. A rewrite that changes `G(t)` is physical redesign whether
+or not anyone wrote down a requirement it would have violated.
+
+Nothing in the compiler is to be taught anything called "bSSFP" under any outcome below.
 
 ### 4.2 What is already measured
 
@@ -177,31 +255,35 @@ M1        1.72      -> 1.45       changed by 16%
 duration  1720 µs   -> 1450 µs    270 µs shorter
 ```
 
-So on this evidence the fusion is not a substitution that leaves semantics alone: it changes
-the first moment about the origin, and it changes the duration of the region it replaces. It
-would qualify as reading B only on an axis with no declared first-moment requirement, and only
-where the shortened duration is absorbed somewhere deliberate. That is a much narrower
-optimisation than "fuse adjacent same-polarity lobes", and it is narrow for a reason that has
-nothing to do with bSSFP.
+`G(t)` changes, the duration changes and `M1` changes. By §4.1 that settles it: **this is
+physical redesign, not representation optimisation.** The minimal reproducer has rejected a
+general gradient-fusion pass in the compiler, and this pull request is not to revisit that.
 
 The 270 µs here and the 220 µs in the record are the same effect at different areas and
 limits; neither number is a property of the module.
 
 ### 4.3 What this pull request must do
 
-Measure the same thing on the real composition rather than on a two-lobe probe: build the
-repetition, compile it, and report per axis how much of the RF-to-RF interval is spent ramping
-to and from zero at the places where the balance structure puts two same-polarity lobes next
-to each other. Then classify, in the pull request and in the record:
+The remaining question is not *which layer* — §4.2 answered that — but what this module does
+about a cost that is now known to live in its own layer. Measure it on the real composition
+rather than on a two-lobe probe: build the repetition, compile it, and report per axis how much
+of the RF-to-RF interval is spent ramping to and from zero where the balance structure puts two
+same-polarity lobes next to each other. Then choose, in the pull request and in the record:
 
-- if the shape that removes the cost can only be found by solving the bSSFP timing problem as
-  a whole, it is reading A, it stays in this module, and the compiler is not touched;
-- if it is a local rewrite that provably preserves every declared requirement, it is reading
-  B, and it becomes a **separately scoped** proposal with its own evidence — not part of this
-  pull request.
+```text
+A  jointly realise the more efficient balanced waveform inside the Module / kernel layer,
+   where changing G(t) is a decision this layer is allowed to make
 
-Ship `bSSFP2DTR` with the honest cost either way. A correct balanced repetition that pays for
-its ramps is shippable; an uncosted claim about where the optimisation belongs is not.
+C  keep the composable zero-at-the-boundary realisation, and quantify and accept the TR cost
+```
+
+**Both are valid outcomes, and C is not a failure.** The composable realisation is the one that
+lets every leaf keep its own correctness condition, and paying measured microseconds for that
+may well be worth it. Do not delay shipping a correct kernel
+because a hand-written waveform would be shorter; ship the measured cost alongside it, and let
+a protocol that cannot afford it be the evidence for A.
+
+Under neither outcome does the compiler learn anything candidate-specific.
 
 ---
 
@@ -229,7 +311,7 @@ reports its own correctness is checking its arithmetic, not its output.
 
 | # | claim | how it is measured |
 |---|---|---|
-| 1 | balance | `M0x`, `M0y`, `M0z` over the full RF-to-RF interval are zero |
+| 1 | balance | build at least two consecutive repetitions, compile them, and integrate `Gx`, `Gy`, `Gz` from RF effective centre `n` to RF effective centre `n+1`: `M0x = M0y = M0z = 0` |
 | 2 | encoding | `k_y` at the ADC sample at the echo is the requested value |
 | 3 | echo placement | the echo falls at the declared TE from the RF effective centre |
 | 4 | default | with no `te_s`, the declared TE equals `TR/2` |
@@ -238,15 +320,37 @@ reports its own correctness is checking its arithmetic, not its output.
 | 7 | receiver phase | the ADC phase offset matches the RF phase, repetition by repetition |
 | 8 | minimum timing | `min_te_s` and `min_tr_s` are achievable, and a shorter request is refused with the achievable value named |
 | 9 | hardware | amplitudes and slews are within `opts`, and every event lands on its raster |
-| 10 | balance is not steady state | claim 1 holds on a single repetition built in isolation, with no train around it |
+| 10 | balance is not steady state | claim 1 holds on the **first** RF-to-RF interval of a two-repetition sequence, where no magnetisation is anywhere near steady state |
+| 11 | balance across unlike neighbours | claim 1 holds for a pair with different `ky`, and for a pair whose flip angles differ as a start-up ramp's do |
 
 Claim 10 is not redundant with claim 1. It is the one that makes the distinction in §1.3
-checkable rather than merely stated.
+checkable rather than merely stated: balance is a property the waveform has from the first
+interval, before any train has had time to establish anything.
+
+Claim 11 is what keeps claim 1 from being satisfied by an accident of symmetry. Measuring a
+pair of identical repetitions cannot distinguish a module that balances the physical RF-to-RF
+interval from one that merely zeroes each `LogicBlock` edge to edge, because for identical
+neighbours the two agree. They stop agreeing when the neighbours differ, so the pair must
+differ:
+
+```text
+different ky          distinguishes a y rewind that belongs to the repetition that encoded
+                      it from one that merely returns the block edge to zero
+start-up flip angles  checks that z balance survives a neighbour with a different RF
+                      amplitude, which it should, because the flip angle is carried by the
+                      RF and not by Gz
+```
+
+Build `N + 1` repetitions and measure the first `N` intervals; the last repetition has no
+successor and therefore no interval of its own. **The test measures the physical RF-to-RF
+definition, not a module-container boundary that happens to resemble it.** A test written
+against the block edges would pass on a module that is wrong in exactly the way §1.2
+describes.
 
 ### Layer 3
 
 The simulation notebook shows a complete 2D acquisition and must distinguish, in its prose and
-in what it plots, between *the waveform is balanced* (claims 1–10, true of each repetition from
+in what it plots, between *the waveform is balanced* (claims 1–11, true of each interval from
 the first) and *steady state has been established* (true only after enough repetitions, and a
 property of the train and the tissue). Showing the approach to steady state is the honest way
 to make the second visible; asserting it from a balanced waveform is the error this notebook
@@ -260,7 +364,7 @@ exists to prevent.
 |---|---|
 | `src/seqcraft/modules/kernel/bssfp_2d_tr.py` | the module |
 | `src/seqcraft/modules/__init__.py` | export, `__all__`, and the folder-map comment |
-| `tests/modules/test_bssfp_2d_tr.py` | claims 1–10 |
+| `tests/modules/test_bssfp_2d_tr.py` | claims 1–11 |
 | `docs/api_reference.md` | the class entry, and the rows in the shipped-module tables |
 | `examples/bssfp_2d/01_build.ipynb` | continuous acquisition first, segmentation second |
 | `examples/bssfp_2d/02_simulate_and_reconstruct.ipynb` | Layer 3 |
@@ -268,7 +372,7 @@ exists to prevent.
 | `examples/README.md`, `README.md` | the example is listed where the others are |
 | `tools/run_notebook_smoke.py` | the notebooks run in CI |
 | `CHANGELOG.md` | what shipped |
-| `tools/module_mining/plans/bssfp/candidate.yaml` | the deferral closed, and the §4 classification recorded |
+| `tools/module_mining/plans/bssfp/candidate.yaml` | the deferral closed, and the §4.3 outcome recorded |
 
 Notebooks follow `docs/writing_examples.md`; the module and its docstring follow
 `docs/writing_a_module.md`, including the attribution rule. Each notebook is written in the
@@ -281,20 +385,26 @@ JSON encoding convention its own file already uses.
 1. Name the class and the file, and get an empty module importing and exported.
 2. Build the symmetric case: z winder, selection, rephaser; x prephaser, readout, balance
    lobe; y blip and rewind. `TE = TR/2`.
-3. Write claims 1, 2, 3 and 4 against the compiled output. Nothing else proceeds until these
-   pass.
-4. Add explicit `te_s`, solve the asymmetric trailing side, and write claims 5 and 10.
-5. Add the RF and receiver phase progression, and write claims 6 and 7.
-6. Add `min_te_s`, `min_tr_s` and the refusals, and write claims 8 and 9.
-7. Run the §4.3 measurement on the finished composition, classify A or B, and write both into
-   the pull request and the record.
-8. Write `01_build.ipynb`: continuous first, segmented second, with the §2.3 loop.
-9. Write `02_simulate_and_reconstruct.ipynb` with the §6 Layer 3 distinction.
-10. Register the example, update `docs/api_reference.md` and `CHANGELOG.md`, and close the
+3. Write claims 1, 2, 3 and 4 against **two consecutive compiled repetitions**, measured RF
+   centre to RF centre. Nothing else proceeds until these pass, and nothing in the test may
+   use a `LogicBlock` edge as an interval endpoint.
+4. Write claims 10 and 11 — the two-repetition pair, the differing `ky`, the start-up flip
+   angles — before adding any further parameter. These are the claims that catch the §1.2
+   error, so they are worth more early than late.
+5. Resolve `te_s=None` / `tr_s=None` to the shortest legal **symmetric** repetition, add
+   explicit `te_s`, solve the asymmetric trailing side, and write claim 5.
+6. Add the RF and receiver phase progression, and write claims 6 and 7.
+7. Add `min_te_s`, `min_tr_s` and the refusals, and write claims 8 and 9. The minimum TR is
+   the shortest symmetric one, per §1.1a.
+8. Run the §4.3 measurement on the finished composition, choose A or C, and write the number
+   and the choice into the pull request and the record.
+9. Write `01_build.ipynb`: continuous first, segmented second, with the §2.3 loop.
+10. Write `02_simulate_and_reconstruct.ipynb` with the §6 Layer 3 distinction.
+11. Register the example, update `docs/api_reference.md` and `CHANGELOG.md`, and close the
     deferral in `candidate.yaml`.
 
-Step 7 is a gate, not a postscript: if it comes out as reading B, the optimisation is still
-not in this pull request, but the pull request has to say so and say why.
+Step 8 is a gate on the *record*, not on shipping: outcome C ships the same module with the
+cost written down. What may not happen is shipping with the cost unmeasured.
 
 ---
 
@@ -308,3 +418,6 @@ not in this pull request, but the pull request has to say so and say why.
 - **Whether `GRE2DTR` and `bSSFP2DTR` share a repetition skeleton.** Already an open question
   in `candidate.yaml`, and refactoring a shipped kernel on the strength of this one is not
   warranted.
+- **Whether a protocol exists that cannot afford outcome C.** That protocol, not a shorter
+  hand-written waveform, is the evidence that would justify outcome A. If §4.3 comes out as C,
+  this becomes the revisit trigger.

@@ -147,7 +147,7 @@ dimension-agnosticism of the invariants does not support.*
 
 | | can it state a condition it can check? | needs from outside | verdict |
 |---|---|---|---|
-| **A** RF-to-RF kernel | **yes, on one instance** | repetition index, encodes, flip angle | **the kernel** |
+| **A** RF-to-RF kernel | **yes, from its own parameters** | repetition index, encodes, flip angle | **the kernel** |
 | **B** balanced requirement | stateable, not checkable alone | every other event on the axis, budget, limits | **not expressible today** |
 | **C** steady-state segment | **no** — its claim is about magnetisation | T1, T2, a simulation | policy, not an abstraction |
 | **D** layered A + composition | yes, as A | as A | **selected** |

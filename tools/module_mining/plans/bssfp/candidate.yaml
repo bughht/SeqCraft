@@ -8,10 +8,15 @@
 #   python tools/module_mining/schema.py tools/module_mining/plans/bssfp/candidate.yaml
 
 id: balanced-ssfp
-name: bSSFP2DTR, bSSFP3DTR   # the kernels of a layered answer; see boundary_hypotheses.
-                             # One per dimension, decided 2026-10-05: see the consequence of
-                             # the segmentation finding for why shared invariants are not
-                             # sufficient reason for one public class.
+name: balanced SSFP repetition   # the physical unit; see boundary_hypotheses
+
+# The record names ONE capability and ONE boundary.  How many public classes realise it is a
+# separate decision, taken 2026-10-05: the RF-to-RF unit is shared physics, and 2D and 3D get
+# separate public realisations because they realise that unit differently on the RF and on `Gz`.
+# Put a second name in `name:` and the record starts asserting an API shape it did not scan for.
+planned_public_realizations:
+  - bSSFP2DTR
+  - bSSFP3DTR
 
 capability:
   family: kernel
@@ -225,18 +230,30 @@ boundary_hypotheses:
     composition, and composition is where every witness and the domain source put steady-state
     establishment and ordering.  The selection follows from those conditions and not from the class name -- and
     the name `bSSFPTR` is kept below only because the unit it denotes turned out to be the right
-    one.  It names the *unit of design*, not a single public class: the public API is `bSSFP2DTR`
-    and `bSSFP3DTR` (2026-10-05), because 2D and 3D realise that unit differently on the RF and on
-    `Gz`.  Shared private machinery, if the second implementation shows genuine duplication, is a
-    separate question from how many public classes there are.
+    one.  It names the *unit of design*, not a public class.
+
+    The RF-to-RF unit is **shared physics**: 2D and 3D agree on the balance interval, on zero net
+    area per axis over it, on the RF and receiver phase progression, on TE and TR semantics, and
+    on steady state living above the repetition.  They get **separate public realisations**
+    (`planned_public_realizations`, 2026-10-05) because they realise that shared unit differently
+    -- slice-selective against slab-selective or non-selective RF, and `Gz` carrying selection +
+    rephasing + balance against slab role + partition encoding + balance.  Shared private
+    machinery, if the second implementation shows genuine duplication, is a separate question
+    again from how many public classes there are.
   compared:
     - id: A
       name: RF-to-RF balanced repetition kernel (the bSSFP*TR unit)
       owns: balanced moments over its own interval, TE placement, RF phase, its own minimum TR
       can_determine: all of the above from its own parameters, given the repetition index
       correctness_condition: >
-        "The net gradient area on each axis over my duration is zero, and my echo is at my
-        declared TE."  Fully checkable on ONE instance, with no reference to neighbours.
+        "The net gradient area on each axis from my RF centre to the next RF centre is zero, and
+        my echo is at my declared TE."  Checkable on one instance in the sense that matters -- the
+        module needs nothing from a caller to state it -- but the interval ends inside the NEXT
+        repetition, so the measurement is made on two adjacent emitted repetitions, and the
+        guarantee holds against a neighbour this module built.  A neighbour with a different
+        selection gradient is outside what one instance can promise.  Corrected 2026-10-05; this
+        previously read "Fully checkable on ONE instance, with no reference to neighbours", which
+        the interval does not support.
       needs_from_outside: repetition index, encode values, flip angle
       what_becomes_awkward: >
         **Measured, not asserted.**  A module's events cannot continue into the next instance of
