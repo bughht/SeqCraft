@@ -16,26 +16,37 @@ Every push to `main` and every pull request runs five gates:
 2. `types`: strict mypy checking of the pure-arithmetic core on Python 3.11.
 3. `checks`: Linux with Python 3.11 -- pytest with coverage, the source doctests, the API
    reference and the prose attribution.
-4. `test`: pytest on Linux with Python 3.12 and on Windows with Python 3.11 and 3.12.
+4. `test`: pytest on Linux with Python 3.10 and 3.12, and on Windows with Python 3.11 and 3.12.
 5. `examples`: isolated execution of the **build-only** notebooks on Linux with Python 3.11 --
    the list in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py), which is
    `01_getting_started.ipynb` and every example directory's `01_build.ipynb`.  The `02` and `03`
    simulation notebooks are deliberately absent: they need MRzeroCore, torch and sigpy plus a
    phantom download, which is the lab tier.
 
-**The package is still tested on four OS/Python combinations**, one each:
+**The package is tested on five OS/Python combinations**, one each:
 
 ```text
+Linux   3.10   in `test`     <- the declared minimum
 Linux   3.11   in `checks`
 Linux   3.12   in `test`
 Windows 3.11   in `test`
 Windows 3.12   in `test`
 ```
 
-Linux/3.11 did not disappear from the compatibility set; it is the `checks` lane, which runs the
-same suite and adds the four once-only validations to it.  Those four -- coverage, doctests, the
-API reference and the prose attribution -- are things we **choose** to validate once, on the
-primary environment, rather than on every lane.  That is a de-duplication decision rather than a
+Python 3.10 is the `requires-python` floor in `pyproject.toml`, so **CI runs the minimum version
+we publicly claim to support.** It is a compatibility lane like any other: it runs the same fast
+suite and does not carry the once-only validations.
+
+That lane needs NumPy pinned per interpreter, because NumPy 2.3.0 raised its own floor to Python
+3.11 while ours stayed at 3.10. `ci/constraints.txt` therefore selects NumPy 2.2.6 on 3.10 and
+2.4.6 on 3.11 and newer, through environment markers. The comment beside them explains what a
+future bump must preserve: drop the marked row and the 3.10 lane silently resolves NumPy from the
+`numpy>=1.24` floor instead of failing, so CI would test a version nobody chose.
+
+Linux/3.11 is the `checks` lane, which runs the same suite and adds the four once-only
+validations to it.  Those four -- coverage, doctests, the API reference and the prose
+attribution -- are things we **choose** to validate once, on the primary environment, rather
+than on every lane.  That is a de-duplication decision rather than a
 claim that they could never behave differently elsewhere; the package's OS and Python
 compatibility stays covered by the pytest lanes.
 

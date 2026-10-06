@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased — the declared minimum Python is now the tested minimum Python
+
+`pyproject.toml` declared `requires-python = '>=3.10'` while CI ran 3.11 and 3.12 only, and
+`ci/constraints.txt` pinned `numpy==2.4.6`, whose own floor is 3.11. The public compatibility
+claim was therefore one the project's own environment could not install, let alone verify.
+
+**The claim turned out to be true; only the constraint file contradicted it.** Nothing in
+SeqCraft or in a required runtime dependency needs 3.11: the pypulseq fork asks for `>=3.8` and
+`numpy>=1.19.5`, and every pinned tool in `ci/constraints.txt` — pytest, pytest-cov,
+pytest-xdist, ruff, mypy, nbclient, nbformat, ipykernel — already supports 3.10 at the exact
+version pinned. The optional extras installed by the compatibility lane resolve there too;
+`matplotlib` selects an older line on 3.10 than on 3.12, which is what a floor-only specifier is
+for. So the blocker was CI-only, and no source change, version check or skip was added.
+
+NumPy is now pinned per interpreter through environment markers — 2.2.6 below 3.11, 2.4.6 at and
+above it. 2.2.6 is the last NumPy supporting 3.10; 2.3.0 raised the floor. The two markers must
+stay mutually exclusive and exhaustive, because dropping the marked row does not fail the 3.10
+lane, it silently resolves NumPy from the `numpy>=1.24` floor instead.
+
+A Linux 3.10 lane joins the `test` matrix, through `include` rather than by widening the version
+list, which would also have built a Windows 3.10 lane. It runs the same fast suite as the other
+compatibility lanes and does not take on the once-only validations. Five package-suite runs now
+cover 3.10/3.11/3.12 on Linux and 3.11/3.12 on Windows; whether that density is worth its
+runner-minutes is a separate question from whether the support contract is honest.
+
 ## Unreleased — a balanced repetition, and what it costs to make one composable
 
 `sc.modules.bSSFP2DTR` builds one balanced repetition of a 2D Cartesian bSSFP acquisition.

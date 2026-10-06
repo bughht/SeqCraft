@@ -6,7 +6,7 @@ on:
   pull_request:
 
 # One run per pull request.  A review push supersedes the commit before it, and this run asks
-# for seven hosted runners, so without this a burst of review commits keeps several obsolete
+# for eight hosted runners, so without this a burst of review commits keeps several obsolete
 # commits occupying the pool while the one under review waits behind them.
 #
 # Keyed on the pull request NUMBER rather than on the branch name: a branch name is unique only
@@ -32,6 +32,8 @@ concurrency:
 #                behaviour -- the doctests and the API-reference blocks are executable code.  The
 #                package's OS and Python compatibility stays covered by the pytest lanes below.
 #   test         the compatibility matrix.  Does the suite pass on this OS and this Python?
+#                It runs pytest only; the once-only checks above are not repeated here, and a
+#                new lane does not acquire them merely by being new.
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -118,6 +120,15 @@ jobs:
         exclude:
           - os: ubuntu-latest
             python: '3.11'
+        # 3.10 is the minimum `requires-python` in pyproject.toml, so it is the one version whose
+        # support we assert publicly and must therefore actually run.  It is added through
+        # `include` rather than by widening `python` above, which would also create a Windows 3.10
+        # lane nobody asked for: neither of this entry's keys can merge into an existing
+        # combination without overwriting an original matrix value, so Actions appends it as a new
+        # combination instead.  NumPy is pinned separately for it -- see ci/constraints.txt.
+        include:
+          - os: ubuntu-latest
+            python: '3.10'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
