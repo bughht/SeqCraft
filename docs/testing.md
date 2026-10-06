@@ -12,12 +12,12 @@ the incompatible PyPI wheel, so the immutable source URL is part of the dependen
 
 Every push to `main` and every pull request runs five gates:
 
-1. `lint`: the established Ruff correctness baseline on Python 3.12.
-2. `types`: strict mypy checking of the pure-arithmetic core, hosted on Python 3.12.
-3. `checks`: Linux with Python 3.12 -- pytest with coverage, the source doctests, the API
+1. `lint`: the established Ruff correctness baseline on Python 3.14.
+2. `types`: strict mypy checking of the pure-arithmetic core, hosted on Python 3.14.
+3. `checks`: Linux with Python 3.14 -- pytest with coverage, the source doctests, the API
    reference and the prose attribution.
-4. `test`: pytest on Linux with Python 3.10 and on Windows with Python 3.12.
-5. `examples`: isolated execution of the **build-only** notebooks on Linux with Python 3.12 --
+4. `test`: pytest on Linux with Python 3.10 and on Windows with Python 3.14.
+5. `examples`: isolated execution of the **build-only** notebooks on Linux with Python 3.14 --
    the list in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py), which is
    `01_getting_started.ipynb` and every example directory's `01_build.ipynb`.  The `02` and `03`
    simulation notebooks are deliberately absent: they need MRzeroCore, torch and sigpy plus a
@@ -29,28 +29,38 @@ The package suite runs in **three environments**:
 
 ```text
 Linux   3.10   in `test`      minimum supported Python
-Linux   3.12   in `checks`    primary environment
-Windows 3.12   in `test`      OS portability, at the primary Python
+Linux   3.14   in `checks`    current primary Python
+Windows 3.14   in `test`      OS portability, at the primary Python
 ```
 
-The coverage is deliberately **representative rather than Cartesian**. Each lane differs from the
-primary environment in exactly one dimension, which is what makes a failure attributable:
+This is **representative compatibility coverage, not an exhaustive product** of the supported
+dimensions. Each lane changes one primary compatibility dimension relative to the primary
+environment, which makes a failure easier to localise:
 
 ```text
-Linux 3.10  <-> Linux 3.12       Python varies, OS held     -- the supported version range
-Linux 3.12  <-> Windows 3.12     OS varies, Python held     -- OS portability
+Linux 3.10  <-> Linux 3.14       Python differs, OS held    -- the supported version endpoints
+Linux 3.14  <-> Windows 3.14     OS differs, Python held    -- OS portability
 ```
 
+"Easier to localise" is the honest claim rather than "attributable". The 3.10 lane is a whole
+**environment**, not only an interpreter: 3.10 also resolves older NumPy and matplotlib, so a
+failure there narrows the search without proving the interpreter caused it.
+
 **A combination SeqCraft supports is not required to appear here.** `requires-python` is `>=3.10`
-and the package is expected to work on 3.11 and on either OS; CI runs the subset that would
-localise a break, not the product of every supported dimension. Windows 3.11, for instance, is
-supported but not run: it differs from both of its neighbours in two dimensions at once, so a
-whole suite execution there bought little independent information.
+with no upper bound; 3.11, 3.12 and 3.13 are supported and simply are not executed. Windows 3.11
+used to run and was dropped on the same reasoning: once the minimum-Python Linux lane and the
+primary-Python Windows lane are both present, it adds relatively little independent compatibility
+information for the cost of another full-suite execution. That is a judgement about marginal
+value, not a claim that it could detect nothing.
 
 Python 3.10 is the `requires-python` floor, so **CI runs the minimum version we publicly claim to
 support.** It is a compatibility lane like any other -- the same fast suite, without the
 once-only validations. Being the minimum-version gate does not earn it coverage, doctest, API or
 prose work.
+
+Python 3.14 is the current stable endpoint, verified rather than assumed: the suite, the
+notebooks and all four once-only validations were run there before it became the primary
+environment.
 
 ### NumPy is pinned per interpreter
 
@@ -60,7 +70,7 @@ uses environment markers:
 
 ```text
 Python 3.10     ->  numpy 2.2.6    the last release supporting 3.10
-Python >=3.11   ->  numpy 2.4.6
+Python >=3.11   ->  numpy 2.4.6    including 3.14, which resolves cp314 wheels
 ```
 
 Keep the two markers mutually exclusive and exhaustive when bumping either line. Dropping the
@@ -74,9 +84,9 @@ primary environment. That is a de-duplication decision rather than a claim that 
 behave differently elsewhere -- the doctests and the API-reference blocks are executable code.
 The package's OS and Python compatibility stays covered by the three suite environments above.
 
-`types` is the one job whose interpreter is immaterial to its result: `[tool.mypy]` sets
-`python_version = '3.10'`, so mypy analyses against the declared minimum whatever version hosts
-it.
+`[tool.mypy]` sets `python_version = '3.10'`, which keeps mypy's target-language semantics at the
+declared minimum whatever version hosts the `types` job. The host still supplies the installed
+stubs mypy reads, so it is not irrelevant -- it is simply not what fixes the target.
 
 A pull request is also one concurrency group, so a new commit cancels the run for the commit it
 supersedes.  Pushes to `main` group individually and cancel nothing.

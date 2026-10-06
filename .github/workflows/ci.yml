@@ -41,7 +41,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -49,18 +49,17 @@ jobs:
       - run: python -m pip install --constraint ci/constraints.txt ruff
       - run: ruff check .
 
-  # The interpreter here hosts mypy; it is not what mypy analyses against.  `[tool.mypy]` sets
-  # `python_version = '3.10'`, so the target stays the declared minimum whatever this runner is --
-  # which is the version we want checked, since it is the one that can lack a newer stdlib name.
-  # Moving the host from 3.11 to 3.12 therefore cannot change a result, and NumPy resolves to the
-  # same 2.4.6 on both.
+  # `[tool.mypy]` sets `python_version = '3.10'`, which keeps mypy's target-language semantics at
+  # the declared minimum -- the version that can actually lack a newer stdlib name.  Moving the
+  # host interpreter does not change that intended target.  It is still the host, though, so it
+  # supplies the installed stubs mypy reads; this job was re-run on 3.14 before the move.
   types:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -80,9 +79,9 @@ jobs:
           src/seqcraft/compiler/legalization.py
           src/seqcraft/compiler/emission.py
 
-  # The primary environment: Ubuntu with the latest supported Python.  It carries the once-only
+  # The primary environment: Ubuntu on the current primary Python.  It carries the once-only
   # validations plus its own suite run, and it is the baseline both `test` lanes are compared
-  # against -- each of them varies exactly one dimension away from this job.
+  # against -- each of them changes one primary compatibility dimension away from this job.
   #
   # The once-only validations used to be appended to every matrix lane, which spent four runners
   # computing the same four answers -- and the coverage one is not cheap: instrumentation costs
@@ -93,7 +92,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -127,23 +126,27 @@ jobs:
       # coverage we want is not Cartesian, so writing it as a product we then cut down states it
       # less clearly than naming the two lanes.  The third suite environment is `checks`.
       #
-      # Each lane differs from Ubuntu 3.12 in exactly one dimension, which is what makes a failure
-      # attributable:
+      # Each lane changes one primary compatibility dimension relative to the primary environment
+      # (ubuntu 3.14), which makes a failure easier to localise:
       #
-      #   ubuntu  3.10   vs ubuntu 3.12 -- Python varies, OS held.  The minimum `requires-python`
-      #                  in pyproject.toml, so it is the version whose support we assert publicly
-      #                  and must therefore actually run.  NumPy is pinned separately for it; see
-      #                  ci/constraints.txt.
-      #   windows 3.12   vs ubuntu 3.12 -- OS varies, Python held.
+      #   ubuntu  3.10   the Python-3.10 environment.  The minimum `requires-python` in
+      #                  pyproject.toml, so it is the version whose support we assert publicly and
+      #                  must therefore actually run.  Note that it is a whole environment and not
+      #                  only an interpreter: 3.10 also resolves older NumPy and matplotlib, so a
+      #                  failure here is not by itself proof that the interpreter caused it.
+      #                  NumPy is pinned separately for it; see ci/constraints.txt.
+      #   windows 3.14   OS varies, Python held at the primary version.
       #
-      # Windows 3.11 was dropped deliberately: it differed from both of its neighbours in two
-      # dimensions at once and so added little independent information for a whole suite run.
+      # Windows 3.11 was dropped deliberately.  Once the minimum-Python Linux lane and the
+      # primary-Python Windows lane are both present, it adds relatively little independent
+      # compatibility information for the cost of another full-suite execution -- a judgement
+      # about marginal value, not a claim that it could detect nothing.
       matrix:
         include:
           - os: ubuntu-latest
             python: '3.10'
           - os: windows-latest
-            python: '3.12'
+            python: '3.14'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -167,7 +170,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             pyproject.toml

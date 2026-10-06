@@ -23,23 +23,38 @@ A Linux 3.10 lane joins the `test` matrix. It runs the same fast suite as the ot
 lanes and does not take on the once-only validations: being the minimum-version gate is not a
 reason to accumulate work there.
 
-**The matrix was then made representative rather than Cartesian, and the primary environment
-moved to Python 3.12.** The package suite now runs in three environments instead of the previous
-four — Linux 3.10, Linux 3.12 (`checks`), Windows 3.12 — so making the declared minimum real did
-not cost a permanent extra suite execution. Each lane differs from the primary environment in
-exactly one dimension, which is what makes a failure attributable: Linux 3.10 varies Python with
-the OS held, Windows 3.12 varies the OS with Python held. Windows 3.11 was dropped because it
-differed from both of its neighbours at once and so localised nothing a whole suite run was worth.
+**The upper endpoint was validated rather than assumed.** `requires-python` has no upper bound,
+so calling 3.12 the latest supported Python was a stronger claim than anything tested. A Python
+3.14 probe — install under the existing constraints, import, full fast suite, notebooks, and all
+four once-only validations — passed with no change to source, constraints or tests. NumPy 2.4.6
+already ships cp314 wheels, and SciPy 1.18.1, matplotlib 3.11.2, sigpy 0.1.27 and numba 0.68.0
+all resolved there. So 3.14 is the current primary environment.
 
-That subset is representative coverage, not a definition of support. `requires-python` is still
-`>=3.10` and 3.11 is still supported; it is simply not a combination CI needs to execute to
-localise a break. `docs/testing.md` now says so explicitly, because a matrix read as exhaustive
-is how a support claim quietly narrows to whatever CI happens to run.
+**The matrix is representative rather than Cartesian.** The package suite runs in three
+environments instead of the previous four — Linux 3.10, Linux 3.14 (`checks`), Windows 3.14 — so
+making the declared minimum real did not cost a permanent extra suite execution. Each lane
+changes one primary compatibility dimension relative to the primary environment, which makes a
+failure easier to localise: Linux 3.10 differs in Python with the OS held, Windows 3.14 in the OS
+with Python held.
 
-`lint`, `types` and `examples` moved from 3.11 to 3.12 with the primary environment. For `types`
-the host interpreter is immaterial either way: `[tool.mypy]` sets `python_version = '3.10'`, so
-mypy analyses against the declared minimum whatever version runs it — which is the version that
-can actually lack a newer stdlib name.
+That is deliberately weaker than "attributable". The 3.10 lane is a whole environment and not
+only an interpreter — it also resolves older NumPy and matplotlib — so a failure there narrows
+the search without proving the interpreter caused it.
+
+Windows 3.11 was dropped on marginal value: once the minimum-Python Linux lane and the
+primary-Python Windows lane both exist, another full-suite execution there adds relatively little
+independent compatibility information. That is a judgement about what the run is worth, not a
+claim that it could detect nothing.
+
+The subset is coverage, not a definition of support. `requires-python` stays `>=3.10` with no
+upper bound, and 3.11 through 3.13 remain supported without being executed. `docs/testing.md`
+says so explicitly, because a matrix read as exhaustive is how a support claim quietly narrows to
+whatever CI happens to run.
+
+`lint`, `types` and `examples` follow the primary environment. `[tool.mypy]` sets
+`python_version = '3.10'`, which keeps mypy's target-language semantics at the declared minimum
+whatever version hosts the job; the host still supplies the stubs mypy reads, so the job was
+re-run there before the move rather than assumed unaffected.
 
 ## Unreleased — a balanced repetition, and what it costs to make one composable
 
