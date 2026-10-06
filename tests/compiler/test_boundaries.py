@@ -8,6 +8,7 @@ fallback path exists for, so that gets a test too.
 
 from __future__ import annotations
 
+import statistics
 import time
 
 import pypulseq as pp
@@ -49,6 +50,13 @@ def _time_boundaries(opts, n_echo: int) -> float:
     return best
 
 
+def _scaling_ratio(opts) -> tuple[float, float, float]:
+    """One paired measurement of what quadrupling the echo count costs."""
+    small = _time_boundaries(opts, 400)
+    large = _time_boundaries(opts, 1600)
+    return large / max(small, 1e-9), small, large
+
+
 def test_boundary_selection_is_not_quadratic(opts) -> None:
     """
     Quadrupling the echo count must not multiply the work by ~16.
@@ -57,13 +65,34 @@ def test_boundary_selection_is_not_quadratic(opts) -> None:
     16x) are far enough apart to assert on without flaking.  Before the fix this path re-sorted
     the whole mark set once per echo: 253 ms at 3200 echoes against 17 ms after, and the ratio
     per doubling was 3.7 rather than 2.
+
+    **The median of five paired ratios, not one.**  Each size is already a best of three, but that
+    only removes interference that hits *some* of the three repetitions: the quantities here are
+    about 1.3 ms and 5.5 ms on the wall clock, so a single ratio is still dominated by the machine
+    descheduling the large measurement and not the small one.  On a quiet machine that is
+    invisible -- the ratio sits at 4.2 with no spread worth mentioning -- but CI runs several
+    xdist workers on a shared runner, and under deliberate CPU contention a single ratio reached
+    12.3 and crossed this threshold in 3 of 20 attempts.  The signal survives that; the *tail* is
+    what does not.  Taking the median of five held the worst of 20 attempts at 4.96 under the same
+    load, which was the smallest aggregation tested that removed the failures.
+
+    The obvious alternative, a CPU-time clock, is not available here: on the Windows runner
+    ``time.process_time`` reports 100 ns resolution and in fact advances only once per 15.625 ms
+    scheduler quantum, so a 1.3 ms measurement reads as either 0 or 15.625 ms.  ``thread_time``
+    is the same.  Measuring for longer does not rescue it, and measuring for longer on the wall
+    clock makes things worse rather than better -- an 800/3200 pair failed 7 of 20 under the load
+    above, because a longer window accumulates more interference, not less.
+
+    What the threshold still buys: against the quadratic implementation this replaced, the same
+    statistic measured at least 22.1 under that contention, so the two live on opposite sides of
+    8.0 with a factor of four between them.
     """
-    small = _time_boundaries(opts, 400)
-    large = _time_boundaries(opts, 1600)
-    ratio = large / max(small, 1e-9)
+    measured = [_scaling_ratio(opts) for _ in range(5)]
+    ratio = statistics.median(r for r, _, _ in measured)
     assert ratio < 8.0, (
-        f'boundary selection scaled by {ratio:.1f}x for a 4x larger EPI train '
-        f'({small * 1e3:.1f} ms -> {large * 1e3:.1f} ms); linear predicts ~4x, quadratic ~16x'
+        f'boundary selection scaled by {ratio:.1f}x (median of five) for a 4x larger EPI train; '
+        f'linear predicts ~4x, quadratic ~16x.  Measured '
+        + ', '.join(f'{r:.1f}x ({lo * 1e3:.1f} -> {hi * 1e3:.1f} ms)' for r, lo, hi in measured)
     )
 
 

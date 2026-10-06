@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased — the complexity guard is robust to scheduler noise
+
+`test_boundary_selection_is_not_quadratic` asserts that quadrupling an EPI train's echo count
+does not multiply boundary selection by ~16. It reduced three wall-clock timings at each size to a
+best-of-three value, then formed a **single** scaling ratio from those two values. The quantities
+are about 1.3 ms and 5.5 ms, and best-of-three does not help when the interference is asymmetric:
+one ratio can still be dominated by the machine descheduling the large measurement but not the
+small one. Under deliberate CPU contention a single ratio reached 12.3 and crossed the threshold
+in 3 of 20 attempts.
+
+The clock has not changed — it is still `time.perf_counter`, so scheduler interference is still in
+what is measured. What changed is that the assertion no longer rests on the tail of it.
+
+It now takes the **median of five paired ratios**. Nothing else changed: the sizes are still
+400 and 1600, each measurement is still the best of three, and the threshold is still 8.0 — the
+geometric midpoint between the linear prediction of 4 and the quadratic one of 16. Under the same
+contention the worst of 20 attempts was 4.96.
+
+**The guard still catches what it exists for.** Run against a reconstruction of the quadratic
+implementation this replaced — the one that re-sorted the whole mark set once per gap — the
+shipped test failed 20 of 20 under that contention, measuring 30.6x. Real and quadratic sit on
+opposite sides of the threshold with a factor of four between them.
+
+A CPU-time clock would have been the more direct instrument and was measured first. It is not
+usable here: on the Windows runner `time.process_time` **reports** 100 ns resolution and actually
+advances once per 15.625 ms scheduler quantum, so a 4 ms workload reads as `0.000, 0.000, 15.625,
+0.000`. `thread_time` behaves identically. `time.get_clock_info` does not reveal this, which is
+why it was measured on the runner rather than assumed. Lengthening the timed region does not
+rescue the CPU clock and makes the wall clock worse rather than better: an 800/3200 pair, which
+keeps the same 4x separation and therefore the same threshold, failed 7 of 20 under that load,
+because a longer window accumulates more interference.
+
 ## Unreleased — the notebook smoke gate runs four at a time
 
 `examples` was the longest job in CI and 84% of it was notebook execution, run one kernel after
