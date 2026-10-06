@@ -18,10 +18,15 @@ Every push to `main` and every pull request runs five gates:
    reference and the prose attribution.
 4. `test`: pytest on Linux with Python 3.10 and on Windows with Python 3.14.
 5. `examples`: isolated execution of the **build-only** notebooks on Linux with Python 3.14 --
-   the list in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py), which is
-   `01_getting_started.ipynb` and every example directory's `01_build.ipynb`.  The `02` and `03`
-   simulation notebooks are deliberately absent: they need MRzeroCore, torch and sigpy plus a
-   phantom download, which is the lab tier.
+   the explicit allowlist `_NOTEBOOKS` in
+   [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py), currently 22 notebooks.
+   The allowlist is the source of truth and is not a filename pattern: it is every notebook
+   that needs only seqcraft and matplotlib, which includes `01_getting_started.ipynb`, the
+   `01_build.ipynb` of each example, and the `03` notebooks that are also build-only
+   (`fse_2d/03_module_api`, and `03_flow_comp` under `gre_2d`, `gre_spiral_2d` and `megre_2d`).
+   What is deliberately absent is the simulation tier -- every `02_simulate_and_reconstruct`
+   and `bssfp_2d/03_flow_and_motion` -- which needs MRzeroCore, torch and sigpy plus a phantom
+   download, and so belongs to the lab tier.
 
 ### What the matrix covers
 
@@ -93,6 +98,24 @@ supersedes.  Pushes to `main` group individually and cancel nothing.
 
 The notebook runner copies `examples/` to a temporary directory before execution. Generated
 sequence files therefore never modify the working tree.
+
+Inside that copy it runs the allowlist **four notebooks at a time**. Almost half of a single
+notebook's cost is fixed startup -- a kernel is 0.7 s and its imports another 1.7 s -- so the set
+is dominated by per-notebook overhead rather than by any one notebook, and overlapping them is
+what shortens the job. The bound is a ceiling rather than a target: each worker holds a kernel
+subprocess with its own NumPy and matplotlib, so the limit is runner memory and CPU, not this
+process.
+
+Concurrency is safe here because the notebooks are independent, which is a property of the
+notebooks and not an assumption: none reads another's output, no two write the same filename,
+and the `seq/` directory they create is created with `exist_ok=True`. **A new notebook that
+reads a sibling's output would break that**, and belongs in the pytest suite instead, where
+ordering is explicit.
+
+A failing notebook no longer stops the run. With several kernels already in flight, where a
+serial run would have stopped is a property of the runner's CPU that minute, so every scheduled
+notebook finishes and every failure is reported -- in allowlist order, with the failing cell and
+the kernel's traceback.
 
 To reproduce the main gates locally from the repository root:
 

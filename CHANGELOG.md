@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased — the notebook smoke gate runs four at a time
+
+`examples` was the longest job in CI and 84% of it was notebook execution, run one kernel after
+another. The allowlist now executes four notebooks at a time, and the job stops being a queue of
+kernel starts.
+
+**Almost half the cost was never the sequences.** A kernel is 0.7 s to start and its imports
+another 1.7 s, against a median notebook of 4.5 s — so the set was dominated by fixed per-notebook
+overhead rather than by any one notebook, and the slowest three were only 26% of the total.
+Nothing was worth pruning; the work was worth overlapping.
+
+Concurrency is safe because the notebooks are independent, and that was audited rather than
+assumed: none reads another's output, the one apparent filename collision (`megre_2d/01_build`
+and `03_flow_comp` both writing `{name}.seq`) resolves to disjoint names, the only `../`
+references are prose comments, and `seq/` is created with `exist_ok=True`. Running the set at 1,
+2, 4 and 6 workers produced identical output every time. A future notebook that reads a sibling's
+output would break this, and belongs in the pytest suite where ordering is explicit.
+
+Four workers is a ceiling, not a target: each one holds a kernel subprocess with its own NumPy and
+matplotlib, so the limit is runner memory and CPU rather than this process. Measured locally at
+1/2/4/6 workers the set took 119/66/37/31 s, so four takes most of the gain with headroom left.
+
+A failing notebook no longer stops the run. With several kernels already in flight, where a serial
+run would have stopped is a property of the runner's CPU that minute, so every scheduled notebook
+finishes and every failure is reported — **in allowlist order**, carrying the failing cell and the
+kernel's own traceback. A gate whose output reshuffles between runs is one nobody can diff.
+
+**Nothing moved between validation layers.** All 22 notebooks still execute, and the pytest
+notebook tests are untouched. Those are not a duplicate of this job: they execute a *prefix* of a
+notebook in-process, keep the resulting namespace, and assert that the class a reader writes by
+hand still equals the shipped one. This job answers "does it run"; they answer "is it right".
+
+`docs/testing.md` claimed the set was `01_getting_started.ipynb` plus every directory's
+`01_build.ipynb`. It is 22 notebooks and also includes four `03` notebooks that need only seqcraft
+and matplotlib. The allowlist, not a filename pattern, is the source of truth.
+
 ## Unreleased — the declared minimum Python is now the tested minimum Python
 
 `pyproject.toml` declared `requires-python = '>=3.10'` while CI ran 3.11 and 3.12 only, and
