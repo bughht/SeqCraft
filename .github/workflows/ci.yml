@@ -164,6 +164,15 @@ jobs:
           -m "not slow and not bloch and not crossval and not hardware"
           --durations=20
 
+  # Layer 2: does each example notebook still execute end to end?  The set is the explicit
+  # `_NOTEBOOKS` allowlist in tools/run_notebook_smoke.py -- build-only notebooks, which is not
+  # the same as "every 01_build": four `03` notebooks need nothing but seqcraft and matplotlib
+  # and are in it, and the simulation tier is what is excluded.  The allowlist is the source of
+  # truth; do not re-derive it from a filename pattern.
+  #
+  # The runner executes four at a time, so this job's cost is no longer one kernel start after
+  # another.  The semantic assertions about these notebooks live in the pytest suite (Layer 1)
+  # and are not repeated here: this job answers "does it run", not "is it right".
   examples:
     runs-on: ubuntu-latest
     steps:
