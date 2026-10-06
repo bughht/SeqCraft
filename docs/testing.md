@@ -108,9 +108,13 @@ process.
 
 Concurrency is safe here because the notebooks are independent, which is a property of the
 notebooks and not an assumption: none reads another's output, no two write the same filename,
-and the `seq/` directory they create is created with `exist_ok=True`. **A new notebook that
-reads a sibling's output would break that**, and belongs in the pytest suite instead, where
-ordering is explicit.
+and the `seq/` directory they create is created with `exist_ok=True`.
+
+**That independence is what the allowlist requires, and it is a precondition rather than a
+preference.** A future notebook that depends on another notebook's output would violate it, so
+it cannot simply be appended to the allowlist and left to run unordered. It would need explicit
+dependency ordering, serialisation, or another ordering-aware validation path — which it may
+well get while remaining a Layer-2 smoke notebook.
 
 A failing notebook no longer stops the run. With several kernels already in flight, where a
 serial run would have stopped is a property of the runner's CPU that minute, so every scheduled

@@ -15,8 +15,13 @@ Concurrency is safe because the notebooks are independent, and that was audited 
 assumed: none reads another's output, the one apparent filename collision (`megre_2d/01_build`
 and `03_flow_comp` both writing `{name}.seq`) resolves to disjoint names, the only `../`
 references are prose comments, and `seq/` is created with `exist_ok=True`. Running the set at 1,
-2, 4 and 6 workers produced identical output every time. A future notebook that reads a sibling's
-output would break this, and belongs in the pytest suite where ordering is explicit.
+2, 4 and 6 workers produced identical output every time.
+
+That independence is a precondition of the allowlist rather than a preference. A future notebook
+that depends on another notebook's output would violate it, and so could not simply be appended
+and left to run unordered — it would need explicit dependency ordering, serialisation, or another
+ordering-aware validation path. That is a scheduling question, not a reason it would stop being a
+Layer-2 smoke notebook.
 
 Four workers is a ceiling, not a target: each one holds a kernel subprocess with its own NumPy and
 matplotlib, so the limit is runner memory and CPU rather than this process. Measured locally at
