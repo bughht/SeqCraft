@@ -6,7 +6,7 @@ on:
   pull_request:
 
 # One run per pull request.  A review push supersedes the commit before it, and this run asks
-# for seven hosted runners, so without this a burst of review commits keeps several obsolete
+# for six hosted runners, so without this a burst of review commits keeps several obsolete
 # commits occupying the pool while the one under review waits behind them.
 #
 # Keyed on the pull request NUMBER rather than on the branch name: a branch name is unique only
@@ -32,6 +32,8 @@ concurrency:
 #                behaviour -- the doctests and the API-reference blocks are executable code.  The
 #                package's OS and Python compatibility stays covered by the pytest lanes below.
 #   test         the compatibility matrix.  Does the suite pass on this OS and this Python?
+#                It runs pytest only; the once-only checks above are not repeated here, and a
+#                new lane does not acquire them merely by being new.
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -39,7 +41,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -47,13 +49,17 @@ jobs:
       - run: python -m pip install --constraint ci/constraints.txt ruff
       - run: ruff check .
 
+  # `[tool.mypy]` sets `python_version = '3.10'`, which keeps mypy's target-language semantics at
+  # the declared minimum -- the version that can actually lack a newer stdlib name.  Moving the
+  # host interpreter does not change that intended target.  It is still the host, though, so it
+  # supplies the installed stubs mypy reads; this job was re-run on 3.14 before the move.
   types:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -73,16 +79,20 @@ jobs:
           src/seqcraft/compiler/legalization.py
           src/seqcraft/compiler/emission.py
 
-  # The once-only validations, plus the primary lane's own suite run.  These used to be appended
-  # to every matrix lane, which spent four runners computing the same four answers -- and the
-  # coverage one is not cheap: instrumentation costs 64-80% on this suite.
+  # The primary environment: Ubuntu on the current primary Python.  It carries the once-only
+  # validations plus its own suite run, and it is the baseline both `test` lanes are compared
+  # against -- each of them changes one primary compatibility dimension away from this job.
+  #
+  # The once-only validations used to be appended to every matrix lane, which spent four runners
+  # computing the same four answers -- and the coverage one is not cheap: instrumentation costs
+  # 64-80% on this suite.
   checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -112,12 +122,31 @@ jobs:
       # A compatibility lane that has already failed has answered the question the matrix exists
       # to ask, and the remaining lanes are then paying for an answer nobody is waiting for.
       fail-fast: true
+      # Listed as explicit combinations rather than as a cross product with exclusions: the
+      # coverage we want is not Cartesian, so writing it as a product we then cut down states it
+      # less clearly than naming the two lanes.  The third suite environment is `checks`.
+      #
+      # Each lane changes one primary compatibility dimension relative to the primary environment
+      # (ubuntu 3.14), which makes a failure easier to localise:
+      #
+      #   ubuntu  3.10   the Python-3.10 environment.  The minimum `requires-python` in
+      #                  pyproject.toml, so it is the version whose support we assert publicly and
+      #                  must therefore actually run.  Note that it is a whole environment and not
+      #                  only an interpreter: 3.10 also resolves older NumPy and matplotlib, so a
+      #                  failure here is not by itself proof that the interpreter caused it.
+      #                  NumPy is pinned separately for it; see ci/constraints.txt.
+      #   windows 3.14   OS varies, Python held at the primary version.
+      #
+      # Windows 3.11 was dropped deliberately.  Once the minimum-Python Linux lane and the
+      # primary-Python Windows lane are both present, it adds relatively little independent
+      # compatibility information for the cost of another full-suite execution -- a judgement
+      # about marginal value, not a claim that it could detect nothing.
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ['3.11', '3.12']
-        exclude:
+        include:
           - os: ubuntu-latest
-            python: '3.11'
+            python: '3.10'
+          - os: windows-latest
+            python: '3.14'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -141,7 +170,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: |
             pyproject.toml

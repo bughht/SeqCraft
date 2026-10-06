@@ -1,5 +1,61 @@
 # Changelog
 
+## Unreleased — the declared minimum Python is now the tested minimum Python
+
+`pyproject.toml` declared `requires-python = '>=3.10'` while CI ran 3.11 and 3.12 only, and
+`ci/constraints.txt` pinned `numpy==2.4.6`, whose own floor is 3.11. The public compatibility
+claim was therefore one the project's own environment could not install, let alone verify.
+
+**The claim turned out to be true; only the constraint file contradicted it.** Nothing in
+SeqCraft or in a required runtime dependency needs 3.11: the pypulseq fork asks for `>=3.8` and
+`numpy>=1.19.5`, and every pinned tool in `ci/constraints.txt` — pytest, pytest-cov,
+pytest-xdist, ruff, mypy, nbclient, nbformat, ipykernel — already supports 3.10 at the exact
+version pinned. The optional extras installed by the compatibility lane resolve there too;
+`matplotlib` selects an older line on 3.10 than on 3.12, which is what a floor-only specifier is
+for. So the blocker was CI-only, and no source change, version check or skip was added.
+
+NumPy is now pinned per interpreter through environment markers — 2.2.6 below 3.11, 2.4.6 at and
+above it. 2.2.6 is the last NumPy supporting 3.10; 2.3.0 raised the floor. The two markers must
+stay mutually exclusive and exhaustive, because dropping the marked row does not fail the 3.10
+lane, it silently resolves NumPy from the `numpy>=1.24` floor instead.
+
+A Linux 3.10 lane joins the `test` matrix. It runs the same fast suite as the other compatibility
+lanes and does not take on the once-only validations: being the minimum-version gate is not a
+reason to accumulate work there.
+
+**The upper endpoint was validated rather than assumed.** `requires-python` has no upper bound,
+so calling 3.12 the latest supported Python was a stronger claim than anything tested. A Python
+3.14 probe — install under the existing constraints, import, full fast suite, notebooks, and all
+four once-only validations — passed with no change to source, constraints or tests. NumPy 2.4.6
+already ships cp314 wheels, and SciPy 1.18.1, matplotlib 3.11.2, sigpy 0.1.27 and numba 0.68.0
+all resolved there. So 3.14 is the current primary environment.
+
+**The matrix is representative rather than Cartesian.** The package suite runs in three
+environments instead of the previous four — Linux 3.10, Linux 3.14 (`checks`), Windows 3.14 — so
+making the declared minimum real did not cost a permanent extra suite execution. Each lane
+changes one primary compatibility dimension relative to the primary environment, which makes a
+failure easier to localise: Linux 3.10 differs in Python with the OS held, Windows 3.14 in the OS
+with Python held.
+
+That is deliberately weaker than "attributable". The 3.10 lane is a whole environment and not
+only an interpreter — it also resolves older NumPy and matplotlib — so a failure there narrows
+the search without proving the interpreter caused it.
+
+Windows 3.11 was dropped on marginal value: once the minimum-Python Linux lane and the
+primary-Python Windows lane both exist, another full-suite execution there adds relatively little
+independent compatibility information. That is a judgement about what the run is worth, not a
+claim that it could detect nothing.
+
+The subset is coverage, not a definition of support. `requires-python` stays `>=3.10` with no
+upper bound, and 3.11 through 3.13 remain supported without being executed. `docs/testing.md`
+says so explicitly, because a matrix read as exhaustive is how a support claim quietly narrows to
+whatever CI happens to run.
+
+`lint`, `types` and `examples` follow the primary environment. `[tool.mypy]` sets
+`python_version = '3.10'`, which keeps mypy's target-language semantics at the declared minimum
+whatever version hosts the job; the host still supplies the stubs mypy reads, so the job was
+re-run there before the move rather than assumed unaffected.
+
 ## Unreleased — a balanced repetition, and what it costs to make one composable
 
 `sc.modules.bSSFP2DTR` builds one balanced repetition of a 2D Cartesian bSSFP acquisition.

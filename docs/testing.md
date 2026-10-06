@@ -12,32 +12,81 @@ the incompatible PyPI wheel, so the immutable source URL is part of the dependen
 
 Every push to `main` and every pull request runs five gates:
 
-1. `lint`: the established Ruff correctness baseline on Python 3.11.
-2. `types`: strict mypy checking of the pure-arithmetic core on Python 3.11.
-3. `checks`: Linux with Python 3.11 -- pytest with coverage, the source doctests, the API
+1. `lint`: the established Ruff correctness baseline on Python 3.14.
+2. `types`: strict mypy checking of the pure-arithmetic core, hosted on Python 3.14.
+3. `checks`: Linux with Python 3.14 -- pytest with coverage, the source doctests, the API
    reference and the prose attribution.
-4. `test`: pytest on Linux with Python 3.12 and on Windows with Python 3.11 and 3.12.
-5. `examples`: isolated execution of the **build-only** notebooks on Linux with Python 3.11 --
+4. `test`: pytest on Linux with Python 3.10 and on Windows with Python 3.14.
+5. `examples`: isolated execution of the **build-only** notebooks on Linux with Python 3.14 --
    the list in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py), which is
    `01_getting_started.ipynb` and every example directory's `01_build.ipynb`.  The `02` and `03`
    simulation notebooks are deliberately absent: they need MRzeroCore, torch and sigpy plus a
    phantom download, which is the lab tier.
 
-**The package is still tested on four OS/Python combinations**, one each:
+### What the matrix covers
+
+The package suite runs in **three environments**:
 
 ```text
-Linux   3.11   in `checks`
-Linux   3.12   in `test`
-Windows 3.11   in `test`
-Windows 3.12   in `test`
+Linux   3.10   in `test`      minimum supported Python
+Linux   3.14   in `checks`    current primary Python
+Windows 3.14   in `test`      OS portability, at the primary Python
 ```
 
-Linux/3.11 did not disappear from the compatibility set; it is the `checks` lane, which runs the
-same suite and adds the four once-only validations to it.  Those four -- coverage, doctests, the
-API reference and the prose attribution -- are things we **choose** to validate once, on the
-primary environment, rather than on every lane.  That is a de-duplication decision rather than a
-claim that they could never behave differently elsewhere; the package's OS and Python
-compatibility stays covered by the pytest lanes.
+This is **representative compatibility coverage, not an exhaustive product** of the supported
+dimensions. Each lane changes one primary compatibility dimension relative to the primary
+environment, which makes a failure easier to localise:
+
+```text
+Linux 3.10  <-> Linux 3.14       Python differs, OS held    -- the supported version endpoints
+Linux 3.14  <-> Windows 3.14     OS differs, Python held    -- OS portability
+```
+
+"Easier to localise" is the honest claim rather than "attributable". The 3.10 lane is a whole
+**environment**, not only an interpreter: 3.10 also resolves older NumPy and matplotlib, so a
+failure there narrows the search without proving the interpreter caused it.
+
+**A combination SeqCraft supports is not required to appear here.** `requires-python` is `>=3.10`
+with no upper bound; 3.11, 3.12 and 3.13 are supported and simply are not executed. Windows 3.11
+used to run and was dropped on the same reasoning: once the minimum-Python Linux lane and the
+primary-Python Windows lane are both present, it adds relatively little independent compatibility
+information for the cost of another full-suite execution. That is a judgement about marginal
+value, not a claim that it could detect nothing.
+
+Python 3.10 is the `requires-python` floor, so **CI runs the minimum version we publicly claim to
+support.** It is a compatibility lane like any other -- the same fast suite, without the
+once-only validations. Being the minimum-version gate does not earn it coverage, doctest, API or
+prose work.
+
+Python 3.14 is the current stable endpoint, verified rather than assumed: the suite, the
+notebooks and all four once-only validations were run there before it became the primary
+environment.
+
+### NumPy is pinned per interpreter
+
+NumPy 2.3.0 raised its own support floor to Python 3.11 while ours stayed at 3.10, so a single
+unconditional pin cannot install on the minimum Python we claim to support. `ci/constraints.txt`
+uses environment markers:
+
+```text
+Python 3.10     ->  numpy 2.2.6    the last release supporting 3.10
+Python >=3.11   ->  numpy 2.4.6    including 3.14, which resolves cp314 wheels
+```
+
+Keep the two markers mutually exclusive and exhaustive when bumping either line. Dropping the
+marked row does **not** fail the 3.10 lane -- pip falls back to the `numpy>=1.24` floor in
+`pyproject.toml`, and CI silently validates a version nobody chose.
+
+### What runs once, and why
+
+Coverage, the doctests, the API reference and the prose attribution run only in `checks`, on the
+primary environment. That is a de-duplication decision rather than a claim that they could never
+behave differently elsewhere -- the doctests and the API-reference blocks are executable code.
+The package's OS and Python compatibility stays covered by the three suite environments above.
+
+`[tool.mypy]` sets `python_version = '3.10'`, which keeps mypy's target-language semantics at the
+declared minimum whatever version hosts the `types` job. The host still supplies the installed
+stubs mypy reads, so it is not irrelevant -- it is simply not what fixes the target.
 
 A pull request is also one concurrency group, so a new commit cancels the run for the commit it
 supersedes.  Pushes to `main` group individually and cancel nothing.
@@ -93,8 +142,8 @@ which the caller passes explicitly and which is never committed here. Those tier
 not on public GitHub-hosted runners.
 
 The public CI result therefore proves the compiler, the `Module` contract, documentation snippets,
-file round-trip, and the getting-started notebook on the supported matrix. It does not prove vendor
-hardware, full simulation, reconstruction, or external cross-validation.
+file round-trip, and the getting-started notebook on the three suite environments above. It does
+not prove vendor hardware, full simulation, reconstruction, or external cross-validation.
 
 ## What the fixtures are made of
 
