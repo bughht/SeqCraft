@@ -6,7 +6,7 @@ on:
   pull_request:
 
 # One run per pull request.  A review push supersedes the commit before it, and this run asks
-# for eight hosted runners, so without this a burst of review commits keeps several obsolete
+# for six hosted runners, so without this a burst of review commits keeps several obsolete
 # commits occupying the pool while the one under review waits behind them.
 #
 # Keyed on the pull request NUMBER rather than on the branch name: a branch name is unique only
@@ -41,7 +41,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -49,13 +49,18 @@ jobs:
       - run: python -m pip install --constraint ci/constraints.txt ruff
       - run: ruff check .
 
+  # The interpreter here hosts mypy; it is not what mypy analyses against.  `[tool.mypy]` sets
+  # `python_version = '3.10'`, so the target stays the declared minimum whatever this runner is --
+  # which is the version we want checked, since it is the one that can lack a newer stdlib name.
+  # Moving the host from 3.11 to 3.12 therefore cannot change a result, and NumPy resolves to the
+  # same 2.4.6 on both.
   types:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -75,16 +80,20 @@ jobs:
           src/seqcraft/compiler/legalization.py
           src/seqcraft/compiler/emission.py
 
-  # The once-only validations, plus the primary lane's own suite run.  These used to be appended
-  # to every matrix lane, which spent four runners computing the same four answers -- and the
-  # coverage one is not cheap: instrumentation costs 64-80% on this suite.
+  # The primary environment: Ubuntu with the latest supported Python.  It carries the once-only
+  # validations plus its own suite run, and it is the baseline both `test` lanes are compared
+  # against -- each of them varies exactly one dimension away from this job.
+  #
+  # The once-only validations used to be appended to every matrix lane, which spent four runners
+  # computing the same four answers -- and the coverage one is not cheap: instrumentation costs
+  # 64-80% on this suite.
   checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -114,21 +123,27 @@ jobs:
       # A compatibility lane that has already failed has answered the question the matrix exists
       # to ask, and the remaining lanes are then paying for an answer nobody is waiting for.
       fail-fast: true
+      # Listed as explicit combinations rather than as a cross product with exclusions: the
+      # coverage we want is not Cartesian, so writing it as a product we then cut down states it
+      # less clearly than naming the two lanes.  The third suite environment is `checks`.
+      #
+      # Each lane differs from Ubuntu 3.12 in exactly one dimension, which is what makes a failure
+      # attributable:
+      #
+      #   ubuntu  3.10   vs ubuntu 3.12 -- Python varies, OS held.  The minimum `requires-python`
+      #                  in pyproject.toml, so it is the version whose support we assert publicly
+      #                  and must therefore actually run.  NumPy is pinned separately for it; see
+      #                  ci/constraints.txt.
+      #   windows 3.12   vs ubuntu 3.12 -- OS varies, Python held.
+      #
+      # Windows 3.11 was dropped deliberately: it differed from both of its neighbours in two
+      # dimensions at once and so added little independent information for a whole suite run.
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ['3.11', '3.12']
-        exclude:
-          - os: ubuntu-latest
-            python: '3.11'
-        # 3.10 is the minimum `requires-python` in pyproject.toml, so it is the one version whose
-        # support we assert publicly and must therefore actually run.  It is added through
-        # `include` rather than by widening `python` above, which would also create a Windows 3.10
-        # lane nobody asked for: neither of this entry's keys can merge into an existing
-        # combination without overwriting an original matrix value, so Actions appends it as a new
-        # combination instead.  NumPy is pinned separately for it -- see ci/constraints.txt.
         include:
           - os: ubuntu-latest
             python: '3.10'
+          - os: windows-latest
+            python: '3.12'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -152,7 +167,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: pip
           cache-dependency-path: |
             pyproject.toml

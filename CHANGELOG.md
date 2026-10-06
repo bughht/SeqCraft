@@ -19,11 +19,27 @@ above it. 2.2.6 is the last NumPy supporting 3.10; 2.3.0 raised the floor. The t
 stay mutually exclusive and exhaustive, because dropping the marked row does not fail the 3.10
 lane, it silently resolves NumPy from the `numpy>=1.24` floor instead.
 
-A Linux 3.10 lane joins the `test` matrix, through `include` rather than by widening the version
-list, which would also have built a Windows 3.10 lane. It runs the same fast suite as the other
-compatibility lanes and does not take on the once-only validations. Five package-suite runs now
-cover 3.10/3.11/3.12 on Linux and 3.11/3.12 on Windows; whether that density is worth its
-runner-minutes is a separate question from whether the support contract is honest.
+A Linux 3.10 lane joins the `test` matrix. It runs the same fast suite as the other compatibility
+lanes and does not take on the once-only validations: being the minimum-version gate is not a
+reason to accumulate work there.
+
+**The matrix was then made representative rather than Cartesian, and the primary environment
+moved to Python 3.12.** The package suite now runs in three environments instead of the previous
+four — Linux 3.10, Linux 3.12 (`checks`), Windows 3.12 — so making the declared minimum real did
+not cost a permanent extra suite execution. Each lane differs from the primary environment in
+exactly one dimension, which is what makes a failure attributable: Linux 3.10 varies Python with
+the OS held, Windows 3.12 varies the OS with Python held. Windows 3.11 was dropped because it
+differed from both of its neighbours at once and so localised nothing a whole suite run was worth.
+
+That subset is representative coverage, not a definition of support. `requires-python` is still
+`>=3.10` and 3.11 is still supported; it is simply not a combination CI needs to execute to
+localise a break. `docs/testing.md` now says so explicitly, because a matrix read as exhaustive
+is how a support claim quietly narrows to whatever CI happens to run.
+
+`lint`, `types` and `examples` moved from 3.11 to 3.12 with the primary environment. For `types`
+the host interpreter is immaterial either way: `[tool.mypy]` sets `python_version = '3.10'`, so
+mypy analyses against the declared minimum whatever version runs it — which is the version that
+can actually lack a newer stdlib name.
 
 ## Unreleased — a balanced repetition, and what it costs to make one composable
 
