@@ -6,14 +6,18 @@ on:
   pull_request:
 
 # One run per pull request.  A review push supersedes the commit before it, and this run asks
-# for six hosted runners, so without this a burst of review commits keeps several obsolete
+# for seven hosted runners, so without this a burst of review commits keeps several obsolete
 # commits occupying the pool while the one under review waits behind them.
 #
-# `github.head_ref` is set only for `pull_request`, so pushes to `main` fall back to
-# `github.run_id`, which is unique per run.  Main runs therefore group alone and cancel nothing:
-# a merge is a distinct commit whose result is worth keeping.
+# Keyed on the pull request NUMBER rather than on the branch name: a branch name is unique only
+# within a repository, so two forks can both open a PR from `fix/thing` and would otherwise share
+# a group and cancel each other.  A PR number is unique in this repository whatever the source.
+#
+# `github.event.pull_request.number` exists only on `pull_request` events, so a push to `main`
+# falls through to `github.run_id`, which is unique per run.  Main runs therefore group alone and
+# cancel nothing: a merge is a distinct commit whose result is worth keeping.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 # Vendor .asc gradient descriptors are never available in CI by design, so the `hardware`
@@ -22,11 +26,12 @@ concurrency:
 #
 # Two kinds of job, and the split is the point:
 #
-#   checks       things whose answer cannot depend on the OS or the interpreter -- lint, types,
-#                coverage, doctests, the API reference and the prose attribution.  Each runs
-#                ONCE, on the primary lane.
+#   checks       what we deliberately validate ONCE, on the primary environment: coverage, the
+#                doctests, the API reference and the prose attribution.  This is a de-duplication
+#                policy, not a claim that those checks are incapable of platform-dependent
+#                behaviour -- the doctests and the API-reference blocks are executable code.  The
+#                package's OS and Python compatibility stays covered by the pytest lanes below.
 #   test         the compatibility matrix.  Does the suite pass on this OS and this Python?
-#                Nothing else, because nothing else varies with those.
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -68,8 +73,9 @@ jobs:
           src/seqcraft/compiler/legalization.py
           src/seqcraft/compiler/emission.py
 
-  # Everything that is a property of the repository rather than of a platform.  These used to be
-  # appended to every matrix lane, which ran them four times to learn the same answer.
+  # The once-only validations, plus the primary lane's own suite run.  These used to be appended
+  # to every matrix lane, which spent four runners computing the same four answers -- and the
+  # coverage one is not cheap: instrumentation costs 64-80% on this suite.
   checks:
     runs-on: ubuntu-latest
     steps:

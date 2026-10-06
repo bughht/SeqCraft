@@ -10,16 +10,37 @@ the incompatible PyPI wheel, so the immutable source URL is part of the dependen
 
 ## Pull-request CI
 
-Every push to `main` and every pull request runs four gates:
+Every push to `main` and every pull request runs five gates:
 
 1. `lint`: the established Ruff correctness baseline on Python 3.11.
 2. `types`: strict mypy checking of the pure-arithmetic core on Python 3.11.
-3. `test`: pytest and source doctests on Linux and Windows with Python 3.11 and 3.12.
-4. `examples`: isolated execution of the **build-only** notebooks on Linux with Python 3.11 --
+3. `checks`: Linux with Python 3.11 -- pytest with coverage, the source doctests, the API
+   reference and the prose attribution.
+4. `test`: pytest on Linux with Python 3.12 and on Windows with Python 3.11 and 3.12.
+5. `examples`: isolated execution of the **build-only** notebooks on Linux with Python 3.11 --
    the list in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py), which is
-   `01_getting_started.ipynb` and every example directory's `01_build.ipynb`.  The `02`
+   `01_getting_started.ipynb` and every example directory's `01_build.ipynb`.  The `02` and `03`
    simulation notebooks are deliberately absent: they need MRzeroCore, torch and sigpy plus a
    phantom download, which is the lab tier.
+
+**The package is still tested on four OS/Python combinations**, one each:
+
+```text
+Linux   3.11   in `checks`
+Linux   3.12   in `test`
+Windows 3.11   in `test`
+Windows 3.12   in `test`
+```
+
+Linux/3.11 did not disappear from the compatibility set; it is the `checks` lane, which runs the
+same suite and adds the four once-only validations to it.  Those four -- coverage, doctests, the
+API reference and the prose attribution -- are things we **choose** to validate once, on the
+primary environment, rather than on every lane.  That is a de-duplication decision rather than a
+claim that they could never behave differently elsewhere; the package's OS and Python
+compatibility stays covered by the pytest lanes.
+
+A pull request is also one concurrency group, so a new commit cancels the run for the commit it
+supersedes.  Pushes to `main` group individually and cancel nothing.
 
 The notebook runner copies `examples/` to a temporary directory before execution. Generated
 sequence files therefore never modify the working tree.
@@ -37,11 +58,19 @@ mypy src/seqcraft/design/timing.py src/seqcraft/design/units.py \
   src/seqcraft/compiler/emission.py
 pytest -n auto \
   -m "not slow and not bloch and not crossval and not hardware" \
-  --cov=seqcraft --cov-report=term-missing
+  --cov=seqcraft --cov-report=term-missing --durations=20
 pytest --doctest-modules src/seqcraft
 python tools/check_api_reference.py
+python tools/check_prose_attribution.py
 python tools/run_notebook_smoke.py
 ```
+
+That sequence is the `lint`, `types`, `checks` and `examples` gates together.  The `test` lanes
+run the same pytest invocation without `--cov`, which is most of why they finish sooner.
+
+`check_prose_attribution.py` blocks a short list of specific unsupported attributions and prints
+its broader review words under `--review`, where they never fail.  See
+[`writing_a_module.md`](writing_a_module.md).
 
 `check_api_reference.py` executes every fenced `python` block in
 [`api_reference.md`](api_reference.md) in one shared namespace, in document order, and checks its

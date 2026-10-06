@@ -391,7 +391,7 @@ full-echo, partial-Fourier, monopolar-train and bipolar-train geometries. Tolera
 dimensioned per moment order. Seven of nine deliberate mutations fail the suite; the two survivors
 are the gradient and slew checks inside the feasibility predicate, which are unreachable one
 raster below the minimum because pypulseq refuses to build the lobe at all. **Layer 2**,
-`examples/gre_2d/03_flow_comp.ipynb01_build.ipynb`, both readouts in a complete gradient echo: 0.680 ms
+`examples/gre_2d/03_flow_comp.ipynb`, both readouts in a complete gradient echo: 0.680 ms
 added to the echo time at the reference protocol.
 
 **No Layer 3.** Given `m0 = 0`, the removal of the constant-velocity phase term follows from
