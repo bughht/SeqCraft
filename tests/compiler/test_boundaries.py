@@ -66,13 +66,15 @@ def test_boundary_selection_is_not_quadratic(opts) -> None:
     the whole mark set once per echo: 253 ms at 3200 echoes against 17 ms after, and the ratio
     per doubling was 3.7 rather than 2.
 
-    **The median of five paired ratios, not one.**  The quantities here are about 1.3 ms and
-    5.5 ms, and they are wall clock, so a single ratio also measures whatever else the machine
-    did during the larger measurement.  On a quiet machine that is invisible -- the ratio sits at
-    4.2 with no spread worth mentioning -- but CI runs several xdist workers on a shared runner,
-    and under deliberate CPU contention a single ratio reached 12.3 and crossed this threshold in
-    3 of 20 attempts.  The signal survives that; the *tail* is what does not.  Taking the median
-    of five held the worst of 20 attempts at 4.96 under the same load.
+    **The median of five paired ratios, not one.**  Each size is already a best of three, but that
+    only removes interference that hits *some* of the three repetitions: the quantities here are
+    about 1.3 ms and 5.5 ms on the wall clock, so a single ratio is still dominated by the machine
+    descheduling the large measurement and not the small one.  On a quiet machine that is
+    invisible -- the ratio sits at 4.2 with no spread worth mentioning -- but CI runs several
+    xdist workers on a shared runner, and under deliberate CPU contention a single ratio reached
+    12.3 and crossed this threshold in 3 of 20 attempts.  The signal survives that; the *tail* is
+    what does not.  Taking the median of five held the worst of 20 attempts at 4.96 under the same
+    load, which was the smallest aggregation tested that removed the failures.
 
     The obvious alternative, a CPU-time clock, is not available here: on the Windows runner
     ``time.process_time`` reports 100 ns resolution and in fact advances only once per 15.625 ms

@@ -1,12 +1,17 @@
 # Changelog
 
-## Unreleased — the complexity guard stops measuring the scheduler
+## Unreleased — the complexity guard is robust to scheduler noise
 
 `test_boundary_selection_is_not_quadratic` asserts that quadrupling an EPI train's echo count
-does not multiply boundary selection by ~16. It timed one pair of runs on the wall clock, and the
-quantities are about 1.3 ms and 5.5 ms — small enough that on a shared CI runner the measurement
-partly records what *else* the machine was doing. Under deliberate CPU contention a single ratio
-reached 12.3 and crossed the threshold in 3 of 20 attempts.
+does not multiply boundary selection by ~16. It reduced three wall-clock timings at each size to a
+best-of-three value, then formed a **single** scaling ratio from those two values. The quantities
+are about 1.3 ms and 5.5 ms, and best-of-three does not help when the interference is asymmetric:
+one ratio can still be dominated by the machine descheduling the large measurement but not the
+small one. Under deliberate CPU contention a single ratio reached 12.3 and crossed the threshold
+in 3 of 20 attempts.
+
+The clock has not changed — it is still `time.perf_counter`, so scheduler interference is still in
+what is measured. What changed is that the assertion no longer rests on the tail of it.
 
 It now takes the **median of five paired ratios**. Nothing else changed: the sizes are still
 400 and 1600, each measurement is still the best of three, and the threshold is still 8.0 — the
