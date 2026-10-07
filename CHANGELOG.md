@@ -79,66 +79,62 @@ question from getting the conventional repetition right.
 
 ## The example is an acquisition, not a legal waveform
 
-A correct repetition is not a sequence. `examples/bssfp_3d/` therefore ships the train-level policy
-too, and the policy was **chosen from evidence rather than assembled from what was convenient**.
+A correct repetition is not a sequence. `examples/bssfp_3d/` therefore carries the train-level
+policy too, and each part of it was chosen from the literature and then measured rather than
+assembled from what was convenient.
 
-The earlier draft opened its acquisition with ten full-flip repetitions that sampled nothing. That
-was not a catalyzation scheme; it was discarding ten repetitions. `02_simulate_and_reconstruct.ipynb`
-compares four candidates on three tissues with the encoding **held at the centre of k-space**, so
-only the magnetisation history differs: no preparation, those ten dummies, the Handbook's
-`alpha/2 - TR/2`, and a sixteen-step linear flip-angle ramp. The shipped choice is
-`alpha/2 - TR/2`: it reaches the lowest opening transient of the cheap schemes and costs one pulse
-and half a TR against a ramp's sixteen repetitions, which is what makes it affordable once per
-segment. The literature names these alternatives and sets **no criterion for choosing**, which is
-why the choice is measured here rather than asserted.
-
-The measurement also separates two things that are easy to conflate: a preparation reduces the
-transient **amplitude**, and leaves the convergence **timescale** alone — the repetitions needed to
-settle within 5% are nearly identical across all four schemes, because that rate belongs to T1, T2,
-TR and the flip angle.
-
-`01` now writes **two** acquisitions rather than one. The segmented file cuts the table into four
-prepared segments of two partitions with a recovery interval, which is what an acquisition does
-when it has to fit a breath-hold or a cardiac window — and it exercises the compositional property
-the kernel exists for, since a segment boundary changes both `ky` and `kz` at once. `02` reads both
-files back and confirms they walk the table `01` recorded before simulating anything.
-
-**What segmentation changes turned out not to be what was expected.** Measured on a point object —
-a 1 mm box, so its own k-space is flat across the table and the map shows the acquisition rather
-than the phantom — the two acquisitions put their modulation in different *shapes*:
+**Preparation: a 24-step linear flip-angle ramp.** Hargreaves et al. (2001) write one repetition as
+`M(k+1) = A M(k) + B`, so the error against the steady state decays at the eigenvalues of `A` —
+properties of T1, T2, TR, flip angle and off-resonance that no preparation can change. What a
+preparation changes is the initial error. The named schemes are `alpha/2 - TR/2` and a flip ramp,
+and the sources do not rank them, so `02` measures both **across the off-resonance band** rather
+than only on resonance:
 
 ```text
-mean |signal| per partition, in acquisition order
-continuous   1.60  1.33  1.16  1.06  1.00  0.96  0.93  0.92   one ramp across the whole axis
-segmented    1.60  1.33  1.46  1.23  1.44  1.24  1.44  1.23   a ripple on a flat baseline
-
-z point-spread, energy outside the point's own voxel
-continuous   0.499      segmented   0.180
+peak transient over the first 60 imaging repetitions, / late-train signal, white matter
+                        0 Hz    59 Hz    89 Hz   107 Hz      (band edge 119 Hz)
+no preparation          3.59     5.31    10.41    25.24
+alpha/2 - TR/2          1.53     3.59     9.55    24.71
+24-step flip ramp       1.45     2.55     5.82    10.80
 ```
 
-**The interrupted acquisition is the less modulated of the two**, which is the opposite of the
-obvious expectation and is why it was measured rather than asserted. Continuous pays the transient
-once, and partition-major ordering stretches that single decay across the whole `kz` axis — one long
-monotonic ramp, which is a large low-order modulation and costs resolution. Segmented pays it four
-times, but four short ramps that each start from a similar place vary less across the axis than one
-ramp running its full length.
+They tie at the passband centre and under `+-10%` B1; the ramp is markedly better toward the band
+edge, which is the behaviour Hargreaves predicts for a non-selective half-angle pulse — it rotates
+part of the frequency range the wrong way. An earlier draft of this work shipped `alpha/2` on the
+strength of an on-resonance-only comparison; the band sweep reversed that. Ramp length was chosen the same way,
+at the knee of its own diminishing returns.
 
-That result is specific to this protocol, and the ratio is what makes it so: the transient decays
-over roughly 170 repetitions while a segment is 64, so no segment gets far down its own decay.
-Longer segments, or a shorter transient, would let each segment settle and turn the boundaries into
-steps — the regime where interruption does cost an artifact. The notebook says so rather than
-generalising from one protocol.
+**View ordering: the loop order with a bidirectional `ky` sweep.** Segmented SSFP has two competing
+ordering constraints (Spincemaille et al. 2004) — central views collected when the magnetisation is
+where the protocol wants it, and a *smooth* trajectory through `(ky, kz)`, because
+repetition-to-repetition phase-encode changes drive eddy currents that bSSFP is unusually sensitive
+to. Sweeping `ky` in alternating directions makes the largest step between consecutive views **1**,
+against 191 for a partition-major sweep that restarts each line.
 
-`02` closes with the off-resonance response, whose measured nulls land at ±75 Hz against the ±74.5
-Hz that `1/(2 TR)` predicts under the 0/pi phase cycle — the signature that distinguishes balanced
-SSFP from a merely balanced gradient waveform.
+**Two protocols, written from the same policy.** The representative acquisition is `192 x 192 x 16`
+over a 300 mm FOV at TR 4.21 ms — essentially the protocol shape in the segmented-SSFP literature.
+Balanced SSFP keeps its coherence pathways alive, so simulating it is impractical; `01` therefore
+also writes a reduced `48 x 32 x 8` acquisition with the same preparation, phase cycle, ordering,
+segmentation rule and **the same TR**, pinned explicitly so the magnetisation sees an identical
+train. `02` simulates that one. The validation cost determines the surrogate, not the protocol the
+example presents.
 
-**The shipped protocol is `48 x 32 x 8`, and the size is a deliberate consequence of that validation.**
-Balanced SSFP keeps its coherence pathways alive, so simulation costs voxels x repetitions x states
-and all three are large: a `64 x 64 x 16` volume takes over an hour per acquisition to simulate,
-where this one takes minutes. Three different matrix dimensions also mean a `ky`/`kz` swap changes
-the shape of the volume rather than hiding as a plausible image. `02` is lab tier and is not in the
-notebook smoke allowlist; `01` stays in it.
+**The artifact interface is checked where it is cheap.** `01` re-reads all four files it writes and
+asserts readout counts, distinct `(LIN, PAR)` addresses, agreement with the recorded table, and the
+declared TE/TR — so the `01 -> 02` contract has CI coverage through the notebook smoke job without
+running MRzero there.
+
+**What segmentation changes, and how far that generalises.** Measured on a point object small
+enough that its own k-space is flat across the table, the continuous acquisition's single transient
+is spread along `kz` by the loop order while the segmented one repeats a shorter pattern per
+segment. Which costs more depends on how a segment compares with the transient — white matter
+decays with a time constant of about 83 repetitions against a 64-view segment here — so the result
+is reported as protocol-specific rather than as a ranking, and the `8`-sample `z` profile beside it
+is named as a summed normalised magnitude rather than as energy or a resolution metric.
+
+`02` is lab tier and is not in the notebook smoke allowlist; `01` stays in it. Both notebooks are
+committed with their executed outputs, which is this repository's convention for `examples/` and is
+what makes `02` reviewable as evidence rather than as a recipe.
 
 ## Unreleased — the complexity guard is robust to scheduler noise
 
