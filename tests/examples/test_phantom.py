@@ -16,7 +16,10 @@ What is worth pinning is the part the notebooks *rely on* and cannot check thems
 - **``field_hz=None`` leaves the phantom's own B0 alone**, because every example simulates against
   it and silently replacing it would change what those notebooks measure;
 - **``field_hz()`` returns that same map**, because the EPI notebooks draw it beside the image it
-  distorted, and a map that does not match the simulation is worse than no map.
+  distorted, and a map that does not match the simulation is worse than no map;
+- **``slab_3d`` covers an extent where ``slab`` counts slices**, because the 3D examples assert
+  their phantom against the sequence's encoded FOV, and those assertions are only worth making if
+  the helper's physical extent really is independent of the matrix it is sampled on.
 """
 
 from __future__ import annotations
@@ -146,3 +149,65 @@ def test_the_phantom_s_b0_is_mrzero_s_own_and_is_already_centred(fetched) -> Non
 
     with np.load(fetched.PHANTOM_PATH) as data:
         assert 'B0_map' not in data, 'the file now ships a B0 map -- the docstring needs updating'
+
+
+# ------------------------------------------------------------------------ the 3D slab is separate
+def test_slab_3d_covers_the_physical_extent_it_was_asked_for(fetched) -> None:
+    """
+    The property the helper exists for: `z_extent_mm` is physical, `matrix[2]` is sampling.
+
+    ``interpolate`` rescales the affine along with the tensors, so resolution and extent are
+    independent -- this pins that they stay independent, because every geometric assertion a 3D
+    notebook makes about its phantom rests on it.
+    """
+    out = fetched.slab_3d(matrix=(48, 32, 8), z_extent_mm=96.0)
+
+    assert fetched.extent_mm(out)[2] == pytest.approx(96.0, abs=fetched.NATIVE_MM)
+    assert tuple(out.PD.shape) == (48, 32, 8)
+
+
+def test_the_two_slab_helpers_are_not_interchangeable(fetched) -> None:
+    """
+    ``slab`` counts *native slices*; ``slab_3d`` covers an *extent*.  Reading one as the other is
+    the mistake this pair of helpers exists to prevent.
+
+    At ``nz = 8`` they differ by almost an order of magnitude in z: eight native slices is 12 mm of
+    anatomy, which inside a sequence encoding 96 mm fills one partition and leaves seven empty.
+    That looks like a reconstruction fault and is not one, so it is worth a test rather than a
+    comment.
+    """
+    thin = fetched.extent_mm(fetched.slab(matrix=48, nz=8, n_coils=0))[2]
+    thick = fetched.extent_mm(fetched.slab_3d(matrix=(48, 32, 8), z_extent_mm=96.0))[2]
+
+    assert thin == pytest.approx(8 * fetched.NATIVE_MM, abs=0.5)
+    assert thick > 7 * thin, 'slab_3d must not have become an alias for slab'
+
+
+@pytest.mark.parametrize('nz', [4, 8, 16])
+def test_the_z_sampling_does_not_move_the_phantom(fetched, nz: int) -> None:
+    """Coarser sampling of the same slab is a coarser phantom, not a smaller one."""
+    out = fetched.slab_3d(matrix=(32, 32, nz), z_extent_mm=96.0)
+
+    assert fetched.extent_mm(out)[2] == pytest.approx(96.0, abs=fetched.NATIVE_MM)
+    assert abs(float(out.affine[2, 2])) == pytest.approx(96.0 / nz, abs=fetched.NATIVE_MM / nz)
+
+
+def test_slab_3d_is_centred_on_isocentre(fetched) -> None:
+    """Same reason as :func:`test_the_slab_is_moved_to_isocentre`: an off-centre slab is dark."""
+    nz = 8
+    out = fetched.slab_3d(matrix=(32, 32, nz), z_extent_mm=96.0)
+    step = float(out.affine[2, 2])
+
+    assert float(out.affine[2, 3]) == pytest.approx(-0.5 * nz * step)
+
+
+def test_the_in_plane_extent_is_the_head_and_not_the_matrix(fetched) -> None:
+    """
+    In-plane, too, the matrix is sampling.  A 3D notebook asserts its phantom fits inside the
+    encoded FOV, and that assertion is only meaningful if this holds.
+    """
+    coarse = fetched.extent_mm(fetched.slab_3d(matrix=(32, 32, 8), z_extent_mm=96.0))
+    fine = fetched.extent_mm(fetched.slab_3d(matrix=(96, 64, 8), z_extent_mm=96.0))
+
+    assert coarse[:2] == pytest.approx(fine[:2], abs=1e-3)
+    assert coarse[0] == pytest.approx(128 * fetched.NATIVE_MM, abs=1.0)
