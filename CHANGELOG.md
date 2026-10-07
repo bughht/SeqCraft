@@ -79,16 +79,13 @@ question from getting the conventional repetition right.
 
 ## The example is an acquisition, not a legal waveform
 
-A correct repetition is not a sequence. `examples/bssfp_3d/` therefore carries the train-level
-policy too, and each part of it was chosen from the literature and then measured rather than
-assembled from what was convenient.
+A correct repetition is not a sequence. `examples/bssfp_3d/` carries the train-level policy too,
+and each part of it was taken from the literature and then measured.
 
-**Preparation: a 24-step linear flip-angle ramp.** Hargreaves et al. (2001) write one repetition as
-`M(k+1) = A M(k) + B`, so the error against the steady state decays at the eigenvalues of `A` —
-properties of T1, T2, TR, flip angle and off-resonance that no preparation can change. What a
-preparation changes is the initial error. The named schemes are `alpha/2 - TR/2` and a flip ramp,
-and the sources do not rank them, so `02` measures both **across the off-resonance band** rather
-than only on resonance:
+**Preparation: a 24-step linear flip-angle ramp.** Hargreaves et al. (2001) give the frame — the
+transient is `Q(k+1) = A Q(k)`, so its rate is an eigenvalue of `A` and no preparation changes it;
+a preparation changes the initial error. The named alternatives are `alpha/2 - TR/2` and a flip
+ramp, and the sources do not rank them, so `02` measures both **across the off-resonance band**:
 
 ```text
 peak transient over the first 60 imaging repetitions, / late-train signal, white matter
@@ -98,43 +95,60 @@ alpha/2 - TR/2          1.53     3.59     9.55    24.71
 24-step flip ramp       1.45     2.55     5.82    10.80
 ```
 
-They tie at the passband centre and under `+-10%` B1; the ramp is markedly better toward the band
-edge, which is the behaviour Hargreaves predicts for a non-selective half-angle pulse — it rotates
-part of the frequency range the wrong way. An earlier draft of this work shipped `alpha/2` on the
-strength of an on-resonance-only comparison; the band sweep reversed that. Ramp length was chosen the same way,
-at the knee of its own diminishing returns.
+They tie at the passband centre and under `±10%` B1; the ramp is markedly better toward the edge,
+which is what Hargreaves predicts for a non-selective half-angle pulse. An earlier draft shipped
+`alpha/2` on an on-resonance-only comparison. The ramp's length comes from a sweep that `02` now
+runs and keeps.
 
-**View ordering: the loop order with a bidirectional `ky` sweep.** Segmented SSFP has two competing
-ordering constraints (Spincemaille et al. 2004) — central views collected when the magnetisation is
-where the protocol wants it, and a *smooth* trajectory through `(ky, kz)`, because
-repetition-to-repetition phase-encode changes drive eddy currents that bSSFP is unusually sensitive
-to. Sweeping `ky` in alternating directions makes the largest step between consecutive views **1**,
-against 191 for a partition-major sweep that restarts each line.
+**View ordering: bidirectional sequential, and measured over the whole RF train.** Spincemaille et
+al. (2004) require the `(ky, kz)` trajectory to be smooth because repetition-to-repetition
+phase-encode changes drive eddy currents. That criterion is about *repetitions*, so the preparation
+repetitions count: the ramp now runs **at the first acquired view's encoding** rather than at the
+centre of k-space, which removes a full-width jump at the ramp-to-acquisition boundary that an
+acquired-views-only metric could not see. Within an uninterrupted run no repetition moves more than
+one encoding step. The ordering is named for what it is — the smooth sequential variant — rather
+than as Spincemaille's fan or loop construction, which additionally time the central views against
+a contrast preparation this acquisition does not have.
 
-**Two protocols, written from the same policy.** The representative acquisition is `192 x 192 x 16`
-over a 300 mm FOV at TR 4.21 ms — essentially the protocol shape in the segmented-SSFP literature.
-Balanced SSFP keeps its coherence pathways alive, so simulating it is impractical; `01` therefore
-also writes a reduced `48 x 32 x 8` acquisition with the same preparation, phase cycle, ordering,
-segmentation rule and **the same TR**, pinned explicitly so the magnetisation sees an identical
-train. `02` simulates that one. The validation cost determines the surrogate, not the protocol the
-example presents.
+**Segmentation is defined by shot length, not shot count.** The behaviour depends on the ratio of
+shot length to the transient's time constant, so a surrogate that changed it would validate a
+different regime. Fixing the shot at 64 views puts both protocols at the same ratio — about 0.77
+against a white-matter time constant of ~83 repetitions — with the representative acquisition
+simply having more shots. 107 ms between shots follows the interval Morita et al. (2008) report.
+
+**Two protocols, from the same policy code.** The representative acquisition is `192 x 192 x 16`
+over 300 mm at TR 4.21 ms; the reduced one is `48 x 32 x 8` at the same TR and the same shot
+length. The reduced protocol is used for the volume reconstruction; the transient, ordering and
+segmentation physics are measured on the **representative** `.seq` files directly, because a
+point-object history of 3072 views costs seconds.
+
+**That distinction changed the answer.** Measured on the reduced protocol and looking only at `z`,
+segmentation had appeared to be the *less* modulated of the two. On the representative acquisition
+the cost lands on `ky`, because each 192-view constant-`kz` line is cut into three 64-view shots:
+
+```text
+point response, summed normalised magnitude      y off-peak   largest far sample
+continuous                                          0.161          0.0086
+segmented                                           1.128          0.0899
+```
+
+The immediate neighbours are unchanged on both axes, so resolution is intact; what grows is distant
+energy along `y`, by roughly a factor of seven. The earlier reading was an artifact of a surrogate
+with the wrong shot-to-transient ratio and of looking at the axis the shot period does not divide.
 
 **The artifact interface is checked where it is cheap.** `01` re-reads all four files it writes and
-asserts readout counts, distinct `(LIN, PAR)` addresses, agreement with the recorded table, and the
-declared TE/TR — so the `01 -> 02` contract has CI coverage through the notebook smoke job without
-running MRzero there.
+asserts readout counts, distinct `(LIN, PAR)` addresses, agreement with the recorded table and the
+declared TE/TR, so the `01 -> 02` contract has CI coverage through the notebook smoke job.
 
-**What segmentation changes, and how far that generalises.** Measured on a point object small
-enough that its own k-space is flat across the table, the continuous acquisition's single transient
-is spread along `kz` by the loop order while the segmented one repeats a shorter pattern per
-segment. Which costs more depends on how a segment compares with the transient — white matter
-decays with a time constant of about 83 repetitions against a 64-view segment here — so the result
-is reported as protocol-specific rather than as a ranking, and the `8`-sample `z` profile beside it
-is named as a summed normalised magnitude rather than as energy or a resolution metric.
+Protocol attribution is kept narrow: the in-plane matrix and FOV scale, partition count and TR
+regime are adapted from published 3D segmented trueFISP; the flip angle, bandwidth, slab geometry,
+preparation and shot length are this example's own choices.
 
-`02` is lab tier and is not in the notebook smoke allowlist; `01` stays in it. Both notebooks are
-committed with their executed outputs, which is this repository's convention for `examples/` and is
-what makes `02` reviewable as evidence rather than as a recipe.
+Both notebooks are committed with their executed outputs, which is this repository's convention for
+`examples/`. `01` summarises the compiler's vector-norm warnings rather than printing thousands of
+sites — they are informational, since several axes ramping together exceed the scalar per-axis norm
+while each amplifier axis stays within its own — and `02` suppresses only that one warning class
+rather than filtering everything.
 
 ## Unreleased — the complexity guard is robust to scheduler noise
 
