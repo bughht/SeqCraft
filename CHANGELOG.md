@@ -72,10 +72,73 @@ The public surface is deliberately small: `te_s`, `tr_s`, `min_te_s`, `min_tr_s`
 is `pe_z.k_per_m(p)`, which is already how `PhaseEncode` and `GRE3DTR` spell it; no second
 spelling was added, and the solver's own bookkeeping stays private.
 
-RF phase cycling, the receiver phase progression, start-up preparation, dummies, segmentation and
-the view order stay the caller's, as on `bSSFP2DTR`. There are no spoilers, and `flow_comp` is not
-offered yet: `z` already carries three roles here, and the joint-design contract for a fourth is a
-separate question from getting the conventional repetition right.
+RF phase cycling, the receiver phase progression, preparation, dummies, segmentation and the view
+order stay the caller's, as on `bSSFP2DTR`. There are no spoilers, and `flow_comp` is not offered
+yet: `z` already carries three roles here, and the joint-design contract for a fourth is a separate
+question from getting the conventional repetition right.
+
+## The example is an acquisition, not a legal waveform
+
+A correct repetition is not a sequence. `examples/bssfp_3d/` therefore ships the train-level policy
+too, and the policy was **chosen from evidence rather than assembled from what was convenient**.
+
+The earlier draft opened its acquisition with ten full-flip repetitions that sampled nothing. That
+was not a catalyzation scheme; it was discarding ten repetitions. `02_simulate_and_reconstruct.ipynb`
+compares four candidates on three tissues with the encoding **held at the centre of k-space**, so
+only the magnetisation history differs: no preparation, those ten dummies, the Handbook's
+`alpha/2 - TR/2`, and a sixteen-step linear flip-angle ramp. The shipped choice is
+`alpha/2 - TR/2`: it reaches the lowest opening transient of the cheap schemes and costs one pulse
+and half a TR against a ramp's sixteen repetitions, which is what makes it affordable once per
+segment. The literature names these alternatives and sets **no criterion for choosing**, which is
+why the choice is measured here rather than asserted.
+
+The measurement also separates two things that are easy to conflate: a preparation reduces the
+transient **amplitude**, and leaves the convergence **timescale** alone — the repetitions needed to
+settle within 5% are nearly identical across all four schemes, because that rate belongs to T1, T2,
+TR and the flip angle.
+
+`01` now writes **two** acquisitions rather than one. The segmented file cuts the table into four
+prepared segments of two partitions with a recovery interval, which is what an acquisition does
+when it has to fit a breath-hold or a cardiac window — and it exercises the compositional property
+the kernel exists for, since a segment boundary changes both `ky` and `kz` at once. `02` reads both
+files back and confirms they walk the table `01` recorded before simulating anything.
+
+**What segmentation changes turned out not to be what was expected.** Measured on a point object —
+a 1 mm box, so its own k-space is flat across the table and the map shows the acquisition rather
+than the phantom — the two acquisitions put their modulation in different *shapes*:
+
+```text
+mean |signal| per partition, in acquisition order
+continuous   1.60  1.33  1.16  1.06  1.00  0.96  0.93  0.92   one ramp across the whole axis
+segmented    1.60  1.33  1.46  1.23  1.44  1.24  1.44  1.23   a ripple on a flat baseline
+
+z point-spread, energy outside the point's own voxel
+continuous   0.499      segmented   0.180
+```
+
+**The interrupted acquisition is the less modulated of the two**, which is the opposite of the
+obvious expectation and is why it was measured rather than asserted. Continuous pays the transient
+once, and partition-major ordering stretches that single decay across the whole `kz` axis — one long
+monotonic ramp, which is a large low-order modulation and costs resolution. Segmented pays it four
+times, but four short ramps that each start from a similar place vary less across the axis than one
+ramp running its full length.
+
+That result is specific to this protocol, and the ratio is what makes it so: the transient decays
+over roughly 170 repetitions while a segment is 64, so no segment gets far down its own decay.
+Longer segments, or a shorter transient, would let each segment settle and turn the boundaries into
+steps — the regime where interruption does cost an artifact. The notebook says so rather than
+generalising from one protocol.
+
+`02` closes with the off-resonance response, whose measured nulls land at ±75 Hz against the ±74.5
+Hz that `1/(2 TR)` predicts under the 0/pi phase cycle — the signature that distinguishes balanced
+SSFP from a merely balanced gradient waveform.
+
+**The shipped protocol is `48 x 32 x 8`, and the size is a deliberate consequence of that validation.**
+Balanced SSFP keeps its coherence pathways alive, so simulation costs voxels x repetitions x states
+and all three are large: a `64 x 64 x 16` volume takes over an hour per acquisition to simulate,
+where this one takes minutes. Three different matrix dimensions also mean a `ky`/`kz` swap changes
+the shape of the volume rather than hiding as a plausible image. `02` is lab tier and is not in the
+notebook smoke allowlist; `01` stays in it.
 
 ## Unreleased — the complexity guard is robust to scheduler noise
 
