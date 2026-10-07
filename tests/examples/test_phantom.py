@@ -152,7 +152,28 @@ def test_the_phantom_s_b0_is_mrzero_s_own_and_is_already_centred(fetched) -> Non
 
 
 # ------------------------------------------------------------------------ the 3D slab is separate
-def test_slab_3d_covers_the_physical_extent_it_was_asked_for(fetched) -> None:
+@pytest.fixture(scope='module')
+def native(fetched) -> float:
+    """The source file's own z spacing, from its affine -- the tolerance these tests round to."""
+    import MRzeroCore as mr0
+    return fetched.voxel_mm(mr0.VoxelGridPhantom.load(str(fetched.download())))[2]
+
+
+def test_voxel_mm_reads_the_affine_rather_than_assuming_it(fetched, native: float) -> None:
+    """
+    The helper derives geometry instead of restating it, so this pins that it really reads.
+
+    A phantom resampled to a different matrix must report a different spacing over the same
+    extent -- which a hard-coded constant could not do.
+    """
+    coarse = fetched.slab_3d(matrix=(32, 32, 4), z_extent_mm=96.0)
+    fine = fetched.slab_3d(matrix=(32, 32, 16), z_extent_mm=96.0)
+
+    assert fetched.voxel_mm(coarse)[2] == pytest.approx(4 * fetched.voxel_mm(fine)[2], rel=0.05)
+    assert native == pytest.approx(1.5, abs=0.01), 'the shipped BrainWeb grid is 1.5 mm isotropic'
+
+
+def test_slab_3d_covers_the_physical_extent_it_was_asked_for(fetched, native: float) -> None:
     """
     The property the helper exists for: `z_extent_mm` is physical, `matrix[2]` is sampling.
 
@@ -162,11 +183,11 @@ def test_slab_3d_covers_the_physical_extent_it_was_asked_for(fetched) -> None:
     """
     out = fetched.slab_3d(matrix=(48, 32, 8), z_extent_mm=96.0)
 
-    assert fetched.extent_mm(out)[2] == pytest.approx(96.0, abs=fetched.NATIVE_MM)
+    assert fetched.extent_mm(out)[2] == pytest.approx(96.0, abs=native)
     assert tuple(out.PD.shape) == (48, 32, 8)
 
 
-def test_the_two_slab_helpers_are_not_interchangeable(fetched) -> None:
+def test_the_two_slab_helpers_are_not_interchangeable(fetched, native: float) -> None:
     """
     ``slab`` counts *native slices*; ``slab_3d`` covers an *extent*.  Reading one as the other is
     the mistake this pair of helpers exists to prevent.
@@ -179,17 +200,17 @@ def test_the_two_slab_helpers_are_not_interchangeable(fetched) -> None:
     thin = fetched.extent_mm(fetched.slab(matrix=48, nz=8, n_coils=0))[2]
     thick = fetched.extent_mm(fetched.slab_3d(matrix=(48, 32, 8), z_extent_mm=96.0))[2]
 
-    assert thin == pytest.approx(8 * fetched.NATIVE_MM, abs=0.5)
+    assert thin == pytest.approx(8 * native, abs=0.5)
     assert thick > 7 * thin, 'slab_3d must not have become an alias for slab'
 
 
 @pytest.mark.parametrize('nz', [4, 8, 16])
-def test_the_z_sampling_does_not_move_the_phantom(fetched, nz: int) -> None:
+def test_the_z_sampling_does_not_move_the_phantom(fetched, native: float, nz: int) -> None:
     """Coarser sampling of the same slab is a coarser phantom, not a smaller one."""
     out = fetched.slab_3d(matrix=(32, 32, nz), z_extent_mm=96.0)
 
-    assert fetched.extent_mm(out)[2] == pytest.approx(96.0, abs=fetched.NATIVE_MM)
-    assert abs(float(out.affine[2, 2])) == pytest.approx(96.0 / nz, abs=fetched.NATIVE_MM / nz)
+    assert fetched.extent_mm(out)[2] == pytest.approx(96.0, abs=native)
+    assert fetched.voxel_mm(out)[2] == pytest.approx(96.0 / nz, abs=native / nz)
 
 
 def test_slab_3d_is_centred_on_isocentre(fetched) -> None:
@@ -201,7 +222,7 @@ def test_slab_3d_is_centred_on_isocentre(fetched) -> None:
     assert float(out.affine[2, 3]) == pytest.approx(-0.5 * nz * step)
 
 
-def test_the_in_plane_extent_is_the_head_and_not_the_matrix(fetched) -> None:
+def test_the_in_plane_extent_is_the_head_and_not_the_matrix(fetched, native: float) -> None:
     """
     In-plane, too, the matrix is sampling.  A 3D notebook asserts its phantom fits inside the
     encoded FOV, and that assertion is only meaningful if this holds.
@@ -210,4 +231,4 @@ def test_the_in_plane_extent_is_the_head_and_not_the_matrix(fetched) -> None:
     fine = fetched.extent_mm(fetched.slab_3d(matrix=(96, 64, 8), z_extent_mm=96.0))
 
     assert coarse[:2] == pytest.approx(fine[:2], abs=1e-3)
-    assert coarse[0] == pytest.approx(128 * fetched.NATIVE_MM, abs=1.0)
+    assert coarse[0] == pytest.approx(128 * native, abs=1.0)

@@ -144,7 +144,15 @@ def slab(*, matrix: int = 128, nz: int = 4, n_coils: int = 8, z_center: int = 64
 
 
 #: BrainWeb's native isotropic voxel, metres.  192 mm over 128 samples on every axis.
-NATIVE_MM = 1.5
+def voxel_mm(phantom) -> tuple[float, float, float]:
+    """
+    Voxel spacing along each axis, millimetres, read off the affine rather than restated.
+
+    The column norms rather than the diagonal: they agree for the axis-aligned BrainWeb grid, and
+    only one of them keeps agreeing if a phantom ever arrives rotated.
+    """
+    affine = np.asarray(phantom.affine)
+    return tuple(float(np.linalg.norm(affine[:3, i])) for i in range(3))
 
 
 def slab_3d(*, matrix: tuple[int, int, int], z_extent_mm: float, n_coils: int = 0,
@@ -186,9 +194,11 @@ def slab_3d(*, matrix: tuple[int, int, int], z_extent_mm: float, n_coils: int = 
     import MRzeroCore as mr0
 
     nx, ny, nz = (int(v) for v in matrix)
-    native = max(1, int(round(float(z_extent_mm) / NATIVE_MM)))
-    out = mr0.VoxelGridPhantom.load(str(download())).slices(slices_of(native, z_center))
-    out = out.interpolate(nx, ny, nz)
+    full = mr0.VoxelGridPhantom.load(str(download()))
+    # How many native slices cover the requested extent is a question about the *file*, so it is
+    # asked of the file's own affine.
+    native = max(1, int(round(float(z_extent_mm) / voxel_mm(full)[2])))
+    out = full.slices(slices_of(native, z_center)).interpolate(nx, ny, nz)
     # Put the centre of the extent at isocentre, which is where the slab is excited.
     out.affine[2, 3] = -0.5 * nz * float(out.affine[2, 2])
     if n_coils:
@@ -200,8 +210,8 @@ def slab_3d(*, matrix: tuple[int, int, int], z_extent_mm: float, n_coils: int = 
 
 
 def extent_mm(phantom) -> tuple[float, float, float]:
-    """The phantom's physical size along each axis, millimetres -- voxels times the affine."""
-    return tuple(abs(float(phantom.affine[i, i])) * int(phantom.PD.shape[i]) for i in range(3))
+    """The phantom's physical size along each axis, millimetres -- voxels times their spacing."""
+    return tuple(s * int(n) for s, n in zip(voxel_mm(phantom), phantom.PD.shape))
 
 
 def built_3d(**kwargs):

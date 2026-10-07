@@ -110,23 +110,38 @@ one encoding step. The ordering is named for what it is — the smooth sequentia
 than as Spincemaille's fan or loop construction, which additionally time the central views against
 a contrast preparation this acquisition does not have.
 
-**Segmentation is defined by shot length, not shot count.** The behaviour depends on the ratio of
-shot length to the transient's time constant, so a surrogate that changed it would validate a
-different regime. Fixing the shot at **53 views** — the echo train length Morita et al. (2008)
-report at p.1245, §2.2, alongside the 107 ms inter-shot delay — puts both protocols at the same
-ratio, about 0.64 against a white-matter time constant of ~83 repetitions, with the representative
-acquisition simply having more shots.
+**Segmentation is defined by shot length, not shot count — and it comes with its catalyzation.**
+The behaviour depends on the ratio of shot length to the transient's time constant, so that ratio
+is what a surrogate must preserve. The shot is **53 views**, the echo train length Morita et al.
+(2008) report at p.1245, §2.2, alongside their 107 ms inter-shot delay; both protocols then sit at
+about 0.64 against a white-matter time constant of ~83 repetitions.
 
-**Three trains per protocol, and the un-prepared one is kept on purpose.** Continuous; segmented
-with acquisition resuming immediately, re-catalyzing nothing; and segmented with a restart
-preparation. The middle one is the configuration Morita describes — "a dummy pulse was not used
-for this sequence in both orderings when not using fat saturation", with the delay "equivalent to
-a time of 28 RF pulses, which split the steady state" — so it is a real failure mode rather than a
-straw man.
+**Every segment is catalyzed, including the first.** This is the acquisition-hierarchy correction
+in this revision. An earlier head treated segmentation as a continuous train with gaps cut into
+it, resuming acquisition immediately, and offered restart preparation as a separate repaired
+variant. That is backwards: an interruption leaves the magnetisation somewhere other than the
+periodic state, so re-establishing it is part of what a segmented acquisition *is*. `01`'s
+`acquisition()` now runs the ramp at the first acquired encoding of **every** segment, and the
+continuous acquisition is the same policy code with one segment and the same ramp — which is also
+the semantics `bssfp_2d_segmented.seq` already taught.
 
-**Two protocols, from the same policy code.** The representative acquisition is `192 x 192 x 16`
-over 300 mm at TR 4.21 ms; the reduced one is `48 x 32 x 8` at the same TR and the same shot
-length. The reduced protocol is used for the volume reconstruction; the transient, ordering and
+The catalyzation is the 24-step linear ramp chosen on evidence above, not full-flip dummies. Full
+flip repetitions do drive the system back toward the periodic state, but they are brute force
+rather than an established bSSFP catalyzation family, and an earlier head picked their *count* by
+finding the best value of one image-domain scalar — which is how an example stops being
+representative. One caveat is stated rather than papered over: the ramp was selected against an
+equilibrium start, and a segment restart begins from a relaxed driven state.
+
+**A shot count and an interruption count are different numbers**, and the previous head printed
+the second under the first's name. `segments()` now returns both: 3072 views in 53-view segments
+is 58 shots and 57 breaks, and the catalyzation overhead scales with the shots — 1392 repetitions,
+45% of the acquired views. In a gated acquisition that is time inside a fixed physiological window,
+which is the trade the section exists to teach. The measurement below says what that overhead
+buys, and it is also where the caveat above gets settled.
+
+**Two protocols, from the same policy code, each continuous and segmented — four files.** The
+representative acquisition is `192 x 192 x 16` over 300 mm at TR 4.21 ms; the reduced one is
+`48 x 32 x 8` at the same TR and the same shot length. The reduced protocol is used for the volume reconstruction; the transient, ordering and
 segmentation physics are measured on the **representative** `.seq` files directly, because a
 point-object history of 3072 views costs seconds.
 
@@ -140,86 +155,104 @@ affine with the tensors. `slab()` is deliberately unchanged, since seven noteboo
 side by side and asserts the three relations between them; five tests in
 `tests/examples/test_phantom.py` pin that the two helpers are not interchangeable.
 
-**The segmentation measurement is now two measurements, because they disagree.** A point object at
-the origin has flat k-space by construction, so the acquired `|echo|` per repetition is the
-magnetisation's own wandering, independent of encoding; the reconstructed point response is what
-reaches the image, and additionally depends on *where in the table* the disturbed repetitions land.
-On the representative acquisition, with a 0.1 mm point whose envelope is asserted flat to 0.9965
+**The measurement is two measurements, and the language now says which is which.** A point object
+at the origin has flat k-space by construction, so the acquired `|echo|` per repetition is the
+acquisition's own modulation — but that is the magnitude of one sampled echo, not the magnetisation
+vector, and the previous head called it "state", which claimed more than it measured. It is now
+**per-view echo-magnitude departure**. The reconstructed point response is the other quantity, and
+it depends additionally on where in the table the modulated views fall and on phase. Measured on
+the representative acquisition, with a 0.1 mm point whose envelope is asserted flat to 0.9965
 across the sampled table:
 
 ```text
-                                   -- state --            -- image --
-                            min/level   rms dev     far sum   largest far
-continuous                      0.999    0.1642       0.100        0.0055
-segmented, no restart           0.316    0.3445       0.223        0.0056
-segmented, 8 restart dummies    0.499    0.2666       0.206        0.0060
+                        -- echo magnitude --        -- point response --
+                        min/median    rms dev       far sum    largest far
+continuous                   0.998     0.1641         0.100         0.0055
+segmented, catalyzed         0.932     0.1021         0.128         0.0049
 ```
 
-Restart repetitions do what they are for — swept over 0/4/8/16/24 dummies the deepest excursion
-rises 0.316 → 0.754 and the rms deviation falls 0.344 → 0.174, both monotonically, at 0% → 45% of
-the acquired views in overhead. **The image does not follow.** The summed far response wanders
-between 0.165 and 0.226 with no trend, worse at 16 dummies than at none. The continuous train's
-0.1642 rms is its own opening transient, which is the floor rather than a defect.
+Interrupted 57 times, the acquisition's point response grows by about a quarter. The whole-train rms
+comes out *lower* for the segmented train, which is not a claim that interrupting helps — both open
+from equilibrium with the same ramp, and that one transient dominates the figure. Splitting it is
+free, since the arrays are already in hand, and the split is the interesting part: drop the first
+two segments' worth of views and the continuous train's rms falls 0.164 → 0.046, the segmented
+train's 0.102 → 0.043. **The same number, to within the noise, across 56 further interruptions.**
 
-**The earlier dramatic artifact was a property of shot length against matrix size.** At 64 views
-per shot, which divides the 192-line table exactly three times, the same interruption produces
-nearly identical state wandering and a completely different image:
+**A restart is not a startup.** After 107 ms the magnetisation has relaxed from a driven state
+rather than returned to equilibrium, so a restart begins far closer to the periodic state than the
+opening did, and a ramp sized for the opening more than covers it. That is why the ramp length
+chosen for one is not evidence about the other — stated in the notebook rather than quietly
+inherited.
 
-```text
-shots of    192/shot   min/level   rms dev    far sum   largest far
-      53        3.62       0.316    0.3445      0.223        0.0056
-      64        3.00       0.314    0.3581      1.004        0.0897
-```
+It also sharpens the two-measurement point into its cleanest form: the ongoing echo-magnitude
+modulation of the two trains is *equal*, and the reconstructed point response is still about a
+quarter larger. What differs is not how much modulation there is but where in the table it lands
+and what phase it carries.
 
-A period that divides the table repeats the disturbance at the same few `ky` positions and it adds
-coherently; one that does not spreads it thinly. This is Morita's own subject — centric and linear
-ordering of the *same* sequence differ because, with no dummy pulse, centric samples the k-space
-centre of each shot "from the first RF pulse" while linear samples it "after 26 RF pulses were
-excited". The previous revision reported the 64-view number as the cost of segmentation in general.
-The claim that resolution was intact is withdrawn: the notebook now says that the largest single
-off-peak sample moves only from 0.0055 to 0.0060 while the summed far response roughly doubles, and does not describe a point response as a resolution metric at all.
+The segmented volume differs from the continuous one by 13.1% of its signal, measured after
+reconstruction — which carries phase and k-space position, neither of which the per-view magnitude
+reports.
 
+**Where the segment boundaries fall is a sensitivity, not a tuning parameter.** `SHOT_VIEWS = 53`
+is Morita's figure; 64 would divide the 192-line table exactly three times, repeating whatever
+modulation survives at the same few `ky` positions, where it adds coherently. Measured, with both
+catalyzed: the per-view modulation is within 8%, while 64-view shots give about a quarter more
+summed far response (0.128 → 0.158) and about seventy percent more in the largest single sample
+(0.0049 → 0.0084). Both are modest, which is the catalyzation working — the boundaries still fall
+somewhere, but there is much less left at them to be placed well or badly. The notebook keeps 53, because the literature specifies it for this regime and because selecting a
+protocol parameter from one scalar of one reconstruction is exactly what this revision stopped
+doing elsewhere. The lesson it carries is the mapping — similar per-view modulation can produce
+quite different image structure depending on boundary placement — which is a reason to measure a
+segmented protocol rather than a knob to turn.
+
+**The no-catalyzation failure mode is described, not shipped.** Morita's study deliberately used no
+dummy pulse and found that centric and linear orderings of the same sequence gave different
+contrast, because "the data of the k-space center of each shot with centric ordering was sampled
+from the first RF pulse, while [that] with linear ordering was sampled after 26 RF pulses were
+excited". That is the reason catalyzation matters, and it is now a paragraph in `02` rather than an
+under-prepared `.seq` sitting beside the one a reader should copy. A published experimental
+realization is not a generic authoring pattern.
 **The off-resonance comparison is differential, because the surrogate forced it to be.** On the
-256-view reduced train the opening transient is about a third of the repetitions rather than a
-fortieth, so an absolute deviation there measures the ramp. Each segmented train is now compared
-with the continuous one view by view at the same offset, so the common opening transient cancels.
-What that shows: the relative cost of interrupting is roughly flat across the passband — 0.22 to
-0.28 for the un-prepared train, against a signal that falls to two-thirds of its on-resonance
-value — rather than growing toward the band edge, and the restart cuts it by about 30% at every
-offset. That is more consistent than the same restart managed in the image metric, for the reason
-already established: this measures how far each view sits from where the continuous train would
-have put it, not which views those are.
+256-view reduced train each segment's ramp is a large fraction of the repetitions, so an absolute
+deviation there mostly measures the ramps. The segmented train is compared with the continuous one
+view by view at the same offset instead, so what is common to both cancels. An earlier,
+non-differential version of this cell ranked the *continuous* train worse than the segmented one at
+0.75 of the band edge, which is how the confound was found.
 
-**Asking that question of a long-`T2` tissue exposed an instrument problem, which is now checked
-rather than assumed.** The restart improves per-view departure for white matter while the
-reconstructed volume's difference from continuous barely moves, and tissue dependence was the
-obvious explanation — the approach to the driven state is an eigenvalue depending on `T1` and `T2`,
-and CSF's `T2` is twenty-five times white matter's. Measuring it produced a CSF number that
-*changed sign between two runs of the same computation*. Sweeping the coherence-state budget
-explains why:
+The residual cost is **not** uniform across the passband — it roughly triples from resonance to
+`0.75` of the band edge (0.0746 → 0.2192) while the signal it is measured against falls to about
+two-thirds. Nothing in the gap is refocused, so the further from resonance, the more the
+catalyzation has to undo. An earlier head called this quantity roughly flat; that was measured on
+the un-catalyzed train and does not carry over.
+
+**One tissue cannot be simulated here, and that is now checked rather than discovered.** Every
+number rests on a coherence-state budget chosen for white matter, and bSSFP keeps its pathways
+alive — a long `T2` keeps more of them alive for longer. An earlier head quoted a CSF figure that
+*changed sign between two runs of the same computation*. Sweeping the budget shows why:
 
 ```text
-rms per-view departure from the continuous train, segmented with no restart
+rms per-view echo-magnitude departure from the continuous train
                  200 states   400 states   800 states
-white matter         0.2780       0.2780       0.2780      converged
-grey matter          0.2537       0.2516       0.2516      converged
-CSF                  0.2816       0.1630       0.1440      STILL MOVING (13%)
+white matter         0.0746       0.0746       0.0746      converged
+grey matter          0.0627       0.0631       0.0631      converged
+CSF                  0.4555       0.4500       0.4744      STILL MOVING (5%)
 ```
 
-White matter is converged at 200 and grey matter by 400; CSF is not, and a further check outside
-the notebook carried it to 1600 states, where it reaches 0.0530 — **still moving**, having changed
-the sign of its apparent restart benefit more than once along the way. The notebook now sweeps the budget in-line and quotes no number for a tissue that fails it,
-for the same reason Section 1 already excludes CSF from settling claims. For the two that converge
-the restart helps by a broadly similar fraction, so the hypothesis is eliminated; what is left (the
-volume figure is post-reconstruction, so it depends on where the residual lands in k-space and on
-its phase, and the volume contains CSF) is named rather than asserted as a cause.
+CSF fails the check at the budgets `02` can afford. Extending it off-notebook to 800 / 1600 / 3200
+states gives 0.4677 / 0.4805 / 0.4749 — settling near 0.475, but only after an order of magnitude
+more states than white matter needs, and with a few percent of run-to-run variation at every budget
+below that. `02` sweeps in-line and quotes nothing for a tissue that fails, for the same reason
+Section 1 already excludes CSF from settling claims. (An earlier head reported CSF "still moving at
+1600 states"; that was the un-catalyzed train, where the same sweep ran 0.2814 → 0.0530.)
 
 **The headline measurement carries its own convergence guard.** The representative segmented train
 is re-run at 400 states and the summed far response must agree with the 200-state value to within
+2%, so the section's numbers rest on a checked assumption about the simulator rather than an
+inherited default.
 2% — it agrees to 0.05% — so the section's numbers rest on a checked assumption about the simulator
 rather than an inherited default.
 
-**The artifact interface is checked where it is cheap.** `01` re-reads all six files it writes and
+**The artifact interface is checked where it is cheap.** `01` re-reads all four files it writes and
 asserts readout counts, distinct `(LIN, PAR)` addresses, agreement with the recorded table and the
 declared TE/TR, so the `01 -> 02` contract has CI coverage through the notebook smoke job.
 
@@ -228,7 +261,8 @@ matrix and FOV scale, partition count and TR regime, and from Morita et al. (200
 specifically the echo train length of 53 and the 107 ms delay between shots. *Adapted*: flip
 angle, bandwidth, slab geometry and the preparation. *Ours*: the combination — Morita's shot
 length with a bidirectional sequential view order that is neither of Spincemaille's constructions,
-simulated at 3 T where Morita imaged at 1.5 T. Spincemaille's loop order additionally requires each
+ramped catalyzation before every segment where Morita's protocol deliberately used none, and 3 T
+where Morita imaged at 1.5 T. Spincemaille's loop order additionally requires each
 segment to be a whole number of `ky` lines, which this shot length is not; that difference is
 measured rather than argued.
 
