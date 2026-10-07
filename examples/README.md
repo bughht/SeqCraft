@@ -95,6 +95,12 @@ is a flow-compensated bSSFP sequence**: the only compensated variant among them 
 moment at the echo, which is a different condition from the between-excitations one `03` Part C
 describes and which is not implemented.
 
+## `bssfp_3d/`
+
+| | |
+|---|---|
+| [`bssfp_3d/01_build.ipynb`](bssfp_3d/01_build.ipynb) | A 3D balanced-SSFP volume out of `sc.modules.bSSFP3DTR`, where `z` selects the slab, balances that selection **and** encodes `kz`. The point of the notebook is *ownership*: each repetition discharges its own partition moment, so balance holds across a view order whose neighbouring repetitions change both indices — measured over partition jumps spanning the whole table, which a train of identical repetitions cannot test. Also the shared selection-side window that keeps TE independent of `kz`, the first moment vanishing at `kz = 0` and growing with \|`kz`\|, and the two excitation modes with their different RF families. **Needs nothing but `seqcraft`.** |
+
 ## `se_2d/` and `fse_2d/`
 
 | | |

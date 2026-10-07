@@ -19,7 +19,7 @@ Every push to `main` and every pull request runs five gates:
 4. `test`: pytest on Linux with Python 3.10 and on Windows with Python 3.14.
 5. `examples`: isolated execution of the **build-only** notebooks on Linux with Python 3.14 --
    the explicit allowlist `_NOTEBOOKS` in
-   [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py), currently 22 notebooks.
+   [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py), currently 23 notebooks.
    The allowlist is the source of truth and is not a filename pattern: it is every notebook
    that needs only seqcraft and matplotlib, which includes `01_getting_started.ipynb`, the
    `01_build.ipynb` of each example, and the `03` notebooks that are also build-only
