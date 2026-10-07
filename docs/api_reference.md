@@ -1064,6 +1064,7 @@ Re-exported **flat**, so no import path names a folder:
 | `GRE2D` | the complete scan |
 | `GRE3DTR` | one repetition of a 3D Cartesian gradient echo — a sibling of `GRE2DTR`, owning the z axis where a slab's rephasing and a partition's encoding become one gradient |
 | `bSSFP2DTR` | one **balanced** repetition of a 2D Cartesian bSSFP acquisition: zero net gradient area on every axis over the RF-centre-to-RF-centre interval, with `TE = TR/2` as the default realisation rather than as the definition. Every declared time is measured from the RF *effective* centre, which `time_to_rf_center()` reports. It claims a balanced *waveform* and never a magnetisation in steady state. `flow_comp` adds **echo-time** first-moment compensation, which is narrower than the between-excitations condition the bSSFP flow literature uses |
+| `bSSFP3DTR` | one **balanced** repetition of a 3D Cartesian bSSFP acquisition — a sibling of `bSSFP2DTR`, where `z` carries slab selection, its balancing **and** the partition encoding. **Each repetition discharges its own partition moment**, so the RF-to-RF balance does not depend on which partition the successor acquires and the caller owns the view order. The selection-side lobes share one window, which is what keeps the symmetric realisation whose first moment vanishes at `kz = 0` |
 | `TSEShot` | one excitation and its train of refocused Cartesian readouts — the crusher window three axes share, and the moment balance around every refocusing pulse |
 | `FSE2D` | the complete turbo-spin-echo scan: shots, and which lines each one acquires |
 | `DiffusionSEPrep` | a diffusion-weighted spin echo: the excitation, the refocusing pulse, and two equal same-polarity lobes either side of it. `b_s_per_mm2` in; the lobe width, the amplitude and the echo time out |
@@ -2007,6 +2008,7 @@ at import.
 | `axis_gradient` | `compiler.legalization` | function |
 | `b_value` | `analysis` | function |
 | `bSSFP2DTR` | `modules` | class |
+| `bSSFP3DTR` | `modules` | class |
 | `barrier` | `design.logic` | function |
 | `check_event_sizes` | `compiler.verification` | function |
 | `check_exclusive` | `compiler.boundaries` | function |

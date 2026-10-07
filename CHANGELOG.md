@@ -1,34 +1,75 @@
 # Changelog
 
-## Unreleased — the excitation mode rule moves to one place
+## Unreleased — a balanced repetition that encodes a partition
 
-Selective and non-selective are **two physical excitation modes, not one mode with the selection
-gradient switched off**. Each has its own RF family: a slab wants a shaped pulse, no slab wants a
-hard one. `GRE3DTR` established that rule and owned it privately; a second 3D kernel is coming,
-and a kernel that re-derives this is how the rule gets lost.
+`sc.modules.bSSFP3DTR` builds one balanced repetition of a 3D Cartesian bSSFP acquisition. A
+**sibling** of `bSSFP2DTR` rather than a wrapper, for the reason `GRE3DTR` is a sibling of
+`GRE2DTR`: the `z` axis does a different job. In 2D it carries slice selection and its balancing;
+here it carries slab selection, its balancing, **and** the partition encoding.
 
-`resolve_excitation_mode` in `modules/_support.py` now answers it, and `GRE3DTR` delegates.
-`_HARD_PULSE_S` moves with the behaviour it belongs to, as `HARD_PULSE_S`. The semantics are
-unchanged: a slab defaults to `'sinc'`, no slab to `'block'` at 0.2 ms, an explicit `rf_pulse` is
-always honoured in either mode, and a time-bandwidth product on a block pulse is refused rather
-than ignored — with the refusal still naming `slab_thickness_mm`, which is the argument that
-fixes it.
+The balance definition is unchanged — zero net area on x, y and z over the RF-centre-to-RF-centre
+interval, with `TE = TR/2` the standard symmetric realisation and not the definition.
 
-**Behaviour-preserving, and checked that way rather than asserted.** Twelve mode combinations —
-both defaults, explicit `sinc`/`slr`/`gauss`/`block` in both modes, explicit durations, and the
-three refusals — were recorded from `main` and from this branch and compared field by field: TE,
-TR, `min_te_s`, `min_tr_s`, RF duration, RF sample count, RF envelope sum, rephaser area, the
-gradient channels of the emitted excitation, and the refusal messages. Identical.
+**Each repetition discharges its own partition moment.** This is the part 3D adds, and it is a
+compositional requirement rather than an arithmetic one. The interval ends inside the *successor*,
+so giving the encode to the pre-echo lobe and the rewind to the lobe before the next pulse leaves
 
-The new tests pin the *emitted pair*, which is what a mode is: the slab mode emits thousands of RF
-samples over milliseconds on channel `z`, the non-selective mode a two-sample block an order of
-magnitude shorter on no channel at all. Asking only whether `Gz` is present cannot tell a
-non-selective excitation from a selective one with its gradient deleted, and those are different
-designs.
+```text
+A_post(n) + [-A_post + K(p_n)] + [-A_pre - K(p_{n+1})] + A_pre(n+1)  =  K(p_n) - K(p_{n+1})
+```
 
-`_support.py` said "nothing here is MR knowledge". That is no longer true and its docstring now
-says so: which pulse family a mode wants *is* MR knowledge, and it is here because it is knowledge
-two kernels must not answer differently.
+which is zero only while neighbouring repetitions share a partition. A 3D acquisition chooses its
+view order, so that is not a repetition contract at all. The realisation here instead keeps the
+encode and its rewind in the same repetition — `lead = -A_pre` with no partition term at all,
+`tail = -A_post + K(p)` before the echo, `rewind = -K(p)` after it — and the interval reduces to
+the selection halves and their balancing lobes whatever the successor acquires.
+
+That distinction is invisible to a train of identical repetitions, so the first-class regression
+test drives a view order where **every neighbouring pair changes both indices**, with partition
+steps up to the full width of the table. Measured on compiled waveforms: worst RF-to-RF `|M0|` of
+4.0e-12 1/m across x, y and z; echo k-space exact to 3e-12 on all three axes; TE and TR constant
+to 1e-17 s.
+
+The encoding is **lumped into** the balancing lobe rather than played beside it: the z axis is
+already occupied between the pulse and the echo, and a second independent z gradient there merges
+with the first and exceeds the slew limit at the edge of the partition table. One lobe carrying
+the signed sum is the same moment in a legal shape — what `GRE3DTR` does with `A_slab +
+A_partition`. Which partition makes that lobe longest is a *result* of the signed combination, so
+every supported partition is enumerated rather than an edge assumed.
+
+One selection-side window serves the whole table, and both lobes take it. Letting each partition
+take its shortest would make TE a function of `kz`; letting the two lobes differ would break the
+symmetry about the echo. **That symmetry is a choice, not part of balance** — what it buys is the
+clean limit at `kz = 0`, where z carries only slab-selection balancing and the interval's first
+moment vanishes (measured 1.0e-16). Away from the centre the partition encoding contributes its
+own first-moment term of opposite sign at the two edges, exactly as the phase encoding already
+does on `y`.
+
+On one protocol — 200x200x160 mm, 64x64x16, 100 mm slab, 35 degrees, 400 Hz/px:
+
+```text
+lead minimum (-A_pre)                140 us
+pre-echo combined minimum            240 us   limited by partition 0
+post-echo rewind minimum             200 us   limited by partition 0, and it fits the
+                                              360 us post-echo window already there
+chosen common selection-side window  240 us   taken by both lobes
+
+min_te_s 3.1907 ms   min_symmetric_te_s 3.4707 ms   min_tr_s 6.9400 ms
+te_s 3.4707 ms       tr_s 6.9400 ms               symmetry_residual 7.5e-07 s
+```
+
+**Selective and non-selective are two excitation modes**, not one mode with the selection gradient
+switched off: `slab_thickness_mm=None` means no selection gradient *and* a hard pulse. That rule
+already existed inside `GRE3DTR`; it now lives in `resolve_excitation_mode` in
+`modules/_support.py` and both 3D kernels call it, so they cannot answer it differently. GRE3DTR's
+behaviour is unchanged — twelve mode combinations were recorded before and after and compared
+field by field, including TE, TR, the emitted RF sample count and duration, the excitation's
+gradient channels and the exact refusal messages.
+
+RF phase cycling, the receiver phase progression, start-up preparation, dummies, segmentation and
+the view order stay the caller's, as on `bSSFP2DTR`. There are no spoilers, and `flow_comp` is not
+offered yet: `z` already carries three roles here, and the joint-design contract for a fourth is a
+separate question from getting the conventional repetition right.
 
 ## Unreleased — the complexity guard is robust to scheduler noise
 
