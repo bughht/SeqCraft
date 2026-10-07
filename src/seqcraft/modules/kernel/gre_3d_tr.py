@@ -72,7 +72,7 @@ from ...design.logic import LogicBlock
 from ...design.module import Module
 from ...design.timing import EPS
 from ...errors import ConfigurationError, format_error
-from .._support import ceil_raster, require_positive
+from .._support import ceil_raster, require_positive, resolve_excitation_mode
 from ..encoding.phase_encoding import PhaseEncode
 from ..readout.cartesian_line import CartesianLine
 from ..rf.excitation import Excitation
@@ -84,12 +84,6 @@ if TYPE_CHECKING:
     from pypulseq.opts import Opts
 
 __all__ = ['GRE3DTR']
-
-#: The non-selective pulse duration, when the caller does not give one.  A hard pulse is short by
-#: definition, and ``Excitation``'s own 3 ms default is a *shaped selective* pulse's default -- it
-#: would spend three milliseconds of echo time on a pulse that selects nothing.  0.2 ms is what
-#: ``writeGradientEcho3D.m`` uses, and it is short enough that the RF is not the term that sets TE.
-_HARD_PULSE_S = 0.2e-3
 
 #: Moments below this are treated as zero rather than handed to ``make_trapezoid``, which cannot
 #: design a gradient of no area.  One part in 10^9 of a millimetre-scale ``dk``.
@@ -163,8 +157,8 @@ class GRE3DTR(Module):
     rf_duration_s, rf_time_bw_product
         Forwarded to :class:`~seqcraft.modules.Excitation`.  ``None`` defers to its default --
         **a number here would be a second default that can drift from the first** -- except for a
-        block pulse, where this module supplies :data:`_HARD_PULSE_S` because ``Excitation``'s
-        default is a shaped pulse's.  A sharper slab profile is a deliberate choice: raise
+        block pulse, which takes :data:`~seqcraft.modules._support.HARD_PULSE_S` because
+        ``Excitation``'s default is a shaped pulse's.  A sharper slab profile is a deliberate choice: raise
         `rf_time_bw_product` explicitly when the transition band matters.
     te_s, tr_s
         ``None`` for the shortest achievable.  A request below what the design can reach raises,
@@ -776,31 +770,16 @@ class GRE3DTR(Module):
         """
         Return the excitation arguments, letting the mode choose the pulse when nothing was asked.
 
-        A slab wants a shaped pulse; no slab wants a hard one.  Defaulting both to ``'sinc'``
-        would give the non-selective path a three-millisecond pulse that selects nothing and puts
-        every millisecond of it into TE.
+        The rule itself is :func:`~seqcraft.modules._support.resolve_excitation_mode`, shared so
+        that a second 3D kernel inherits this mode semantics rather than re-deriving it.
         """
-        pulse = rf_pulse if rf_pulse is not None else ('sinc' if self.selective else 'block')
-        out: dict[str, float | str] = {'pulse': pulse}
-
-        if rf_duration_s is not None:
-            out['duration_s'] = rf_duration_s
-        elif pulse == 'block':
-            out['duration_s'] = _HARD_PULSE_S
-
-        if rf_time_bw_product is not None:
-            if pulse == 'block':
-                msg = format_error(
-                    'a time-bandwidth product needs a shaped pulse, and this excitation is a hard '
-                    'block pulse.',
-                    {'rf_time_bw_product': rf_time_bw_product, 'rf_pulse': pulse,
-                     'slab_thickness_mm': self.slab_thickness_mm},
-                    ["pass rf_pulse='sinc' for a shaped pulse",
-                     'or drop rf_time_bw_product, which a block pulse has no use for'],
-                )
-                raise ConfigurationError(msg)
-            out['time_bw_product'] = rf_time_bw_product
-        return out
+        return resolve_excitation_mode(
+            selective=self.selective,
+            rf_pulse=rf_pulse,
+            rf_duration_s=rf_duration_s,
+            rf_time_bw_product=rf_time_bw_product,
+            selection=('slab_thickness_mm', self.slab_thickness_mm),
+        )
 
     @staticmethod
     def _require_triple(value: tuple[float, float, float], name: str) -> tuple[float, ...]:

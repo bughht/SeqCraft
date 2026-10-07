@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased — the excitation mode rule moves to one place
+
+Selective and non-selective are **two physical excitation modes, not one mode with the selection
+gradient switched off**. Each has its own RF family: a slab wants a shaped pulse, no slab wants a
+hard one. `GRE3DTR` established that rule and owned it privately; a second 3D kernel is coming,
+and a kernel that re-derives this is how the rule gets lost.
+
+`resolve_excitation_mode` in `modules/_support.py` now answers it, and `GRE3DTR` delegates.
+`_HARD_PULSE_S` moves with the behaviour it belongs to, as `HARD_PULSE_S`. The semantics are
+unchanged: a slab defaults to `'sinc'`, no slab to `'block'` at 0.2 ms, an explicit `rf_pulse` is
+always honoured in either mode, and a time-bandwidth product on a block pulse is refused rather
+than ignored — with the refusal still naming `slab_thickness_mm`, which is the argument that
+fixes it.
+
+**Behaviour-preserving, and checked that way rather than asserted.** Twelve mode combinations —
+both defaults, explicit `sinc`/`slr`/`gauss`/`block` in both modes, explicit durations, and the
+three refusals — were recorded from `main` and from this branch and compared field by field: TE,
+TR, `min_te_s`, `min_tr_s`, RF duration, RF sample count, RF envelope sum, rephaser area, the
+gradient channels of the emitted excitation, and the refusal messages. Identical.
+
+The new tests pin the *emitted pair*, which is what a mode is: the slab mode emits thousands of RF
+samples over milliseconds on channel `z`, the non-selective mode a two-sample block an order of
+magnitude shorter on no channel at all. Asking only whether `Gz` is present cannot tell a
+non-selective excitation from a selective one with its gradient deleted, and those are different
+designs.
+
+`_support.py` said "nothing here is MR knowledge". That is no longer true and its docstring now
+says so: which pulse family a mode wants *is* MR knowledge, and it is here because it is knowledge
+two kernels must not answer differently.
+
 ## Unreleased — the complexity guard is robust to scheduler noise
 
 `test_boundary_selection_is_not_quadratic` asserts that quadrupling an EPI train's echo count
