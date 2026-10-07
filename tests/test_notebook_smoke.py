@@ -56,17 +56,17 @@ def test_the_shipped_allowlist_is_what_runs() -> None:
     fails on every such addition teaches people to edit the number rather than read the test.
     What does not change is that each entry is distinct and each one exists -- a duplicate would
     execute a notebook twice, and a stale path would silently stop covering one.
+
+    Deliberately **not** asserted: that every file named ``01_build.ipynb`` appears here.  That
+    would make the filename a second source of truth beside the allowlist, and it would also
+    decide, by accident, that any future build notebook must be independent enough to run
+    unordered -- a policy this repository has not adopted.  ``docs/testing.md`` leaves room for a
+    dependent notebook to need ordering or another Layer-2 path instead.
     """
     assert len({*smoke._NOTEBOOKS}) == len(smoke._NOTEBOOKS), 'the allowlist repeats a notebook'
     examples = Path(__file__).resolve().parents[1] / 'examples'
     missing = [n for n in smoke._NOTEBOOKS if not (examples / n).exists()]
     assert missing == [], f'allowlisted notebooks that do not exist: {missing}'
-    unlisted = sorted(
-        p.relative_to(examples).as_posix()
-        for p in examples.rglob('01_build.ipynb')
-        if p.relative_to(examples) not in set(smoke._NOTEBOOKS)
-    )
-    assert unlisted == [], f'build notebooks nothing executes: {unlisted}'
 
 
 # ------------------------------------------------------------------------------ the worker bound

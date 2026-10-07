@@ -167,7 +167,7 @@ class bSSFP3DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
     ...                slab_thickness_mm=100.0)
     >>> tr.center_line, tr.center_partition
     (32, 8)
-    >>> round(tr.partition_area_per_m(tr.center_partition), 9)
+    >>> round(tr.pe_z.k_per_m(tr.center_partition), 9)
     0.0
     >>> abs(tr.symmetry_residual_s) <= o.grad_raster_time / 2
     True
@@ -241,7 +241,7 @@ class bSSFP3DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
         # it moves the limit to the other edge of k-space.
         self._z_window_s = ceil_raster(
             max(self._lobe_duration_s(-self._a_pre),
-                *(self._lobe_duration_s(-self._a_post + self.partition_area_per_m(p))
+                *(self._lobe_duration_s(-self._a_post + self.pe_z.k_per_m(p))
                   for p in range(nz))),
             raster,
         )
@@ -286,10 +286,6 @@ class bSSFP3DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
     def center_partition(self) -> int:
         """The partition that encodes ``kz = 0``.  ``matrix[2] // 2``, as for a line."""
         return self.pe_z.center_line
-
-    def partition_area_per_m(self, partition: int) -> float:
-        """The signed z moment `partition` encodes, 1/m -- ``K(p)`` in the module docstring."""
-        return self.pe_z.k_per_m(partition)
 
     def dk_per_m(self, axis: str) -> float:
         """The k-space step between neighbouring samples on `axis`, 1/m."""
@@ -442,14 +438,14 @@ class bSSFP3DTR(Module):  # noqa: N801 -- `bSSFP` is the domain spelling; see ru
     # ----------------------------------------------------------------------- design
     def _z_tail_for(self, partition: int) -> Event | None:
         """The one pre-echo z lobe: slab-selection balance and the partition encode together."""
-        area = -self._a_post + self.partition_area_per_m(partition)
+        area = -self._a_post + self.pe_z.k_per_m(partition)
         if abs(area) < _NEGLIGIBLE_PER_M:
             return None
         return self._lobe('z', area, self._z_window_s)
 
     def _partition_rewind(self, partition: int) -> Event | None:
         """The post-echo lobe that returns ``kz`` to zero inside **this** repetition."""
-        area = -self.partition_area_per_m(partition)
+        area = -self.pe_z.k_per_m(partition)
         if abs(area) < _NEGLIGIBLE_PER_M:
             return None
         return self._lobe('z', area, self.winder_s)

@@ -125,12 +125,12 @@ def test_balance_survives_any_partition_transition(tr: bSSFP3DTR) -> None:
 def test_the_transitions_really_do_move_the_partition(tr: bSSFP3DTR) -> None:
     """Guards the guard: a view order that did not move would make the test above vacuous."""
     views = violent_views(tr)
-    steps = [abs(tr.partition_area_per_m(b) - tr.partition_area_per_m(a))
+    steps = [abs(tr.pe_z.k_per_m(b) - tr.pe_z.k_per_m(a))
              for (_, a), (_, b) in zip(views, views[1:])]
 
     assert min(steps) > 0.0, 'every neighbouring pair must change the partition'
-    assert max(steps) > 0.9 * (tr.partition_area_per_m(tr.matrix[2] - 1)
-                               - tr.partition_area_per_m(0)), 'and one pair must cross the table'
+    assert max(steps) > 0.9 * (tr.pe_z.k_per_m(tr.matrix[2] - 1)
+                               - tr.pe_z.k_per_m(0)), 'and one pair must cross the table'
 
 
 def test_a_homogeneous_train_is_balanced_too(tr: bSSFP3DTR) -> None:
@@ -157,11 +157,11 @@ def test_the_echo_lands_on_the_requested_k_space_point(tr: bSSFP3DTR) -> None:
 
         assert abs(kx) < ZERO, f'{(line, partition)}: readout is not at k=0 at the echo'
         assert ky == pytest.approx(tr.pe.k_per_m(line), abs=ZERO)
-        assert kz == pytest.approx(tr.partition_area_per_m(partition), abs=ZERO)
+        assert kz == pytest.approx(tr.pe_z.k_per_m(partition), abs=ZERO)
 
 
 def test_the_centre_partition_encodes_no_z_moment(tr: bSSFP3DTR) -> None:
-    assert tr.partition_area_per_m(tr.center_partition) == pytest.approx(0.0, abs=1e-12)
+    assert tr.pe_z.k_per_m(tr.center_partition) == pytest.approx(0.0, abs=1e-12)
     assert tr.center_partition == tr.matrix[2] // 2
 
 

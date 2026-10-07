@@ -66,6 +66,12 @@ behaviour is unchanged — twelve mode combinations were recorded before and aft
 field by field, including TE, TR, the emitted RF sample count and duration, the excitation's
 gradient channels and the exact refusal messages.
 
+The public surface is deliberately small: `te_s`, `tr_s`, `min_te_s`, `min_tr_s`,
+`min_symmetric_te_s`, `symmetry_residual_s`, `time_to_rf_center()`, `time_to_echo()`,
+`center_line`, `center_partition`, `dk_per_m()` and `voxel_mm()`. The partition's k-space position
+is `pe_z.k_per_m(p)`, which is already how `PhaseEncode` and `GRE3DTR` spell it; no second
+spelling was added, and the solver's own bookkeeping stays private.
+
 RF phase cycling, the receiver phase progression, start-up preparation, dummies, segmentation and
 the view order stay the caller's, as on `bSSFP2DTR`. There are no spoilers, and `flow_comp` is not
 offered yet: `z` already carries three roles here, and the joint-design contract for a fourth is a
