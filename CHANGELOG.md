@@ -226,22 +226,18 @@ two-thirds. Nothing in the gap is refocused, so the further from resonance, the 
 catalyzation has to undo. An earlier head called this quantity roughly flat; that was measured on
 the un-catalyzed train and does not carry over.
 
-**One tissue cannot be simulated here, and that is now checked rather than discovered.** Every
-number rests on a coherence-state budget chosen for white matter, and bSSFP keeps its pathways
-alive — a long `T2` keeps more of them alive for longer. An earlier head quoted a CSF figure that
-*changed sign between two runs of the same computation*. Sweeping the budget shows why:
+**The coherence-state budget is checked before the tissue comparison is read, rather than
+discovered afterwards.** Every number rests on a budget chosen for white matter, and bSSFP keeps
+its pathways alive — a long `T2` keeps more of them alive for longer. An earlier head quoted a CSF
+figure that changed sign between two runs of the same computation, so `02` now sweeps the budget
+in-line, prints the per-tissue verdict, and quotes nothing for a tissue that fails it.
 
-```text
-rms per-view echo-magnitude departure from the continuous train
-                 200 states   400 states   800 states
-white matter         0.0746       0.0746       0.0746      converged
-grey matter          0.0627       0.0631       0.0631      converged
-CSF                  0.4369       0.4500       0.4615      STILL MOVING (3%)
-```
-
-CSF does not converge under the practical coherence-state budget the notebook runs, so it is
-excluded from quantitative claims — the same reason Section 1 already excludes it from settling
-claims. `02` sweeps the budget in-line and quotes nothing for a tissue that fails it.
+White matter and grey matter converge within the budget and are reported. **CSF does not converge
+under the practical coherence-state budget used by this notebook and is therefore excluded from
+quantitative claims** — the same reason Section 1 already excludes it from settling claims. It is
+not unsimulable; it needs a substantially larger state budget than this demonstration spends, and
+buying one is not what this example is for. The executed sweep is in the notebook, which is where
+a result that moves run to run belongs.
 
 **The headline measurement carries its own convergence guard.** The representative segmented train
 is re-run at 400 states and the summed far response must agree with the 200-state value to within
