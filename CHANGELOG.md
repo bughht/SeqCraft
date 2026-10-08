@@ -82,7 +82,7 @@ question from getting the conventional repetition right.
 A correct repetition is not a sequence. `examples/bssfp_3d/` carries the train-level policy too,
 and each part of it was taken from the literature and then measured.
 
-**Preparation: a 24-step linear flip-angle ramp.** Hargreaves et al. (2001) give the frame — the
+**Catalyzation: a 24-step linear flip-angle ramp.** Hargreaves et al. (2001) give the frame — the
 transient is `Q(k+1) = A Q(k)`, so its rate is an eigenvalue of `A` and no preparation changes it;
 a preparation changes the initial error. The named alternatives are `alpha/2 - TR/2` and a flip
 ramp, and the sources do not rank them, so `02` measures both **across the off-resonance band**:
@@ -118,7 +118,7 @@ about 0.64 against a white-matter time constant of ~83 repetitions.
 
 **Every segment is catalyzed, including the first.** This is the acquisition-hierarchy correction
 in this revision. An earlier head treated segmentation as a continuous train with gaps cut into
-it, resuming acquisition immediately, and offered restart preparation as a separate repaired
+it, resuming acquisition immediately, and offered segment catalyzation as a separate repaired
 variant. That is backwards: an interruption leaves the magnetisation somewhere other than the
 periodic state, so re-establishing it is part of what a segmented acquisition *is*. `01`'s
 `acquisition()` now runs the ramp at the first acquired encoding of **every** segment, and the
@@ -129,21 +129,24 @@ The catalyzation is the 24-step linear ramp chosen on evidence above, not full-f
 flip repetitions do drive the system back toward the periodic state, but they are brute force
 rather than an established bSSFP catalyzation family, and an earlier head picked their *count* by
 finding the best value of one image-domain scalar — which is how an example stops being
-representative. One caveat is stated rather than papered over: the ramp was selected against an
-equilibrium start, and a segment restart begins from a relaxed driven state.
+representative. One ramp length serves both positions it appears in, which are not quite the
+same problem — **initial catalyzation** starts the train from equilibrium, **segment catalyzation**
+starts from the magnetisation left after an inter-shot gap — and that is an explicit acquisition
+choice rather than a claim that 24 is optimal for either. The teaching point is that every
+independently interrupted imaging segment needs an explicit catalyzation policy.
 
 **A shot count and an interruption count are different numbers**, and the previous head printed
 the second under the first's name. `segments()` now returns both: 3072 views in 53-view segments
 is 58 shots and 57 breaks, and the catalyzation overhead scales with the shots — 1392 repetitions,
 45% of the acquired views. In a gated acquisition that is time inside a fixed physiological window,
-which is the trade the section exists to teach. The measurement below says what that overhead
-buys, and it is also where the caveat above gets settled.
+which is the trade the section exists to teach.
 
 **Two protocols, from the same policy code, each continuous and segmented — four files.** The
 representative acquisition is `192 x 192 x 16` over 300 mm at TR 4.21 ms; the reduced one is
-`48 x 32 x 8` at the same TR and the same shot length. The reduced protocol is used for the volume reconstruction; the transient, ordering and
-segmentation physics are measured on the **representative** `.seq` files directly, because a
-point-object history of 3072 views costs seconds.
+`48 x 32 x 8` at the same TR and the same shot length. The reduced protocol is used for the volume
+reconstruction; the transient, ordering and segmentation physics are measured on the
+**representative** `.seq` files directly, because a point-object history of 3072 views costs
+seconds.
 
 **The 3D phantom is a different object from the 2D one.** `examples/phantom.py` gained `slab_3d()`
 beside `slab()`: `slab(nz=8)` returns eight *native* BrainWeb slices, which is 12 mm of anatomy
@@ -156,8 +159,8 @@ side by side and asserts the three relations between them; five tests in
 `tests/examples/test_phantom.py` pin that the two helpers are not interchangeable.
 
 **The measurement is two measurements, and the language now says which is which.** A point object
-at the origin has flat k-space by construction, so the acquired `|echo|` per repetition is the
-acquisition's own modulation — but that is the magnitude of one sampled echo, not the magnetisation
+at the origin has a transform verified effectively flat over the sampled table, so the acquired
+`|echo|` per repetition is the acquisition's own modulation — but that is the magnitude of one sampled echo, not the magnetisation
 vector, and the previous head called it "state", which claimed more than it measured. It is now
 **per-view echo-magnitude departure**. The reconstructed point response is the other quantity, and
 it depends additionally on where in the table the modulated views fall and on phase. Measured on
@@ -178,18 +181,16 @@ free, since the arrays are already in hand, and the split is the interesting par
 two segments' worth of views and the continuous train's rms falls 0.164 → 0.046, the segmented
 train's 0.102 → 0.043. **The same number, to within the noise, across 56 further interruptions.**
 
-**A restart is not a startup.** After 107 ms the magnetisation has relaxed from a driven state
-rather than returned to equilibrium, so a restart begins far closer to the periodic state than the
-opening did, and a ramp sized for the opening more than covers it. That is why the ramp length
-chosen for one is not evidence about the other — stated in the notebook rather than quietly
-inherited.
+**Segment catalyzation starts closer than initial catalyzation does**, which is the distinction
+above, measured. After 107 ms the magnetisation has relaxed from a driven state rather than
+returning to equilibrium, so one ramp sized for the harder of the two covers both comfortably.
 
 It also sharpens the two-measurement point into its cleanest form: the ongoing echo-magnitude
 modulation of the two trains is *equal*, and the reconstructed point response is still about a
 quarter larger. What differs is not how much modulation there is but where in the table it lands
 and what phase it carries.
 
-The segmented volume differs from the continuous one by 13.1% of its signal, measured after
+The segmented volume differs from the continuous one by 13.2% of its signal, measured after
 reconstruction — which carries phase and k-space position, neither of which the per-view magnitude
 reports.
 
@@ -199,9 +200,9 @@ modulation survives at the same few `ky` positions, where it adds coherently. Me
 catalyzed: the per-view modulation is within 8%, while 64-view shots give about a quarter more
 summed far response (0.128 → 0.158) and about seventy percent more in the largest single sample
 (0.0049 → 0.0084). Both are modest, which is the catalyzation working — the boundaries still fall
-somewhere, but there is much less left at them to be placed well or badly. The notebook keeps 53, because the literature specifies it for this regime and because selecting a
-protocol parameter from one scalar of one reconstruction is exactly what this revision stopped
-doing elsewhere. The lesson it carries is the mapping — similar per-view modulation can produce
+somewhere, but there is much less left at them to be placed well or badly. The notebook keeps 53,
+because the literature specifies it for this regime and because selecting a protocol parameter from
+one scalar of one reconstruction is exactly what this revision stopped doing elsewhere. The lesson it carries is the mapping — similar per-view modulation can produce
 quite different image structure depending on boundary placement — which is a reason to measure a
 segmented protocol rather than a knob to turn.
 
@@ -235,15 +236,12 @@ rms per-view echo-magnitude departure from the continuous train
                  200 states   400 states   800 states
 white matter         0.0746       0.0746       0.0746      converged
 grey matter          0.0627       0.0631       0.0631      converged
-CSF                  0.4555       0.4500       0.4744      STILL MOVING (5%)
+CSF                  0.4369       0.4500       0.4615      STILL MOVING (3%)
 ```
 
-CSF fails the check at the budgets `02` can afford. Extending it off-notebook to 800 / 1600 / 3200
-states gives 0.4677 / 0.4805 / 0.4749 — settling near 0.475, but only after an order of magnitude
-more states than white matter needs, and with a few percent of run-to-run variation at every budget
-below that. `02` sweeps in-line and quotes nothing for a tissue that fails, for the same reason
-Section 1 already excludes CSF from settling claims. (An earlier head reported CSF "still moving at
-1600 states"; that was the un-catalyzed train, where the same sweep ran 0.2814 → 0.0530.)
+CSF does not converge under the practical coherence-state budget the notebook runs, so it is
+excluded from quantitative claims — the same reason Section 1 already excludes it from settling
+claims. `02` sweeps the budget in-line and quotes nothing for a tissue that fails it.
 
 **The headline measurement carries its own convergence guard.** The representative segmented train
 is re-run at 400 states and the summed far response must agree with the 200-state value to within
@@ -481,7 +479,7 @@ criterion. The
 between-excitations condition is not implemented.
 
 Steady-state establishment, start-up method and count, segmentation and segment count, `ky` and
-acquisition ordering, restart policy and reconstruction are all **not** owned here. A balanced
+acquisition ordering, catalyzation policy and reconstruction are all **not** owned here. A balanced
 repetition is not a repetition in steady state, and a segmented acquisition is a loop around
 the repetitions rather than a class.
 
