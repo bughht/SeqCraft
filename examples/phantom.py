@@ -143,6 +143,82 @@ def slab(*, matrix: int = 128, nz: int = 4, n_coils: int = 8, z_center: int = 64
     return out
 
 
+#: BrainWeb's native isotropic voxel, metres.  192 mm over 128 samples on every axis.
+def voxel_mm(phantom) -> tuple[float, float, float]:
+    """
+    Voxel spacing along each axis, millimetres, read off the affine rather than restated.
+
+    The column norms rather than the diagonal: they agree for the axis-aligned BrainWeb grid, and
+    only one of them keeps agreeing if a phantom ever arrives rotated.
+    """
+    affine = np.asarray(phantom.affine)
+    return tuple(float(np.linalg.norm(affine[:3, i])) for i in range(3))
+
+
+def slab_3d(*, matrix: tuple[int, int, int], z_extent_mm: float, n_coils: int = 0,
+            z_center: int = 64, field_hz: np.ndarray | float | None = None):
+    """
+    A BrainWeb volume covering `z_extent_mm` of anatomy, resampled to `matrix` voxels.
+
+    **This is not :func:`slab` with a different signature, and the difference is the point.**
+    ``slab(nz=8)`` returns eight *native* slices -- 12 mm of anatomy -- which is what a 2D or
+    thin-slab example wants.  A 3D acquisition that encodes 96 mm in ``z`` and excites an 80 mm
+    slab needs a phantom that is 96 mm tall; giving it a 12 mm one puts anatomy in one partition
+    of eight and leaves the rest empty, which looks like a reconstruction fault and is not one.
+
+    So here ``matrix[2]`` is a *sampling* choice and `z_extent_mm` is the *physical* one. Eight
+    voxels over 96 mm is a coarse phantom, deliberately: the simulation cost is voxels x
+    repetitions x states, and a balanced sequence is expensive on all three.
+
+    The resampling is ``VoxelGridPhantom.interpolate``, which rescales the affine with the
+    tensors, so the extent survives the change of resolution.
+
+    Parameters
+    ----------
+    matrix
+        ``(nx, ny, nz)`` simulation voxels.
+    z_extent_mm
+        The physical z extent the phantom should cover, millimetres.
+    n_coils
+        Elements in the receive ring.  ``0`` leaves the phantom with no coil sensitivity.
+    z_center
+        Which of the 128 native slices the extent is centred on.  64 is mid-brain.
+    field_hz
+        As :func:`slab`.  ``None`` leaves the phantom's own B0 map alone.
+
+    Returns
+    -------
+    VoxelGridPhantom
+        Call ``.build()`` on it, or use :func:`built_3d`.
+    """
+    import MRzeroCore as mr0
+
+    nx, ny, nz = (int(v) for v in matrix)
+    full = mr0.VoxelGridPhantom.load(str(download()))
+    # How many native slices cover the requested extent is a question about the *file*, so it is
+    # asked of the file's own affine.
+    native = max(1, int(round(float(z_extent_mm) / voxel_mm(full)[2])))
+    out = full.slices(slices_of(native, z_center)).interpolate(nx, ny, nz)
+    # Put the centre of the extent at isocentre, which is where the slab is excited.
+    out.affine[2, 3] = -0.5 * nz * float(out.affine[2, 2])
+    if n_coils:
+        out.coil_sens = coil_ring(nx, ny, nz, n_coils=n_coils)
+    if field_hz is not None:
+        out.B0 = torch.tensor(np.broadcast_to(np.asarray(field_hz, np.float32),
+                                              tuple(out.B0.shape)).copy())
+    return out
+
+
+def extent_mm(phantom) -> tuple[float, float, float]:
+    """The phantom's physical size along each axis, millimetres -- voxels times their spacing."""
+    return tuple(s * int(n) for s, n in zip(voxel_mm(phantom), phantom.PD.shape))
+
+
+def built_3d(**kwargs):
+    """:func:`slab_3d`, built into the ``SimData`` a simulation actually takes."""
+    return slab_3d(**kwargs).build()
+
+
 def built(**kwargs):
     """:func:`slab`, built into the ``SimData`` a simulation actually takes."""
     return slab(**kwargs).build()

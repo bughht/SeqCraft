@@ -1,5 +1,271 @@
 # Changelog
 
+## Unreleased — a balanced repetition that encodes a partition
+
+`sc.modules.bSSFP3DTR` builds one balanced repetition of a 3D Cartesian bSSFP acquisition. A
+**sibling** of `bSSFP2DTR` rather than a wrapper, for the reason `GRE3DTR` is a sibling of
+`GRE2DTR`: the `z` axis does a different job. In 2D it carries slice selection and its balancing;
+here it carries slab selection, its balancing, **and** the partition encoding.
+
+The balance definition is unchanged — zero net area on x, y and z over the RF-centre-to-RF-centre
+interval, with `TE = TR/2` the standard symmetric realisation and not the definition.
+
+**Each repetition discharges its own partition moment.** This is the part 3D adds, and it is a
+compositional requirement rather than an arithmetic one. The interval ends inside the *successor*,
+so giving the encode to the pre-echo lobe and the rewind to the lobe before the next pulse leaves
+
+```text
+A_post(n) + [-A_post + K(p_n)] + [-A_pre - K(p_{n+1})] + A_pre(n+1)  =  K(p_n) - K(p_{n+1})
+```
+
+which is zero only while neighbouring repetitions share a partition. A 3D acquisition chooses its
+view order, so that is not a repetition contract at all. The realisation here instead keeps the
+encode and its rewind in the same repetition — `lead = -A_pre` with no partition term at all,
+`tail = -A_post + K(p)` before the echo, `rewind = -K(p)` after it — and the interval reduces to
+the selection halves and their balancing lobes whatever the successor acquires.
+
+That distinction is invisible to a train of identical repetitions, so the first-class regression
+test drives a view order where **every neighbouring pair changes both indices**, with partition
+steps up to the full width of the table. Measured on compiled waveforms: worst RF-to-RF `|M0|` of
+4.0e-12 1/m across x, y and z; echo k-space exact to 3e-12 on all three axes; TE and TR constant
+to 1e-17 s.
+
+The encoding is **lumped into** the balancing lobe rather than played beside it: the z axis is
+already occupied between the pulse and the echo, and a second independent z gradient there merges
+with the first and exceeds the slew limit at the edge of the partition table. One lobe carrying
+the signed sum is the same moment in a legal shape — what `GRE3DTR` does with `A_slab +
+A_partition`. Which partition makes that lobe longest is a *result* of the signed combination, so
+every supported partition is enumerated rather than an edge assumed.
+
+One selection-side window serves the whole table, and both lobes take it. Letting each partition
+take its shortest would make TE a function of `kz`; letting the two lobes differ would break the
+symmetry about the echo. **That symmetry is a choice, not part of balance** — what it buys is the
+clean limit at `kz = 0`, where z carries only slab-selection balancing and the interval's first
+moment vanishes (measured 1.0e-16). Away from the centre the partition encoding contributes its
+own first-moment term of opposite sign at the two edges, exactly as the phase encoding already
+does on `y`.
+
+On one protocol — 200x200x160 mm, 64x64x16, 100 mm slab, 35 degrees, 400 Hz/px:
+
+```text
+lead minimum (-A_pre)                140 us
+pre-echo combined minimum            240 us   limited by partition 0
+post-echo rewind minimum             200 us   limited by partition 0, and it fits the
+                                              360 us post-echo window already there
+chosen common selection-side window  240 us   taken by both lobes
+
+min_te_s 3.1907 ms   min_symmetric_te_s 3.4707 ms   min_tr_s 6.9400 ms
+te_s 3.4707 ms       tr_s 6.9400 ms               symmetry_residual 7.5e-07 s
+```
+
+**Selective and non-selective are two excitation modes**, not one mode with the selection gradient
+switched off: `slab_thickness_mm=None` means no selection gradient *and* a hard pulse. That rule
+already existed inside `GRE3DTR`; it now lives in `resolve_excitation_mode` in
+`modules/_support.py` and both 3D kernels call it, so they cannot answer it differently. GRE3DTR's
+behaviour is unchanged — twelve mode combinations were recorded before and after and compared
+field by field, including TE, TR, the emitted RF sample count and duration, the excitation's
+gradient channels and the exact refusal messages.
+
+The public surface is deliberately small: `te_s`, `tr_s`, `min_te_s`, `min_tr_s`,
+`min_symmetric_te_s`, `symmetry_residual_s`, `time_to_rf_center()`, `time_to_echo()`,
+`center_line`, `center_partition`, `dk_per_m()` and `voxel_mm()`. The partition's k-space position
+is `pe_z.k_per_m(p)`, which is already how `PhaseEncode` and `GRE3DTR` spell it; no second
+spelling was added, and the solver's own bookkeeping stays private.
+
+RF phase cycling, the receiver phase progression, preparation, dummies, segmentation and the view
+order stay the caller's, as on `bSSFP2DTR`. There are no spoilers, and `flow_comp` is not offered
+yet: `z` already carries three roles here, and the joint-design contract for a fourth is a separate
+question from getting the conventional repetition right.
+
+## The example is an acquisition, not a legal waveform
+
+A correct repetition is not a sequence. `examples/bssfp_3d/` carries the train-level policy too,
+and each part of it was taken from the literature and then measured.
+
+**Catalyzation: a 24-step linear flip-angle ramp.** Hargreaves et al. (2001) give the frame — the
+transient is `Q(k+1) = A Q(k)`, so its rate is an eigenvalue of `A` and no preparation changes it;
+a preparation changes the initial error. The named alternatives are `alpha/2 - TR/2` and a flip
+ramp, and the sources do not rank them, so `02` measures both **across the off-resonance band**:
+
+```text
+peak transient over the first 60 imaging repetitions, / late-train signal, white matter
+                        0 Hz    59 Hz    89 Hz   107 Hz      (band edge 119 Hz)
+no preparation          3.59     5.31    10.41    25.24
+alpha/2 - TR/2          1.53     3.59     9.55    24.71
+24-step flip ramp       1.45     2.55     5.82    10.80
+```
+
+They tie at the passband centre and under `±10%` B1; the ramp is markedly better toward the edge,
+which is what Hargreaves predicts for a non-selective half-angle pulse. An earlier draft shipped
+`alpha/2` on an on-resonance-only comparison. The ramp's length comes from a sweep that `02` now
+runs and keeps.
+
+**View ordering: bidirectional sequential, and measured over the whole RF train.** Spincemaille et
+al. (2004) require the `(ky, kz)` trajectory to be smooth because repetition-to-repetition
+phase-encode changes drive eddy currents. That criterion is about *repetitions*, so the preparation
+repetitions count: the ramp now runs **at the first acquired view's encoding** rather than at the
+centre of k-space, which removes a full-width jump at the ramp-to-acquisition boundary that an
+acquired-views-only metric could not see. Within an uninterrupted run no repetition moves more than
+one encoding step. The ordering is named for what it is — the smooth sequential variant — rather
+than as Spincemaille's fan or loop construction, which additionally time the central views against
+a contrast preparation this acquisition does not have.
+
+**Segmentation is defined by shot length, not shot count — and it comes with its catalyzation.**
+The behaviour depends on the ratio of shot length to the transient's time constant, so that ratio
+is what a surrogate must preserve. The shot is **53 views**, the echo train length Morita et al.
+(2008) report at p.1245, §2.2, alongside their 107 ms inter-shot delay; both protocols then sit at
+about 0.64 against a white-matter time constant of ~83 repetitions.
+
+**Every segment is catalyzed, including the first.** This is the acquisition-hierarchy correction
+in this revision. An earlier head treated segmentation as a continuous train with gaps cut into
+it, resuming acquisition immediately, and offered segment catalyzation as a separate repaired
+variant. That is backwards: an interruption leaves the magnetisation somewhere other than the
+periodic state, so re-establishing it is part of what a segmented acquisition *is*. `01`'s
+`acquisition()` now runs the ramp at the first acquired encoding of **every** segment, and the
+continuous acquisition is the same policy code with one segment and the same ramp — which is also
+the semantics `bssfp_2d_segmented.seq` already taught.
+
+The catalyzation is the 24-step linear ramp chosen on evidence above, not full-flip dummies. Full
+flip repetitions do drive the system back toward the periodic state, but they are brute force
+rather than an established bSSFP catalyzation family, and an earlier head picked their *count* by
+finding the best value of one image-domain scalar — which is how an example stops being
+representative. One ramp length serves both positions it appears in, which are not quite the
+same problem — **initial catalyzation** starts the train from equilibrium, **segment catalyzation**
+starts from the magnetisation left after an inter-shot gap — and that is an explicit acquisition
+choice rather than a claim that 24 is optimal for either. The teaching point is that every
+independently interrupted imaging segment needs an explicit catalyzation policy.
+
+**A shot count and an interruption count are different numbers**, and the previous head printed
+the second under the first's name. `segments()` now returns both: 3072 views in 53-view segments
+is 58 shots and 57 breaks, and the catalyzation overhead scales with the shots — 1392 repetitions,
+45% of the acquired views. In a gated acquisition that is time inside a fixed physiological window,
+which is the trade the section exists to teach.
+
+**Two protocols, from the same policy code, each continuous and segmented — four files.** The
+representative acquisition is `192 x 192 x 16` over 300 mm at TR 4.21 ms; the reduced one is
+`48 x 32 x 8` at the same TR and the same shot length. The reduced protocol is used for the volume
+reconstruction; the transient, ordering and segmentation physics are measured on the
+**representative** `.seq` files directly, because a point-object history of 3072 views costs
+seconds.
+
+**The 3D phantom is a different object from the 2D one.** `examples/phantom.py` gained `slab_3d()`
+beside `slab()`: `slab(nz=8)` returns eight *native* BrainWeb slices, which is 12 mm of anatomy
+inside a sequence that encodes 96 mm, so seven of eight partitions are empty and the result looks
+like a reconstruction fault. `slab_3d(matrix=..., z_extent_mm=...)` takes the extent as physical
+and the matrix as sampling, resampling through `VoxelGridPhantom.interpolate`, which rescales the
+affine with the tensors. `slab()` is deliberately unchanged, since seven notebooks depend on it.
+`02` now prints the encoded FOV, excited slab, phantom extent, phantom matrix and simulation voxel
+side by side and asserts the three relations between them; five tests in
+`tests/examples/test_phantom.py` pin that the two helpers are not interchangeable.
+
+**The measurement is two measurements, and the language now says which is which.** A point object
+at the origin has a transform verified effectively flat over the sampled table, so the acquired
+`|echo|` per repetition is the acquisition's own modulation — but that is the magnitude of one sampled echo, not the magnetisation
+vector, and the previous head called it "state", which claimed more than it measured. It is now
+**per-view echo-magnitude departure**. The reconstructed point response is the other quantity, and
+it depends additionally on where in the table the modulated views fall and on phase. Measured on
+the representative acquisition, with a 0.1 mm point whose envelope is asserted flat to 0.9965
+across the sampled table:
+
+```text
+                        -- echo magnitude --        -- point response --
+                        min/median    rms dev       far sum    largest far
+continuous                   0.998     0.1641         0.100         0.0055
+segmented, catalyzed         0.932     0.1021         0.128         0.0049
+```
+
+Interrupted 57 times, the acquisition's point response grows by about a quarter. The whole-train rms
+comes out *lower* for the segmented train, which is not a claim that interrupting helps — both open
+from equilibrium with the same ramp, and that one transient dominates the figure. Splitting it is
+free, since the arrays are already in hand, and the split is the interesting part: drop the first
+two segments' worth of views and the continuous train's rms falls 0.164 → 0.046, the segmented
+train's 0.102 → 0.043. **The same number, to within the noise, across 56 further interruptions.**
+
+**Segment catalyzation starts closer than initial catalyzation does**, which is the distinction
+above, measured. After 107 ms the magnetisation has relaxed from a driven state rather than
+returning to equilibrium, so one ramp sized for the harder of the two covers both comfortably.
+
+It also sharpens the two-measurement point into its cleanest form: the ongoing echo-magnitude
+modulation of the two trains is *equal*, and the reconstructed point response is still about a
+quarter larger. What differs is not how much modulation there is but where in the table it lands
+and what phase it carries.
+
+The segmented volume differs from the continuous one by 13.2% of its signal, measured after
+reconstruction — which carries phase and k-space position, neither of which the per-view magnitude
+reports.
+
+**Where the segment boundaries fall is a sensitivity, not a tuning parameter.** `SHOT_VIEWS = 53`
+is Morita's figure; 64 would divide the 192-line table exactly three times, repeating whatever
+modulation survives at the same few `ky` positions, where it adds coherently. Measured, with both
+catalyzed: the per-view modulation is within 8%, while 64-view shots give about a quarter more
+summed far response (0.128 → 0.158) and about seventy percent more in the largest single sample
+(0.0049 → 0.0084). Both are modest, which is the catalyzation working — the boundaries still fall
+somewhere, but there is much less left at them to be placed well or badly. The notebook keeps 53,
+because the literature specifies it for this regime and because selecting a protocol parameter from
+one scalar of one reconstruction is exactly what this revision stopped doing elsewhere. The lesson it carries is the mapping — similar per-view modulation can produce
+quite different image structure depending on boundary placement — which is a reason to measure a
+segmented protocol rather than a knob to turn.
+
+**The no-catalyzation failure mode is described, not shipped.** Morita's study deliberately used no
+dummy pulse and found that centric and linear orderings of the same sequence gave different
+contrast, because "the data of the k-space center of each shot with centric ordering was sampled
+from the first RF pulse, while [that] with linear ordering was sampled after 26 RF pulses were
+excited". That is the reason catalyzation matters, and it is now a paragraph in `02` rather than an
+under-prepared `.seq` sitting beside the one a reader should copy. A published experimental
+realization is not a generic authoring pattern.
+**The off-resonance comparison is differential, because the surrogate forced it to be.** On the
+256-view reduced train each segment's ramp is a large fraction of the repetitions, so an absolute
+deviation there mostly measures the ramps. The segmented train is compared with the continuous one
+view by view at the same offset instead, so what is common to both cancels. An earlier,
+non-differential version of this cell ranked the *continuous* train worse than the segmented one at
+0.75 of the band edge, which is how the confound was found.
+
+The residual cost is **not** uniform across the passband — it roughly triples from resonance to
+`0.75` of the band edge (0.0746 → 0.2192) while the signal it is measured against falls to about
+two-thirds. Nothing in the gap is refocused, so the further from resonance, the more the
+catalyzation has to undo. An earlier head called this quantity roughly flat; that was measured on
+the un-catalyzed train and does not carry over.
+
+**The coherence-state budget is checked before the tissue comparison is read, rather than
+discovered afterwards.** Every number rests on a budget chosen for white matter, and bSSFP keeps
+its pathways alive — a long `T2` keeps more of them alive for longer. An earlier head quoted a CSF
+figure that changed sign between two runs of the same computation, so `02` now sweeps the budget
+in-line, prints the per-tissue verdict, and quotes nothing for a tissue that fails it.
+
+White matter and grey matter converge within the budget and are reported. **CSF does not converge
+under the practical coherence-state budget used by this notebook and is therefore excluded from
+quantitative claims** — the same reason Section 1 already excludes it from settling claims. It is
+not unsimulable; it needs a substantially larger state budget than this demonstration spends, and
+buying one is not what this example is for. The executed sweep is in the notebook, which is where
+a result that moves run to run belongs.
+
+**The headline measurement carries its own convergence guard.** The representative segmented train
+is re-run at 400 states and the summed far response must agree with the 200-state value to within
+2%, so the section's numbers rest on a checked assumption about the simulator rather than an
+inherited default.
+2% — it agrees to 0.05% — so the section's numbers rest on a checked assumption about the simulator
+rather than an inherited default.
+
+**The artifact interface is checked where it is cheap.** `01` re-reads all four files it writes and
+asserts readout counts, distinct `(LIN, PAR)` addresses, agreement with the recorded table and the
+declared TE/TR, so the `01 -> 02` contract has CI coverage through the notebook smoke job.
+
+Protocol attribution is kept narrow, and in three tiers rather than two. *Borrowed*: the in-plane
+matrix and FOV scale, partition count and TR regime, and from Morita et al. (2008, p.1245, §2.2)
+specifically the echo train length of 53 and the 107 ms delay between shots. *Adapted*: flip
+angle, bandwidth, slab geometry and the preparation. *Ours*: the combination — Morita's shot
+length with a bidirectional sequential view order that is neither of Spincemaille's constructions,
+ramped catalyzation before every segment where Morita's protocol deliberately used none, and 3 T
+where Morita imaged at 1.5 T. Spincemaille's loop order additionally requires each
+segment to be a whole number of `ky` lines, which this shot length is not; that difference is
+measured rather than argued.
+
+Both notebooks are committed with their executed outputs, which is this repository's convention for
+`examples/`. `01` summarises the compiler's vector-norm warnings rather than printing thousands of
+sites — they are informational, since several axes ramping together exceed the scalar per-axis norm
+while each amplifier axis stays within its own — and `02` suppresses only that one warning class
+rather than filtering everything.
+
 ## Unreleased — the complexity guard is robust to scheduler noise
 
 `test_boundary_selection_is_not_quadratic` asserts that quadrupling an EPI train's echo count
@@ -209,7 +475,7 @@ criterion. The
 between-excitations condition is not implemented.
 
 Steady-state establishment, start-up method and count, segmentation and segment count, `ky` and
-acquisition ordering, restart policy and reconstruction are all **not** owned here. A balanced
+acquisition ordering, catalyzation policy and reconstruction are all **not** owned here. A balanced
 repetition is not a repetition in steady state, and a segmented acquisition is a loop around
 the repetitions rather than a class.
 

@@ -1,10 +1,18 @@
 """
 Argument checks and exact gradient arithmetic shared by the modules.
 
-Nothing here is a :class:`~seqcraft.design.module.Module`, and nothing here is MR knowledge.  It
-is the handful of lines that would otherwise be copied into five files: the same range check
-written five ways drifts, and the version that drifts is the one whose message stops naming the
-argument that fixes it.
+Nothing here is a :class:`~seqcraft.design.module.Module`.  Most of it is not MR knowledge
+either: it is the handful of lines that would otherwise be copied into five files, where the same
+range check written five ways drifts, and the version that drifts is the one whose message stops
+naming the argument that fixes it.
+
+:func:`resolve_excitation_mode` is the exception, and it is deliberate.  *Which pulse family a
+selective or non-selective excitation wants* is MR knowledge, and it is here because it is
+knowledge two kernels must not answer differently: a non-selective excitation is its own physical
+mode with its own RF family, not a selective one with the selection gradient deleted.  That rule
+was established once, in ``GRE3DTR``, and a second kernel re-deriving it is exactly how it would
+be lost.  The alternative -- a cross-folder import of ``rf/``'s private name from ``kernel/`` --
+is the thing the paragraph below rejects.
 
 :func:`area_until` is the one that is arithmetic rather than validation, and it is here rather
 than in :mod:`seqcraft.design.events` because only the module library has ever needed it -- the
@@ -55,11 +63,77 @@ if TYPE_CHECKING:
     from ..design.events import Event
 
 __all__ = [
+    'HARD_PULSE_S',
     'area_until', 'ceil_raster', 'check_peak_b1', 'duration_for_peak_b1', 'duration_remedy', 'dwell_quantum',
     'halve_onto', 'peak_b1_hz', 'peak_scales_with_duration', 'require_axis',
     'require_usable_max_b1', 'require_count', 'require_pair',
-    'require_positive', 'require_range', 'shift_slice',
+    'require_positive', 'require_range', 'resolve_excitation_mode', 'shift_slice',
 ]
+
+
+#: The non-selective excitation's pulse duration when the caller does not give one.  A hard pulse
+#: is short by definition, and :class:`~seqcraft.modules.Excitation`'s own 3 ms default is a
+#: *shaped selective* pulse's -- it would spend three milliseconds of echo time on a pulse that
+#: selects nothing.  0.2 ms is what ``writeGradientEcho3D.m`` uses.
+HARD_PULSE_S = 0.2e-3
+
+
+def resolve_excitation_mode(
+    *,
+    selective: bool,
+    rf_pulse: str | None,
+    rf_duration_s: float | None,
+    rf_time_bw_product: float | None,
+    selection: tuple[str, object],
+) -> dict[str, float | str]:
+    """
+    Return the :class:`~seqcraft.modules.Excitation` arguments a selection mode implies.
+
+    **Selective and non-selective are two physical excitation modes, not one mode with a gradient
+    switched off.**  Each has its own RF family: a slab wants a shaped pulse, and no slab wants a
+    hard one.  Defaulting both to ``'sinc'`` would hand the non-selective path a shaped pulse that
+    selects nothing -- which is a mis-specified excitation, whatever it costs in echo time.
+
+    An explicit `rf_pulse` is always honoured, so a caller who deliberately wants a shaped but
+    spatially non-selective pulse -- a spectrally selective excitation, say -- still gets one.
+    That is an explicit alternative excitation design rather than the default imaging mode.
+
+    Parameters
+    ----------
+    selective
+        Whether a selection gradient is being played.
+    rf_pulse, rf_duration_s, rf_time_bw_product
+        What the caller asked for; ``None`` means "let the mode decide".
+    selection
+        ``(name, value)`` of the caller's selection argument, named in the refusal so the message
+        points at the argument that would fix it rather than at an internal flag.
+
+    Returns
+    -------
+    dict
+        Keyword arguments for :class:`~seqcraft.modules.Excitation`.
+    """
+    pulse = rf_pulse if rf_pulse is not None else ('sinc' if selective else 'block')
+    out: dict[str, float | str] = {'pulse': pulse}
+
+    if rf_duration_s is not None:
+        out['duration_s'] = rf_duration_s
+    elif pulse == 'block':
+        out['duration_s'] = HARD_PULSE_S
+
+    if rf_time_bw_product is not None:
+        if pulse == 'block':
+            name, value = selection
+            msg = format_error(
+                'a time-bandwidth product needs a shaped pulse, and this excitation is a hard '
+                'block pulse.',
+                {'rf_time_bw_product': rf_time_bw_product, 'rf_pulse': pulse, name: value},
+                ["pass rf_pulse='sinc' for a shaped pulse",
+                 'or drop rf_time_bw_product, which a block pulse has no use for'],
+            )
+            raise ConfigurationError(msg)
+        out['time_bw_product'] = rf_time_bw_product
+    return out
 
 
 def peak_b1_hz(rf: Event) -> float:
