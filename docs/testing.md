@@ -161,6 +161,43 @@ limited to the modules that the configuration describes as structurally typeable
 list only after bringing an additional module to a clean baseline.  The README contains fenced
 examples rather than doctests, so the former empty pytest invocation is not a gate.
 
+## The three validation layers
+
+Evidence about a sequence comes in three kinds, and naming them keeps a claim from being supported
+by the wrong one. These are **definitions, not a checklist**: they say what a piece of evidence is,
+never how much of it a given change owes.
+
+```text
+Layer 1   analytic and test evidence
+          invariants measured on the emitted events -- TE and TR, RF and ADC phase and
+          timing, gradient moments, b-value or VENC, k-space at the true ADC samples,
+          encoding signs and labels, raster and hardware legality
+
+Layer 2   executable build and readback
+          the complete acquisition builds, writes a real .seq, is read back and
+          inspected -- structure, view count, train-level policy, declared definitions
+
+Layer 3   simulation and reconstruction
+          the magnetisation-, train-, voxel- or image-level behaviour the physical
+          objective actually requires, with convergence or sensitivity evidence where
+          the result depends on a numerical budget
+```
+
+A higher layer is not a better version of a lower one. Layer 1 measures what was emitted, Layer 2
+measures that the whole acquisition survives a round trip, and Layer 3 measures what the spins do.
+A balanced repetition can pass Layers 1 and 2 and still belong to an acquisition whose steady state
+was never established, because that is a Layer 3 question.
+
+**How much is owed is a separate question, and it belongs to the task.** Layer 3 is not required of
+every primitive; a leaf whose contract is a gradient area is fully characterised without simulating
+anything. But when a newly completed imaging acquisition makes a train-level or image-level
+correctness claim, relevant Layer 3 evidence is part of maintainer merge readiness, because nothing
+below Layer 3 can test that claim.
+
+Acceptance policy beyond that — which layers block, which are review evidence, and what an
+incomplete layer is called — is set by whichever workflow is in use and is documented with that
+workflow, not here.
+
 ## Tiers outside pull-request CI
 
 Simulation and reconstruction notebooks require MRzeroCore, Torch, SigPy, and artifacts generated

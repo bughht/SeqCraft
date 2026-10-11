@@ -1,5 +1,55 @@
 # Changelog
 
+## Unreleased — a skill for writing the whole acquisition
+
+`.claude/skills/sequence-authoring/SKILL.md` is the first slice of a **user-facing** authoring
+skill. Its governing rule is the one the repository keeps rediscovering: a compilable `.seq` is not
+a correct acquisition, and most of what makes an acquisition right — preparation, phase cycling,
+view ordering, segmentation, recovery — lives above the repetition where the compiler cannot see
+it.
+
+It is deliberately one file. No RequirementIR, protocol schema, sequence DSL, module registry,
+general solver or compiler hook was added to support it, and it does not invoke `module-mining`,
+which is a maintainer workflow for deciding what belongs in the package and is not a runtime
+dependency of anything a user does.
+
+**The skill describes the shipped facilities at their real scope**, because an agent that goes
+looking for a capability the package deliberately lacks wastes the user's time:
+`PhysicalDesignScope` is opt-in and region-scoped and says so in its own docstring;
+`seqcraft.design.joint` behind it is provisional and internal; `sc.timing` is exact raster
+arithmetic rather than an optimizer; minimum TE and TR are per-kernel properties, since
+`docs/architecture.md` records that a gap-timing solver is deliberately absent; and `sc.pns` is a
+**prediction** over a compiled tree given a response model, not a constraint the designer honours.
+
+**`docs/testing.md` now defines the three validation layers.** They had no neutral home — the term
+appeared there once, in passing, while the only normative statement lived inside the maintainer-only
+module-mining skill, which a user-facing skill may neither cite nor restate. The new section
+defines what each layer *is* and explicitly leaves acceptance policy to whichever workflow is in
+use: Layer 3 is not owed by every primitive, but a newly completed imaging acquisition claiming
+train- or image-level correctness owes relevant Layer 3 evidence for merge readiness.
+
+**`tests/sequence_authoring/` checks the emitted file, not the authoring script.** A small
+version-controlled acquisition is built into pytest's temporary directory — no `.seq` is committed —
+and seven checks measure the sequence after it has been written and read back: that the emitted
+`k_y` covers the whole phase-encode grid exactly once, that dummy repetitions excite without
+acquiring, that TE measured from the RF centre to the echo and TR between excitations are the ones
+declared, that `k_x` sweeps through the origin at the sample the readout puts it on, that the
+written definitions describe this acquisition, and that the build raises nothing but the known
+informational vector-norm warning.
+
+The expectations come from the specification and from physics, which is a correction rather than a
+preference. The first draft compared the emitted table against the view list the authoring code had
+just built, so it agreed with itself: deleting a line from the protocol left all seven passing.
+Mutation testing found it. Rewritten against `(line - n/2) / FOV_y` for every line of the matrix,
+the same mutation fails three checks, and a policy that claims dummies it does not play fails
+another. None of this duplicates `tests/compiler/`, which already rejects an illegal file; the
+question here is whether a legal file is the acquisition it claims to be.
+
+Calibration prompts live in `tools/sequence_authoring/calibration/prompts.md` as **inputs only**.
+Review criteria and recorded verdicts stay in the workspace planning repository, because the agent
+being evaluated can read this one. Agent behaviour is reviewed by a person; pytest success is not
+skill success, and the two are kept apart on purpose.
+
 ## Unreleased — a base install that can be imported
 
 `pip install seqcraft` resolved cleanly and then raised on `import seqcraft`:
