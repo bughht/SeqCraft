@@ -13,22 +13,53 @@ governing rule:
 > that acquisition.**
 
 A correct repetition is not a sequence. Most of what makes an acquisition right — preparation,
-phase cycling, view ordering, segmentation, recovery, shot structure — lives *above* the
-repetition, and none of it is checked by the compiler.
+phase cycling, view ordering, segmentation, recovery — lives *above* the repetition, and none of it
+is checked by the compiler.
 
 ## What this covers
 
 Writing a complete acquisition for a user: interpreting the request, choosing a representative
 protocol, implementing it, validating the artifact, and delivering it with honest limits.
 
-**Not covered.** Do not edit, patch, or monkey-patch the installed SeqCraft package. Do not run or
-invoke the `module-mining` workflow — it is a maintainer workflow for deciding what belongs in the
-package, and nothing here depends on it. Do not propose a compiler change to make a sequence work.
+**Not covered.** Do not edit, patch, or monkey-patch the installed SeqCraft or PyPulseq packages.
+Do not run or invoke the `module-mining` workflow — it is a maintainer workflow for deciding what
+belongs in the package, and nothing here depends on it. Do not propose a compiler change to make a
+sequence work.
 
 If a capability genuinely seems missing, say so in one sentence, give the local fallback you used,
 and continue. A missing public abstraction is an observation, not a blocker.
 
 ---
+
+## 0. Establish the environment first
+
+**Two environments are in scope, and they are not the same job.**
+
+```text
+a SeqCraft source checkout     the repository is present: its docs, examples and the
+                               module source are readable, and the installed package may
+                               be an editable install of exactly that tree
+
+an ordinary Python project     SeqCraft and PyPulseq are installed, e.g. by pip, and there
+                               is no SeqCraft repository anywhere
+```
+
+Before designing anything, find out which one you are in and what is actually installed:
+
+```python
+import importlib.metadata as md
+import seqcraft as sc, pypulseq as pp
+print(sc.__version__, md.version('pypulseq'))
+print(sorted(n for n in dir(sc.modules) if not n.startswith('_')))
+```
+
+Then check the specific surfaces you intend to rely on — a module's constructor signature, whether
+a facility exists at all — by introspecting the installed package rather than by recalling what the
+development branch has. **An installed release does not contain everything on `main`.** If
+something you expected is absent, say so and compose what you need locally instead.
+
+This file is self-contained. Where it points at repository documents, those are *supplementary*
+and exist only in a source checkout; nothing here requires them at runtime.
 
 ## 1. Read the request
 
@@ -97,59 +128,85 @@ to be convenient.
 **Implementation preference**, following physical ownership rather than tidiness:
 
 ```text
-1. a shipped SeqCraft Module
+1. a shipped SeqCraft Module          check it exists in the installed version
 2. a sequence-local Module or function, in the user's own project
 3. direct LogicBlock composition or raw PyPulseq events
 ```
 
 A good acquisition often creates no new abstraction at all. Do not manufacture a class to make
-generated code look modular.
+generated code look modular. Sequence-local code belongs to the user's project, never to the
+installed package.
 
-**Use the shipped facilities within their actual scope.** Read the contract before relying on one;
-none of these is a general solver, and none is a validation oracle:
+**Use the shipped facilities within their actual scope.** None is a general solver; confirm each is
+present in the installed version before relying on it:
 
 | Facility | What it is |
 |---|---|
+| `sc.LogicBlock.add(t, ...)` | Places an event or nests a block at a time you compute. The composition primitive. |
+| `sc.compile(tree, opts)` | Schedules and checks legality, returning a `pypulseq.Sequence`. Refusal is a hardware or raster violation, not a physics review. |
 | `sc.PhysicalDesignScope` / `PhysicalDesign` | Opt-in, **region-scoped** gradient design. You declare a window, what plays either side, which axes it may use, and which states the family comes in; it puts `k` at the echo where you asked and meets the declared intents. It is not a layer and never rewrites a finished block. |
 | `sc.FlowCompensation`, `sc.VelocityEncoding` | The moment-constrained intents a scope or a kernel accepts. |
 | `sc.timing` — `Raster`, `to_ticks`, `exact_sum` | Exact raster arithmetic without drift. Not an optimizer. |
 | Module `min_te_s`, `min_tr_s`, `time_to_echo()` | Each kernel computes its own feasible minima and reference instants. Gap timing is arithmetic you write and can read. |
-| `sc.analysis` — `moments`, `kspace`, `b_value`, `sample` | Measurement of a compiled tree. This is your Layer 1 evidence. |
-| `sc.pns`, `sc.hardware.*` | A PNS **prediction** over a compiled tree, given a response model. Not a constraint the designer honours, and `synthetic_hardware()` carries illustrative public coefficients only. |
 
-The package deliberately contains no recipes, no gap-timing solver, no `.seq` importer, and no
-simulation or reconstruction — see [`docs/architecture.md`](../../../docs/architecture.md). Inherit
-that; do not reimplement one locally and present it as SeqCraft capability.
-
-Keep the public architecture intact: `LogicBlock.add(t, ...)` places events and nests blocks,
-modules own physical design, you own protocol policy, and `sc.compile(tree, opts)` schedules and
-checks legality.
+SeqCraft deliberately ships no recipes, no gap-timing solver, no `.seq` importer, and no simulation
+or reconstruction. Inherit that; do not reimplement one locally and then present it as SeqCraft
+capability.
 
 **Use explicit `pypulseq.Opts`.** If the user gave no scanner limits, choose conservative
 illustrative ones and state the values and where they came from. Never call them scanner-safe.
 
-## 4. Validate the emitted file
+## 4. Validate — and know what each measurement looks at
 
-Write the real `.seq`, read it back, and inspect what was actually emitted. A module's
-self-reported `te_s` is not evidence that the file contains that TE.
+Three different things get measured, and conflating them is the most common way an authoring
+session convinces itself it is finished.
 
-The three layers are defined in [`docs/testing.md`](../../../docs/testing.md). Match the evidence to
-the claim:
+```text
+the tree you built        sc.moments   exact, over flatten(tree)
+                          sc.sample    interpolated onto a uniform raster grid -- not exact
+                          sc.b_value   numerical, inherits sample's grid
 
-- **Layer 1** — measure the emitted events. TE and TR at the true reference instants, RF and ADC
-  phase, gradient moments, k-space at real ADC samples, encoding signs and labels.
-- **Layer 2** — the whole acquisition builds, writes, rereads and inspects: view count, train
-  structure, the policy you said you implemented, the definitions you declared.
-- **Layer 3** — what the spins do, when the claim needs it. Preparation and transient, contrast,
-  off-resonance, flow, point response, reconstruction. Simulation reads the **written file**
-  through `mr0.Sequence.import_file`, which is the stronger check because it tests what a scanner
-  would play.
+compiled internally       sc.kspace    compiles, then calculate_kspacePP(); exact at true ADC times
+                          sc.pns       compiles, then calculate_pns(); a model-based prediction
+
+the emitted file          read the written .seq back with pypulseq and measure it, or import it
+                          into a simulator.  Nothing in sc.analysis does this for you.
+```
+
+**`sc.analysis` measures your tree, not your file.** That matters, because the file is what a
+scanner plays. Write the `.seq`, read it back, and derive your expectations from the protocol and
+from physics — `k_y = (line - n/2) / FOV_y`, TE from the RF effective centre to the echo, TR
+between successive excitations. A module's self-reported `te_s` is not evidence that the file
+contains that TE.
+
+Evidence comes in three layers. In a source checkout, `docs/testing.md` defines them and each
+workflow's acceptance policy lives with that workflow; the working summary:
+
+- **Layer 1 — analytic.** Invariants measured on the emitted events: TE and TR at true reference
+  instants, RF and ADC phase, gradient moments, k-space at real ADC samples, encoding signs and
+  labels.
+- **Layer 2 — build and readback.** The complete acquisition builds, writes a real `.seq`, and is
+  read back and inspected: view count and order, train structure, the policy you said you
+  implemented, the definitions you declared.
+- **Layer 3 — simulation and reconstruction.** What the spins do, when the claim needs it.
+  Preparation and transient, contrast, off-resonance, flow, point response, reconstruction.
+
+Layer 3 is not owed by every primitive. It *is* owed when the claim is about train-level or
+image-level behaviour, because nothing below it can test that claim.
+
+If you simulate, import the **written file** (for example `mr0.Sequence.import_file`) rather than
+the tree, since that tests what a scanner would play. Importing cleanly is evidence that the file
+is well formed and that its physics simulates as expected — it is **not** evidence that a scanner
+will execute it.
 
 Rules that catch the common failures:
 
 - **Legal Pulseq is necessary, not sufficient.** A balanced TR does not make a steady state. A
   segmented acquisition is not a continuous one with gaps cut in; its catalyzation policy is part
   of the acquisition's definition.
+- **Coverage is not ordering.** Checking that every view was acquired says nothing about the order
+  they were acquired in, and view order decides which lines are collected while the magnetisation
+  is still settling.
 - **Simulate the file you shipped.** A reduced protocol may supplement it, but only if it preserves
   the quantity under study — not merely TR. Say what you changed and why it still answers the
   question.
@@ -170,6 +227,11 @@ artifact rather than the belief.
 Give the user the authoring source, the generated `.seq`, the measurements you ran, the settings
 and where each came from, and the parameters they can change.
 
+**Where output goes.** Use the directory the user asked for. If they did not name one, create a
+clearly named directory inside their current project — not inside the installed package, and not
+inside a SeqCraft checkout's source tree — and tell them where you put it. Generated code, `.seq`
+files, simulation artifacts and figures are the user's project's, never the package's.
+
 **Evidence check.** Does each physical statement rest on evidence you actually produced? Report in
 plain prose:
 
@@ -184,10 +246,6 @@ unavailable; **"compiles" is never validation**, and nothing here is scanner-rea
 slew legality under chosen `Opts`, or a PNS prediction against an illustrative model, is a design
 check — not RF/SAR, acoustic, vendor-interpreter or site approval. Say so when you hand it over.
 
-Put generated artifacts under `scratch/sequence_authoring/<case>/`, which is git-ignored. Do not
-commit `.seq` files. Only a reviewed teaching acquisition belongs in `examples/`, under
-[`docs/writing_examples.md`](../../../docs/writing_examples.md).
-
 For follow-up requests, continue from the established design. Do not reopen settled literature or
 architecture decisions unless the new requirement actually disturbs them.
 
@@ -198,7 +256,8 @@ the physics genuinely forks and no default is defensible
 the request is self-contradictory
 real hardware deployment is requested and site limits are unknown
 a requirement cannot be realised or validated with available capabilities
+an expected API is absent from the installed version and no local fallback fits
 ```
 
-In the last case, report the obstacle. Do not change the package, and do not quietly deliver
-something weaker under the original name.
+In the last two cases, report the obstacle. Do not change the installed package, and do not quietly
+deliver something weaker under the original name.

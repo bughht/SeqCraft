@@ -13,6 +13,15 @@ general solver or compiler hook was added to support it, and it does not invoke 
 which is a maintainer workflow for deciding what belongs in the package and is not a runtime
 dependency of anything a user does.
 
+**Both installation environments are in scope**, and the skill opens by establishing which one it
+is in. A user with SeqCraft and PyPulseq installed by pip has no repository: no `docs/`, no
+`examples/`, and an installed release that does not contain everything on `main`. So the skill
+carries no repository-relative links, names the documents it mentions as supplementary, and tells
+the agent to introspect the installed package — versions, the module list, a constructor signature
+— rather than recall what the development branch has. Generated output goes where the user asked,
+or into a clearly named directory in *their* project; `scratch/sequence_authoring/` is this
+repository's own calibration location, not a public convention.
+
 **The skill describes the shipped facilities at their real scope**, because an agent that goes
 looking for a capability the package deliberately lacks wastes the user's time:
 `PhysicalDesignScope` is opt-in and region-scoped and says so in its own docstring;
@@ -28,22 +37,41 @@ defines what each layer *is* and explicitly leaves acceptance policy to whicheve
 use: Layer 3 is not owed by every primitive, but a newly completed imaging acquisition claiming
 train- or image-level correctness owes relevant Layer 3 evidence for merge readiness.
 
+**What each measurement looks at is now stated, because conflating the three is how a session
+convinces itself it is finished.** `sc.moments` is exact over the flattened tree and `sc.sample`
+interpolates onto a raster grid; `sc.kspace` and `sc.pns` compile internally; **none of them reads
+the written file**. Measuring the artifact means reading the `.seq` back, or importing it into a
+simulator — and importing cleanly is evidence that the file is well formed and simulates as
+expected, not that a scanner will execute it.
+
 **`tests/sequence_authoring/` checks the emitted file, not the authoring script.** A small
 version-controlled acquisition is built into pytest's temporary directory — no `.seq` is committed —
-and seven checks measure the sequence after it has been written and read back: that the emitted
-`k_y` covers the whole phase-encode grid exactly once, that dummy repetitions excite without
-acquiring, that TE measured from the RF centre to the echo and TR between excitations are the ones
-declared, that `k_x` sweeps through the origin at the sample the readout puts it on, that the
-written definitions describe this acquisition, and that the build raises nothing but the known
-informational vector-norm warning.
+and nine checks measure the sequence after it has been written and read back: that the emitted
+`k_y` covers the whole phase-encode grid exactly once **and walks it in the declared order**, that
+dummy repetitions excite without acquiring **and do so before acquisition begins**, that TE
+measured from the RF centre to the echo and TR between excitations are the ones declared, that
+`k_x` sweeps through the origin at the sample the readout puts it on, that the written definitions
+describe this acquisition, and that the build raises nothing but the known informational
+vector-norm warning.
+
+The ordering and dummy-position checks exist because counting cannot see either. A sorted coverage
+test passes for every permutation of the table, and equal RF and ADC counts survive moving the
+preparation to the *end* of the train — so one check compares the emitted `k_y` sequence against
+the declared low-to-high policy in order, and the other counts excitations before the first ADC
+sample.
 
 The expectations come from the specification and from physics, which is a correction rather than a
 preference. The first draft compared the emitted table against the view list the authoring code had
 just built, so it agreed with itself: deleting a line from the protocol left all seven passing.
 Mutation testing found it. Rewritten against `(line - n/2) / FOV_y` for every line of the matrix,
-the same mutation fails three checks, and a policy that claims dummies it does not play fails
-another. None of this duplicates `tests/compiler/`, which already rejects an illegal file; the
+the same mutation fails three checks, a reversed view order fails the ordering check alone, dummies
+moved to the end of the train fail the positioning check, and a policy that claims dummies it does
+not play fails another. None of this duplicates `tests/compiler/`, which already rejects an illegal file; the
 question here is whether a legal file is the acquisition it claims to be.
+
+`module-mining/SKILL.md` now points at `docs/testing.md` for what a layer *is* and keeps only its
+own acceptance policy over those layers, so the definitions have one home rather than two
+consistent copies.
 
 Calibration prompts live in `tools/sequence_authoring/calibration/prompts.md` as **inputs only**.
 Review criteria and recorded verdicts stay in the workspace planning repository, because the agent

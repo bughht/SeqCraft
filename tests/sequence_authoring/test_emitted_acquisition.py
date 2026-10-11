@@ -35,7 +35,12 @@ import seqcraft as sc
 #: once, and that expectation needs no help from the authoring code's own view list.
 NX, NY = ref.MATRIX
 FOV_Y_M = ref.FOV_MM[1] * 1e-3
-EXPECTED_KY = sorted((line - NY // 2) / FOV_Y_M for line in range(NY))
+
+#: The declared view-ordering policy, restated here from the protocol rather than imported from
+#: the code that implements it.  `reference_acquisition` claims linear low-to-high; a test that
+#: asked it which order it used could not catch it using a different one.
+POLICY_KY = [(line - NY // 2) / FOV_Y_M for line in range(NY)]
+EXPECTED_KY = sorted(POLICY_KY)
 
 
 def _readout_count(seq) -> int:
@@ -59,6 +64,23 @@ def test_the_emitted_file_covers_the_whole_phase_encode_grid(emitted, trajectory
     assert acquired == pytest.approx(EXPECTED_KY, abs=1e-3), 'the grid is not covered exactly once'
 
 
+def test_the_emitted_file_walks_the_grid_in_the_declared_order(emitted, trajectory) -> None:
+    """
+    Coverage is not ordering, and the two fail differently.
+
+    The previous check sorts, so it passes for any permutation of the table -- but view order is an
+    acquisition policy with real consequences: it decides where the centre of k-space falls in the
+    train and therefore which views are acquired while the magnetisation is still settling.  This
+    one compares the emitted sequence of `k_y` against the declared linear low-to-high policy, in
+    order.
+    """
+    k_y = np.asarray(trajectory['k_adc'])[1]
+    readouts = _readout_count(emitted)
+    in_order = [float(np.mean(k_y[i * NX:(i + 1) * NX])) for i in range(readouts)]
+
+    assert in_order == pytest.approx(POLICY_KY, abs=1e-3), 'the emitted order is not the declared one'
+
+
 def test_the_dummy_repetitions_excite_without_acquiring(emitted, trajectory) -> None:
     """
     A preparation policy that quietly acquires is a different acquisition.
@@ -69,6 +91,24 @@ def test_the_dummy_repetitions_excite_without_acquiring(emitted, trajectory) -> 
 
     assert _readout_count(emitted) == NY
     assert n_excitations == ref.DUMMIES + NY
+
+
+def test_the_dummy_repetitions_come_before_acquisition_starts(trajectory) -> None:
+    """
+    Counting excitations and readouts cannot tell where the dummies are.
+
+    A preparation that plays after the data is not a preparation.  The same RF and ADC counts
+    survive moving the dummies to the end of the train, so the check has to be on time: before the
+    first ADC sample there should be exactly the declared dummies plus the one excitation that
+    readout belongs to.
+    """
+    t_exc = np.asarray(trajectory['t_excitation'])
+    first_adc = float(np.asarray(trajectory['t_adc'])[0])
+
+    before = int(np.sum(t_exc < first_adc))
+    assert before == ref.DUMMIES + 1, (
+        f'{before - 1} excitations precede the first readout, not the {ref.DUMMIES} declared'
+    )
 
 
 # --------------------------------------------------------------------------- timing, as emitted
