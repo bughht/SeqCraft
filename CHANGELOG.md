@@ -85,6 +85,21 @@ The prompts file carries inputs only. Review criteria and recorded findings stay
 planning repository, because the agent under test can read this one. A passing pytest run is not
 evidence about any end-to-end question, and the two are kept apart on purpose.
 
+**`end_to_end/setup.sh` builds a test environment and refuses rather than deletes.** It began with
+`rm -rf "$ROOT"` — a destructive default in a script whose argument is a path a person types — and
+its guard against the planning repository failed *open*: it asked git about a path with a missing
+component, git errored, the `if` was false, and it installed 224 MB into the repository it was
+meant to protect. Now nothing is deleted, every run wants a new directory, and all path validation
+happens before anything is written. The enclosing-repository check looks for the criteria directory
+on every ancestor rather than asking git, which a nested repository would have answered for itself;
+the parent is resolved with `cd -P`, so a symlink cannot point the check at the wrong tree; and a
+symlink target is refused on `-L` as well as `-e`, since a dangling one is invisible to the latter.
+
+Eight tests cover the refusals, and only the refusals: they assert that the script stops *and* that
+pre-existing files survive. Restoring `rm -rf` fails three of them, and restoring the git-based
+check fails the other three. The run time is itself the signal — 0.10 s when every case refuses
+before touching disk, 86 s when the destructive version proceeds to build real environments first.
+
 ## Unreleased — a base install that can be imported
 
 `pip install seqcraft` resolved cleanly and then raised on `import seqcraft`:
