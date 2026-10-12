@@ -321,6 +321,10 @@ source-specific compiler behaviour is `RED`.
 
 ## Validation layers, and deferring one honestly
 
+What each layer *is* is defined once, in [`docs/testing.md`](../../../docs/testing.md), and shared
+with anything else in this repository that reasons about evidence. What follows is this workflow's
+own **acceptance policy** over those layers — how much of each a candidate owes before it may move:
+
 ```text
 Layer 1  analytic / reference invariants          blocking
 Layer 2  complete acquisition build (01 notebook) blocking
