@@ -17,9 +17,9 @@ the view list the authoring code had just built, which agreed with itself: delet
 protocol left all of these tests passing.  A check that consults the thing under test for its own
 expected answer is not a check.
 
-These are deterministic artifact checks.  Whether an agent *chose* a sensible acquisition is a
-different question, reviewed by a human against the calibration prompts, and is deliberately not
-asserted here.
+These are deterministic artifact checks -- unit tests of an emitted artifact.  Whether an agent
+*chose* a sensible acquisition is a different question, answered by a skill end-to-end test with a
+fresh agent session and a human reviewer, and is deliberately not asserted here.
 """
 
 from __future__ import annotations

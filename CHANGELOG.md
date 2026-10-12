@@ -20,7 +20,7 @@ carries no repository-relative links, names the documents it mentions as supplem
 the agent to introspect the installed package — versions, the module list, a constructor signature
 — rather than recall what the development branch has. Generated output goes where the user asked,
 or into a clearly named directory in *their* project; `scratch/sequence_authoring/` is this
-repository's own calibration location, not a public convention.
+repository's own working location for skill testing, not a public convention.
 
 **The skill describes the shipped facilities at their real scope**, because an agent that goes
 looking for a capability the package deliberately lacks wastes the user's time:
@@ -73,10 +73,17 @@ question here is whether a legal file is the acquisition it claims to be.
 own acceptance policy over those layers, so the definitions have one home rather than two
 consistent copies.
 
-Calibration prompts live in `tools/sequence_authoring/calibration/prompts.md` as **inputs only**.
-Review criteria and recorded verdicts stay in the workspace planning repository, because the agent
-being evaluated can read this one. Agent behaviour is reviewed by a person; pytest success is not
-skill success, and the two are kept apart on purpose.
+**The testing vocabulary is ordinary software-testing vocabulary**, because "calibration" already
+means something in MRI and this repository uses it in that sense throughout — ACS bands, an
+uncalibrated gradient delay. `tests/sequence_authoring/` holds **unit tests** of an emitted
+artifact. `tools/sequence_authoring/end_to_end/prompts.md` feeds **skill end-to-end tests**: a fresh
+agent session is given one request, uses the skill, and a person reviews what comes back. The same
+end-to-end test run under Claude Code and Codex against one copy of the skill is a **cross-agent
+test**. A controlled comparison of agent configurations is a **benchmark**, and is not part of v0.
+
+The prompts file carries inputs only. Review criteria and recorded findings stay in the workspace
+planning repository, because the agent under test can read this one. A passing pytest run is not
+evidence about any end-to-end question, and the two are kept apart on purpose.
 
 ## Unreleased — a base install that can be imported
 
