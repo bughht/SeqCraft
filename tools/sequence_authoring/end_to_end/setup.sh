@@ -6,6 +6,14 @@
 #   ./setup.sh source <dir>     a SeqCraft checkout; the skill is already at .claude/skills/
 #   ./setup.sh project <dir>    an independent project with SeqCraft installed and no checkout
 #
+# By default each run builds its own virtual environment, which is the clean-install option and the
+# one to use when dependency isolation is itself what you are checking. Set CONDA_ENV to reuse a
+# dedicated conda environment instead, so four test cases do not rebuild four copies of torch:
+#
+#   CONDA_ENV=seqcraft-e2e ./setup.sh project ~/skill-tests/epi-01
+#
+# The working directory is always new either way -- only the interpreter is shared.
+#
 # This script only builds the environment. It does not run the test, and it holds no knowledge of
 # what a good answer looks like -- the point of the exercise is that the agent decides.
 #
@@ -52,6 +60,20 @@ done
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO="${REPO:-$(cd -P "$HERE/../../.." && pwd -P)}"     # this file is in tools/sequence_authoring/end_to_end/
 BRANCH="${BRANCH:-$(git -C "$REPO" rev-parse --abbrev-ref HEAD)}"
+CONDA_ENV="${CONDA_ENV:-}"
+REINSTALL="${REINSTALL:-}"                              # set to force a reinstall into a conda env
+
+# Resolve the interpreter before anything is built, so a missing environment fails here.
+if [ -n "$CONDA_ENV" ]; then
+  command -v conda >/dev/null || { echo "refusing: CONDA_ENV set but conda is not on PATH" >&2; exit 1; }
+  CONDA_PREFIX_DIR="$(conda env list | awk -v n="$CONDA_ENV" '$1==n {print $NF}')"
+  [ -n "$CONDA_PREFIX_DIR" ] || {
+    echo "refusing: no conda environment named $CONDA_ENV" >&2
+    echo "  create it first, e.g.: conda create -n $CONDA_ENV python=3.12" >&2
+    exit 1; }
+  PY="$CONDA_PREFIX_DIR/bin/python"
+  [ -x "$PY" ] || { echo "refusing: no interpreter at $PY" >&2; exit 1; }
+fi
 
 # ------------------------------------------------------------------------------------- build it
 mkdir "$ROOT"                                           # not -p: a race that created it should fail
@@ -59,18 +81,26 @@ mkdir "$ROOT"                                           # not -p: a race that cr
 case "$MODE" in
   source)
     git clone --quiet --branch "$BRANCH" "$REPO" "$ROOT/SeqCraft"
-    VENV="$ROOT/SeqCraft/.venv"
-    python3 -m venv "$VENV"
-    "$VENV/bin/python" -m pip install --quiet --upgrade pip
-    "$VENV/bin/python" -m pip install --quiet -e "$ROOT/SeqCraft[viz]"
+    if [ -z "$CONDA_ENV" ]; then
+      PY="$ROOT/SeqCraft/.venv/bin/python"
+      python3 -m venv "$ROOT/SeqCraft/.venv"
+      "$PY" -m pip install --quiet --upgrade pip
+      "$PY" -m pip install --quiet -e "$ROOT/SeqCraft[viz]"
+    fi
     WHERE="$ROOT/SeqCraft"
     HOW='already present at .claude/skills/sequence-authoring/ -- native discovery is under test'
     ;;
   project)
-    VENV="$ROOT/.venv"
-    python3 -m venv "$VENV"
-    "$VENV/bin/python" -m pip install --quiet --upgrade pip
-    "$VENV/bin/python" -m pip install --quiet "$REPO"
+    # An installed distribution, never an editable install pointing at the development checkout --
+    # the point of this mode is that no source tree is reachable from the project.
+    if [ -z "$CONDA_ENV" ]; then
+      PY="$ROOT/.venv/bin/python"
+      python3 -m venv "$ROOT/.venv"
+      "$PY" -m pip install --quiet --upgrade pip
+      "$PY" -m pip install --quiet "$REPO"
+    elif [ -n "$REINSTALL" ] || ! "$PY" -c 'import seqcraft' 2>/dev/null; then
+      "$PY" -m pip install --quiet --upgrade "$REPO"
+    fi
     mkdir -p "$ROOT/.claude/skills/sequence-authoring"
     cp "$REPO/.claude/skills/sequence-authoring/SKILL.md" "$ROOT/.claude/skills/sequence-authoring/"
     WHERE="$ROOT"
@@ -79,18 +109,48 @@ case "$MODE" in
 esac
 
 # The agent must not be the one to discover that the environment cannot import what it needs.
-if ! "$VENV/bin/python" -c 'import seqcraft, pypulseq' 2>/dev/null; then
+if ! "$PY" -c 'import seqcraft, pypulseq' 2>/dev/null; then
   echo "FAILED: this environment cannot import seqcraft." >&2
   echo "  $ROOT is left in place for inspection; remove it yourself." >&2
   exit 1
 fi
-"$VENV/bin/python" - <<'CHECK'
-import importlib.metadata as md
-import seqcraft as sc
-mods = [n for n in dir(sc.modules) if not n.startswith('_')]
-print(f"  seqcraft {sc.__version__} | pypulseq {md.version('pypulseq')} | {len(mods)} modules")
-CHECK
 
+# Record what was actually resolved, not what was intended.  An editable install pointing back at
+# the development checkout would defeat the project mode, and the only way to know is to look.
+"$PY" - "$MODE" "$REPO" > "$ROOT/environment.txt" <<'CHECK'
+import importlib.metadata as md
+import pathlib
+import sys
+
+import pypulseq
+import seqcraft as sc
+
+mode, repo = sys.argv[1], pathlib.Path(sys.argv[2]).resolve()
+where = pathlib.Path(sc.__file__).resolve().parent
+editable = repo in where.parents or where == repo / 'src' / 'seqcraft'
+
+print(f'python            {sys.executable}')
+print(f'version           {sys.version.split()[0]}')
+print(f'seqcraft          {sc.__version__}')
+print(f'seqcraft at       {where}')
+print(f'editable install  {"yes" if editable else "no"}')
+print(f'pypulseq          {md.version("pypulseq")}')
+print(f'pypulseq at       {pathlib.Path(pypulseq.__file__).resolve().parent}')
+print(f'numpy             {md.version("numpy")}')
+print(f'sigpy             {md.version("sigpy")}')
+print(f'modules           {len([n for n in dir(sc.modules) if not n.startswith("_")])}')
+for extra in ('MRzeroCore', 'torch', 'matplotlib'):
+    try:
+        print(f'{extra:<18}{md.version(extra)}')
+    except md.PackageNotFoundError:
+        print(f'{extra:<18}not installed')
+if mode == 'project' and editable:
+    raise SystemExit('FAILED: project mode resolved to an editable install of the checkout')
+CHECK
+sed 's/^/  /' "$ROOT/environment.txt"
+
+echo "  ---"
 echo "  work in:  $WHERE"
 echo "  skill:    $HOW"
+echo "  recorded: $ROOT/environment.txt"
 echo "  prompt:   give the agent one line from prompts.md, verbatim, and nothing else"

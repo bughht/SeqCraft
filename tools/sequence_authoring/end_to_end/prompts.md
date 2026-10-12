@@ -49,33 +49,42 @@ Let it write its artifacts into its own project directory.
 
 ## The prompts
 
-### 1. Minimal and ambiguous
+Four cases, one per authoring capability. They are given one at a time, each to its own fresh
+session, and the first is inspected before the rest run so that one environment problem does not
+spoil four results.
+
+Reusing a shipped Module correctly is a success, not a shortcut. An agent that reimplements
+something the package already provides has done worse, not better, even if its version works.
+Nothing below names a Module, because discovering the right abstraction is part of what is being
+observed.
+
+### A — reuse
 
 ```text
 Write an EPI sequence.
 ```
 
-### 2. A clinical goal rather than a sequence name
+### B — extend
 
 ```text
-I need a T2-weighted 2D brain protocol at 3 T.
+Write an EPI sequence that acquires the entire k-space trajectory as one continuous readout.
 ```
 
-### 3. A named acquisition with structure above the repetition
+### C — compose
 
 ```text
-Build an MP2RAGE acquisition and show me the two inversion images.
+Write a 2D T2-prepared gradient-echo acquisition.
 ```
 
-### 4. A measured quantity rather than a picture
+### D — design
 
 ```text
-I want to measure flow velocity in the carotid.
+Design a 2D gradient-echo acquisition that samples k-space along a rosette trajectory.
 ```
 
-### 5. Prospective
+### Later, prospective
 
-Reserved. One genuinely prospective case is chosen later and added here **after** it has been run,
-so that the first agent to see it has not also seen it sitting in the repository. Replaying an
-acquisition this repository already ships is useful as a regression but does not demonstrate
-independent design judgement.
+Reserved. One genuinely prospective case is chosen later and added **after** it has been run, so
+the first agent to see it has not also seen it sitting in the repository. Replaying an acquisition
+this repository already ships is useful as a regression but does not demonstrate independent design
+judgement.

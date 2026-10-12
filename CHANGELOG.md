@@ -100,6 +100,31 @@ pre-existing files survive. Restoring `rm -rf` fails three of them, and restorin
 check fails the other three. The run time is itself the signal — 0.10 s when every case refuses
 before touching disk, 86 s when the destructive version proceeds to build real environments first.
 
+**Four end-to-end cases, one per authoring capability**, with the shipped coverage confirmed before
+the prompts were written: reuse (`EPI2D` ships and fits), extend (a continuous single-readout EPI
+is *not* shipped — `EPI2D` is one ADC per echo — while `SpiralReadout` plans ADC events over a
+continuous trajectory and is the nearest precedent), compose (`T2Prep` and `GRE2DTR` both ship),
+and design (nothing rosette-related exists in the package, docs or examples). No prompt names a
+Module, because discovering the right abstraction is part of what is observed, and reusing one
+correctly is the preferred outcome rather than a shortcut.
+
+`setup.sh` gained a reusable-environment option: `CONDA_ENV=seqcraft-e2e` shares one interpreter
+across cases instead of rebuilding torch four times, while omitting it still builds a fresh virtual
+environment for when dependency isolation is itself the subject. The working directory is always
+new either way. It now writes `environment.txt` recording the interpreter, where SeqCraft actually
+resolved to, its versions — and **whether the install is editable**, refusing project mode outright
+if it resolved to the development checkout, which is the one way that mode could silently stop
+testing what it claims to.
+
+`skill_invocation.py` answers whether the skill was *invoked*, which grepping a reply for its
+vocabulary cannot: an agent can use the skill and paraphrase none of it, or write about emitted
+`.seq` files because that is how people talk about sequences. Claude Code records one JSONL per
+session under `~/.claude/projects/<encoded-cwd>/`, and a real invocation is a `tool_use` block
+named `Skill` carrying `input.skill`. The tool reports **invoked**, **offered but never called** —
+a discovery finding that says nothing about authoring — or **never listed**. It was verified
+against existing sessions in both states, and the directory encoding turns underscores into dashes
+as well as slashes, which a slash-only substitution misses entirely.
+
 ## Unreleased — a base install that can be imported
 
 `pip install seqcraft` resolved cleanly and then raised on `import seqcraft`:
