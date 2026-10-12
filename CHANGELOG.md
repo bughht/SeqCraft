@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased — a base install that can be imported
+
+`pip install seqcraft` resolved cleanly and then raised on `import seqcraft`:
+
+```text
+seqcraft/__init__ -> seqcraft/_compat -> pypulseq/__init__
+                  -> pypulseq.make_slr_pulse -> pypulseq.make_sigpy_pulse
+                  -> import sigpy            # at module import time
+ModuleNotFoundError: SigPy is not installed
+```
+
+`sigpy` was an optional extra — `[rf]` for SLR pulse design, `[recon]` for reconstruction — which
+is true of *SeqCraft's* own use of it and false of the pinned pypulseq fork, whose package
+`__init__` imports `make_slr_pulse` unconditionally. The minimum working install was
+`seqcraft[rf]`, which nothing said. `sigpy>=0.1.26` is now a base dependency, with the reason
+recorded where the pin is, to be revisited if the fork ever imports it lazily. `[rf]` and `[recon]`
+stay, so existing install lines keep resolving; they now document what SeqCraft uses SigPy *for*,
+which the base pin does not say.
+
+**No lane could have caught this.** The jobs that import the package install `[dev,viz,rf]`, and
+`rf` brought SigPy in; the only lane installing `[dev]` alone is mypy, which analyses without
+importing. A `minimal-install` job now builds a fresh virtual environment, installs the base
+package with `--no-cache-dir` and no extras, asserts that `MRzeroCore`, `torch` and
+`pulseq_systems` are *not* importable, and then imports `pypulseq` and `seqcraft` and builds a
+`LogicBlock`.
+
+Matplotlib is deliberately absent from that leak check: pypulseq depends on it, so it is present in
+every install and a base environment cannot assert its absence. `[viz]` still declares it, so the
+extra states SeqCraft's own need rather than relying on a transitive one, and the comment now says
+why a base install has it anyway.
+
+Found while building a pip-installed environment to test the sequence-authoring skill, which is the
+environment that has no repository to fall back on.
+
 ## Unreleased — a balanced repetition that encodes a partition
 
 `sc.modules.bSSFP3DTR` builds one balanced repetition of a 3D Cartesian bSSFP acquisition. A

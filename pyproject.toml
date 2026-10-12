@@ -25,12 +25,23 @@ classifiers = [
 dependencies = [
   'pypulseq @ https://github.com/m-a-x-i-m-z/pypulseq-matlab-like/archive/22ef2db1f71ff38c8ce355c61913cfd8fceaac3b.zip',
   'numpy>=1.24',
+  # Not optional, however much it looks like it should be.  The pinned fork's package __init__
+  # imports `make_slr_pulse` unconditionally, and that module imports SigPy at import time -- so
+  # `import pypulseq`, and therefore `import seqcraft`, fails without it.  SeqCraft itself uses
+  # SigPy only through the SLR path, but a base install that cannot be imported is not an install.
+  # Revisit if the pin ever moves to a pypulseq that imports it lazily.
+  'sigpy>=0.1.26',
 ]
 
 [project.optional-dependencies]
 # matplotlib only: seqcraft.display is the sole importer of a plotting library, and it imports
 # nothing else.  A second backend belongs here the day a module in src/ actually imports it.
+# Declared even though pypulseq already depends on matplotlib, so `seqcraft[viz]` states SeqCraft's
+# own need rather than relying on a transitive one -- but that is why a base install still has it.
 viz = ['matplotlib>=3.7']
+# Kept so `seqcraft[rf]` and `seqcraft[recon]` keep resolving; both are satisfied by the base
+# dependency above and neither adds anything today.  They still say what SeqCraft uses SigPy *for*,
+# which the base pin does not: SLR pulse design here, ESPIRiT and TV reconstruction below.
 rf = ['sigpy>=0.1.26']              # SLR pulse design, via pypulseq.make_slr_pulse
 # The affine argument VoxelGridPhantom requires arrived in MRzeroCore 1.0; without it the phantom
 # builds but its voxels land in the wrong place, which is scaled or shifted rather than an error.
