@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased — scope follows the request, checking is on by default
+
+Four end-to-end runs of the authoring skill, each in a fresh session, exercised reuse (`EPI2D`),
+extension (a sequence-local continuous-readout EPI), composition (`T2Prep` with GRE) and original
+design (a rosette trajectory with no shipped Module). All four produced defensible acquisitions.
+Three of them were also larger or slower than the request warranted: "write an EPI sequence"
+returned a 34-slice BOLD protocol after ~55 minutes, and a request for one continuous readout came
+back with thirty slices and fat saturation whose mechanism the accompanying simulation then
+replaced with a delay.
+
+So **acquisition size and checking depth are now stated as independent**. Size follows the request:
+for a short one, the smallest *complete* acquisition that answers it — where complete means the
+preparation, encoding and train-level policy the contrast physically needs, since a readout alone
+is not an acquisition. Optional features need a reason rather than a precedent. Checking is on by
+default and proportionate to the claims made, waivable only when the user asks, and then labelled
+**unvalidated** with the omitted checks named. Neither dimension sets the other: a one-slice demo
+can deserve careful checking, and an elaborate protocol can honestly ship partly validated.
+
+The skill also gained a one-sentence opening notice — what is about to be built, that checking is
+included, that the user can redirect — explicitly *not* a gate, a questionnaire, or something to
+repeat every turn. And a stopping criterion: stop when the claims are supported, not when the
+measurements run out, with a contradiction or a non-converging number the one thing worth more
+time. No mode API, flag or preset was added; natural language controls both dimensions.
+
+**Five measured lessons from those runs went into the rules rather than into new sections.** A
+checker that imports its expectation from the authoring code agrees with itself and cannot catch a
+wrong protocol. A surrogate that replaces a preparation pulse with an equal delay is evidence about
+encoding and not about that preparation. A numerical control other than the state budget can leave
+a biased answer looking stable — raising a graph budget while leaving a truncation threshold alone
+did exactly that — and a mixture of tissues pruned against averaged relaxation needs per-tissue
+calculation. A measured crusher moment is not an impossibility theorem about every pathway. Per-axis
+legality is not a vector norm, an oblique prescription is rotated before it plays, and ADC
+segmentation still meets a particular interpreter. Steady state is a declared target: a finite dummy
+train need not bring every tissue inside some tolerance, and over-catalyzing to force that can cost
+more than the artifact is worth.
+
+**`skill_invocation.py` no longer claims what it cannot see.** A `Skill` tool-use record is positive
+evidence of invocation and still reported as such. The old `offered` verdict rested on finding the
+skill's name on a log line, which proves nothing — in the session that developed this skill the name
+appears on 459 lines with zero invocations — and `absent` cannot distinguish "not available" from
+"logged elsewhere". Everything that is not an invocation now reports as *no invocation found*, with
+the mention count printed as a hint explicitly labelled as not proof of availability.
+
+Twelve tests cover that distinction, and thirteen more assert the skill document's load-bearing
+instructions — not that an agent obeys them, which only an end-to-end run can show, but that the
+instruction and its obligation are still present *together*. Removing the "label it unvalidated"
+clause, adding a `--mode` flag, or reordering the Module-first preference each fail exactly one of
+them.
+
 ## Unreleased — a skill for writing the whole acquisition
 
 `.claude/skills/sequence-authoring/SKILL.md` is the first slice of a **user-facing** authoring

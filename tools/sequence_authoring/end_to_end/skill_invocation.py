@@ -17,13 +17,21 @@ Usage::
     python3 skill_invocation.py ~/skill-tests/epi-01          # the directory the session ran in
     python3 skill_invocation.py ~/skill-tests/epi-01 --skill sequence-authoring
 
-What the answers mean:
+What this can and cannot establish:
 
-``invoked``      the agent called the skill.  Guided-authoring findings are meaningful.
-``offered``      the skill was listed as available and never called.  That is a discovery
-                 finding, and says nothing about whether the skill improves authoring.
-``absent``       the skill was never even listed.  Installation or discovery is broken; look at
+``invoked``      positive evidence.  An assistant ``tool_use`` block named ``Skill`` carrying this
+                 skill's name was recorded.  Guided-authoring findings are meaningful.
+
+``no invocation  the searched logs contain no such block.  That is the absence of evidence, not
+found``          evidence of absence: the logs may not cover the whole session, a session may have
+                 run from a different working directory, and a skill's content can reach a model by
+                 routes this tool cannot see.  Report it as "no invocation found", and look at
                  where ``SKILL.md`` was placed before concluding anything about the skill itself.
+
+The tool also reports whether the skill's **name appears anywhere** in the logs. That is a weak
+hint for a human to follow, **not** proof the skill was offered: the name also appears when a user
+types it, when a path contains it, or when the agent merely discusses it. It is printed as a
+mention count and nothing is inferred from it.
 """
 
 from __future__ import annotations
@@ -46,16 +54,21 @@ def project_log_dir(workdir: Path) -> Path:
     return Path.home() / '.claude' / 'projects' / encoded
 
 
-def scan(log: Path, skill: str) -> tuple[list[dict], bool]:
-    """``(invocations, was_offered)`` for one session file."""
+def scan(log: Path, skill: str) -> tuple[list[dict], int]:
+    """
+    ``(invocations, name_mentions)`` for one session file.
+
+    The first is positive evidence. The second is only a count of lines containing the skill's
+    name, which is a hint worth following by hand and not a claim about availability.
+    """
     invocations: list[dict] = []
-    offered = False
+    mentions = 0
     with log.open(encoding='utf-8', errors='replace') as handle:
         for line in handle:
             if skill not in line and '"Skill"' not in line:
                 continue
             if skill in line:
-                offered = True                      # listed in the available-skills reminder
+                mentions += 1
             try:
                 record = json.loads(line)
             except ValueError:
@@ -68,7 +81,7 @@ def scan(log: Path, skill: str) -> tuple[list[dict], bool]:
                     used = (block.get('input') or {}).get('skill')
                     if used == skill or skill in str(used):
                         invocations.append(block.get('input') or {})
-    return invocations, offered
+    return invocations, mentions
 
 
 def main() -> int:
@@ -88,27 +101,32 @@ def main() -> int:
         logging.error('no session files in %s', logs)
         return 2
 
-    total, offered_anywhere = 0, False
+    total, mentions_total = 0, 0
     for log in files:
-        invocations, offered = scan(log, args.skill)
-        offered_anywhere |= offered
+        invocations, mentions = scan(log, args.skill)
+        mentions_total += mentions
         total += len(invocations)
-        state = f'{len(invocations)} invocation(s)' if invocations else (
-            'offered, never invoked' if offered else 'not offered')
+        state = (f'{len(invocations)} invocation(s)' if invocations
+                 else f'no invocation found ({mentions} line(s) mention the name)')
         logging.info('%s  %s', log.name[:8], state)
         for inp in invocations:
             logging.info('            input: %s', json.dumps(inp)[:140])
 
     logging.info('')
     if total:
-        logging.info('invoked  -- %d call(s); guided-authoring findings are meaningful', total)
-    elif offered_anywhere:
-        logging.info('offered  -- the skill was available and never called; this is a DISCOVERY')
-        logging.info('            finding, and says nothing about whether the skill improves')
-        logging.info('            authoring')
-    else:
-        logging.info('absent   -- the skill was never listed; check where SKILL.md was placed')
-        logging.info('            before concluding anything about the skill itself')
+        logging.info('invoked  -- %d call(s) recorded; guided-authoring findings are meaningful',
+                     total)
+        return 0
+
+    logging.info('no invocation found in %d searched log file(s).', len(files))
+    logging.info('  This is the absence of evidence, not evidence of absence: the logs may not')
+    logging.info('  cover the whole session, and a session started elsewhere logs elsewhere.')
+    if mentions_total:
+        logging.info('  The name appears on %d line(s) -- a hint to follow by hand, NOT proof the',
+                     mentions_total)
+        logging.info('  skill was offered; the name also appears when a user types it or a path')
+        logging.info('  contains it.')
+    logging.info('  Check where SKILL.md was placed before concluding anything about the skill.')
     return 0
 
 

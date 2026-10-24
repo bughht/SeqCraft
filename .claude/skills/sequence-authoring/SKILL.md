@@ -66,6 +66,17 @@ and exist only in a source checkout; nothing here requires them at runtime.
 **A minimal request is a valid request.** "Write an EPI sequence" is enough to start. Do not demand
 a protocol form, scanner specification, or validation plan first.
 
+**Say what you are about to build, in one or two sentences, then start.** When the request does not
+set the scope or the depth of checking, name both and keep going — the user can redirect you while
+you work:
+
+> I'll build a compact, complete EPI example and validate the emitted sequence, with focused
+> physical and image-level checks where they matter. Say so if you'd rather have a quick
+> unvalidated draft, or a different scope.
+
+That is a courtesy, not a gate. Do not wait for an answer, do not turn it into a questionnaire or
+a template, and do not repeat it on every follow-up turn.
+
 Resolve routine unspecified parameters yourself, with defensible choices you state and the user can
 revise. Keep four categories visibly distinct when you report:
 
@@ -108,6 +119,30 @@ segmentation / recovery    including the catalyzation policy, if interrupted
 A published special case is evidence that a choice exists — not that it is the default. Do not pick
 an unrepresentative protocol because it is cheaper to simulate; if cost forces a reduced version,
 that is a *validation surrogate*, and the representative acquisition is still what you author.
+
+### How big should it be?
+
+**Scope follows the request.** For a short or open-ended one, build the **smallest complete,
+physically defensible, modifiable acquisition** that answers it — and *complete* is the operative
+word. A readout waveform on its own is not an acquisition; whatever preparation, encoding and
+train-level policy the requested contrast physically requires is part of the smallest version, not
+an extra.
+
+```text
+"write an EPI sequence"            a compact but complete EPI, sensible stated defaults
+"write a BOLD fMRI EPI protocol"   BOLD-specific, multislice if that is what it takes
+"...and validate it thoroughly"    same compact demo, deeper checks
+```
+
+**Optional features need a reason, not a precedent.** Fat saturation, many slices or volumes,
+navigators, reference or calibration scans, elaborate preparation — none of these belongs in the
+build merely because a paper or a reference implementation has it. Each adds RF, timing,
+assumptions and validation you then owe. If the user's goal or the physics calls for one, add it
+and say why. If not, leave it out and mention that you did.
+
+The failure to avoid is answering a narrow question with a clinical protocol: asked for one
+continuous EPI readout, do not deliver thirty slices and fat saturation whose mechanism nothing in
+your evidence then tests.
 
 **Design check.** Before writing much code, you should be able to state: what complete acquisition
 this is, its key physical constraints, why the acquisition-level choices suit the goal, which
@@ -158,6 +193,21 @@ illustrative ones and state the values and where they came from. Never call them
 
 ## 4. Validate — and know what each measurement looks at
 
+**Validation is on by default, and its depth is a separate question from the acquisition's size.**
+A one-slice demo can deserve careful checking; an elaborate protocol can honestly ship partly
+validated. Do not let one dimension set the other.
+
+By default: emit the `.seq`, read it back, independently check the invariants that matter, and add
+targeted simulation or reconstruction where a signal-level or image-level claim needs it. That is
+the floor, not a licence to run every sweep — a convergence study, a sensitivity analysis or a
+hardware investigation is warranted by a specific risk or an unresolved discrepancy, not by
+thoroughness for its own sake.
+
+**If the user asks for a quick draft without validation, give them that.** Hand over what exists,
+mark it **unvalidated** where they will see it, list the checks you did not run, and claim nothing
+about physical accuracy. Never imply an unperformed check passed. What you must not do, in either
+mode, is call anything scanner-ready.
+
 Three different things get measured, and conflating them is the most common way an authoring
 session convinces itself it is finished.
 
@@ -207,20 +257,65 @@ Rules that catch the common failures:
 - **Coverage is not ordering.** Checking that every view was acquired says nothing about the order
   they were acquired in, and view order decides which lines are collected while the magnetisation
   is still settling.
-- **Simulate the file you shipped.** A reduced protocol may supplement it, but only if it preserves
-  the quantity under study — not merely TR. Say what you changed and why it still answers the
-  question.
+- **A check that imports its expectation from your own authoring code agrees with itself.** Reading
+  the protocol back out of the module or the JSON you just wrote measures emission, which is worth
+  measuring — but it cannot catch a wrong protocol choice or a mistake common to both sides. Derive
+  at least the central invariants from the physics instead: `k_y = (line - n/2) / FOV_y`, TE from
+  the RF centre to the echo.
+- **Simulate the file you shipped, and say what the surrogate dropped.** A reduced protocol may
+  supplement it if it preserves the quantity under study — not merely TR. A one-slice extract with
+  a preparation pulse replaced by an equal delay is fine evidence about encoding and useless
+  evidence about that preparation; name which it is.
 - **Different evidence is not interchangeable.** Single-spin phase, voxel-ensemble magnitude,
   per-view echo amplitude, and reconstructed image behaviour are four different measurements. Equal
   echo modulation can still produce different image structure, because where the modulation lands
   in k-space matters.
-- **A number that moves with the numerical budget is not a result.** Sweep the budget, say what
-  converged, and exclude what did not rather than quoting it.
+- **A number that moves with a numerical control is not a result — and the budget is not the only
+  control.** Raising a state count while leaving a pruning or truncation threshold alone can leave
+  a biased answer looking stable. Vary every control the claim depends on, and where a mixture of
+  tissues is pruned against averaged relaxation, compute per tissue instead. Say what converged and
+  exclude what did not rather than quoting it.
+- **A measured gradient moment is not an impossibility theorem.** A large crusher dephases the
+  pathways you analysed under the timing you analysed. "No pathway can ever refocus" is a different
+  and much stronger claim; it needs an ensemble that includes the RF imperfections you are implying
+  it survives.
+- **Legal under your `Opts` is not legal on a scanner.** Per-axis limits say nothing about the
+  vector norm when axes ramp together, and an oblique prescription is rotated onto physical axes
+  before it plays — recheck there, and do not treat a `1/√2` derating as a guarantee. ADC
+  segmentation that satisfies PyPulseq's arithmetic is still subject to a particular interpreter's
+  limits.
+- **Steady state is a declared target, not a universal requirement.** A finite dummy train does not
+  have to bring every tissue within some tolerance to be a sound acquisition; long-`T1`/`T2` species
+  may stay visibly transient, and over-catalyzing to fix that can cost more time than the artifact
+  is worth. State the criterion, what you measured against it, what it does to the image, and what
+  it cost — then let that be the answer.
+- **Suspect your own reproduction before you blame a library.** If an upstream call behaves
+  strangely, reduce it to a minimal case, record the input and the measured output, and report that.
+  Do not describe it as a PyPulseq or SeqCraft bug on one surprising observation, and do not silently
+  work around it without saying you did.
 - **Name the quantity you measured.** A summed sidelobe magnitude is not energy and not resolution.
 
 When evidence contradicts the design, find out which stage is wrong — protocol choice, physical
 design, event implementation, emission, simulation, or reconstruction — fix it, and revalidate the
 artifact rather than the belief.
+
+### When to stop adding evidence
+
+Stop when a suitable Module is in use, the acquisition is defensible, and every claim you are
+making has evidence behind it. Not when you run out of things that could be measured — there is
+always another sweep.
+
+```text
+look at the shipped Modules first, before researching a design you may not need to make
+read enough literature to justify the choices you are about to state, then stop reading
+run the highest-value emitted-file checks first
+add a specialist analysis for a specific risk or an unresolved discrepancy, not for completeness
+```
+
+A contradiction or a non-converging number is the one thing worth spending more time on.
+Investigate it, or report it unresolved — never quietly drop it. And none of this licenses skipping
+a physical check to finish sooner: the aim is effort proportionate to the request, with the rigour
+intact.
 
 ## 5. Deliver
 
@@ -238,6 +333,7 @@ plain prose:
 ```text
 validated             the claims made are supported by the evidence run
 partially validated   some claims rest on evidence not yet run -- say which
+unvalidated           the user asked for a draft without checks, and none were run
 blocked               a physical or technical obstacle prevents the claim
 ```
 
@@ -245,6 +341,10 @@ Say which layers ran. "Partially validated" is an honest and useful result when 
 unavailable; **"compiles" is never validation**, and nothing here is scanner-ready. Gradient and
 slew legality under chosen `Opts`, or a PNS prediction against an illustrative model, is a design
 check — not RF/SAR, acoustic, vendor-interpreter or site approval. Say so when you hand it over.
+
+An **unvalidated** hand-off still describes what it is: the acquisition you intended, the checks
+that would normally run, and the fact that none of them did. A draft the user asked for is a
+legitimate deliverable. A draft presented as though it had been checked is not.
 
 For follow-up requests, continue from the established design. Do not reopen settled literature or
 architecture decisions unless the new requirement actually disturbs them.
