@@ -7,8 +7,12 @@ emitted `.seq` files and validation layers because that is how people talk about
 agent can load the skill and then paraphrase none of it. The question needs the session record.
 
 Claude Code writes one JSONL file per session under ``~/.claude/projects/<encoded-cwd>/``, where
-the encoding replaces both ``/`` and ``_`` in the working directory with ``-`` -- verified against
-the directories that exist, since the underscore rule is not guessable. A real invocation appears
+the encoding replaces both ``/`` and ``_`` in the working directory with ``-`` -- read off the
+directories that exist, since the underscore rule is not guessable.
+
+**That was read on POSIX, and the Windows form has not been checked.** A Windows path is
+drive-anchored with backslashes, so this substitution would produce something else; if the lookup
+reports no log directory there, suspect the encoding before the session. A real invocation appears
 there as an assistant ``tool_use`` block whose ``name`` is ``Skill`` and whose ``input.skill`` is
 the skill's name. That shape was confirmed against existing session logs before this was written.
 

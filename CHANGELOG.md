@@ -43,6 +43,12 @@ appears on 459 lines with zero invocations — and `absent` cannot distinguish "
 "logged elsewhere". Everything that is not an invocation now reports as *no invocation found*, with
 the mention count printed as a hint explicitly labelled as not proof of availability.
 
+The log-directory encoding was read off the directories that exist on a POSIX machine, and the
+Windows form has not been checked — a Windows path is drive-anchored with backslashes, so the same
+substitution produces something else. The helper now says so, and the test that pins the encoding
+skips there rather than asserting a POSIX answer on a platform where it cannot hold. Windows CI
+found that, which is what it is for.
+
 Twelve tests cover that distinction, and thirteen more assert the skill document's load-bearing
 instructions — not that an agent obeys them, which only an end-to-end run can show, but that the
 instruction and its obligation are still present *together*. Removing the "label it unvalidated"

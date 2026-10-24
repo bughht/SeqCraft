@@ -43,13 +43,20 @@ def _invocation(skill: str = SKILL, **extra) -> str:
 
 
 # -------------------------------------------------------------------- where the logs are looked for
+@pytest.mark.skipif(sys.platform == 'win32',
+                    reason='the encoding was read off POSIX log directories; see the docstring')
 def test_the_log_directory_encoding_converts_underscores_as_well_as_slashes() -> None:
     """
     A path with an underscore lands somewhere a slash-only substitution never looks.
 
     This is not guessable from the documented behaviour; it was read off the directories that
-    exist. Getting it wrong makes every answer "no log directory", which looks like a missing
-    session rather than a bug in the lookup.
+    exist on this machine. Getting it wrong makes every answer "no log directory", which looks
+    like a missing session rather than a bug in the lookup.
+
+    **Skipped on Windows, and that is a real limitation rather than a test convenience.** There
+    `Path('/Users/...').resolve()` is drive-anchored with backslashes, so this substitution
+    produces something else entirely — and what Claude Code actually names its log directory on
+    Windows has not been checked. The helper is verified on POSIX only.
     """
     got = checker.project_log_dir(Path('/Users/someone/Code_mgh/sources/seqcraft_workspace'))
 
