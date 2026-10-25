@@ -12,10 +12,17 @@ Which of two identical sequences was refused also depended on packaging.  The sa
 as two overlapping events, whose nets do not vanish one by one, compiled to the identical emitted
 shape with the identical rounding, and passed.
 
-Traversed area is additive over a division in time and never smaller than the waveform's own, so
-one waveform now gets one verdict however the tree divides it.  The check still refuses area that
-is actually lost, and m1 -- deliberately unchanged -- still refuses a gradient played at the wrong
-time.  One gap remains, pinned at the bottom of this file.
+Traversed area is additive over a division of one waveform in time, and overlapping pieces that
+cancel can only raise it, so the scale never falls below the waveform's own traversed area.  That
+is enough for the four packagings tested below to agree; it is not a promise that every
+decomposition gets the same tolerance.  The check still refuses area that is actually lost, and m1
+-- deliberately unchanged -- still refuses a lobe played one raster late, early in a sequence or
+ten seconds into it.  One gap is pinned at the bottom of this file.
+
+Another is not pinned, because it is not this change's: m1 is referenced to the start of the
+sequence, so the same registration error placed at time t moves m1 by t times its area error.  A
+compressible shape accepted at the start can be refused by m1 when placed a second or more later,
+on main as here.
 
 Nothing here builds a module.
 """
@@ -170,13 +177,15 @@ def test_traversed_area_is_exact_through_a_zero_and_additive_at_knots() -> None:
 
 
 @pytest.mark.parametrize('seed', [1, 4])
-def test_one_waveform_gets_one_verdict_however_the_tree_divides_it(seed: int) -> None:
+def test_four_divisions_of_one_waveform_get_one_verdict(seed: int) -> None:
     """
-    The packaging dependence, and what removes it.
+    The packaging dependence these four cases exposed, and what removes it for them.
 
-    One event, two events cut at an exact zero, two overlapping pieces, one event cut by a block
-    barrier: the emitted waveform is the same, so the verdict must be.  Under the sum of each
-    event's |net| the first and last were refused and the middle two passed.
+    One event; two events cut at an exact zero, a division in time that leaves the scale
+    unchanged; two overlapping pieces, whose scale can only be larger; and one event cut by a
+    block barrier.  The emitted waveform is the same each time, and so is the verdict.  Under the
+    sum of each event's |net|, the first and last were refused and the middle two passed.  This
+    is not a claim about every possible decomposition.
     """
     opts = _opts()
     whole, cut = _lobe_then_section(seed)
@@ -248,12 +257,63 @@ def test_m1_still_refuses_a_piece_played_one_raster_late() -> None:
     assert 'compiled m0' not in str(err.value), 'a time shift preserves area exactly'
 
 
+# ------------------------------------------------- the same controls, far from the sequence start
+def _two_lobes_at(t0: float, opts: pp.Opts) -> sc.LogicBlock:
+    """
+    Two trapezoids of non-zero area on one axis, starting at `t0`.
+
+    Trapezoids are stored as parameters, so registration rounds nothing, and only what a control
+    puts there changes with `t0`.  A translated zero-net waveform would be the wrong probe: it moves
+    m1 by `t0` times its net area, which is zero.
+    """
+    first = pp.make_trapezoid('y', area=500.0, duration=2e-3, system=opts)
+    second = pp.make_trapezoid('y', area=-300.0, duration=2e-3, system=opts)
+    return sc.LogicBlock('late').add(t0, first).add(t0 + 3e-3, second)
+
+
+@pytest.mark.parametrize('t0', [0.0, 1.0, 10.0])
+def test_lost_area_is_refused_wherever_the_axis_sits(t0: float) -> None:
+    opts = _opts()
+    tree = _two_lobes_at(t0, opts)
+    seq = sc.compile(tree, opts, name='clean')
+    placed = place_events(tree, opts)
+    lobe = min((p for p in placed if p.kind in ('trap', 'grad')), key=lambda p: p.node_t)
+
+    with pytest.raises(sc.CompilerContractError, match='compiled m0'):
+        _recheck(seq, [*placed, lobe])
+
+
+@pytest.mark.parametrize('t0', [0.0, 1.0, 10.0])
+def test_a_lobe_one_raster_late_is_refused_wherever_the_axis_sits(t0: float) -> None:
+    """
+    Only one side of the comparison moves, and the piece that moves has area.
+
+    The 500 1/m lobe played one raster late changes m1 by 500 1/m * 10 us however far into the
+    sequence it sits, and leaves m0 exactly as it was.
+    """
+    opts = _opts()
+    tree = _two_lobes_at(t0, opts)
+    seq = sc.compile(tree, opts, name='clean')
+    placed = place_events(tree, opts)
+    first = min(p.node_t for p in placed if p.kind in ('trap', 'grad'))
+    dt = float(opts.grad_raster_time)
+    shifted = [dataclasses.replace(p, node_t=p.node_t + dt, start=p.start + dt, end=p.end + dt,
+                                   res_start=p.res_start + dt, res_end=p.res_end + dt)
+               if p.kind in ('trap', 'grad') and p.node_t == first else p
+               for p in placed]
+
+    with pytest.raises(sc.CompilerContractError) as err:
+        _recheck(seq, shifted)
+    assert 'compiled m1' in str(err.value)
+    assert 'compiled m0' not in str(err.value)
+
+
 # ------------------------------------------------------------------------------- the gap left open
 @pytest.mark.xfail(strict=True, raises=sc.CompilerContractError, reason=(
-    'Known: 1e-6 of the traversed area covers worst-case storage rounding only while a shape '
-    "spends at least 5 % of its peak on average.  Below that, a long constant section rounds the "
-    'same way at every sample and the error accumulates.  Remove this mark when a storage-quantum '
-    'floor covers it.'))
+    'Known: 1e-6 of the traversed area is a sufficient bound on worst-case storage rounding when '
+    "a shape's mean |g| is at least 5 % of its peak.  Below that it need not hold, and for this "
+    'shape it does not: a long constant section rounds the same way at every sample.  Remove '
+    'this mark when a storage-quantum floor covers it.'))
 def test_a_dense_low_duty_shape_with_systematic_rounding() -> None:
     """
     A 0.5 ms spike cancelled by a long weak constant tail, in one densely sampled shape.

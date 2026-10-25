@@ -14,16 +14,32 @@ reproducer. The message blamed "a split or a merge", although nothing had been s
 The verdict also depended on packaging. The same waveform held as two overlapping events compiled
 to an identical shape, with identical rounding, and passed.
 
-m0 now scales by the area each event traverses, the integral of `|g|`. That is additive over a
-division in time, so one waveform gets one verdict however the tree divides it, and the measured
-rounding sits two orders or more below the tolerance. A refusal now reports the difference and the
-tolerance rather than naming a cause. m1 is unchanged and still refuses a piece played one raster
-late. Writing the file adds a separate error the check never sees, because it reads the sequence in
-memory: amplitudes are written to six significant digits, up to 5e-6 relative per event.
+m0 now scales by the area each event traverses, the integral of `|g|`.
 
-One gap remains, pinned by a strict `xfail`. 1e-6 of the traversed area covers worst-case rounding
-only while a shape's mean `|g|` is at least 5 % of its peak. Below that, a long, densely sampled
-constant section that rounds the same way at every sample can exceed it.
+- That is additive over a division of one waveform in time, and overlapping pieces that cancel can
+  only raise it, so the scale never falls below the waveform's own traversed area. The four tested
+  packagings now get one verdict; that is not a promise for every decomposition.
+- The measured registration rounding sits two orders or more below the tolerance.
+- A refusal now reports the difference and the tolerance rather than naming a cause.
+- m1 is unchanged. It still refuses a lobe played one raster late, tested at 0, 1 and 10 s into a
+  sequence.
+- The check reads the sequence in memory, so it covers registration only. Writing the file rounds
+  again, separately: amplitudes to six significant digits, up to 5e-6 relative per event.
+
+**One gap is pinned by a strict `xfail`.** Under the quantisation model, 1e-6 of the traversed area
+is *sufficient* to cover worst-case rounding when a shape's mean `|g|` is at least 5 % of its peak;
+lower-duty shapes are not thereby refused. A long, densely sampled constant section that rounds the
+same way at every sample does exceed it.
+
+**Another is recorded, not fixed, because it predates this change.** m1 is referenced to the start
+of the sequence, so registration error `δm0` at time `t` moves m1 by `t·δm0`, while m1's tolerance
+does not grow with `t`.
+
+- Reproduced with native `sc.compile`: a compressible shape accepted at 0 s is refused by m1 at 1 s
+  and 10 s.
+- That holds for a zero-net shape here, and for a non-zero-net one on `main` as well.
+- A tolerance large enough to absorb it would hide a lobe played one raster late in a long
+  sequence. Comparing m1 per block would separate the two.
 
 ## Unreleased — a base install that can be imported
 

@@ -443,8 +443,8 @@ def _traversed_area(times: np.ndarray, amps: np.ndarray) -> float:
     Return the integral of ``|g|`` over piecewise-linear knots, in 1/m.
 
     Exact: a segment whose ends have opposite signs is split at its zero crossing, where a
-    trapezoidal rule on ``|amps|`` would overstate it.  Additive over a partition at knots, which
-    is what lets m0's tolerance ignore how a waveform was divided into events.
+    trapezoidal rule on ``|amps|`` would overstate it.  Additive over a partition at knots, so
+    dividing one waveform into consecutive events leaves the total unchanged.
     """
     a, b, dt = amps[:-1], amps[1:], np.diff(times)
     out = 0.5 * np.abs(a + b) * dt
@@ -524,13 +524,18 @@ def verify_against_tree(
     # would demand exactness that float summation over thousands of pieces cannot deliver -- while
     # a tolerance on the total still catches a whole lost lobe, which is what this is for.
     #
-    # Traversed area also cannot depend on how the tree divides a waveform in time.  Summing each
-    # event's |net| did: a closed trajectory's axis, or any one event that changes sign and nets
-    # zero, collapsed it to the 1.0 floor, while the same waveform as two pieces did not.  At
-    # that floor ordinary shape storage was refused -- PyPulseq rounds a compressible shape's
-    # peak-normalised samples to 1e-7, moving its area by up to 5e-8 * peak * duration, and in
-    # practice by a few percent of that.  1e-6 of the traversed area covers even the worst case
-    # whenever a shape's mean |g| is at least 5 % of its peak.
+    # Traversed area is additive over a division of one waveform in time, so cutting it into
+    # consecutive events leaves the scale unchanged; overlapping pieces that cancel can only raise
+    # it, because the sum of their integrals of |g| is at least the integral of |their sum|.  It is
+    # therefore never below the waveform's own traversed area -- which is not the same as being
+    # independent of how events are packaged.  Summing each event's |net| collapsed to the 1.0
+    # floor for any one event that changes sign and nets zero, such as a closed trajectory's axis.
+    # At that floor PyPulseq's registration was refused: it rounds a compressible shape's
+    # peak-normalised samples to 1e-7, moving the area by at most 5e-8 * peak * duration, and in
+    # practice by a few percent of that.  Under that model 1e-6 of the traversed area is
+    # sufficient to cover the worst case whenever a shape's mean |g| is at least 5 % of its peak;
+    # it is not necessary, and lower-duty shapes are not thereby refused.  Writing the file
+    # rounds again, separately, and this check never sees that.
     traversed: dict[str, float] = {}
     # Each event's |net area|, summed: m1's relative term, unchanged -- see the m1 check below.
     magnitude: dict[str, float] = {}
@@ -577,6 +582,14 @@ def verify_against_tree(
             # area -- m1 has its own floor for representation noise below, and a wider relative
             # term would only loosen the time-shift check this exists for.  A lobe displaced by
             # one raster changes m1 by area * 10 us, comfortably above this.
+            #
+            # **Not covered: registration error far from the sequence start.**  m1 is referenced
+            # to t = 0, so a shape whose stored area moved by delta_m0 at time t moves m1 by
+            # t * delta_m0 as well, while this tolerance does not grow with t.  A compressible shape
+            # that compiles at the start of a sequence can therefore be refused here when the same
+            # shape is placed a second or more later -- on main before the m0 change as after it.
+            # No tolerance alone separates that from a mistimed lobe late in a long sequence;
+            # comparing m1 per block would.
             #
             # **Plus a floor proportional to peak |g|**, because the relative term alone sits
             # inside the noise for a whole class of legal input.  An arbitrary gradient that the

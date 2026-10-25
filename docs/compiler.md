@@ -228,15 +228,27 @@ which lost a tail or a merge which dropped a piece — a whole class of compiler
 individual test case would have to think of. Its tolerance scales with the total area *traversed*,
 not the net: a readout and its prephaser very nearly cancel, and a relative tolerance on the net
 would demand exactness that float summation over thousands of pieces cannot deliver. Traversed area
-is the integral of `|g|` over each event, so it does not depend on how the tree divides a waveform
-into events.
+is the integral of `|g|` over each event. Dividing one waveform into consecutive events leaves it
+unchanged, and overlapping pieces that cancel can only raise it, so it never falls below the
+waveform's own traversed area. That is not the same as being independent of how the tree packages
+a waveform, and is not promised.
 
-The tolerance also has to cover how PyPulseq stores a shape. When run-length compression engages,
-the peak-normalised samples are rounded to 1e-7, which moves the area by at most half a quantum per
-sample. 1e-6 of the traversed area covers that worst case whenever a shape's mean `|g|` is at least
-5 % of its peak, and measured rounding sits two orders below the tolerance. A long, densely sampled
-shape below that duty, whose constant section rounds the same way at every sample, is a known gap
-and is pinned in `tests/compiler/test_m0_tolerance.py`.
+The tolerance also has to cover how PyPulseq **registers** a shape in memory, which is what this
+check reads. When run-length compression engages, the peak-normalised samples are rounded to 1e-7,
+which moves the area by at most half a quantum per sample. Under that model, 1e-6 of the traversed
+area is a sufficient bound on the worst case whenever a shape's mean `|g|` is at least 5 % of its
+peak. It is not a necessary one: lower-duty shapes are not thereby refused, and measured rounding
+sits two orders below the tolerance. A long, densely sampled shape below that duty, whose constant
+section rounds the same way at every sample, does exceed it; that gap is pinned in
+`tests/compiler/test_m0_tolerance.py`. Writing the `.seq` file rounds again — amplitudes to six
+significant digits — but that serialisation error is separate, and this check never sees it.
+
+**m1 is not covered for the same error far from the start.** m1 is referenced to `t = 0`, so a
+shape whose registered area moved by `δm0` at time `t` also moves m1 by `t·δm0`, while m1's
+tolerance does not grow with `t`. A compressible shape accepted at the start of a sequence can
+therefore be refused by m1 when placed a second or more later. No tolerance alone separates that
+from a mistimed lobe late in a long sequence; comparing m1 per block would. It is recorded here as
+a known limitation, not addressed by the m0 change.
 
 m0 alone is **not** evidence of fidelity, and it is worth being precise about why. Area is exactly
 what linear resampling preserves, so when both sides were integrated the same approximate way their
