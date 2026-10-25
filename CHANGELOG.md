@@ -1,5 +1,208 @@
 # Changelog
 
+## Unreleased — scope follows the request, checking is on by default
+
+Four end-to-end runs of the authoring skill, each in a fresh session, exercised reuse (`EPI2D`),
+extension (a sequence-local continuous-readout EPI), composition (`T2Prep` with GRE) and original
+design (a rosette trajectory with no shipped Module). All four produced defensible acquisitions.
+Three of them were also larger or slower than the request warranted: "write an EPI sequence"
+returned a 34-slice BOLD protocol after ~55 minutes, and a request for one continuous readout came
+back with thirty slices and fat saturation whose mechanism the accompanying simulation then
+replaced with a delay.
+
+So **acquisition size and checking depth are now stated as independent**. Size follows the request:
+for a short one, the smallest *complete* acquisition that answers it — where complete means the
+preparation, encoding and train-level policy the contrast physically needs, since a readout alone
+is not an acquisition. Optional features need a reason rather than a precedent. Checking is on by
+default and proportionate to the claims made, waivable only when the user asks, and then labelled
+**unvalidated** with the omitted checks named. Neither dimension sets the other: a one-slice demo
+can deserve careful checking, and an elaborate protocol can honestly ship partly validated.
+
+The skill also gained a one-sentence opening notice — what is about to be built, that checking is
+included, that the user can redirect — explicitly *not* a gate, a questionnaire, or something to
+repeat every turn. And a stopping criterion: stop when the claims are supported, not when the
+measurements run out, with a contradiction or a non-converging number the one thing worth more
+time. No mode API, flag or preset was added; natural language controls both dimensions.
+
+**Five measured lessons from those runs went into the rules rather than into new sections.** A
+checker that imports its expectation from the authoring code agrees with itself and cannot catch a
+wrong protocol. A surrogate that replaces a preparation pulse with an equal delay is evidence about
+encoding and not about that preparation. A numerical control other than the state budget can leave
+a biased answer looking stable — raising a graph budget while leaving a truncation threshold alone
+did exactly that — and a mixture of tissues pruned against averaged relaxation needs per-tissue
+calculation. A measured crusher moment is not an impossibility theorem about every pathway. Per-axis
+legality is not a vector norm, an oblique prescription is rotated before it plays, and ADC
+segmentation still meets a particular interpreter. Steady state is a declared target: a finite dummy
+train need not bring every tissue inside some tolerance, and over-catalyzing to force that can cost
+more than the artifact is worth.
+
+**`skill_invocation.py` no longer claims what it cannot see.** A `Skill` tool-use record is positive
+evidence of invocation and still reported as such. The old `offered` verdict rested on finding the
+skill's name on a log line, which proves nothing — in the session that developed this skill the name
+appears on 459 lines with zero invocations — and `absent` cannot distinguish "not available" from
+"logged elsewhere". Everything that is not an invocation now reports as *no invocation found*, with
+the mention count printed as a hint explicitly labelled as not proof of availability.
+
+The log-directory encoding was read off the directories that exist on a POSIX machine, and the
+Windows form has not been checked — a Windows path is drive-anchored with backslashes, so the same
+substitution produces something else. The helper now says so, and the test that pins the encoding
+skips there rather than asserting a POSIX answer on a platform where it cannot hold. Windows CI
+found that, which is what it is for.
+
+Matching is now exact or namespace-qualified. The earlier `skill in str(used)` counted
+`sequence-authoring-debug` and `my-sequence-authoring`, which are other skills, and counted
+`sequence-authoring:helper`, where this skill's name is only the namespace. A skill is invoked by its
+bare name or behind a plugin namespace (`anthropic-skills:pptx` is the form real logs show) or a
+directory scope, and in every case its own name is what follows the **last** colon. Restoring the
+substring rule fails all eight of the new negative cases.
+
+**The stopping criterion no longer depends on how the acquisition was built.** It read "stop when a
+suitable Module is in use", which made finishing look conditional on an abstraction existing. A
+complete acquisition may reuse shipped Modules, add sequence-local ones, compose LogicBlocks
+directly — usually some of each — and none of those is more finished than another. Completion now
+rests on the requested acquisition being complete and defensible, its claims having evidence, and
+its unestablished parts being stated. Reuse stays the preference where it fits; creating an
+abstraction in order to be done is named as the thing not to do.
+
+**"Unvalidated" no longer claims that nothing ran.** The status read "the user asked for a draft
+without checks, and none were run". But an unvalidated draft still compiles, and building,
+compiling and writing a file run checks of their own. The word now means that *independent*
+validation was not performed — the read-back, the checks on the emitted file, any simulation or
+reconstruction. Built-in checks are never bypassed to get a file out, are reported truthfully, and
+are not presented as validation or scanner readiness. One more document test holds that pairing,
+and restoring the old wording fails it.
+
+Twelve tests cover that distinction, and thirteen more assert the skill document's load-bearing
+instructions — not that an agent obeys them, which only an end-to-end run can show, but that the
+instruction and its obligation are still present *together*. Removing the "label it unvalidated"
+clause, adding a `--mode` flag, or reordering the Module-first preference each fail exactly one of
+them.
+
+## Unreleased — a skill for writing the whole acquisition
+
+`.claude/skills/sequence-authoring/SKILL.md` is the first slice of a **user-facing** authoring
+skill. Its governing rule is the one the repository keeps rediscovering: a compilable `.seq` is not
+a correct acquisition, and most of what makes an acquisition right — preparation, phase cycling,
+view ordering, segmentation, recovery — lives above the repetition where the compiler cannot see
+it.
+
+It is deliberately one file. No RequirementIR, protocol schema, sequence DSL, module registry,
+general solver or compiler hook was added to support it, and it does not invoke `module-mining`,
+which is a maintainer workflow for deciding what belongs in the package and is not a runtime
+dependency of anything a user does.
+
+**Both installation environments are in scope**, and the skill opens by establishing which one it
+is in. A user with SeqCraft and PyPulseq installed by pip has no repository: no `docs/`, no
+`examples/`, and an installed release that does not contain everything on `main`. So the skill
+carries no repository-relative links, names the documents it mentions as supplementary, and tells
+the agent to introspect the installed package — versions, the module list, a constructor signature
+— rather than recall what the development branch has. Generated output goes where the user asked,
+or into a clearly named directory in *their* project; `scratch/sequence_authoring/` is this
+repository's own working location for skill testing, not a public convention.
+
+**The skill describes the shipped facilities at their real scope**, because an agent that goes
+looking for a capability the package deliberately lacks wastes the user's time:
+`PhysicalDesignScope` is opt-in and region-scoped and says so in its own docstring;
+`seqcraft.design.joint` behind it is provisional and internal; `sc.timing` is exact raster
+arithmetic rather than an optimizer; minimum TE and TR are per-kernel properties, since
+`docs/architecture.md` records that a gap-timing solver is deliberately absent; and `sc.pns` is a
+**prediction** over a compiled tree given a response model, not a constraint the designer honours.
+
+**`docs/testing.md` now defines the three validation layers.** They had no neutral home — the term
+appeared there once, in passing, while the only normative statement lived inside the maintainer-only
+module-mining skill, which a user-facing skill may neither cite nor restate. The new section
+defines what each layer *is* and explicitly leaves acceptance policy to whichever workflow is in
+use: Layer 3 is not owed by every primitive, but a newly completed imaging acquisition claiming
+train- or image-level correctness owes relevant Layer 3 evidence for merge readiness.
+
+**What each measurement looks at is now stated, because conflating the three is how a session
+convinces itself it is finished.** `sc.moments` is exact over the flattened tree and `sc.sample`
+interpolates onto a raster grid; `sc.kspace` and `sc.pns` compile internally; **none of them reads
+the written file**. Measuring the artifact means reading the `.seq` back, or importing it into a
+simulator — and importing cleanly is evidence that the file is well formed and simulates as
+expected, not that a scanner will execute it.
+
+**`tests/sequence_authoring/` checks the emitted file, not the authoring script.** A small
+version-controlled acquisition is built into pytest's temporary directory — no `.seq` is committed —
+and nine checks measure the sequence after it has been written and read back: that the emitted
+`k_y` covers the whole phase-encode grid exactly once **and walks it in the declared order**, that
+dummy repetitions excite without acquiring **and do so before acquisition begins**, that TE
+measured from the RF centre to the echo and TR between excitations are the ones declared, that
+`k_x` sweeps through the origin at the sample the readout puts it on, that the written definitions
+describe this acquisition, and that the build raises nothing but the known informational
+vector-norm warning.
+
+The ordering and dummy-position checks exist because counting cannot see either. A sorted coverage
+test passes for every permutation of the table, and equal RF and ADC counts survive moving the
+preparation to the *end* of the train — so one check compares the emitted `k_y` sequence against
+the declared low-to-high policy in order, and the other counts excitations before the first ADC
+sample.
+
+The expectations come from the specification and from physics, which is a correction rather than a
+preference. The first draft compared the emitted table against the view list the authoring code had
+just built, so it agreed with itself: deleting a line from the protocol left all seven passing.
+Mutation testing found it. Rewritten against `(line - n/2) / FOV_y` for every line of the matrix,
+the same mutation fails three checks, a reversed view order fails the ordering check alone, dummies
+moved to the end of the train fail the positioning check, and a policy that claims dummies it does
+not play fails another. None of this duplicates `tests/compiler/`, which already rejects an illegal file; the
+question here is whether a legal file is the acquisition it claims to be.
+
+`module-mining/SKILL.md` now points at `docs/testing.md` for what a layer *is* and keeps only its
+own acceptance policy over those layers, so the definitions have one home rather than two
+consistent copies.
+
+**The testing vocabulary is ordinary software-testing vocabulary**, because "calibration" already
+means something in MRI and this repository uses it in that sense throughout — ACS bands, an
+uncalibrated gradient delay. `tests/sequence_authoring/` holds **unit tests** of an emitted
+artifact. `tools/sequence_authoring/end_to_end/prompts.md` feeds **skill end-to-end tests**: a fresh
+agent session is given one request, uses the skill, and a person reviews what comes back. The same
+end-to-end test run under Claude Code and Codex against one copy of the skill is a **cross-agent
+test**. A controlled comparison of agent configurations is a **benchmark**, and is not part of v0.
+
+The prompts file carries inputs only. Review criteria and recorded findings stay in the workspace
+planning repository, because the agent under test can read this one. A passing pytest run is not
+evidence about any end-to-end question, and the two are kept apart on purpose.
+
+**`end_to_end/setup.sh` builds a test environment and refuses rather than deletes.** It began with
+`rm -rf "$ROOT"` — a destructive default in a script whose argument is a path a person types — and
+its guard against the planning repository failed *open*: it asked git about a path with a missing
+component, git errored, the `if` was false, and it installed 224 MB into the repository it was
+meant to protect. Now nothing is deleted, every run wants a new directory, and all path validation
+happens before anything is written. The enclosing-repository check looks for the criteria directory
+on every ancestor rather than asking git, which a nested repository would have answered for itself;
+the parent is resolved with `cd -P`, so a symlink cannot point the check at the wrong tree; and a
+symlink target is refused on `-L` as well as `-e`, since a dangling one is invisible to the latter.
+
+Eight tests cover the refusals, and only the refusals: they assert that the script stops *and* that
+pre-existing files survive. Restoring `rm -rf` fails three of them, and restoring the git-based
+check fails the other three. The run time is itself the signal — 0.10 s when every case refuses
+before touching disk, 86 s when the destructive version proceeds to build real environments first.
+
+**Four end-to-end cases, one per authoring capability**, with the shipped coverage confirmed before
+the prompts were written: reuse (`EPI2D` ships and fits), extend (a continuous single-readout EPI
+is *not* shipped — `EPI2D` is one ADC per echo — while `SpiralReadout` plans ADC events over a
+continuous trajectory and is the nearest precedent), compose (`T2Prep` and `GRE2DTR` both ship),
+and design (nothing rosette-related exists in the package, docs or examples). No prompt names a
+Module, because discovering the right abstraction is part of what is observed, and reusing one
+correctly is the preferred outcome rather than a shortcut.
+
+`setup.sh` gained a reusable-environment option: `CONDA_ENV=seqcraft-e2e` shares one interpreter
+across cases instead of rebuilding torch four times, while omitting it still builds a fresh virtual
+environment for when dependency isolation is itself the subject. The working directory is always
+new either way. It now writes `environment.txt` recording the interpreter, where SeqCraft actually
+resolved to, its versions — and **whether the install is editable**, refusing project mode outright
+if it resolved to the development checkout, which is the one way that mode could silently stop
+testing what it claims to.
+
+`skill_invocation.py` answers whether the skill was *invoked*, which grepping a reply for its
+vocabulary cannot: an agent can use the skill and paraphrase none of it, or write about emitted
+`.seq` files because that is how people talk about sequences. Claude Code records one JSONL per
+session under `~/.claude/projects/<encoded-cwd>/`, and a real invocation is a `tool_use` block
+named `Skill` carrying `input.skill`. The tool reports **invoked**, **offered but never called** —
+a discovery finding that says nothing about authoring — or **never listed**. It was verified
+against existing sessions in both states, and the directory encoding turns underscores into dashes
+as well as slashes, which a slash-only substitution misses entirely.
+
 ## Unreleased — a base install that can be imported
 
 `pip install seqcraft` resolved cleanly and then raised on `import seqcraft`:
