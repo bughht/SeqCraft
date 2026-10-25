@@ -301,9 +301,13 @@ artifact rather than the belief.
 
 ### When to stop adding evidence
 
-Stop when a suitable Module is in use, the acquisition is defensible, and every claim you are
-making has evidence behind it. Not when you run out of things that could be measured — there is
-always another sweep.
+Stop when the requested acquisition is complete and physically defensible, every claim you are
+making has evidence behind it, and what you have not established is stated. Not when you run out
+of things that could be measured — there is always another sweep.
+
+How it was built does not enter into it. Shipped Modules, sequence-local Modules or functions, and
+LogicBlocks composed directly are all finished work, and one acquisition will often use all three.
+Reuse what exists where it fits, but never create an abstraction in order to be done.
 
 ```text
 look at the shipped Modules first, before researching a design you may not need to make

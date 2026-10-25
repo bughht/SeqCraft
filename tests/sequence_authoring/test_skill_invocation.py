@@ -159,6 +159,53 @@ def test_a_missing_log_directory_is_reported_rather_than_crashing(tmp_path, capl
     assert 'expected' in caplog.text, 'the message must say where it looked'
 
 
+# ------------------------------------------------- which names count as *this* skill, exactly
+@pytest.mark.parametrize('used', [
+    'sequence-authoring',                         # bare name
+    'anthropic-skills:sequence-authoring',        # a plugin namespace, the form real logs show
+    'apps/web:sequence-authoring',                # a directory-scoped skill
+    'a:b:sequence-authoring',                     # the name is what follows the LAST colon
+])
+def test_exact_and_namespace_qualified_names_count(used: str) -> None:
+    assert checker.names_this_skill(used, SKILL)
+
+
+@pytest.mark.parametrize('used', [
+    'sequence-authoring-debug',                   # a suffix: a different skill
+    'my-sequence-authoring',                      # a prefix: a different skill
+    'pack:sequence-authoring-debug',              # namespaced, and still a different skill
+    'sequence-authoring:helper',                  # this name is only the namespace here
+    'sequence-authoring ',                        # not trimmed: an exact match means exact
+    'Sequence-Authoring',                         # skill names are case-sensitive
+    '',
+])
+def test_names_that_merely_contain_this_one_do_not_count(used: str) -> None:
+    """
+    The regression this replaces.
+
+    The earlier test was `skill in str(used)`, which counts every one of these. Each is either a
+    different skill or a namespace that happens to share the name.
+    """
+    assert not checker.names_this_skill(used, SKILL)
+
+
+@pytest.mark.parametrize('used', [None, 42, ['sequence-authoring'], {'skill': 'sequence-authoring'}])
+def test_a_malformed_input_skill_is_not_an_invocation(used: object) -> None:
+    """`str()` of these would have produced a matchable string; a record shaped wrongly is no evidence."""
+    assert not checker.names_this_skill(used, SKILL)
+
+
+def test_a_suffixed_skill_in_a_real_log_record_is_not_counted(tmp_path) -> None:
+    """The same rejection, end to end through `scan`, on the record shape Claude Code writes."""
+    log = tmp_path / 's.jsonl'
+    log.write_text(_invocation('sequence-authoring-debug') + _invocation('pack:sequence-authoring'),
+                   encoding='utf-8')
+
+    invocations, _ = checker.scan(log, SKILL)
+
+    assert [i['skill'] for i in invocations] == ['pack:sequence-authoring']
+
+
 @pytest.mark.parametrize('name', ['sequence-authoring', 'dataviz', 'module-mining'])
 def test_the_scan_is_specific_to_the_skill_asked_about(tmp_path, name: str) -> None:
     log = tmp_path / 's.jsonl'

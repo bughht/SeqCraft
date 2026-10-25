@@ -49,6 +49,21 @@ substitution produces something else. The helper now says so, and the test that 
 skips there rather than asserting a POSIX answer on a platform where it cannot hold. Windows CI
 found that, which is what it is for.
 
+Matching is now exact or namespace-qualified. The earlier `skill in str(used)` counted
+`sequence-authoring-debug` and `my-sequence-authoring`, which are other skills, and counted
+`sequence-authoring:helper`, where this skill's name is only the namespace. A skill is invoked by its
+bare name or behind a plugin namespace (`anthropic-skills:pptx` is the form real logs show) or a
+directory scope, and in every case its own name is what follows the **last** colon. Restoring the
+substring rule fails all eight of the new negative cases.
+
+**The stopping criterion no longer depends on how the acquisition was built.** It read "stop when a
+suitable Module is in use", which made finishing look conditional on an abstraction existing. A
+complete acquisition may reuse shipped Modules, add sequence-local ones, compose LogicBlocks
+directly — usually some of each — and none of those is more finished than another. Completion now
+rests on the requested acquisition being complete and defensible, its claims having evidence, and
+its unestablished parts being stated. Reuse stays the preference where it fits; creating an
+abstraction in order to be done is named as the thing not to do.
+
 Twelve tests cover that distinction, and thirteen more assert the skill document's load-bearing
 instructions — not that an agent obeys them, which only an end-to-end run can show, but that the
 instruction and its obligation are still present *together*. Removing the "label it unvalidated"

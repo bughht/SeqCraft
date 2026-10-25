@@ -58,6 +58,21 @@ def project_log_dir(workdir: Path) -> Path:
     return Path.home() / '.claude' / 'projects' / encoded
 
 
+def names_this_skill(used: object, skill: str) -> bool:
+    """
+    Whether an invocation's ``input.skill`` is this skill, exactly or namespace-qualified.
+
+    A skill is invoked either by its bare name or with a namespace in front -- a plugin pack such
+    as ``anthropic-skills:pptx`` (seen in real logs), or a directory scope such as
+    ``apps/web:deploy``. Either way the skill's own name is what follows the **last** colon.
+
+    A substring test is wrong in both directions it could be wrong: it counts
+    ``sequence-authoring-debug`` and ``my-sequence-authoring``, which are other skills, and it
+    counts ``sequence-authoring:helper``, where this skill's name is only the namespace.
+    """
+    return isinstance(used, str) and used.rsplit(':', 1)[-1] == skill
+
+
 def scan(log: Path, skill: str) -> tuple[list[dict], int]:
     """
     ``(invocations, name_mentions)`` for one session file.
@@ -82,8 +97,7 @@ def scan(log: Path, skill: str) -> tuple[list[dict], int]:
                 if not isinstance(block, dict):
                     continue
                 if block.get('type') == 'tool_use' and block.get('name') == 'Skill':
-                    used = (block.get('input') or {}).get('skill')
-                    if used == skill or skill in str(used):
+                    if names_this_skill((block.get('input') or {}).get('skill'), skill):
                         invocations.append(block.get('input') or {})
     return invocations, mentions
 
