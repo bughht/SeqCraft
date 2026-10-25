@@ -74,6 +74,22 @@ def test_the_opt_out_comes_with_its_labelling_obligation(flat: str) -> None:
     )
 
 
+def test_unvalidated_means_independent_validation_was_not_performed(flat: str) -> None:
+    """
+    An opt-out declines independent validation; it does not switch off the built-in checks.
+
+    Building, compiling and writing a file run checks of their own, and an unvalidated draft still
+    compiles. "None were run" would then be untrue. Four things have to stay together: what the
+    word means, that built-in checks are never bypassed, that they are reported truthfully, and
+    that passing them is neither validation nor scanner readiness.
+    """
+    assert 'none were run' not in flat, 'an absolute claim that no checks ran'
+    assert 'Unvalidated means independent validation was not performed' in flat
+    assert re.search(r'Never bypass those', flat), 'built-in checks must not be bypassed'
+    assert re.search(r'report truthfully that they ran', flat)
+    assert re.search(r'Passing them is not independent validation', flat)
+
+
 def test_an_unperformed_check_may_never_be_implied_to_have_passed(flat: str) -> None:
     assert 'Never imply an unperformed check passed' in flat
 

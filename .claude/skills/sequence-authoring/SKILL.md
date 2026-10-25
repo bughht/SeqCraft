@@ -208,6 +208,12 @@ mark it **unvalidated** where they will see it, list the checks you did not run,
 about physical accuracy. Never imply an unperformed check passed. What you must not do, in either
 mode, is call anything scanner-ready.
 
+**Unvalidated means independent validation was not performed** — the read-back, the checks on the
+emitted file, any simulation or reconstruction. It does not switch off the checks that building,
+compiling or writing the file run by themselves. Never bypass those to get a file out, and report
+truthfully that they ran and what they found. Passing them is not independent validation of the
+acquisition, and does not make it scanner-ready.
+
 Three different things get measured, and conflating them is the most common way an authoring
 session convinces itself it is finished.
 
@@ -337,7 +343,8 @@ plain prose:
 ```text
 validated             the claims made are supported by the evidence run
 partially validated   some claims rest on evidence not yet run -- say which
-unvalidated           the user asked for a draft without checks, and none were run
+unvalidated           the user declined independent validation, and none was performed --
+                      built-in checks may still have run while the file was built
 blocked               a physical or technical obstacle prevents the claim
 ```
 
@@ -346,9 +353,10 @@ unavailable; **"compiles" is never validation**, and nothing here is scanner-rea
 slew legality under chosen `Opts`, or a PNS prediction against an illustrative model, is a design
 check — not RF/SAR, acoustic, vendor-interpreter or site approval. Say so when you hand it over.
 
-An **unvalidated** hand-off still describes what it is: the acquisition you intended, the checks
-that would normally run, and the fact that none of them did. A draft the user asked for is a
-legitimate deliverable. A draft presented as though it had been checked is not.
+An **unvalidated** hand-off still describes what it is: the acquisition you intended, the
+independent checks that would normally run, the fact that none of them did, and any built-in checks
+that ran while the file was built and written. A draft the user asked for is a legitimate
+deliverable. A draft presented as though it had been checked is not.
 
 For follow-up requests, continue from the established design. Do not reopen settled literature or
 architecture decisions unless the new requirement actually disturbs them.

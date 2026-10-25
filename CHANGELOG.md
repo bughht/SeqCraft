@@ -64,6 +64,14 @@ rests on the requested acquisition being complete and defensible, its claims hav
 its unestablished parts being stated. Reuse stays the preference where it fits; creating an
 abstraction in order to be done is named as the thing not to do.
 
+**"Unvalidated" no longer claims that nothing ran.** The status read "the user asked for a draft
+without checks, and none were run". But an unvalidated draft still compiles, and building,
+compiling and writing a file run checks of their own. The word now means that *independent*
+validation was not performed — the read-back, the checks on the emitted file, any simulation or
+reconstruction. Built-in checks are never bypassed to get a file out, are reported truthfully, and
+are not presented as validation or scanner readiness. One more document test holds that pairing,
+and restoring the old wording fails it.
+
 Twelve tests cover that distinction, and thirteen more assert the skill document's load-bearing
 instructions — not that an agent obeys them, which only an end-to-end run can show, but that the
 instruction and its obligation are still present *together*. Removing the "label it unvalidated"
