@@ -227,7 +227,16 @@ would flag every sequence over an hour.
 which lost a tail or a merge which dropped a piece — a whole class of compiler bug that no
 individual test case would have to think of. Its tolerance scales with the total area *traversed*,
 not the net: a readout and its prephaser very nearly cancel, and a relative tolerance on the net
-would demand exactness that float summation over thousands of pieces cannot deliver.
+would demand exactness that float summation over thousands of pieces cannot deliver. Traversed area
+is the integral of `|g|` over each event, so it does not depend on how the tree divides a waveform
+into events.
+
+The tolerance also has to cover how PyPulseq stores a shape. When run-length compression engages,
+the peak-normalised samples are rounded to 1e-7, which moves the area by at most half a quantum per
+sample. 1e-6 of the traversed area covers that worst case whenever a shape's mean `|g|` is at least
+5 % of its peak, and measured rounding sits two orders below the tolerance. A long, densely sampled
+shape below that duty, whose constant section rounds the same way at every sample, is a known gap
+and is pinned in `tests/compiler/test_m0_tolerance.py`.
 
 m0 alone is **not** evidence of fidelity, and it is worth being precise about why. Area is exactly
 what linear resampling preserves, so when both sides were integrated the same approximate way their

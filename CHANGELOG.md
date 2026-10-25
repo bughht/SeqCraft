@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased — m0 no longer refuses a legal gradient because of how PyPulseq stores it
+
+The m0 against-tree check scaled its tolerance by the sum of each gradient event's `|net area|`,
+while its comment and `docs/compiler.md` said area *traversed*. For a single event that changes
+sign and nets zero — a closed trajectory's axis, or a bipolar pair held in one shape — that sum is
+zero, and the tolerance fell to its absolute floor of 1e-6 1/m. PyPulseq rounds a compressible
+shape's peak-normalised samples to 1e-7 when it registers them, which moves an ordinary waveform's
+area by a few 1e-6 to a few 1e-5 1/m. So legal input was refused whenever compression engaged and
+the shape had no symmetry to cancel the rounding: 32 of 32 such waveforms in a candidate-free
+reproducer. The message blamed "a split or a merge", although nothing had been split or merged.
+
+The verdict also depended on packaging. The same waveform held as two overlapping events compiled
+to an identical shape, with identical rounding, and passed.
+
+m0 now scales by the area each event traverses, the integral of `|g|`. That is additive over a
+division in time, so one waveform gets one verdict however the tree divides it, and the measured
+rounding sits two orders or more below the tolerance. A refusal now reports the difference and the
+tolerance rather than naming a cause. m1 is unchanged and still refuses a piece played one raster
+late. Writing the file adds a separate error the check never sees, because it reads the sequence in
+memory: amplitudes are written to six significant digits, up to 5e-6 relative per event.
+
+One gap remains, pinned by a strict `xfail`. 1e-6 of the traversed area covers worst-case rounding
+only while a shape's mean `|g|` is at least 5 % of its peak. Below that, a long, densely sampled
+constant section that rounds the same way at every sample can exceed it.
+
 ## Unreleased — a base install that can be imported
 
 `pip install seqcraft` resolved cleanly and then raised on `import seqcraft`:
