@@ -825,7 +825,8 @@ class EPI2D(Module):
         gradient raster, and :func:`~seqcraft.compile` refuses a gradient that starts off it.  An
         odd raster count is the one way to make this design fail at compile time rather than in
         the image -- the good kind of failure, but still worth not having.  The design is
-        :func:`~seqcraft.modules._support.design_blip`, shared with every echo-planar train.
+        :func:`~seqcraft.modules._support.design_blip`, shared with
+        :class:`~seqcraft.modules.ContinuousEPI2D`.
         """
         return design_blip(
             opts=self.opts, axis=self.blip_axis, area_per_m=self.blip_lines * self.dk_blip_per_m,
@@ -1147,7 +1148,8 @@ class EPI2D(Module):
         fix meant to remove it, and one no image would attribute to a rounding rule. So the
         protocol is refused with the two echo spacings that do divide, since the caller can reach
         either one and this module cannot choose between them.  The divisibility rule is
-        :func:`~seqcraft.modules._support.shot_spacings`, shared with every echo-planar train.
+        :func:`~seqcraft.modules._support.shot_spacings`, shared with
+        :class:`~seqcraft.modules.ContinuousEPI2D`.
         """
         raster_s = float(self.opts.block_duration_raster)
         spacings = shot_spacings(self.echo_spacing_s, self.shots, raster_s)

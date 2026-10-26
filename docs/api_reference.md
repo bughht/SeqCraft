@@ -1056,6 +1056,7 @@ Re-exported **flat**, so no import path names a folder:
 | `RadialReadout` | one radial spoke: prephaser, readout gradient and ADC, already oriented, with the trajectory geometry a caller would otherwise reverse-engineer |
 | `SpiralReadout` | one reversible spiral arm and the four ways to traverse it — `out`, `in`, `in-out`, `out-in`. The arm is at rest at both ends, which is what makes them one family |
 | `EPI2D` | the whole echo-planar train: prephasers, alternating lobes, blips on the zero crossings, one ADC per echo, and the labels a reconstruction reads back |
+| `ContinuousEPI2D` | the same train sampled by **one** ADC window, from the first lobe's start to the last lobe's end — ramps, turnarounds and blips included — with every sample's k and time reported. The window has to fit the configured `opts.adc_samples_limit`, and is never split |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
 | `SaturationPrep` | a spectrally selective pulse and the spoiler that destroys what it made — the chemical-shift offset is the contract, and its sign is the failure that looks fine |
@@ -1283,6 +1284,8 @@ the questions a tree of events cannot:
 | `EPI2D.polarity(echo)` | `+1` or `-1`, counted across the whole train. `echo` is an **offset from the first imaging echo**, so `-navigator_echoes … -1` are the navigators and `range(-navigator_echoes, len(lines))` walks the file's readouts in order |
 | `EPI2D.k_read_per_m` | where a forward lobe's samples land in k, per sample. With ramp sampling that is not `dk` times an index, and nothing outside the module can derive it |
 | `EPI2D.time_to_center_line(lines)` | to the acquisition of `center_line`, which the ordering decides. **This is TE**, and it is not the first echo |
+| `ContinuousEPI2D.time_to_echo(echo)` / `time_to_center_line(lines)` | the **midpoint** of a lobe, which is where its `kx = 0` is — an instant, on a sample only when `samples_per_echo` is odd. The second is TE's endpoint, where `kx` and `ky` are zero together |
+| `ContinuousEPI2D.k_per_m(lines)` / `sample_times_s(lines)` | every sample of the one window: where in k, integrated from the emitted lobes and blips, and when, read off the ADC event. Sample `j` is lobe `j // samples_per_echo` |
 | `SpiralReadout.origin_crossing_samples` / `origin_crossing_times` | where the trajectory passes through `k = 0`, as a **sequence** — `out-in` crosses twice and the others once, so a scalar would change meaning when it arrived |
 | `SpiralReadout.k_per_m(angle_rad=…)` | the sample positions, integrated from the **emitted** knots rather than from the design pass. A NUFFT is told where the samples are, so a trajectory one raster out is a blur and a wrong field map |
 | `SpiralReadout.limits()` | the peak gradient and slew this readout actually emits, measured rather than inferred from the traversal's constraints |
@@ -1517,6 +1520,45 @@ self-calibration no real scan can have, and §8 decomposes a segmented EPI's rep
 over the TR, the run-in and the spoiling schedule.
 
 
+
+## One sampling window across the train
+
+`ContinuousEPI2D` is `EPI2D`'s sibling with a different receiver: **one ADC event spans every
+lobe**, so flat tops, ramps, turnarounds and blips are all sampled. The lobes, the blips centred on
+the zero crossings, the line table, `blip_lines`, `shots`, `segment` and `phase_deg` mean what they
+mean for `EPI2D`, and the two refuse the same tables with the same words.
+
+```python
+window_opts = pp.Opts(max_grad=32, grad_unit='mT/m', max_slew=130, slew_unit='T/m/s',
+                      rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6,
+                      adc_samples_limit=8192)
+cepi = sc.modules.ContinuousEPI2D(opts=window_opts, fov_mm=220.0, matrix=(64, 64),
+                                  dwell_s=5e-6, oversampling=1.5)
+cepi_train = cepi(lines=range(64))                # one ADC event of 64 x 118 samples
+
+assert cepi.samples_per_echo * cepi.dwell_s == cepi.echo_spacing_s
+cepi_k = cepi.k_per_m(range(64))                  # (2, 7552): where every sample lands
+cepi_t = cepi.sample_times_s(range(64))           # and when, on the block's clock
+cepi_te_end = cepi.time_to_center_line(range(64)) # the midpoint of the centre line's lobe
+```
+
+| | |
+|---|---|
+| **the lobe is the window** | no guard: `echo_spacing_s = samples_per_echo × dwell_s` exactly, on the gradient raster. The echo spacing moves in steps of `lcm(dwell_s, grad_raster_time)`, and the samples per echo are an output |
+| **`k = 0` is an instant** | the readout prephaser is half a lobe's area, so `kx = 0` is each lobe's midpoint. That is on a sample only when `samples_per_echo` is odd, so there is no `echo_sample` |
+| **`oversampling` is a bound** | every kx step between consecutive samples is at most `dk_read_per_m / oversampling`, met on the flat top, where it is `readout_amplitude_hz_m × dwell_s`. It is not `EPI2D`'s sample-count multiplier, and it bounds the spacing along kx only — not the 2D sampling of ky lines and blip samples |
+| **each half-blip lies in a ramp** | flat-top samples sit on their ky line, the samples within `blip_duration_s / 2` of a seam lie between lines, and the centre line's midpoint has `ky = 0` |
+| **one size limit** | `len(lines) × samples_per_echo` has to fit `opts.adc_samples_limit` and be a multiple of `opts.adc_samples_divisor`. A limit of `0` is refused at construction, and a table above the limit is refused rather than split into several events |
+
+**With `prephase=False` the reported trajectory is nominal.** `k_per_m` starts the train at
+`kx = -area_to_echo_per_m` and `ky = k_blip_per_m(lines[0])`, which is what the module's own
+prephasers deliver. A composition that dephases before a refocusing pulse has to deliver the same
+state, and is checked on the assembled sequence; `sc.kspace` models the conjugation.
+
+Out of scope: navigator echoes, readout partial echo, a readout field-of-view offset, `REF` and
+`IMA` labels, segmentation of the window inside the interpreter, and reconstruction.
+[`examples/gre_epi_2d/03`](../examples/gre_epi_2d/03_continuous_readout.ipynb) builds a complete
+single-shot acquisition with it, writes it and reads it back.
 
 ## A radial spoke, and where its geometry lives
 
@@ -1957,6 +1999,7 @@ at import.
 | `CompileError` | `compiler.errors` | exception |
 | `CompilerContractError` | `compiler.verification` | exception |
 | `ConfigurationError` | `errors` | exception |
+| `ContinuousEPI2D` | `modules` | class |
 | `ContractViolation` | `compiler.verification` | class |
 | `DefinitionConflict` | `compiler.errors` | exception |
 | `DiffusionSEPrep` | `modules` | class |
