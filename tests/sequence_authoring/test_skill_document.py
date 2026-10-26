@@ -132,6 +132,27 @@ def test_stopping_guidance_does_not_license_skipping_physics(body: str, flat: st
     assert re.search(r'rigou?r intact', flat)
 
 
+def test_an_unrequested_claim_is_reported_as_not_evaluated_rather_than_dropped(flat: str) -> None:
+    """
+    Leaving a claim out is honest only if the hand-off says so.
+
+    The guidance that keeps effort proportionate -- make a further claim only when the request or a
+    specific risk needs it -- stays paired with the obligation to say what was not evaluated, and
+    leaves the acquisition's defining invariants among the claims every hand-off owes.
+    """
+    assert 'Each claim you add is evidence you owe' in flat
+    assert re.search(r'leave it out, and say that it was not evaluated', flat)
+    assert "the acquisition's defining invariants" in flat
+
+
+def test_a_simulation_result_is_reused_only_while_nothing_it_depends_on_changed(flat: str) -> None:
+    """Reuse is the saving; the condition on the file, the model and the controls is the safeguard."""
+    assert 'Simulate each artifact once' in flat
+    assert re.search(r'with the hash of the `\.seq` it read', flat)
+    assert re.search(r'Re-simulate when the file, a model assumption or a numerical control changes',
+                     flat)
+
+
 # ---------------------------------------------------------------- the boundaries, still stated
 def test_the_opening_notice_is_marked_non_blocking(flat: str) -> None:
     assert 'Do not wait for an answer' in flat

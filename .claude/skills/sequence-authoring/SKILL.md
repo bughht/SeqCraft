@@ -272,6 +272,10 @@ Rules that catch the common failures:
   supplement it if it preserves the quantity under study — not merely TR. A one-slice extract with
   a preparation pulse replaced by an equal delay is fine evidence about encoding and useless
   evidence about that preparation; name which it is.
+- **Simulate each artifact once.** Simulation is the slow step. Save what the simulator returns
+  with the hash of the `.seq` it read, and when only the analysis changes, rerun the analysis on
+  the saved result. Re-simulate when the file, a model assumption or a numerical control changes;
+  reuse a result only when you can show that none of them did.
 - **Different evidence is not interchangeable.** Single-spin phase, voxel-ensemble magnitude,
   per-view echo amplitude, and reconstructed image behaviour are four different measurements. Equal
   echo modulation can still produce different image structure, because where the modulation lands
@@ -310,6 +314,13 @@ artifact rather than the belief.
 Stop when the requested acquisition is complete and physically defensible, every claim you are
 making has evidence behind it, and what you have not established is stated. Not when you run out
 of things that could be measured — there is always another sweep.
+
+**Each claim you add is evidence you owe.** The request decides which claims the hand-off needs:
+the acquisition's defining invariants, and its train- or image-level behaviour where the request's
+goal depends on it. The benefit of an optional feature, a comparison with a variant you built for
+the purpose, a steady-state, contrast or PNS figure nobody asked for: each is a further claim, with
+its own simulation, convergence and limits. Make one when the request or a specific risk needs it.
+Otherwise leave it out, and say that it was not evaluated.
 
 How it was built does not enter into it. Shipped Modules, sequence-local Modules or functions, and
 LogicBlocks composed directly are all finished work, and one acquisition will often use all three.

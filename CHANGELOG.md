@@ -72,6 +72,18 @@ reconstruction. Built-in checks are never bypassed to get a file out, are report
 are not presented as validation or scanner readiness. One more document test holds that pairing,
 and restoring the old wording fails it.
 
+**Two rules aimed at authoring time, each from a measured session.** In development runs with an
+explicit scope, most of the time after the first `.seq` went to validation, and two parts of it
+answered nothing the request needed. One session ran its whole MRzero simulation five times on an
+unchanged `.seq` to change the analysis, a docstring and plot labels; a first-round session had
+done the same. Another added RF spoiling the request did not ask for, built a variant without it
+to show that it helped, and spent most of its simulation time on the pruning bias that comparison
+exposed. So a simulation now runs once per artifact, its result saved with the file's hash and
+reused until the file, a model assumption or a numerical control changes. And a claim beyond what
+the request needs is named as evidence owed: made when the request or a specific risk needs it,
+and otherwise reported as not evaluated. Neither rule touches the checks of the acquisition's
+defining invariants. Two more document tests hold each rule together with its safeguard.
+
 Twelve tests cover that distinction, and thirteen more assert the skill document's load-bearing
 instructions — not that an agent obeys them, which only an end-to-end run can show, but that the
 instruction and its obligation are still present *together*. Removing the "label it unvalidated"
