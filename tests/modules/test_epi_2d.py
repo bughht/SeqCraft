@@ -700,6 +700,71 @@ def test_the_table_refusals(epi_opts, lines, match) -> None:
         _build(epi_opts)(lines=lines)
 
 
+@pytest.mark.parametrize('nx', [66, 70])
+def test_a_sample_count_the_adc_divisor_does_not_divide_is_refused_at_construction(
+        epi_opts, nx) -> None:
+    """
+    At ``oversampling=1`` a 66- or 70-wide readout samples 66 or 70 points, which 4 does not divide.
+
+    PyPulseq's timing check refuses such an ADC, so the train used to build and then fail to
+    compile with a message that blamed the compiler.  It is refused here, before anything is built,
+    and the message says which rule and which numbers.
+    """
+    with pytest.raises(sc.ConfigurationError) as caught:
+        _build(epi_opts, matrix=(nx, 64), dwell_s=7e-6, oversampling=1)
+    message = str(caught.value)
+
+    assert message.splitlines()[0] == (
+        f'{nx} ADC samples per echo is not a multiple of opts.adc_samples_divisor = 4, which '
+        f"PyPulseq's timing check requires of every ADC event.")
+    assert 'compiler bug' not in message
+
+
+@pytest.mark.parametrize('nx', [66, 70])
+def test_the_divisor_refusal_offers_remedies_that_build_and_says_what_each_changes(
+        epi_opts, nx) -> None:
+    """
+    Each remedy compiles, and each one names what it changes: sampling, or the readout matrix.
+
+    None of them drops k-space: the oversampled train keeps the matrix, and a different matrix
+    is stated as a different resolution or field of view.
+    """
+    with pytest.raises(sc.ConfigurationError) as caught:
+        _build(epi_opts, matrix=(nx, 64), dwell_s=7e-6, oversampling=1)
+    message = str(caught.value)
+    oversampling = int(message.split('oversampling=')[1].split(':')[0])
+    sizes = [int(n) for n in message.split('matrix[0] = ')[1].split(',')[0].split(' or ')]
+
+    assert 'the echo spacing with it' in message
+    assert 'a different readout resolution' in message
+    by_bandwidth = _build(epi_opts, matrix=(nx, 64), bandwidth_hz_px=1 / (7e-6 * nx),
+                          oversampling=oversampling)
+    by_dwell = _build(epi_opts, matrix=(nx, 64), dwell_s=7e-6, oversampling=oversampling)
+    # Held bandwidth keeps the sampling window; held dwell grows it by the oversampling factor.
+    assert by_bandwidth.num_samples * by_bandwidth.dwell_s == pytest.approx(nx * 7e-6, abs=1e-12)
+    assert by_dwell.num_samples * by_dwell.dwell_s == pytest.approx(
+        oversampling * nx * 7e-6, abs=1e-12)
+    for epi in (by_bandwidth, by_dwell,
+                *(_build(epi_opts, matrix=(n, 64), dwell_s=7e-6, oversampling=1) for n in sizes)):
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', sc.SeqCraftWarning)
+            sc.compile(sc.LogicBlock('probe').add(0.0, epi(lines=range(4))), epi_opts)
+
+
+def test_the_adc_divisor_is_read_from_opts(epi_opts) -> None:
+    """The rule is the scanner's: under a divisor of 2 the 66-sample train builds and compiles."""
+    relaxed = Opts(
+        max_grad=40, grad_unit='mT/m', max_slew=180, slew_unit='T/m/s', B0=3.0,
+        rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6, adc_samples_divisor=2,
+    )
+    epi = _build(relaxed, matrix=(66, 64), dwell_s=7e-6, oversampling=1)
+
+    assert epi.num_samples == 66
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', sc.SeqCraftWarning)
+        sc.compile(sc.LogicBlock('probe').add(0.0, epi(lines=range(4))), relaxed)
+
+
 def test_a_table_without_the_centre_has_no_echo_time(epi_opts) -> None:
     """Under segmentation only one shot has a meaningful TE, and this is what says which."""
     epi = _build(epi_opts)
