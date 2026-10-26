@@ -106,7 +106,7 @@ from .boundaries import (
 )
 from .emission import emit_blocks
 from .errors import CompileError, DefinitionConflict
-from .legalization import _NEGLIGIBLE_EDGE, legalize_blocks
+from .legalization import legalize_blocks
 from .placement import place_events
 from .verification import (
     ContractViolation,
@@ -428,7 +428,6 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
         stored=lambda: stored_gradients(seq),
         resampled=resampled,
         grad_raster=float(opts.grad_raster_time),
-        snap=_NEGLIGIBLE_EDGE * float(opts.max_grad),
         label_states=lambda: seq.evaluate_labels(evolution='adc'),
     )
     # Last, so that nothing warns about a compile that then failed.

@@ -324,7 +324,7 @@ def test_a_resampled_stretch_with_sloped_ends_compiles(t0: float) -> None:
 
     handed = seen['handed']
     raster = round(float(opts.grad_raster_time) * 1e12)
-    plain, _, _, _, _, _ = _tree_side(seen['placed'], handed.edges, (), raster, 0.0)
+    plain, _, _, _, _, _ = _tree_side(seen['placed'], handed.edges, (), raster)
     rows = [k for k, _ in resampled]
     per_block = handed.m0[rows, 0] - plain[rows, 0]
     assert np.all(np.abs(per_block) > 5e-3)

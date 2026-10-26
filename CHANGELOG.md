@@ -21,8 +21,9 @@ stages:
 
 The whole-sequence m0 and m1 refusals are retired. The sequence's moments are sums of the block
 ones, so they add nothing a block-wise check misses. A refusal names its stage, block, start time,
-difference and tolerance. Duration and label addresses are checked as before, and no emitted
-waveform changes.
+difference and tolerance. Duration and label addresses are checked as before. The comparison
+changes no emitted waveform; the endpoint-snap correction below does, at seam values under
+`1e-6·max_grad`.
 
 What changes in verdicts, on the controls in `tests/compiler/test_local_moments.py`:
 
@@ -44,8 +45,6 @@ ends are sloped.
   and centroid is invisible, and so is anything below the tolerance.
 - The registration stage allows for PyPulseq's six-digit deduplication, so it cannot see a stored
   change within about `1e-5` of a block's `|g|` integral.
-- The endpoint snap, which zeroes a seam value below `1e-6·max_grad`, is modelled in the
-  compile tolerance, not removed.
 - Event time parameters and shape lengths must stay below `1e6` gradient rasters, where `%.6g`
   prints them exactly.
 
@@ -54,6 +53,14 @@ at a cut or at another piece's knot carried an error that grew with the block's 
 controls a block's area moved by up to 1.5e-10 1/m at 100 s and 1.2e-9 at 1000 s, against 1.1e-14
 at 0 s. The same block now superposes to the same knots, bit for bit, wherever it sits, and the
 compile stage's tolerance loses its only term that grew with placement.
+
+**The endpoint snap zeroes only what float cannot tell from zero.** `axis_gradient` set a
+superposed block's first or last value to zero below `1e-6·max_grad`, a threshold about a million
+times the float residue it existed to remove. It silently zeroed genuine seam values — up to
+1.36 Hz/m at 32 mT/m — and that removed triangle was the whole of the split residue the
+whole-sequence m1 had a floor for. `superpose` now returns an end value as exactly zero only within
+the float bound of the segments it is interpolated from. A genuine seam value is kept, so the
+emitted waveform changes there, at that level and no other.
 
 ## Unreleased — m0's tolerance scales with the area traversed, as documented
 

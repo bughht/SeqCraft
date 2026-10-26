@@ -242,7 +242,7 @@ Both are compared in **two stages**, each against its own input:
 
 | stage | compares | its tolerance covers |
 |---|---|---|
-| compile | the tree's placed events, restricted exactly to each block, with the ready blocks emission hands PyPulseq | SeqCraft's own arithmetic: float summation; the float of superposing pieces; the endpoint snap; and where a knot's time lands in ticks |
+| compile | the tree's placed events, restricted exactly to each block, with the ready blocks emission hands PyPulseq | SeqCraft's own arithmetic: float summation; the float of superposing pieces; and where a knot's time lands in ticks |
 | registration | the ready blocks, measured before emission, with what PyPulseq stored, read back block by block | PyPulseq's storage precision: compression rounding, and the six-digit key it deduplicates events by |
 
 A refusal names its stage, block, time, difference and tolerance, so it says whether SeqCraft or
@@ -267,10 +267,10 @@ case.
   block's start, so this does not depend on where the block sits. A raster resample interpolates
   in float seconds from the block's start, which adds `4·u·L` times the summed peak slope for a
   block of length `L`.
-- *Endpoint snap*, compile. `axis_gradient` sets a superposed block's first or last value to zero
-  when it is below `1e-6·max_grad`, removing a triangle of that height out to the next knot. This is
-  modelled from the tree's own value at each block edge, wherever the compile's value could fall
-  under the threshold.
+- *Endpoint zeroing*, compile. `superpose` returns a block's first or last value as exactly zero
+  when float cannot tell it from zero — within the superposition bound above — so pieces that
+  cancel at a seam leave no residue there. That moves the waveform by less than the superposition
+  term already allows, so it needs no term of its own. A genuine value is kept however small.
 - *Time representation*, compile. The raster check puts a gradient's start within half a tick of
   its tick, and a knot's absolute time takes a few more roundings to become ticks. So a knot can
   land one tick (1 ps) from where the other side puts it, and further once `u·t` approaches a tick,

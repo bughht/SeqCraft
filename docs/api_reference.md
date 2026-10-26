@@ -1884,7 +1884,7 @@ access to placed events, boundaries, label targets, the scanner limits, or trans
 | `expected_addresses(placed, targets) -> list[dict[str, int]]` | Fold the tree's labels the way the interpreter will |
 | `handed_gradients(blocks) -> HandedGradients` | m0 and m1 of the ready blocks per block and axis, about each block's start, measured before emission, with PyPulseq's storage allowance |
 | `stored_gradients(seq) -> BlockMoments` | The same for what PyPulseq stored, read back block by block |
-| `verify_against_tree(placed, targets, *, duration_s, tree_duration_s, handed, stored, resampled, grad_raster, snap, label_states) -> None` | The four semantic invariants |
+| `verify_against_tree(placed, targets, *, duration_s, tree_duration_s, handed, stored, resampled, grad_raster, label_states) -> None` | The four semantic invariants |
 
 **The self-check** asserts four invariants after emission, each catching a class of compiler bug no
 individual test case would:
@@ -1901,8 +1901,8 @@ individual test case would:
 
 m0 and m1 are compared in two stages, each against its own input. **Compile**: the tree's events,
 restricted exactly to each block, against the ready blocks emission hands PyPulseq, within
-SeqCraft's own float and endpoint snap; a block-axis legalization resampled is compared with the
-tree resampled onto the raster. **Registration**: those ready blocks against what PyPulseq stored,
+SeqCraft's own float; a block-axis legalization resampled is compared with the tree resampled onto
+the raster. **Registration**: those ready blocks against what PyPulseq stored,
 within its storage precision — compression rounding, and the six-digit key it deduplicates events
 by. The sequence's whole m0 and m1 are sums of the per-block ones, so they need no check of their
 own. All four invariants are measured before anything is raised, because one mistimed stage

@@ -1,17 +1,16 @@
 """
 An arbitrary gradient that changes sign, cut by a block boundary, compiles.
 
-The compiler rebuilds each side of the cut, and that does not round-trip exactly.  Where the
-waveform's value ``v`` at the seam is below 1e-6 of ``max_grad``, ``axis_gradient`` sets it to zero
-on both sides -- its endpoint snap -- which removes a triangle of height ``v`` out to the nearest
-sample, half a raster away, on each side.  The emitted area moves by ``-v r / 2``; where ``v`` is
-larger, it does not move.
+The compiler rebuilds each side of the cut.  It used not to round-trip exactly: where the
+waveform's value ``v`` at the seam was below 1e-6 of ``max_grad``, ``axis_gradient`` set it to zero
+on both sides, removing a triangle of height ``v`` out to the nearest sample, half a raster away, on
+each side, and the emitted area moved by ``-v r / 2``.  When m1 was compared for the whole
+sequence, that residual sat in the noise of its relative tolerance: six of ten legal sign-changing
+gradients were refused until a floor proportional to peak ``|g|`` was added, and which six could not
+be predicted from the sequence.
 
-When m1 was compared for the whole sequence, that residual sat in the noise of its relative
-tolerance: six of ten legal sign-changing gradients were refused until a floor proportional to
-peak ``|g|`` was added, and which six could not be predicted from the sequence.  Per block, the
-compile tolerance models the snap from the tree's own value at each block edge, so the same ten
-compile, and the same gradient played one raster late is still refused.
+Only an end value float cannot tell from zero is zeroed now, so the seam value is kept and the area
+does not move.  The same ten compile, and the same gradient played one raster late is refused.
 
 Nothing here builds a module.  The property under test is *one arbitrary gradient that changes
 sign inside itself, cut by a block boundary*, which spirals happen to meet first.
@@ -64,23 +63,28 @@ def test_a_legal_sign_changing_gradient_compiles(n: int, fraction: float) -> Non
 
 @pytest.mark.parametrize('max_grad', [20.0, 40.0])
 @pytest.mark.parametrize(('n', 'fraction'), [(2000, 0.2), (2000, 0.5), (8000, 0.2), (8000, 0.5)])
-def test_the_split_residual_is_the_endpoint_snap(max_grad: float, n: int, fraction: float) -> None:
+def test_a_small_genuine_seam_value_is_kept(max_grad: float, n: int, fraction: float) -> None:
     """
-    What the compile tolerance has to model, measured rather than assumed.
+    Each of these seams sits below 1e-6 of ``max_grad``, where the old snap zeroed it.
 
-    The seam value is under the snap threshold for each of these, and the emitted area moves by
-    exactly the two triangles the snap removes.
+    It is a genuine value, far above any float residue, so both blocks carry it and the emitted
+    area moves by nothing beyond float -- not by the ``-v r / 2`` the snap used to remove.
     """
     opts = _opts(max_grad)
     grad = _sign_changing(n, fraction, opts)
     times, amps = knots_of(grad, 0.0)
-    seam = n * float(opts.grad_raster_time) / 2
-    v = float(np.interp(seam, times, amps))
-    assert 0.0 < abs(v) < 1e-6 * float(opts.max_grad), 'the case must engage the snap'
+    r = float(opts.grad_raster_time)
+    # In ticks, as the compiler interpolates: at float seconds the value itself carries ~1e-10 Hz/m.
+    ticks = np.rint(times * 1e12)
+    v = float(np.interp(np.rint(n * r / 2 * 1e12), ticks, amps))
+    assert 0.0 < abs(v) < 1e-6 * float(opts.max_grad), 'the old snap must have zeroed this one'
 
-    seq, _ = compile_capturing(_split_tree(grad, n, opts), opts, check=False, name='snap')
+    seq, _ = compile_capturing(_split_tree(grad, n, opts), opts, check=False, name='kept')
+    first, second = (seq.get_block(i).gx for i in sorted(seq.block_events))
+    assert float(first.last) == pytest.approx(v, rel=1e-9)
+    assert float(second.first) == pytest.approx(v, rel=1e-9)
     moved = _sequence_moments(seq, 0)['x'] - pwl_moment(times, amps, 0)
-    assert moved == pytest.approx(-v * float(opts.grad_raster_time) / 2, rel=1e-5)
+    assert abs(moved) < 1e-3 * abs(v) * r / 2
 
 
 @pytest.mark.parametrize(('n', 'fraction'), [(1000, 0.3), (16000, 0.9)])
