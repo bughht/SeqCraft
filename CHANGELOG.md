@@ -72,6 +72,20 @@ reconstruction. Built-in checks are never bypassed to get a file out, are report
 are not presented as validation or scanner readiness. One more document test holds that pairing,
 and restoring the old wording fails it.
 
+**Saved simulation output is reused while its configuration is unchanged.** In a development run
+with an explicit scope, one session re-ran its whole MRzero simulation four more times on an
+unchanged `.seq` to change the analysis, a docstring, an independent reference model and plot
+labels; a first-round session had done the same. When only the analysis, reconstruction or
+plotting changes, the skill now has those rerun on saved forward-simulation output. A `.seq` hash
+alone does not identify a simulation, so the output keeps a short manifest of its inputs: the file
+actually simulated and any surrogate or extraction, the phantom, tissue parameters and initial
+magnetisation, the model assumptions and simulation code, and the numerical controls,
+discretisation and random seed. Changing a phantom, a pruning threshold, a state budget, a
+discretisation, an RF approximation or a surrogate reopens the question even for an unchanged
+file. Reuse replaces no convergence check, independent control or necessary repeat, and a saved
+result is no more validated than the run that produced it. Three more document tests hold the rule
+together with those safeguards, and the previous wording fails all three.
+
 Twelve tests cover that distinction, and thirteen more assert the skill document's load-bearing
 instructions — not that an agent obeys them, which only an end-to-end run can show, but that the
 instruction and its obligation are still present *together*. Removing the "label it unvalidated"

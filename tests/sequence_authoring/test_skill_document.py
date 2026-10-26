@@ -132,6 +132,46 @@ def test_stopping_guidance_does_not_license_skipping_physics(body: str, flat: st
     assert re.search(r'rigou?r intact', flat)
 
 
+# ------------------------------------------- saved simulation output, reused only while it applies
+SIMULATION_INPUTS = (
+    'the file actually simulated', 'surrogate or extraction', 'the phantom', 'tissue parameters',
+    'initial magnetisation', 'the model assumptions', 'the simulation code and its version',
+    'the numerical controls', 'discretisation', 'random seed',
+)
+
+
+def test_saved_simulation_output_is_reused_only_for_the_same_configuration(flat: str) -> None:
+    """
+    Reuse is the saving; the manifest of what produced the output is the safeguard.
+
+    A `.seq` hash says nothing about the phantom, the model or the numerical controls, so reuse is
+    keyed to every input of the simulation, and the record stays a manifest rather than a framework.
+    """
+    assert 'Reuse saved results for an unchanged simulation configuration' in flat
+    assert 'When only the analysis, reconstruction or plotting changes' in flat
+    assert re.search(r'A hash of the `\.seq` alone does not identify a simulation', flat)
+    for item in SIMULATION_INPUTS:
+        assert item in flat, f'the manifest no longer names {item!r}'
+    assert 'not a caching framework' in flat
+
+
+def test_a_changed_simulation_input_reopens_reuse_even_when_the_seq_is_unchanged(flat: str) -> None:
+    for change in ('a pruning threshold', 'a state budget', 'an RF approximation', 'a surrogate'):
+        assert change in flat, f'{change!r} is no longer named as a change that reopens reuse'
+    assert re.search(r'even when the `\.seq` is unchanged', flat)
+    assert 're-simulate unless you can show it does not depend on what changed' in flat
+
+
+def test_reusing_a_result_replaces_no_convergence_check_and_validates_nothing(flat: str) -> None:
+    """A saved result inherits exactly the evidence of the run that made it, and no more."""
+    assert 'Caching does not replace convergence checks, independent controls or necessary repeats' \
+        in flat
+    assert 'no more validated than the run that produced it' in flat
+    assert 'A number that moves with a numerical control is not a result' in flat, (
+        'the convergence rule that reuse must not replace is gone'
+    )
+
+
 # ---------------------------------------------------------------- the boundaries, still stated
 def test_the_opening_notice_is_marked_non_blocking(flat: str) -> None:
     assert 'Do not wait for an answer' in flat

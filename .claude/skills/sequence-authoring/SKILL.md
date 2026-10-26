@@ -272,6 +272,19 @@ Rules that catch the common failures:
   supplement it if it preserves the quantity under study — not merely TR. A one-slice extract with
   a preparation pulse replaced by an equal delay is fine evidence about encoding and useless
   evidence about that preparation; name which it is.
+- **Reuse saved results for an unchanged simulation configuration.** A forward simulation is
+  usually the slowest command you run. When only the analysis, reconstruction or plotting changes,
+  rerun those on saved forward-simulation output that holds what they need. A hash of the `.seq`
+  alone does not identify a simulation, so keep a short manifest beside the output: the file
+  actually simulated and any surrogate or extraction from it; the phantom, tissue parameters and
+  initial magnetisation; the model assumptions, and the simulation code and its version; the
+  numerical controls, discretisation and random seed. A few lines of JSON, not a caching framework.
+  Changing any of these — a phantom, a pruning threshold, a state budget, a discretisation, an RF
+  approximation, a surrogate — means deciding again whether the saved output applies, even when
+  the `.seq` is unchanged: re-simulate unless you can show it does not depend on what changed. A
+  new plot label or downstream analysis is no reason to rerun the forward model. Caching does not
+  replace convergence checks, independent controls or necessary repeats, and a saved result is no
+  more validated than the run that produced it.
 - **Different evidence is not interchangeable.** Single-spin phase, voxel-ensemble magnitude,
   per-view echo amplitude, and reconstructed image behaviour are four different measurements. Equal
   echo modulation can still produce different image structure, because where the modulation lands
