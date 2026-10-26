@@ -242,7 +242,7 @@ Both are compared in **two stages**, each against its own input:
 
 | stage | compares | its tolerance covers |
 |---|---|---|
-| compile | the tree's placed events, restricted exactly to each block, with the ready blocks emission hands PyPulseq | SeqCraft's own arithmetic: float summation; the float of superposing pieces, which `superpose` interpolates at absolute times; the endpoint snap; and where a knot's time lands in ticks |
+| compile | the tree's placed events, restricted exactly to each block, with the ready blocks emission hands PyPulseq | SeqCraft's own arithmetic: float summation; the float of superposing pieces; the endpoint snap; and where a knot's time lands in ticks |
 | registration | the ready blocks, measured before emission, with what PyPulseq stored, read back block by block | PyPulseq's storage precision: compression rounding, and the six-digit key it deduplicates events by |
 
 A refusal names its stage, block, time, difference and tolerance, so it says whether SeqCraft or
@@ -262,9 +262,11 @@ case.
 
 - *Float*, both stages. A sum of `N` segment terms is within `(N + 10)·u·Σ|term|` of exact, with
   `u = 2⁻⁵³`, for any `N` and any summation order.
-- *Superposition*, compile. Each superposed value is within `(k + 8)·u` of the summed peaks of its
-  `k` pieces, plus `4·u·t` times their summed peak slope, because `superpose` interpolates at
-  absolute float seconds. That last term is the only one that grows with placement.
+- *Superposition*, compile. Each superposed value is within `(k + 8)·u` of the summed end values
+  of the segments its `k` pieces are interpolated from. `superpose` interpolates in ticks from the
+  block's start, so this does not depend on where the block sits. A raster resample interpolates
+  in float seconds from the block's start, which adds `4·u·L` times the summed peak slope for a
+  block of length `L`.
 - *Endpoint snap*, compile. `axis_gradient` sets a superposed block's first or last value to zero
   when it is below `1e-6·max_grad`, removing a triangle of that height out to the next knot. This is
   modelled from the tree's own value at each block edge, wherever the compile's value could fall

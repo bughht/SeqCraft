@@ -44,10 +44,16 @@ ends are sloped.
   and centroid is invisible, and so is anything below the tolerance.
 - The registration stage allows for PyPulseq's six-digit deduplication, so it cannot see a stored
   change within about `1e-5` of a block's `|g|` integral.
-- The endpoint snap, which zeroes a seam value below `1e-6·max_grad`, and `superpose`'s
-  interpolation at absolute times are modelled in the compile tolerance, not removed.
+- The endpoint snap, which zeroes a seam value below `1e-6·max_grad`, is modelled in the
+  compile tolerance, not removed.
 - Event time parameters and shape lengths must stay below `1e6` gradient rasters, where `%.6g`
   prints them exactly.
+
+**`superpose` interpolates in ticks from each block's start.** At absolute float seconds, a value
+at a cut or at another piece's knot carried an error that grew with the block's position. On two
+controls a block's area moved by up to 1.5e-10 1/m at 100 s and 1.2e-9 at 1000 s, against 1.1e-14
+at 0 s. The same block now superposes to the same knots, bit for bit, wherever it sits, and the
+compile stage's tolerance loses its only term that grew with placement.
 
 ## Unreleased — m0's tolerance scales with the area traversed, as documented
 

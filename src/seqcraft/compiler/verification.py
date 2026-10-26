@@ -714,9 +714,9 @@ def _tree_side(
     resampled the same way, onto the gradient raster from the block's start.
 
     Returns m0, m1, and the two tolerances: this side's float error plus what the compile itself
-    may change -- the float of superposing the pieces, which ``superpose`` interpolates at absolute
-    times, and the endpoint snap of ``axis_gradient``, modelled from the tree.  Also the area
-    lying outside the sequence, per axis, and which block-axes were modelled as resampled.
+    may change -- the float of superposing the pieces, and the endpoint snap of ``axis_gradient``,
+    modelled from the tree.  Also the area lying outside the sequence, per axis, and which
+    block-axes were modelled as resampled.
     """
     n = edges.size - 1
     pieces: list[tuple[int, np.ndarray, np.ndarray]] = []
@@ -787,7 +787,7 @@ def _tree_side(
         sums = {name: np.where(modelled, model[name], given) for name, given in sums.items()}
 
     value = (count + 8.0) * _U * ends                         # per value: k pieces and their sum
-    lever = 4.0 * _U * (edges[1:] / _TPS)[:, None] * steep    # superpose's absolute-time interpolation
+    lever = 4.0 * _U * span * steep                           # the resample, in seconds from the start
     noise = value + lever
     snap0 = np.zeros((n, 3))
     snap1 = np.zeros((n, 3))
@@ -927,8 +927,8 @@ def verify_against_tree(
 
     - **compile** -- the tree's placed events, restricted exactly to each block, against the ready
       blocks emission hands to PyPulseq (`handed`).  The tolerance is SeqCraft's own arithmetic:
-      float, ``superpose``'s interpolation at absolute times, and the endpoint snap.  A block-axis
-      legalization reports as resampled is compared with the tree resampled onto the raster.
+      float, the endpoint snap, and a knot landing a tick off.  A block-axis legalization reports
+      as resampled is compared with the tree resampled onto the raster.
     - **registration** -- the ready blocks against what PyPulseq stored (`stored`).  The tolerance
       is PyPulseq's storage precision: compression rounding, and its six-digit deduplication key.
 

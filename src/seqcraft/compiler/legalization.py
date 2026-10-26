@@ -116,14 +116,17 @@ def superpose(
         marks.update(int(t) for t in t_ps if a_ps < t < b_ps)
         knots.append((t_ps, amps))
 
-    grid_ps = np.array(sorted(marks), dtype=np.int64)
-    grid = grid_ps / TICKS_PER_SECOND
-    total = np.zeros(len(grid_ps), dtype=float)
+    rel_ps = np.array(sorted(marks), dtype=np.int64) - a_ps
+    # Interpolated in ticks from the block's start: differences of exact integers, so a value at a
+    # cut or at another piece's knot is the same wherever the block sits.  At absolute float
+    # seconds its error grew with the block's position in the sequence.
+    grid = rel_ps.astype(float)
+    total = np.zeros(len(rel_ps), dtype=float)
     for t_ps, amps in knots:
         # left/right zero: outside its own span a gradient contributes nothing.  At its first and
         # last knot np.interp returns the knot value, so `first` and `last` are carried exactly.
-        total += np.interp(grid, t_ps / TICKS_PER_SECOND, amps, left=0.0, right=0.0)
-    return grid_ps - a_ps, total
+        total += np.interp(grid, (t_ps - a_ps).astype(float), amps, left=0.0, right=0.0)
+    return rel_ps, total
 
 
 def _as_arbitrary(
