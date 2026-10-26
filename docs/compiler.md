@@ -244,11 +244,16 @@ section rounds the same way at every sample, does exceed it; that gap is pinned 
 significant digits — but that serialisation error is separate, and this check never sees it.
 
 **m1 is not covered for the same error far from the start.** m1 is referenced to `t = 0`, so a
-shape whose registered area moved by `δm0` at time `t` also moves m1 by `t·δm0`, while m1's
-tolerance does not grow with `t`. A compressible shape accepted at the start of a sequence can
-therefore be refused by m1 when placed a second or more later. No tolerance alone separates that
-from a mistimed lobe late in a long sequence; comparing m1 per block would. It is recorded here as
-a known limitation, not addressed by the m0 change.
+shape whose registered area moved by `δm0` at time `t` also moves m1 by `t·δm0`. m1's tolerance
+has a relative term, 1e-9 of the summed `|net area|` times the sequence's duration, so it can grow
+with duration; it does not reliably account for that translated error. For a shape whose events
+net to zero it stays far below the peak-based floor, and where it does grow it can still fall
+short: in a native reproducer, a tolerance of 4.42e-5 s/m at 10 s against an error of 2.95e-4 s/m.
+A compressible shape accepted at the start of a sequence can therefore be refused by m1 when placed
+a second or more later. No tolerance alone separates that from a mistimed lobe late in a long
+sequence. Comparing moments about a local time reference, for example each block's start, is a
+follow-up proposal: it has not been validated and is not part of this check. This is recorded as a
+known limitation, not addressed by the m0 change.
 
 m0 alone is **not** evidence of fidelity, and it is worth being precise about why. Area is exactly
 what linear resampling preserves, so when both sides were integrated the same approximate way their

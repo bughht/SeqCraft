@@ -585,11 +585,14 @@ def verify_against_tree(
             #
             # **Not covered: registration error far from the sequence start.**  m1 is referenced
             # to t = 0, so a shape whose stored area moved by delta_m0 at time t moves m1 by
-            # t * delta_m0 as well, while this tolerance does not grow with t.  A compressible shape
-            # that compiles at the start of a sequence can therefore be refused here when the same
-            # shape is placed a second or more later -- on main before the m0 change as after it.
-            # No tolerance alone separates that from a mistimed lobe late in a long sequence;
-            # comparing m1 per block would.
+            # t * delta_m0 as well.  The relative term below grows with the tree's duration, but
+            # it does not reliably account for that: for a shape whose events net to zero it
+            # stays far below the peak floor, and where it does grow it can still fall short.  A
+            # compressible shape that compiles at the start of a sequence can therefore be refused
+            # here when the same shape is placed a second or more later -- on main before the m0
+            # change as after it.  No tolerance alone separates that from a mistimed lobe late in
+            # a long sequence.  Comparing moments about a local time reference, such as each
+            # block's start, is a follow-up proposal and has not been validated.
             #
             # **Plus a floor proportional to peak |g|**, because the relative term alone sits
             # inside the noise for a whole class of legal input.  An arbitrary gradient that the

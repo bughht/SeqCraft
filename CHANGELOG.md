@@ -1,45 +1,45 @@
 # Changelog
 
-## Unreleased — m0 no longer refuses a legal gradient because of how PyPulseq stores it
+## Unreleased — m0's tolerance scales with the area traversed, as documented
 
 The m0 against-tree check scaled its tolerance by the sum of each gradient event's `|net area|`,
 while its comment and `docs/compiler.md` said area *traversed*. For a single event that changes
 sign and nets zero — a closed trajectory's axis, or a bipolar pair held in one shape — that sum is
 zero, and the tolerance fell to its absolute floor of 1e-6 1/m. PyPulseq rounds a compressible
-shape's peak-normalised samples to 1e-7 when it registers them, which moves an ordinary waveform's
-area by a few 1e-6 to a few 1e-5 1/m. So legal input was refused whenever compression engaged and
-the shape had no symmetry to cancel the rounding: 32 of 32 such waveforms in a candidate-free
-reproducer. The message blamed "a split or a merge", although nothing had been split or merged.
+shape's peak-normalised samples to 1e-7 when it registers them. In a candidate-free reproducer
+that moved the area by 2e-6 to 3e-5 1/m, and all 32 such waveforms were refused, with a message
+that blamed "a split or a merge" although nothing had been split or merged. The same waveform held
+as two overlapping events compiled to an identical shape, with identical rounding, and passed.
 
-The verdict also depended on packaging. The same waveform held as two overlapping events compiled
-to an identical shape, with identical rounding, and passed.
+m0 now scales by the area each event traverses, the integral of `|g|`, and a refusal reports the
+difference and the tolerance rather than naming a cause. No emitted waveform changes, and m1 is
+untouched.
 
-m0 now scales by the area each event traverses, the integral of `|g|`.
-
-- That is additive over a division of one waveform in time, and overlapping pieces that cancel can
-  only raise it, so the scale never falls below the waveform's own traversed area. The four tested
-  packagings now get one verdict; that is not a promise for every decomposition.
-- The measured registration rounding sits two orders or more below the tolerance.
-- A refusal now reports the difference and the tolerance rather than naming a cause.
-- m1 is unchanged. It still refuses a lobe played one raster late, tested at 0, 1 and 10 s into a
-  sequence.
+- Traversed area is additive over a division of one waveform in time, and overlapping pieces that
+  cancel can only raise it. The four tested packagings now get one verdict; that is not a promise
+  for every decomposition.
+- On the 32 reproducer waveforms, measured registration rounding sits two orders of magnitude or
+  more below the new tolerance.
+- m1 still refuses a lobe played one raster late, tested at 0, 1 and 10 s into a sequence.
 - The check reads the sequence in memory, so it covers registration only. Writing the file rounds
   again, separately: amplitudes to six significant digits, up to 5e-6 relative per event.
 
-**One gap is pinned by a strict `xfail`.** Under the quantisation model, 1e-6 of the traversed area
-is *sufficient* to cover worst-case rounding when a shape's mean `|g|` is at least 5 % of its peak;
-lower-duty shapes are not thereby refused. A long, densely sampled constant section that rounds the
-same way at every sample does exceed it.
+**Known limitations, both still open:**
 
-**Another is recorded, not fixed, because it predates this change.** m1 is referenced to the start
-of the sequence, so registration error `δm0` at time `t` moves m1 by `t·δm0`, while m1's tolerance
-does not grow with `t`.
-
-- Reproduced with native `sc.compile`: a compressible shape accepted at 0 s is refused by m1 at 1 s
-  and 10 s.
-- That holds for a zero-net shape here, and for a non-zero-net one on `main` as well.
-- A tolerance large enough to absorb it would hide a lobe played one raster late in a long
-  sequence. Comparing m1 per block would separate the two.
+- **Low-duty shapes.** Under the quantisation model, 1e-6 of the traversed area is *sufficient* to
+  cover worst-case rounding when a shape's mean `|g|` is at least 5 % of its peak; it is not
+  necessary. A long, densely sampled constant section below that duty, which rounds the same way at
+  every sample, does exceed it. That case is pinned by a strict `xfail`.
+- **m1 far from the start of a sequence, which predates this change.** m1 is referenced to `t = 0`,
+  so registration error `δm0` in a shape placed at time `t` moves m1 by `t·δm0`. m1's tolerance has
+  a relative term that can grow with the sequence's duration, but it does not reliably account for
+  that translated error.
+  - In a native reproducer, a compressible shape that compiles at 0 s is refused by m1 at 1 s and
+    10 s. A shape with non-zero net area behaves the same way on `main`.
+  - A tolerance wide enough to absorb it would hide a lobe played one raster late in a long
+    sequence.
+  - Comparing moments about a local time reference, for example each block's start, is a follow-up
+    proposal. It is not part of this change and has not been validated.
 
 ## Unreleased — a base install that can be imported
 
