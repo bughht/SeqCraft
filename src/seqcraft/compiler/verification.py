@@ -438,6 +438,23 @@ def _address_violations(
     return out
 
 
+def _traversed_area(times: np.ndarray, amps: np.ndarray) -> float:
+    """
+    Return the integral of ``|g|`` over piecewise-linear knots, in 1/m.
+
+    Exact: a segment whose ends have opposite signs is split at its zero crossing, where a
+    trapezoidal rule on ``|amps|`` would overstate it.  Additive over a partition at knots, so
+    dividing one waveform into consecutive events leaves the total unchanged.
+    """
+    a, b, dt = amps[:-1], amps[1:], np.diff(times)
+    out = 0.5 * np.abs(a + b) * dt
+    crossing = a * b < 0
+    if np.any(crossing):
+        ac, bc, dc = a[crossing], b[crossing], dt[crossing]
+        out[crossing] = dc * (ac * ac + bc * bc) / (2.0 * (np.abs(ac) + np.abs(bc)))
+    return float(np.sum(out))
+
+
 def verify_against_tree(
     placed: Sequence[PlacedEvent],
     targets: Mapping[int, float] | None,
@@ -502,10 +519,29 @@ def verify_against_tree(
         )
 
     want: dict[str, float] = {}
-    # Tolerance is scaled by the total area *traversed*, not by the net.  A readout and its
-    # prephaser very nearly cancel, so a relative tolerance on the net would demand exactness
-    # that float summation over thousands of pieces cannot deliver -- while a tolerance on the
-    # total still catches a whole lost lobe, which is what this is for.
+    # m0's tolerance is scaled by the area each event *traverses*, the integral of |g|, not by its
+    # net.  A readout and its prephaser very nearly cancel, so a relative tolerance on the net
+    # would demand exactness that float summation over thousands of pieces cannot deliver -- while
+    # a tolerance on the total still catches a whole lost lobe, which is what this is for.
+    #
+    # Traversed area is additive over a division of one waveform in time, so cutting it into
+    # consecutive events leaves the scale unchanged; overlapping pieces that cancel can only raise
+    # it, because the sum of their integrals of |g| is at least the integral of |their sum|.  It is
+    # therefore never below the waveform's own traversed area -- which is not the same as being
+    # independent of how events are packaged.  Summing each event's |net| collapsed to the 1.0
+    # floor for any one event that changes sign and nets zero, such as a closed trajectory's axis.
+    # At that floor PyPulseq's registration was refused: it rounds a compressible shape's
+    # peak-normalised samples to 1e-7, moving the area by at most 5e-8 * peak * duration, and in
+    # practice by a few percent of that.  Under that model 1e-6 of the traversed area is
+    # sufficient to cover the worst case whenever a shape's mean |g| is at least 5 % of its peak;
+    # it is not necessary, and lower-duty shapes are not thereby refused.  Registration also keys
+    # every event by its parameters printed with '%.6g', so an event that prints like an earlier
+    # one plays the earlier one's values: up to 1e-5 relative, in memory, and not covered here.
+    # Two legal trapezoids at 100000.0 and 100000.4 Hz/m in separate blocks are refused, before
+    # this change as after it.  Writing the file rounds again, separately, and this check never
+    # sees that.
+    traversed: dict[str, float] = {}
+    # Each event's |net area|, summed: m1's relative term, unchanged -- see the m1 check below.
     magnitude: dict[str, float] = {}
     # Peak |g| per axis.  m1's floor tracks this and nothing else -- see the m1 check below.
     peak: dict[str, float] = {}
@@ -522,6 +558,7 @@ def verify_against_tree(
             knots = knots_of(p.event, p.node_t)
             area = pwl_moment(*knots, 0)
             want[channel] = want.get(channel, 0.0) + area
+            traversed[channel] = traversed.get(channel, 0.0) + _traversed_area(*knots)
             magnitude[channel] = magnitude.get(channel, 0.0) + abs(area)
             peak[channel] = max(peak.get(channel, 0.0), float(np.max(np.abs(knots[1]))))
             want_m1[channel] = want_m1.get(channel, 0.0) + pwl_moment(*knots, 1)
@@ -530,20 +567,36 @@ def verify_against_tree(
         actual = moments(0)
         actual_m1 = moments(1)
         for axis, expected in want.items():
-            scale = max(magnitude[axis], 1.0)
-            if abs(actual.get(axis, 0.0) - expected) > 1e-6 * scale:
+            difference = actual.get(axis, 0.0) - expected
+            m0_tolerance = 1e-6 * max(traversed[axis], 1.0)
+            if abs(difference) > m0_tolerance:
                 violations.append(
                     ContractViolation(
                         f'axis {axis} m0',
                         f'compiled m0 {actual.get(axis, 0.0):.6g} 1/m differs from the tree '
-                        f'sum {expected:.6g} 1/m -- a split or a merge lost area',
+                        f'sum {expected:.6g} 1/m by {difference:.3g}, beyond the tolerance '
+                        f'{m0_tolerance:.3g} (1e-6 of the {traversed[axis]:.6g} 1/m the axis '
+                        f'traverses) -- the emitted blocks do not carry the area the tree asked for',
                     )
                 )
             # Both sides are exact closed forms, so the only error is float summation over the
-            # pieces.  Scaled by area *traversed* times the horizon, for the same reason m0's
-            # is scaled by area traversed: a readout and its prephaser nearly cancel, so a
-            # tolerance on the net would demand more than float64 can carry.  A lobe displaced
-            # by one raster changes m1 by area * 10 us, comfortably above this.
+            # pieces.  Scaled by each event's |net area|, summed, times the horizon: a readout
+            # and its prephaser nearly cancel, so a tolerance on the total net would demand more
+            # than float64 can carry.  Deliberately left on |net| when m0 moved to traversed
+            # area -- m1 has its own floor for representation noise below, and a wider relative
+            # term would only loosen the time-shift check this exists for.  A lobe displaced by
+            # one raster changes m1 by area * 10 us, comfortably above this.
+            #
+            # **Not covered: registration error far from the sequence start.**  m1 is referenced
+            # to t = 0, so a shape whose stored area moved by delta_m0 at time t moves m1 by
+            # t * delta_m0 as well.  The relative term below grows with the tree's duration, but
+            # it does not reliably account for that: for a shape whose events net to zero it
+            # stays far below the peak floor, and where it does grow it can still fall short.  A
+            # compressible shape that compiles at the start of a sequence can therefore be refused
+            # here when the same shape is placed a second or more later -- on main before the m0
+            # change as after it.  No tolerance alone separates that from a mistimed lobe late in
+            # a long sequence.  Comparing moments about a local time reference, such as each
+            # block's start, is a follow-up proposal and has not been validated.
             #
             # **Plus a floor proportional to peak |g|**, because the relative term alone sits
             # inside the noise for a whole class of legal input.  An arbitrary gradient that the
@@ -559,6 +612,7 @@ def verify_against_tree(
             # below the signal: one raster of displacement moves m1 by ``traversed * raster``,
             # which is 1e-2 .. 1e0 s/m on the same waveforms.  Both bounds are properties of the
             # representation and of the failure being caught, not of any one module.
+            scale = max(magnitude[axis], 1.0)
             m1_scale = max(scale * max(tree_duration_s, 1e-3), 1.0)
             m1_tolerance = max(1e-9 * m1_scale, 1e-11 * peak.get(axis, 0.0))
             if abs(actual_m1.get(axis, 0.0) - want_m1.get(axis, 0.0)) > m1_tolerance:

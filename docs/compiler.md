@@ -227,7 +227,39 @@ would flag every sequence over an hour.
 which lost a tail or a merge which dropped a piece — a whole class of compiler bug that no
 individual test case would have to think of. Its tolerance scales with the total area *traversed*,
 not the net: a readout and its prephaser very nearly cancel, and a relative tolerance on the net
-would demand exactness that float summation over thousands of pieces cannot deliver.
+would demand exactness that float summation over thousands of pieces cannot deliver. Traversed area
+is the integral of `|g|` over each event. Dividing one waveform into consecutive events leaves it
+unchanged, and overlapping pieces that cancel can only raise it, so it never falls below the
+waveform's own traversed area. That is not the same as being independent of how the tree packages
+a waveform, and is not promised.
+
+The tolerance also has to cover how PyPulseq **registers** a shape in memory, which is what this
+check reads. When run-length compression engages, the peak-normalised samples are rounded to 1e-7,
+which moves the area by at most half a quantum per sample. Under that model, 1e-6 of the traversed
+area is a sufficient bound on the worst case whenever a shape's mean `|g|` is at least 5 % of its
+peak. It is not a necessary one: lower-duty shapes are not thereby refused, and measured rounding
+sits two orders below the tolerance. A long, densely sampled shape below that duty, whose constant
+section rounds the same way at every sample, does exceed it; that gap is pinned in
+`tests/compiler/test_m0_tolerance.py`.
+
+Registration also **deduplicates** events: PyPulseq keys each one by its parameters printed with
+`%.6g`, so an event that prints like an earlier one is stored as that one and plays its values. That
+moves the area by up to 1e-5 relative, in memory, and this tolerance does not cover it: two legal
+trapezoids at 100000.0 and 100000.4 Hz/m, in separate blocks, are refused, before the traversed-area
+change as after it. Writing the `.seq` file rounds again — amplitudes to six significant digits —
+but that serialisation error is separate, and this check never sees it.
+
+**m1 is not covered for the same error far from the start.** m1 is referenced to `t = 0`, so a
+shape whose registered area moved by `δm0` at time `t` also moves m1 by `t·δm0`. m1's tolerance
+has a relative term, 1e-9 of the summed `|net area|` times the sequence's duration, so it can grow
+with duration; it does not reliably account for that translated error. For a shape whose events
+net to zero it stays far below the peak-based floor, and where it does grow it can still fall
+short: in a native reproducer, a tolerance of 4.42e-5 s/m at 10 s against an error of 2.95e-4 s/m.
+A compressible shape accepted at the start of a sequence can therefore be refused by m1 when placed
+a second or more later. No tolerance alone separates that from a mistimed lobe late in a long
+sequence. Comparing moments about a local time reference, for example each block's start, is a
+follow-up proposal: it has not been validated and is not part of this check. This is recorded as a
+known limitation, not addressed by the m0 change.
 
 m0 alone is **not** evidence of fidelity, and it is worth being precise about why. Area is exactly
 what linear resampling preserves, so when both sides were integrated the same approximate way their
