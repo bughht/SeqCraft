@@ -34,6 +34,12 @@ smaller module that ``GRE2DTR``, ``MPRAGE2D`` and three example notebooks alread
 dependency the wrong way round -- every existing GRE would import the EPI train to find out how to
 split a guard -- and it would do it through a private name.  One shared file, and neither module
 knows the other exists.
+
+:func:`check_epi_table`, :func:`shot_spacings` and :func:`design_blip` are the rules every
+echo-planar readout here must answer identically: which line tables a train can acquire, when an
+echo spacing divides into interleaved shots on the block raster, and the one blip a train scales
+per step.  They came out of :class:`~seqcraft.modules.EPI2D`.  What differs between trains --
+the lobe, the receiver, where ``k = 0`` falls and how echoes are reported -- stays in each class.
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ import numpy as np
 import pypulseq as pp
 
 from ..design.events import derive, knots_of, pwl_moment
-from ..design.timing import Raster, from_ticks, to_ticks
+from ..design.timing import EPS, Raster, from_ticks, to_ticks
 from ..design.validation import (
     require_axis,
     require_count,
@@ -64,10 +70,12 @@ if TYPE_CHECKING:
 
 __all__ = [
     'HARD_PULSE_S',
-    'area_until', 'ceil_raster', 'check_peak_b1', 'duration_for_peak_b1', 'duration_remedy', 'dwell_quantum',
+    'area_until', 'ceil_raster', 'check_epi_table', 'check_peak_b1', 'design_blip',
+    'duration_for_peak_b1', 'duration_remedy', 'dwell_quantum',
     'halve_onto', 'peak_b1_hz', 'peak_scales_with_duration', 'require_axis',
     'require_usable_max_b1', 'require_count', 'require_pair',
     'require_positive', 'require_range', 'resolve_excitation_mode', 'shift_slice',
+    'shot_spacings',
 ]
 
 
@@ -520,3 +528,139 @@ def shift_slice(rf: Event, gz: Event, *, position_m: float) -> Event:
         pp.calc_rf_center(rf)[0]
     )
     return derive(rf, freq_offset=freq_offset, phase_offset=phase_offset)
+
+
+# ------------------------------------------------------------- the echo-planar trains' shared rules
+def check_epi_table(
+    lines: Iterable[int],
+    *,
+    matrix: tuple[int, int],
+    center_line: int,
+    blip_lines: int,
+    blip_duration_s: float,
+    step_consequence: str,
+) -> tuple[int, ...]:
+    """
+    Return `lines` as a tuple, refusing a table an echo-planar train cannot acquire.
+
+    Four rules, in this order: the table is not empty, every line is in ``0 ... ny - 1``, no line
+    repeats, and no step between consecutive lines exceeds `blip_lines`.  The blip is designed
+    once at `blip_lines` and scaled per step, so a larger step is refused rather than lengthened.
+
+    `step_consequence` completes the remedy that raises `blip_lines`: what a longer blip
+    lengthens differs between the trains that call this.
+    """
+    table = tuple(int(line) for line in lines)
+    ny = matrix[1]
+    if not table:
+        msg = format_error(
+            'lines is empty, so there is nothing to acquire.',
+            {'matrix': matrix},
+            [f'lines=range({ny}) is a fully sampled single shot'],
+        )
+        raise ConfigurationError(msg)
+
+    outside = sorted({line for line in table if not 0 <= line < ny})
+    if outside:
+        msg = format_error(
+            f'{len(outside)} line(s) fall outside 0 ... {ny - 1}.',
+            {'offending': outside[:8], 'matrix': matrix},
+            [
+                'lines are zero-based blip-axis indices, not k-space positions',
+                f'the centre of k-space is line {center_line}',
+            ],
+        )
+        raise ConfigurationError(msg)
+
+    repeated = sorted({line for line in table if table.count(line) > 1})
+    if repeated:
+        msg = format_error(
+            f'{len(repeated)} line(s) are acquired more than once in this shot.',
+            {'repeated': repeated[:8]},
+            [
+                'two readouts writing one k-space address is what the compiler rejects '
+                'downstream, with less to say about it than here',
+                'averaging is a separate acquisition and a separate label',
+            ],
+        )
+        raise ConfigurationError(msg)
+
+    steps = [b - a for a, b in zip(table, table[1:])]
+    too_far = sorted({step for step in steps if abs(step) > blip_lines})
+    if too_far:
+        msg = format_error(
+            f'{len(too_far)} step(s) of this table exceed the {blip_lines}-line blip '
+            f'this instance was designed for.',
+            {'offending_steps': too_far[:8], 'blip_lines': blip_lines,
+             'blip_duration_s': blip_duration_s},
+            [
+                f'pass blip_lines={max(abs(step) for step in too_far)} to design for this '
+                f'table -- {step_consequence}',
+                'or reorder the shot so that consecutive echoes are closer in ky',
+                'a blip is scaled per step and never lengthened per step, because an echo '
+                'spacing that varied with the table would move every echo after it',
+            ],
+        )
+        raise ConfigurationError(msg)
+    return table
+
+
+def shot_spacings(echo_spacing_s: float, shots: int, raster_s: float) -> tuple[float, float] | None:
+    """
+    Return ``None`` when `shots` divides `echo_spacing_s` on `raster_s`, else the nearest that do.
+
+    Interleaved shot ``s`` waits ``s * echo_spacing_s / shots``, played as a block duration, so
+    that delay must be a whole number of rasters: the echo spacing a multiple of ``shots *
+    raster_s``.  Decided in integer ticks.  One shot waits for nothing and always passes.
+
+    Examples
+    --------
+    >>> shot_spacings(560e-6, 4, 10e-6) is None
+    True
+    >>> [round(s * 1e6, 1) for s in shot_spacings(550e-6, 4, 10e-6)]
+    [520.0, 560.0]
+    """
+    if shots == 1:
+        return None
+    step = shots * to_ticks(raster_s)
+    ticks = to_ticks(echo_spacing_s)
+    if ticks % step == 0:
+        return None
+    return from_ticks((ticks // step) * step), from_ticks(-(-ticks // step) * step)
+
+
+def design_blip(
+    *,
+    opts: Opts,
+    axis: str,
+    area_per_m: float,
+    blip_lines: int,
+    requested_s: float | None,
+) -> Event:
+    """
+    Return the blip at the largest step, on an **even** number of gradient rasters.
+
+    The shortest legal trapezoid of `area_per_m`, or `requested_s` when that is longer.  Even
+    because the blip is centred on a seam that is on the gradient raster: it starts at
+    ``seam - blip/2``, and :func:`~seqcraft.compile` refuses a gradient that starts off it.
+    `blip_lines` only names the step in the refusal.
+    """
+    floor_s = float(pp.calc_duration(
+        pp.make_trapezoid(channel=axis, area=area_per_m, system=opts)))
+    wanted = floor_s
+    if requested_s is not None:
+        wanted = require_positive(requested_s, 'blip_duration_s')
+        if wanted < floor_s - EPS:
+            msg = format_error(
+                f'blip_duration_s = {wanted * 1e6:.1f} us is shorter than the minimum a '
+                f'{blip_lines}-line step needs.',
+                {'blip_duration_s': wanted, 'min_blip_duration_s': floor_s,
+                 'blip_lines': blip_lines, 'blip_area_per_m': area_per_m},
+                [
+                    f'pass blip_duration_s >= {floor_s:.6g}',
+                    'or blip_duration_s=None for the shortest legal blip',
+                ],
+            )
+            raise ConfigurationError(msg)
+    duration = 2 * ceil_raster(wanted / 2, opts.grad_raster_time)
+    return pp.make_trapezoid(channel=axis, area=area_per_m, duration=duration, system=opts)

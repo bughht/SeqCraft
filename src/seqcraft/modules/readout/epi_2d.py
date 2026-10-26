@@ -133,6 +133,8 @@ from ...errors import ConfigurationError, format_error
 from .._support import (
     area_until,
     ceil_raster,
+    check_epi_table,
+    design_blip,
     dwell_quantum,
     halve_onto,
     require_axis,
@@ -140,6 +142,7 @@ from .._support import (
     require_pair,
     require_positive,
     require_range,
+    shot_spacings,
 )
 from ..encoding.phase_encoding import PhaseEncode
 
@@ -821,29 +824,12 @@ class EPI2D(Module):
         Even because it is centred on the seam: it starts at ``seam - blip/2``, the seam is on the
         gradient raster, and :func:`~seqcraft.compile` refuses a gradient that starts off it.  An
         odd raster count is the one way to make this design fail at compile time rather than in
-        the image -- the good kind of failure, but still worth not having.
+        the image -- the good kind of failure, but still worth not having.  The design is
+        :func:`~seqcraft.modules._support.design_blip`, shared with every echo-planar train.
         """
-        area = self.blip_lines * self.dk_blip_per_m
-        floor_s = float(pp.calc_duration(
-            pp.make_trapezoid(channel=self.blip_axis, area=area, system=self.opts)))
-        wanted = floor_s
-        if requested_s is not None:
-            wanted = require_positive(requested_s, 'blip_duration_s')
-            if wanted < floor_s - EPS:
-                msg = format_error(
-                    f'blip_duration_s = {wanted * 1e6:.1f} us is shorter than the minimum a '
-                    f'{self.blip_lines}-line step needs.',
-                    {'blip_duration_s': wanted, 'min_blip_duration_s': floor_s,
-                     'blip_lines': self.blip_lines, 'blip_area_per_m': area},
-                    [
-                        f'pass blip_duration_s >= {floor_s:.6g}',
-                        'or blip_duration_s=None for the shortest legal blip',
-                    ],
-                )
-                raise ConfigurationError(msg)
-        duration = 2 * ceil_raster(wanted / 2, self.opts.grad_raster_time)
-        return pp.make_trapezoid(
-            channel=self.blip_axis, area=area, duration=duration, system=self.opts,
+        return design_blip(
+            opts=self.opts, axis=self.blip_axis, area_per_m=self.blip_lines * self.dk_blip_per_m,
+            blip_lines=self.blip_lines, requested_s=requested_s,
         )
 
     def _design_lobe(self) -> tuple[Event, Event, float]:
@@ -1127,59 +1113,11 @@ class EPI2D(Module):
     # -------------------------------------------------------------------- the refusals
     def _check(self, lines: Iterable[int]) -> tuple[int, ...]:
         """Return `lines` as a tuple, refusing what this train cannot acquire."""
-        table = tuple(int(line) for line in lines)
-        ny = self.matrix[1]
-        if not table:
-            msg = format_error(
-                'lines is empty, so there is nothing to acquire.',
-                {'matrix': self.matrix},
-                [f'lines=range({ny}) is a fully sampled single shot'],
-            )
-            raise ConfigurationError(msg)
-
-        outside = sorted({line for line in table if not 0 <= line < ny})
-        if outside:
-            msg = format_error(
-                f'{len(outside)} line(s) fall outside 0 ... {ny - 1}.',
-                {'offending': outside[:8], 'matrix': self.matrix},
-                [
-                    'lines are zero-based blip-axis indices, not k-space positions',
-                    f'the centre of k-space is line {self.center_line}',
-                ],
-            )
-            raise ConfigurationError(msg)
-
-        repeated = sorted({line for line in table if table.count(line) > 1})
-        if repeated:
-            msg = format_error(
-                f'{len(repeated)} line(s) are acquired more than once in this shot.',
-                {'repeated': repeated[:8]},
-                [
-                    'two readouts writing one k-space address is what the compiler rejects '
-                    'downstream, with less to say about it than here',
-                    'averaging is a separate acquisition and a separate label',
-                ],
-            )
-            raise ConfigurationError(msg)
-
-        steps = [b - a for a, b in zip(table, table[1:])]
-        too_far = sorted({step for step in steps if abs(step) > self.blip_lines})
-        if too_far:
-            msg = format_error(
-                f'{len(too_far)} step(s) of this table exceed the {self.blip_lines}-line blip '
-                f'this instance was designed for.',
-                {'offending_steps': too_far[:8], 'blip_lines': self.blip_lines,
-                 'blip_duration_s': self.blip_duration_s},
-                [
-                    f'pass blip_lines={max(abs(step) for step in too_far)} to design for this '
-                    f'table -- it lengthens the blip, the guard and the echo spacing with it',
-                    'or reorder the shot so that consecutive echoes are closer in ky',
-                    'a blip is scaled per step and never lengthened per step, because an echo '
-                    'spacing that varied with the table would move every echo after it',
-                ],
-            )
-            raise ConfigurationError(msg)
-        return table
+        return check_epi_table(
+            lines, matrix=self.matrix, center_line=self.center_line,
+            blip_lines=self.blip_lines, blip_duration_s=self.blip_duration_s,
+            step_consequence='it lengthens the blip, the guard and the echo spacing with it',
+        )
 
     def _check_echo(self, echo: int) -> int:
         """Return `echo` as an offset from the first imaging echo, refusing one before the train."""
@@ -1208,17 +1146,15 @@ class EPI2D(Module):
         ``ky``, which is the *same artefact at a smaller amplitude* -- a ghost that survives the
         fix meant to remove it, and one no image would attribute to a rounding rule. So the
         protocol is refused with the two echo spacings that do divide, since the caller can reach
-        either one and this module cannot choose between them.
+        either one and this module cannot choose between them.  The divisibility rule is
+        :func:`~seqcraft.modules._support.shot_spacings`, shared with every echo-planar train.
         """
-        if self.shots == 1:
-            return
         raster_s = float(self.opts.block_duration_raster)
-        step = self.shots * to_ticks(raster_s)
-        ticks = to_ticks(self.echo_spacing_s)
-        if ticks % step == 0:
+        spacings = shot_spacings(self.echo_spacing_s, self.shots, raster_s)
+        if spacings is None:
             return
 
-        below_s, above_s = from_ticks((ticks // step) * step), from_ticks(-(-ticks // step) * step)
+        below_s, above_s = spacings
         hints = [
             f'the nearest echo spacings that divide {self.shots} ways are '
             f'{below_s * 1e6:.1f} us and {above_s * 1e6:.1f} us, against '
@@ -1231,8 +1167,9 @@ class EPI2D(Module):
         # dead time is what sets the guard and lengthening the blip would do nothing at all.
         if self.blip_duration_s / 2 >= float(self.opts.adc_dead_time):
             quantum = 2 * to_ticks(self.opts.grad_raster_time)
+            ticks = to_ticks(self.echo_spacing_s)
             for k in range(1, 2 * self.shots + 1):
-                if (ticks + k * quantum) % step == 0:
+                if shot_spacings(from_ticks(ticks + k * quantum), self.shots, raster_s) is None:
                     grown_s = self.blip_duration_s + from_ticks(k * quantum)
                     hints.append(
                         f'pass blip_duration_s={grown_s:.6g} to reach '
