@@ -453,12 +453,11 @@ class RosetteReadout(Module):
             adc = pp.make_adc(num_samples=n, dwell=self.dwell_s, delay=from_ticks(delay),
                               system=opts)
             stored = to_ticks(float(adc.delay))
+            # The window opens a dwell before the core, and the first closest approach is the core
+            # start itself, so only a delay raised to adc_dead_time can start the window late.
             if 2 * stored + dwell > start:
-                if stored > delay:
-                    self._refuse_late_window(stored)
-                delay = (delay - dwell) // rf * rf
-                n = max(n, count(delay))
-            elif count(stored) > n:
+                self._refuse_late_window(stored)
+            if count(stored) > n:
                 n = count(stored)
             elif 2 * stored + (2 * n - 1) * dwell < finish:
                 n += divisor
