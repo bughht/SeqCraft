@@ -293,7 +293,7 @@ case.
   Two legal trapezoids at 100000.0 and 100000.4 Hz/m are therefore accepted — and the second still
   plays 100000.0. This allowance never enters the compile stage.
 - *Domain.* Event time parameters and shape lengths below `1e6` gradient rasters, which `%.6g`
-  prints exactly. Gradient time pieces inside the sequence, and each block's gradient inside its
+  prints exactly. The tree's gradients lie inside the sequence and each block's gradient inside its
   block; content outside either is reported in its own right.
 
 **What these checks cannot detect.** m0 and m1 are two linear functionals per block. They are not

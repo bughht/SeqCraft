@@ -582,8 +582,8 @@ def handed_gradients(blocks: Sequence[PulseqReadyBlock]) -> HandedGradients:
     Measure the ready blocks' gradients as emission hands them to PyPulseq.
 
     Run before emission, while legalization's tuple still holds every block, so nothing PyPulseq
-    does when it registers them can change what is measured.  Only numbers are kept: about 170 bytes
-    per block, rather than the events.
+    does when it registers them can change what is measured.  Only numbers are kept, six per block
+    and axis -- 144 bytes per block -- rather than the events.
     """
     durations = [to_ticks(block.duration) for block in blocks]
     edges = np.concatenate([[0], np.cumsum(durations, dtype=np.int64)]).astype(np.int64)

@@ -1901,8 +1901,8 @@ individual test case would:
 
 m0 and m1 are compared in two stages, each against its own input. **Compile**: the tree's events,
 restricted exactly to each block, against the ready blocks emission hands PyPulseq, within
-SeqCraft's own float and endpoint snap; a block-axis legalization resampled is compared with the
-tree resampled onto the raster. **Registration**: those ready blocks against what PyPulseq stored,
+SeqCraft's own float, its endpoint snap, and a tick where a knot can land one off; a block-axis
+legalization resampled is compared with the tree resampled onto the raster. **Registration**: those ready blocks against what PyPulseq stored,
 within its storage precision — compression rounding, and the six-digit key it deduplicates events
 by. The sequence's whole m0 and m1 are sums of the per-block ones, so they need no check of their
 own. All four invariants are measured before anything is raised, because one mistimed stage
