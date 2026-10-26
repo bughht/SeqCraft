@@ -240,24 +240,30 @@ def test_a_long_block_compiles_and_still_sees_a_late_blip(t0: float) -> None:
         recheck(seen, placed=_late(seen['placed'], _is_blip, float(opts.grad_raster_time)))
 
 
-@pytest.mark.parametrize('t0', [0.0, 100.0])
-def test_a_long_segment_cut_far_from_its_knots_compiles(t0: float) -> None:
+@pytest.mark.parametrize(('top', 'up', 'down', 'cut', 't0'), [
+    (1229870.7682268561, 18.98e-3, 2.09e-3, 0.81e-3, 0.0),
+    (1180614.015904176, 41.6e-3, 49.56e-3, 1.03e-3, 0.0),
+    (422673.65083461127, 26.11e-3, 51.14e-3, 0.7e-3, 10.0),
+])
+def test_a_ramp_cut_far_from_its_knots_compiles(top: float, up: float, down: float, cut: float,
+                                                t0: float) -> None:
     """
-    One 50 ms ramp, cut every millisecond, and summed with a short blip in one of those blocks.
+    A long ramp up and down, cut into short blocks.
 
-    Each value at a cut is interpolated from knots up to 50 ms away and up to 1e6 Hz/m, far more
-    than the block itself holds.  The compile tolerance has to scale with those ends, not with the
-    block's own peak.
+    Near the foot of the ramp down a value at a cut is small, but it is interpolated from a knot
+    tens of milliseconds away and up to a million Hz/m: far more than the block itself holds.  Its
+    float error scales with that knot.  Scaled by the block's own peak instead, the compile
+    tolerance refused each of these legal trees.
     """
-    opts = _opts()
-    ramp = pp.make_extended_trapezoid('x', times=np.array([0.0, 50e-3, 100e-3]),
-                                      amplitudes=np.array([0.0, 1e6, 0.0]), system=opts)
-    tree = sc.LogicBlock('ramp').add(t0, ramp).add(t0 + 40.2e-3, pp.make_trapezoid(
-        'x', area=4.5, system=opts))
-    for k in range(1, 100):
-        tree.add(t0 + k * 1e-3, sc.barrier())
-    _, seen = _compile_warned(tree, opts, 'same-axis gradient merge')
-    assert len(seen['handed'].edges) > 100
+    opts = _suite()
+    ramp = pp.make_extended_trapezoid('x', times=np.array([0.0, up, up + down]),
+                                      amplitudes=np.array([0.0, top, 0.0]), system=opts)
+    tree = sc.LogicBlock('ramp').add(t0, ramp)
+    k = 1
+    while k * cut < up + down:
+        tree.add(t0 + k * cut, sc.barrier())
+        k += 1
+    sc.compile(tree, opts, name='ramp')
 
 
 @pytest.mark.parametrize(('t0', 'off'), [(100.0, 0.4999), (300.0, 0.49), (4000.0, 0.3)])
@@ -410,6 +416,37 @@ def test_six_digit_deduplication_is_within_the_registration_tolerance(t0: float)
     stored = [seq.get_block(i).gy for i in sorted(seq.block_events)
               if getattr(seq.get_block(i), 'gy', None) is not None]
     assert [float(g.amplitude) for g in stored] == [100000.0, 100000.0]
+
+
+def test_shapes_sharing_a_six_digit_key_are_within_the_registration_tolerance() -> None:
+    """
+    Two compressible shapes that print alike under ``'%.6g'``, one with a tail the other lacks.
+
+    The tail is 3e-7 of the peak.  It shifts two of the stored differences by less than their sixth
+    significant digit, so PyPulseq stores the second shape as the first and plays it without its
+    100 ms tail: 7e-3 1/m of area, in memory.  Half a quantum per sample and the key's pointwise
+    allowance together do not cover that; the key's allowance for a coarse shape difference,
+    carried into every later sample, does.
+    """
+    opts = _suite()
+    times = np.array([0.0, 0.1, 0.2, 20.0, 40.0, 60.0, 80.0, 99.8, 99.9, 100.0]) * 1e-3
+    eps, c = 3e-7, 0.5                              # eps - 1 prints as -1, and c - eps as 0.5
+    first = pp.make_extended_trapezoid('x', times=times, amplitudes=234567.1 * np.array(
+        [0, 1, 0, 0, 0, 0, 0, 0, c, 0]), system=opts)
+    second = pp.make_extended_trapezoid('x', times=times, amplitudes=234567.4 * np.array(
+        [0, 1, eps, eps, eps, eps, eps, eps, c, 0]), system=opts)
+    tree = sc.LogicBlock('key').add(0.0, first).add(0.101, sc.barrier()).add(0.2, second)
+    seq, seen = compile_capturing(tree, opts)
+    handed, stored = seen['handed'], seen['stored']()
+    row = int(np.flatnonzero(handed.error0[:, 0])[-1])
+    moved = float(stored.m0[row, 0] - handed.m0[row, 0])
+    assert moved == pytest.approx(-7.06e-3, rel=0.01)
+
+    played = knots_of(seq.get_block(row + 1).gx, 0.0)[1]
+    assert played[2] == 0.0, 'the second shape plays the first one\'s tail'
+    times, amps = knots_of(second, 0.0)
+    traversed = float(np.sum(0.5 * np.diff(times) * (np.abs(amps[1:]) + np.abs(amps[:-1]))))
+    assert abs(moved) > 1.5e-7 * float(np.max(amps)) * 0.1 + 1e-5 * (1 + 1e-5) * traversed
 
 
 def test_the_compression_edge_case_is_inside_the_registration_tolerance() -> None:
