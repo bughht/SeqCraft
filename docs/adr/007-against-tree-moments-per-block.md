@@ -24,8 +24,8 @@ stages.
 
 1. **Compile.** The tree's placed events, restricted exactly to each block, against the ready
    blocks that emission hands PyPulseq, measured before registration. The tolerance is SeqCraft's
-   own arithmetic, each term a stated bound: float summation, the float of superposing pieces, and
-   a tick where a knot's time can land one from where the other side puts it.
+   own arithmetic, each term a stated bound: float summation, the float of superposing pieces, the
+   endpoint snap, and a tick where a knot's time can land one from where the other side puts it.
 2. **Registration.** Those ready blocks against what PyPulseq stored, read back block by block.
    The tolerance is PyPulseq's storage precision: compression rounding, bounded by its first-sample
    edge case at 1.5 quanta of the peak, and the six-digit deduplication key. That allowance belongs
@@ -50,7 +50,9 @@ inside the stretch.
 - PyPulseq's six-digit deduplication is accepted as its precision. An event that shares a key with
   an earlier one still plays the earlier one's values.
 - m0 and m1 remain two linear functionals per block, not waveform fidelity.
-- Two compiler details the compile stage would otherwise have to model are changed, each in a
-  commit of its own together with the tolerance term it makes unnecessary: `superpose` interpolates
-  in ticks from the block's start, and an edge value is zeroed only where float cannot tell it from
-  zero.
+- `superpose` interpolates in ticks from the block's start, in a commit of its own with the
+  tolerance term it makes unnecessary.
+- The endpoint snap, which zeroes a superposed block's edge value below `1e-6·max_grad`, stays and
+  is modelled. Narrowing it to float residue was tried and reverted: PyPulseq's timing check refuses
+  an end above 1e-9 Hz/m that the next block does not continue, and the snap is what keeps a summed
+  end that cancels to nearly zero from being refused.

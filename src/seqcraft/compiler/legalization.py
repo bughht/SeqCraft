@@ -74,8 +74,9 @@ __all__ = [
     'superpose',
 ]
 
-#: The unit roundoff of float64.
-_ROUNDOFF = 2.0**-53
+#: A superposed block's edge value below this fraction of ``max_grad`` is set to exactly zero (see
+#: :func:`axis_gradient`).  The against-tree check models the change that makes.
+_NEGLIGIBLE_EDGE = 1e-6
 
 
 def superpose(
@@ -101,11 +102,6 @@ def superpose(
     after a sequence that has been running for minutes, rather than two knots a femtosecond apart
     that then both survive into the shape.
 
-    An end value that float cannot tell from zero is returned as exactly zero.  Pieces cancelling
-    at a seam leave a residue of a few roundings of the segments they are interpolated from rather
-    than 0.0, and it would otherwise be stored and written as a genuine edge value.  Anything
-    larger is kept, however small.
-
     Returns
     -------
     rel_ticks, amps
@@ -126,28 +122,11 @@ def superpose(
     # seconds its error grew with the block's position in the sequence.
     grid = rel_ps.astype(float)
     total = np.zeros(len(rel_ps), dtype=float)
-    scale = np.zeros(2)
     for t_ps, amps in knots:
-        rel = (t_ps - a_ps).astype(float)
         # left/right zero: outside its own span a gradient contributes nothing.  At its first and
         # last knot np.interp returns the knot value, so `first` and `last` are carried exactly.
-        total += np.interp(grid, rel, amps, left=0.0, right=0.0)
-        scale += _bracket(rel, amps, grid[[0, -1]])
-    # Interpolating one value takes at most nine roundings of its segment's larger end, and adding
-    # the k pieces k - 1 more of their sum.
-    for end, size in zip((0, -1), scale):
-        if abs(total[end]) <= (len(knots) + 8) * _ROUNDOFF * size:
-            total[end] = 0.0
+        total += np.interp(grid, (t_ps - a_ps).astype(float), amps, left=0.0, right=0.0)
     return rel_ps, total
-
-
-def _bracket(times: np.ndarray, amps: np.ndarray, at: np.ndarray) -> np.ndarray:
-    """The larger end value of the segment each of `at` lies on, or 0 outside the knots."""
-    if times.size < 2:
-        return np.zeros(at.size)
-    inside = (at >= times[0]) & (at <= times[-1])
-    j = np.clip(np.searchsorted(times, at), 1, times.size - 1)
-    return np.where(inside, np.maximum(np.abs(amps[j - 1]), np.abs(amps[j])), 0.0)
 
 
 def _as_arbitrary(
@@ -220,6 +199,15 @@ def axis_gradient(
     rel_ps, amps = superpose(pieces, a, b)
     if not np.any(amps):
         return None
+
+    # Snap negligible endpoints to exactly zero.  Two pieces that cancel at a seam leave ~1e-12 of
+    # the amplifier's range rather than 0.0, and pypulseq tests ``first != 0`` *exactly* before
+    # demanding the previous block continue it -- so without this a rounding artifact becomes a
+    # continuity error hundreds of blocks away from anything that looks wrong.
+    negligible = _NEGLIGIBLE_EDGE * float(opts.max_grad)
+    for edge in (0, -1):
+        if abs(amps[edge]) < negligible:
+            amps[edge] = 0.0
 
     raster_ps = to_ticks(float(opts.grad_raster_time))
     if np.all(rel_ps % raster_ps == 0):

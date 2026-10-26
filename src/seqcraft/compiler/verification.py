@@ -703,6 +703,7 @@ def _tree_side(
     edges: np.ndarray,
     resampled: Sequence[tuple[int, str]],
     raster: int,
+    snap: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float], np.ndarray]:
     """
     What the tree asked for per block and axis, and how far the compile may move it.
@@ -712,9 +713,9 @@ def _tree_side(
     resampled the same way, onto the gradient raster from the block's start.
 
     Returns m0, m1, and the two tolerances: this side's float error plus what the compile itself
-    may change -- the float of superposing the pieces, which also bounds what ``superpose``'s
-    zeroing of an end value can move.  Also the area lying outside the sequence, per axis, and
-    which block-axes were modelled as resampled.
+    may change -- the float of superposing the pieces, and the endpoint snap of ``axis_gradient``,
+    modelled from the tree.  Also the area lying outside the sequence, per axis, and which
+    block-axes were modelled as resampled.
     """
     n = edges.size - 1
     pieces: list[tuple[int, np.ndarray, np.ndarray]] = []
@@ -778,28 +779,49 @@ def _tree_side(
     unsure_variation = per_bin(key[unsure], np.abs(gr - gl)[unsure])
     unsure_area = per_bin(key[unsure], (0.5 * length / _TPS * (np.abs(gl) + np.abs(gr)))[unsure])
 
+    # The endpoint snap.  axis_gradient sets a superposed block's first or last value to exactly 0
+    # when it is below `snap`.  That removes a triangle of height |v| reaching the next knot, so it
+    # moves m0 by |v| h / 2 and m1 by at most that times the block's length.  Modelled from the
+    # tree's own value at each block edge, wherever the compile's value could be under `snap`.
+    values = {}
+    reach = {}
+    for side, at in (('start', left == edges[block]), ('end', right == edges[block + 1])):
+        at &= length > 0
+        h = np.full(flat, np.iinfo(np.int64).max, dtype=np.int64)
+        np.minimum.at(h, key[at], length[at])
+        values[side] = per_bin(key[at], (gl if side == 'start' else gr)[at])
+        reach[side] = h.reshape(n, 3)
+
     span = (np.diff(edges) / _TPS)[:, None]
     modelled = np.zeros((n, 3), dtype=bool)
     if resampled:
         modelled, model = _resampled_tree(pieces, edges, resampled, raster)
         sums = {name: np.where(modelled, model[name], given) for name, given in sums.items()}
 
-    # superpose zeroes an end value only when it is within `value` of zero, and that changes the
-    # waveform by less than this term already allows.
     value = (count + 8.0) * _U * ends                         # per value: k pieces and their sum
     lever = 4.0 * _U * span * steep                           # the resample, in seconds from the start
     noise = value + lever
+    shift = (np.ceil(0.5 + _TIME_OPERATIONS * _U * edges[1:]) / _TPS)[:, None]
+    snap0 = np.zeros((n, 3))
+    snap1 = np.zeros((n, 3))
+    for side in ('start', 'end'):
+        v = np.abs(values[side])
+        engaged = (v > 0.0) & (v < snap + noise + shift * steep)
+        # A resampled block interpolates the snapped triangle at the raster, one raster further.
+        h = np.minimum(reach[side].astype(float) / _TPS + np.where(modelled, raster / _TPS, 0.0),
+                       span)
+        snap0 += np.where(engaged, v * h / 2.0, 0.0)
+        snap1 += np.where(engaged, v * h / 2.0 * span, 0.0)
 
     # A knot of an unsure piece can land `shift` from where the other side puts it.  Moving every
     # knot of a piece by that changes its area by at most `shift` times its variation and its two
     # end values, and its m1 by that times the lever arm, plus the area times the shift.  For any
     # other piece the two sides compute the same ticks, and this is zero.
-    shift = (np.ceil(0.5 + _TIME_OPERATIONS * _U * edges[1:]) / _TPS)[:, None]
     moved = shift * (unsure_variation + 2.0 * unsure_peak)
 
     interpolated = 4.0 * _U * ends                            # this side's own interpolated values
-    tolerance0 = _float_error(sums, 0) + (interpolated + noise) * span + moved
-    tolerance1 = (_float_error(sums, 1) + (interpolated + noise) * span**2 / 2.0
+    tolerance0 = _float_error(sums, 0) + (interpolated + noise) * span + snap0 + moved
+    tolerance1 = (_float_error(sums, 1) + (interpolated + noise) * span**2 / 2.0 + snap1
                   + moved * span + shift * unsure_area)
     return sums['m0'], sums['m1'], tolerance0, tolerance1, outside, modelled
 
@@ -896,6 +918,7 @@ def verify_against_tree(
     stored: Callable[[], BlockMoments],
     resampled: Sequence[tuple[int, str]],
     grad_raster: float,
+    snap: float,
     label_states: Callable[[], Mapping[str, Any]],
 ) -> None:
     """
@@ -916,8 +939,8 @@ def verify_against_tree(
 
     - **compile** -- the tree's placed events, restricted exactly to each block, against the ready
       blocks emission hands to PyPulseq (`handed`).  The tolerance is SeqCraft's own arithmetic:
-      float, and a knot landing a tick off.  A block-axis legalization reports as resampled is
-      compared with the tree resampled onto the raster.
+      float, the endpoint snap, and a knot landing a tick off.  A block-axis legalization reports
+      as resampled is compared with the tree resampled onto the raster.
     - **registration** -- the ready blocks against what PyPulseq stored (`stored`).  The tolerance
       is PyPulseq's storage precision: compression rounding, and its six-digit deduplication key.
 
@@ -949,8 +972,8 @@ def verify_against_tree(
         nothing.
     resampled
         The ``(block, axis)`` pairs legalization resampled onto the raster.
-    grad_raster
-        The gradient raster in seconds, which a resample interpolates onto.
+    grad_raster, snap
+        The gradient raster in seconds, and the endpoint-snap threshold in Hz/m.
     label_states
         ``Sequence.evaluate_labels(evolution='adc')``, deferred for the same reason.
 
@@ -978,7 +1001,7 @@ def verify_against_tree(
             or handed.overrun):
         edges = handed.edges
         tree0, tree1, tolerance0, tolerance1, outside, modelled = _tree_side(
-            placed, edges, resampled, to_ticks(grad_raster))
+            placed, edges, resampled, to_ticks(grad_raster), snap)
         for axis, area in sorted(outside.items()):
             violations.append(ContractViolation(
                 f'axis {axis}', f'the tree puts {area:.3g} 1/m of gradient outside the sequence'))

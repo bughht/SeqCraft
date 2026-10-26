@@ -355,7 +355,7 @@ def test_a_resampled_stretch_with_sloped_ends_compiles(t0: float) -> None:
 
     handed = seen['handed']
     raster = round(float(opts.grad_raster_time) * 1e12)
-    plain, _, _, _, _, _ = _tree_side(seen['placed'], handed.edges, (), raster)
+    plain, _, _, _, _, _ = _tree_side(seen['placed'], handed.edges, (), raster, 0.0)
     rows = [k for k, _ in resampled]
     per_block = handed.m0[rows, 0] - plain[rows, 0]
     assert np.all(np.abs(per_block) > 5e-3)
@@ -396,6 +396,28 @@ def test_a_resample_on_one_axis_leaves_the_others_checked_block_by_block() -> No
                        .add(1.3e-3, triangle(-0.05)), opts)
     with pytest.raises(sc.CompilerContractError, match='axis y m0'):
         recheck(seen, placed=[*seen['placed'], *moved])
+
+
+# ---------------------------------------------------------------------------- the endpoint snap
+@pytest.mark.parametrize('residual', [1e-3, 1.0])
+def test_a_summed_end_that_cancels_to_nearly_zero_compiles(residual: float) -> None:
+    """
+    Two pieces whose ends cancel to a small residual, with nothing after them.
+
+    PyPulseq's timing check refuses a gradient end above 1e-9 Hz/m that the next block does not
+    continue, so ``axis_gradient`` zeroes an edge value below ``1e-6`` of ``max_grad``.  The compile
+    tolerance models that.  Measured against the whole-sequence m0, the 1 Hz/m case was refused as a
+    compiler bug; without the snap, PyPulseq refuses both.
+    """
+    opts = _suite()
+    times = np.array([0.0, 1e-3, 2e-3])
+    up = pp.make_extended_trapezoid('x', times=times, amplitudes=np.array([0.0, 2e4, 2e4]),
+                                    system=opts)
+    down = pp.make_extended_trapezoid('x', times=times, amplitudes=np.array(
+        [0.0, -1e4, -(2e4 - residual)]), system=opts)
+    tree = sc.LogicBlock('ends').add(0.0, up).add(0.0, down).add(2e-3, pp.make_delay(1e-3))
+    seq, _ = _compile_warned(tree, opts, 'same-axis gradient merge')
+    assert float(seq.get_block(1).gx.last) == 0.0
 
 
 # ------------------------------------------------------------------------ registration precision
