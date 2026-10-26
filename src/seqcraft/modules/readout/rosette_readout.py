@@ -51,7 +51,7 @@ physical limit.
 
 The gradient and slew limits are applied to the in-plane **vector**, so every rotation is legal
 on every axis.  The analytic peaks are :math:`k_{max}\max(\omega_1, \omega_2)` and
-:math:`k_{max}(\omega_1^2 + \omega_2^2)`; the sampled core stays below both.
+:math:`k_{max}(\omega_1^2 + \omega_2^2)`; the sampled core never exceeds either.
 
 What it reports, and from what
 ------------------------------
@@ -80,14 +80,15 @@ One ADC event, opened one dwell before the core starts and sized so its last sam
 half a dwell after the core ends.  The delay is floored onto ``rf_raster_time``, and the sample
 count rounded up to ``adc_samples_divisor``, extra samples going after the core.  The delay is
 read back from the built event, because ``pp.make_adc`` raises a delay below ``adc_dead_time`` to
-it.  The window then has to contain every ideal crossing and every closest approach: when the last
-one falls after the last sample, one divisor of samples is added, and when the window cannot open
-early enough the readout is refused.  Samples outside the core are real data, taken on the lead-in
+it.  The window then has to contain every ideal crossing and every closest approach: while the
+last one falls after the last sample, samples are added one divisor at a time, and when the window
+cannot open early enough the readout is refused.  Samples outside the core are real data, taken on the lead-in
 before it and on the lead-out, the correction or the gradient at rest after it; ``core_samples``
 separates them, and ``k_per_m`` reports where every sample is.
 
-``opts.adc_samples_limit`` must be positive.  A readout needing more samples than one event may
-hold is refused: this readout does not split its window.
+``opts.adc_samples_limit`` must be configured and positive: pypulseq reads zero as no limit, and
+this readout, which never splits its window, requires one.  A readout needing more samples than
+that limit is refused.
 
 The block lasts until both the gradient and the ADC's trailing dead time have ended, the same
 with or without the ADC, so a dummy shot occupies the same time.  When the ADC outlasts the
@@ -557,12 +558,13 @@ class RosetteReadout(Module):
         limit = int(getattr(self.opts, 'adc_samples_limit', 0) or 0)
         if limit <= 0:
             msg = format_error(
-                f'opts.adc_samples_limit is {limit}, so there is no per-event sample limit for '
-                f"this readout's one ADC event to fit.",
+                f'opts.adc_samples_limit is {limit}, which sets no per-event sample limit, and '
+                f'this readout requires one.',
                 {'adc_samples_limit': limit},
-                ['set it to the interpreter\'s per-event limit, e.g. pp.Opts(..., '
+                ["set it to the interpreter's per-event limit, e.g. pp.Opts(..., "
                  'adc_samples_limit=8192)',
-                 'this readout never splits its window, so the limit is what bounds it'],
+                 'this readout acquires in one ADC event and never splits it, so the configured '
+                 'limit is what bounds the window'],
             )
             raise ConfigurationError(msg)
         return limit
@@ -653,7 +655,7 @@ class RosetteReadout(Module):
         """Refuse a dwell that moves k by more than dk where the trajectory is fastest."""
         speed = self.k_max_per_m * self._w1 * max(1.0, self.omega_ratio)
         step = speed * self.dwell_s
-        if step <= self.dk_per_m * (1.0 + _GUARD):
+        if step <= self.dk_per_m * (1.0 + 1e-12):
             return
         longest = Raster(float(self.opts.adc_raster_time)).floor(self.dk_per_m / speed)
         fixes = [f'pass dwell_s <= {longest * 1e6:g} us'] if longest > 0 else []
