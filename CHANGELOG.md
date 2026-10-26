@@ -21,10 +21,11 @@ untouched.
 - On the 32 reproducer waveforms, measured registration rounding sits two orders of magnitude or
   more below the new tolerance.
 - m1 still refuses a lobe played one raster late, tested at 0, 1 and 10 s into a sequence.
-- The check reads the sequence in memory, so it covers registration only. Writing the file rounds
-  again, separately: amplitudes to six significant digits, up to 5e-6 relative per event.
+- The check reads the sequence in memory, so it covers registration only, including the event
+  deduplication below. Writing the file rounds again, separately: amplitudes to six significant
+  digits, up to 5e-6 relative per event.
 
-**Known limitations, both still open:**
+**Known limitations, all still open:**
 
 - **Low-duty shapes.** Under the quantisation model, 1e-6 of the traversed area is *sufficient* to
   cover worst-case rounding when a shape's mean `|g|` is at least 5 % of its peak; it is not
@@ -40,6 +41,11 @@ untouched.
     sequence.
   - Comparing moments about a local time reference, for example each block's start, is a follow-up
     proposal. It is not part of this change and has not been validated.
+- **Six-digit event deduplication, which also predates this change.** PyPulseq's registration keys
+  each event by its parameters printed with `%.6g`, so an event that prints like an earlier one is
+  stored as that one and plays its values: a change of up to 1e-5 relative, in memory. The m0
+  tolerance does not cover it. Two legal trapezoids at 100000.0 and 100000.4 Hz/m, in separate
+  blocks, are refused by m0 and m1, on `main` and with this change alike.
 
 ## Unreleased — a base install that can be imported
 

@@ -534,8 +534,12 @@ def verify_against_tree(
     # peak-normalised samples to 1e-7, moving the area by at most 5e-8 * peak * duration, and in
     # practice by a few percent of that.  Under that model 1e-6 of the traversed area is
     # sufficient to cover the worst case whenever a shape's mean |g| is at least 5 % of its peak;
-    # it is not necessary, and lower-duty shapes are not thereby refused.  Writing the file
-    # rounds again, separately, and this check never sees that.
+    # it is not necessary, and lower-duty shapes are not thereby refused.  Registration also keys
+    # every event by its parameters printed with '%.6g', so an event that prints like an earlier
+    # one plays the earlier one's values: up to 1e-5 relative, in memory, and not covered here.
+    # Two legal trapezoids at 100000.0 and 100000.4 Hz/m in separate blocks are refused, before
+    # this change as after it.  Writing the file rounds again, separately, and this check never
+    # sees that.
     traversed: dict[str, float] = {}
     # Each event's |net area|, summed: m1's relative term, unchanged -- see the m1 check below.
     magnitude: dict[str, float] = {}

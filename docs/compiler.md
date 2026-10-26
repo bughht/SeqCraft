@@ -240,8 +240,14 @@ area is a sufficient bound on the worst case whenever a shape's mean `|g|` is at
 peak. It is not a necessary one: lower-duty shapes are not thereby refused, and measured rounding
 sits two orders below the tolerance. A long, densely sampled shape below that duty, whose constant
 section rounds the same way at every sample, does exceed it; that gap is pinned in
-`tests/compiler/test_m0_tolerance.py`. Writing the `.seq` file rounds again — amplitudes to six
-significant digits — but that serialisation error is separate, and this check never sees it.
+`tests/compiler/test_m0_tolerance.py`.
+
+Registration also **deduplicates** events: PyPulseq keys each one by its parameters printed with
+`%.6g`, so an event that prints like an earlier one is stored as that one and plays its values. That
+moves the area by up to 1e-5 relative, in memory, and this tolerance does not cover it: two legal
+trapezoids at 100000.0 and 100000.4 Hz/m, in separate blocks, are refused, before the traversed-area
+change as after it. Writing the `.seq` file rounds again — amplitudes to six significant digits —
+but that serialisation error is separate, and this check never sees it.
 
 **m1 is not covered for the same error far from the start.** m1 is referenced to `t = 0`, so a
 shape whose registered area moved by `δm0` at time `t` also moves m1 by `t·δm0`. m1's tolerance
