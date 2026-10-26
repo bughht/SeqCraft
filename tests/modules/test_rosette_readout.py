@@ -4,8 +4,9 @@ the emitted trajectory.
 
 Every measurement here is made by code in this file, which shares nothing with the module: the
 knots of the events ``build`` returns, of the compiled sequence in memory, or of the written and
-read-back file are integrated here, or read through ``calculate_kspacePP``.  The analytic curve is
-written here from the formula, from the readout's public parameters.
+read-back file are integrated here, or read through ``calculate_kspacePP``, directly or by
+``sc.kspace``.  The analytic curve is written here from the formula, from the readout's public
+parameters.
 
 The raster departure is checked in three stages, each against its own allowance:
 
@@ -578,7 +579,7 @@ def test_a_retimed_traversal_passes_reversal_and_fails_the_time_law(epsilon: flo
     """
     The negative control.  ``u(t) = t + epsilon / (2 w1) sin(2 w1 t)`` is monotone and fixes
     every crossing, so the re-timed curve passes the reversal check -- and misses the analytic
-    curve by more than a dk, which only the trajectory comparison sees.
+    curve by more than a dk, which the trajectory comparison sees and the reversal check does not.
     """
     opts = scanner()
     oracle = Analytic(rosette(opts, petals=7, petal_duration_s=810e-6), opts)
@@ -598,7 +599,8 @@ def test_a_retimed_traversal_passes_reversal_and_fails_the_time_law(epsilon: flo
 def test_the_module_the_compiler_and_the_file_read_one_trajectory(name: str) -> None:
     """
     The reported k is what the compiler holds and what the file plays (C9): extended
-    trapezoids with knots on the raster, one per axis, read alike by every path.
+    trapezoids with knots on the raster, one per axis, read alike by the module, the compiled
+    sequence and the file.
     """
     opts, ro, angle = case(name)
     block, seq, back, designed = compiled(ro, opts, angle)

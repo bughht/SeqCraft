@@ -58,9 +58,9 @@ What it reports, and from what
 Every time is on the **block clock**, from the start of the block :meth:`~RosetteReadout.build`
 returns.  Every trajectory report is computed from the gradient knots this module designs,
 before any compiler registers them, and is the same at every rotation except ``k_per_m``.  A
-compiled sequence holds these knots after pypulseq has registered them, and a written file after
-it has rounded them again; neither is what this module reports, and the differences are small and
-bounded but not zero.
+compiled sequence holds those knots as pypulseq registered them, which may round a compressible
+shape's samples to 1e-7 of its peak, and a written file stores each amplitude to six significant
+digits.  Neither is exactly what this module reports.
 
 - **Ideal crossings** (``origin_crossing_ideal_s``) are the formula's instants: the core start plus
   ``p`` petals.  They are on the gradient raster.
