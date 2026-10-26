@@ -1055,6 +1055,7 @@ Re-exported **flat**, so no import path names a folder:
 | `CartesianLine` | prephaser, readout gradient and ADC as one design — `prephase=False` drops the prephaser, which is the spin-echo readout; `echoes`/`polarity` read the same line more than once, which is a multi-echo gradient echo; and it can reshape the prephaser into two lobes that null the **first** gradient moment at the echo as well as the zeroth, which is velocity compensation — reached through the repetition-level augmentation API rather than a parameter here |
 | `RadialReadout` | one radial spoke: prephaser, readout gradient and ADC, already oriented, with the trajectory geometry a caller would otherwise reverse-engineer |
 | `SpiralReadout` | one reversible spiral arm and the four ways to traverse it — `out`, `in`, `in-out`, `out-in`. The arm is at rest at both ends, which is what makes them one family |
+| `RosetteReadout` | whole petals of the analytic rosette `k_max sin(ω1 t) e^{iω2 t}`, played on the gradient raster and at rest at both ends, with a crossing report that keeps ideal instants, closest approaches and nearest samples apart |
 | `EPI2D` | the whole echo-planar train: prephasers, alternating lobes, blips on the zero crossings, one ADC per echo, and the labels a reconstruction reads back |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
 | `IRPrep` | an inversion pulse and its crusher, with the effective centre TI is measured from |
@@ -1287,6 +1288,9 @@ the questions a tree of events cannot:
 | `SpiralReadout.k_per_m(angle_rad=…)` | the sample positions, integrated from the **emitted** knots rather than from the design pass. A NUFFT is told where the samples are, so a trajectory one raster out is a blur and a wrong field map |
 | `SpiralReadout.limits()` | the peak gradient and slew this readout actually emits, measured rather than inferred from the traversal's constraints |
 | `SpiralReadout.echo_spacing_s` | derived from the realised trajectory, `None` when there is one crossing |
+| `RosetteReadout.origin_crossing_ideal_s` | the formula's `P + 1` crossing instants, on the gradient raster. Beside them, `origin_crossing_closest_s` and `origin_crossing_residual_per_m` are where and how near the designed trajectory comes to `k = 0`, and `origin_crossing_samples` the nearest samples. Never merged into one number, and no scalar TE |
+| `RosetteReadout.k_per_m(angle_rad=…)` / `core_samples` | every sample's position, padding included, integrated from the designed knots; `core_samples` is the slice taken on the analytic core |
+| `RosetteReadout.departure_per_m` / `limits()` | the core's largest vector departure from the analytic curve, as an upper bound, and the peak vector gradient and slew. Measured on the designed knots |
 | `IRPrep.time_to_center()` | to the inversion's effective centre — 5.1 ms into a 10 ms hyperbolic secant, and what an inversion time is measured from |
 | `SaturationPrep.time_to_center()` | the same question, the same origin, so a timeline can add them |
 | `SaturationPrep.offset_hz` | the chemical shift converted once: `shift_ppm × 1e-6 × B0 × γ`. Negative is below water. A test traces it as far as the compiled sequence, because a sign error here is legal Pulseq that saturates the wrong tissue |
@@ -1571,6 +1575,63 @@ equal-increment or randomised, and the excitation, spoiling and TR around them.
 `tests/modules/test_radial_readout.py` asserts the trajectory, and the rotation-equivariance test
 there is the same one that passed against `write_radial_gre.py` before this module
 existed.
+
+
+## A rosette readout, and what it reports
+
+`RosetteReadout` plays `k(t) = k_max sin(ω1 t) e^{iω2 t}` for a whole number of petals, as the
+gradient raster can play it: the analytic gradient sampled on raster edges, one extended trapezoid
+per in-plane axis. A zero-area lead-in brings the gradient up to `g(0)`; after the core, a lead-out
+along the last gradient and a perpendicular correction cancel the core's end point. So the block
+starts and ends at rest with no net in-plane moment, and it holds one ADC event.
+
+```python
+import math
+
+scanner = pp.Opts(max_grad=32, grad_unit='mT/m', max_slew=120, slew_unit='T/m/s',
+                  adc_dead_time=10e-6, adc_samples_limit=8192)
+rosette = sc.modules.RosetteReadout(opts=scanner, fov_mm=256.0, matrix=128, petals=13,
+                                    omega_ratio=7 / 13, dwell_s=2e-6)
+shots = sc.LogicBlock()
+for n in range(8):                                # the shot schedule is the caller's
+    shots.add(n * 20e-3, rosette(angle_rad=2 * math.pi * n / 8))
+```
+
+`omega_ratio` is `ω2/ω1`: `0` is a spike through the centre, below 1 narrow petals, `1` circles
+through the origin, above 1 wide petals. A shot need not close on itself. `petal_duration_s`
+defaults to the shortest whole-raster petal that the gradient and slew limits — applied to the
+in-plane vector, so every rotation is legal on every axis — and the departure budget allow. The
+dwell plays no part in that choice: a dwell that moves `k` more than `Δk` per sample is refused.
+
+**The departure budget.** On the raster the core departs from the analytic curve by at most a
+closed-form bound `B`, and this readout supports `B ≤ 0.05 Δk`. That is an engineering budget,
+not an image-quality guarantee. The bound is conservative, so a refused petal may depart by less:
+the refusal marks the supported domain, not a physical limit. A compiled sequence and a written
+file each round the designed knots again; those roundings are bounded separately and are not part
+of the budget.
+
+**The crossings are three facts each.**
+
+| | |
+|---|---|
+| `origin_crossing_ideal_s` | the formula's instants: the core start plus `p` petals |
+| `origin_crossing_closest_s`, `origin_crossing_residual_per_m` | where the designed trajectory is nearest `k = 0` around each, and how near |
+| `origin_crossing_samples` | the sample nearest each ideal instant, in integer time; the earlier of two equally near |
+
+All three are on the clock of the block `build` returns, and none of them is a TE: which crossing a
+protocol calls its echo is the composing kernel's choice.
+
+**The window.** One dwell of padding before the core and after it, the delay floored onto
+`rf_raster_time` and the count rounded up to `adc_samples_divisor`. Then a check, not an
+assumption: the samples must reach from the first crossing and its closest approach to the last,
+and the window grows by a divisor of samples until they do. The samples outside `core_samples`
+are real data on the lead-in, the lead-out, or the gradient at rest. `opts.adc_samples_limit`
+must be positive; a readout above it is refused, because this one does not split its window. The
+block lasts until both the gradient and the ADC's trailing dead time have ended, with or without
+the ADC, so `acquire=False` gives a dummy shot of the same length.
+
+What stays with the caller: the excitation, the shot angles, RF spoiling through `phase_deg`,
+dummy shots, TR and contrast. There is no minimum-time traversal and no ADC segmentation.
 
 
 ## A 3D repetition, and the one axis that is not a 2D one
@@ -1991,6 +2052,7 @@ at import.
 | `PhysicalDesign` | `physical_design` | class |
 | `PhysicalDesignScope` | `physical_design` | class |
 | `RadialReadout` | `modules` | class |
+| `RosetteReadout` | `modules` | class |
 | `PlacedEvent` | `compiler.model` | class |
 | `PulseqReadyBlock` | `compiler.model` | class |
 | `Raster` | `design.timing` | class |
