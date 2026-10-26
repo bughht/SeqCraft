@@ -1,5 +1,64 @@
 # Changelog
 
+## Unreleased — m0 and m1 are compared per compiled block, about each block's own start
+
+The against-tree check compared each axis's m0 and m1 over the whole sequence, with m1 referenced
+to `t = 0`. Registration moves a stored shape's area by `δm0`, so a legal waveform placed at `t`
+moved the absolute m1 by `t·δm0`: a compressible shape that compiled at 0 s was refused at 1, 10
+and 100 s, by a message that blamed "a gradient plays at the wrong time" and printed two
+equal-looking numbers. No tolerance alone fixed that without hiding a 4.5 1/m blip played one
+raster late far into a sequence.
+
+m0 and m1 are now compared per compiled block and axis, each about the block's own start, in two
+stages:
+
+- **compile** — the tree's placed events, restricted exactly to each block, against the ready
+  blocks emission hands PyPulseq, within SeqCraft's own float, its endpoint snap, and a tick where
+  a knot's time can land one off;
+- **registration** — those ready blocks, measured before emission, against what PyPulseq stored,
+  within its storage precision: compression rounding, and the six-digit key it deduplicates events
+  by.
+
+The whole-sequence m0 and m1 refusals are retired. The sequence's moments are sums of the block
+ones, so they add nothing a block-wise check misses
+([ADR-007](docs/adr/007-against-tree-moments-per-block.md)). A refusal names its stage, block, start
+time, difference and tolerance. Duration and label addresses are checked as before. The comparison
+changes no emitted waveform, and the one compiler change below moves interpolated values by float
+roundoff only.
+
+What changes in verdicts, on the controls in `tests/compiler/test_local_moments.py`:
+
+- **Accepted now:** the compressible shapes at 1, 10 and 100 s; the dense low-duty shape the
+  traversed-area tolerance refused, whose strict `xfail` is gone; and two trapezoids at 100000.0
+  and 100000.4 Hz/m that share PyPulseq's six-digit key. The second still plays 100000.0, which is
+  PyPulseq's precision rather than SeqCraft's.
+- **Refused now, missed before:** area moved across a block boundary, which leaves the whole m0
+  unchanged.
+- **Still refused:** lost area, and a piece one raster late, at every placement from 0 to 100 s.
+
+**Resampled blocks** are reported by legalization as data. The compile stage compares each one
+with the tree resampled onto the raster the same way, on its own axis, including stretches whose
+ends are sloped.
+
+**Known limitations:**
+
+- m0 and m1 are two numbers per block, not waveform fidelity. A change that keeps every block's area
+  and centroid is invisible, and so is anything below the tolerance.
+- The registration stage allows for PyPulseq's six-digit deduplication, so it cannot see a stored
+  change within about `1e-5` of a block's `|g|` integral.
+- The endpoint snap, which zeroes a superposed block's edge value below `1e-6·max_grad`, is
+  modelled in the compile tolerance, not removed. It stays because PyPulseq's timing check refuses an
+  end above 1e-9 Hz/m that the next block does not continue, and the snap keeps a summed end that
+  cancels to nearly zero from being refused.
+- Event time parameters and shape lengths must stay below `1e6` gradient rasters, where `%.6g`
+  prints them exactly.
+
+**`superpose` interpolates in ticks from each block's start.** At absolute float seconds, a value
+at a cut or at another piece's knot carried an error that grew with the block's position. On two
+controls a block's area moved by up to 1.5e-10 1/m at 100 s and 1.2e-9 at 1000 s, against 1.1e-14
+at 0 s. The same block now superposes to the same knots, bit for bit, wherever it sits, and the
+compile stage's tolerance loses its only term that grew with placement.
+
 ## Unreleased — m0's tolerance scales with the area traversed, as documented
 
 The m0 against-tree check scaled its tolerance by the sum of each gradient event's `|net area|`,

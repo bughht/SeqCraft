@@ -74,6 +74,10 @@ __all__ = [
     'superpose',
 ]
 
+#: A superposed block's edge value below this fraction of ``max_grad`` is set to exactly zero (see
+#: :func:`axis_gradient`).  The against-tree check models the change that makes.
+_NEGLIGIBLE_EDGE = 1e-6
+
 
 def superpose(
     pieces: Sequence[PlacedEvent],
@@ -112,14 +116,17 @@ def superpose(
         marks.update(int(t) for t in t_ps if a_ps < t < b_ps)
         knots.append((t_ps, amps))
 
-    grid_ps = np.array(sorted(marks), dtype=np.int64)
-    grid = grid_ps / TICKS_PER_SECOND
-    total = np.zeros(len(grid_ps), dtype=float)
+    rel_ps = np.array(sorted(marks), dtype=np.int64) - a_ps
+    # Interpolated in ticks from the block's start: differences of exact integers, so a value at a
+    # cut or at another piece's knot is the same wherever the block sits.  At absolute float
+    # seconds its error grew with the block's position in the sequence.
+    grid = rel_ps.astype(float)
+    total = np.zeros(len(rel_ps), dtype=float)
     for t_ps, amps in knots:
         # left/right zero: outside its own span a gradient contributes nothing.  At its first and
         # last knot np.interp returns the knot value, so `first` and `last` are carried exactly.
-        total += np.interp(grid, t_ps / TICKS_PER_SECOND, amps, left=0.0, right=0.0)
-    return grid_ps - a_ps, total
+        total += np.interp(grid, (t_ps - a_ps).astype(float), amps, left=0.0, right=0.0)
+    return rel_ps, total
 
 
 def _as_arbitrary(
@@ -159,6 +166,8 @@ def axis_gradient(
     opts: Opts,
     notes: dict[str, list[str]],
     block_index: int,
+    *,
+    resampled: list[tuple[int, str]] | None = None,
 ) -> SimpleNamespace | None:
     """
     Return the single gradient event for `axis` over the interval ``[a, b)``, or ``None``.
@@ -171,7 +180,8 @@ def axis_gradient(
     whichever pulseq representation can hold those knots without moving them: an extended
     trapezoid when they are all on the gradient raster, an arbitrary gradient when they are the
     raster-centre pattern.  Only a waveform needing *both* -- a trapezoid summed with a spiral --
-    can be held by neither, and that one is resampled and reported rather than done quietly.
+    can be held by neither, and that one is resampled and reported rather than done quietly:
+    in the warning notes, and as ``(block_index, axis)`` in `resampled` when one is given.
     """
     if not pieces:
         return None
@@ -194,7 +204,7 @@ def axis_gradient(
     # the amplifier's range rather than 0.0, and pypulseq tests ``first != 0`` *exactly* before
     # demanding the previous block continue it -- so without this a rounding artifact becomes a
     # continuity error hundreds of blocks away from anything that looks wrong.
-    negligible = 1e-6 * float(opts.max_grad)
+    negligible = _NEGLIGIBLE_EDGE * float(opts.max_grad)
     for edge in (0, -1):
         if abs(amps[edge]) < negligible:
             amps[edge] = 0.0
@@ -234,6 +244,8 @@ def axis_gradient(
         )
         return cast('SimpleNamespace', grad)
 
+    if resampled is not None:
+        resampled.append((block_index, axis))
     return _resampled(axis, rel_ps, amps, opts, notes, block_index, pieces, a)
 
 
@@ -422,6 +434,7 @@ def legalize_blocks(  # noqa: C901, PLR0912
     """
     notes: dict[str, list[str]] = {}
     blocks: list[PulseqReadyBlock] = []
+    resampled: list[tuple[int, str]] = []
 
     grads: dict[str, list[PlacedEvent]] = {}
     for event in placed:
@@ -495,7 +508,8 @@ def legalize_blocks(  # noqa: C901, PLR0912
                     ],
                 )
                 raise CompileError(msg)
-            gradient = axis_gradient(axis, here, start, end, opts, notes, index)
+            gradient = axis_gradient(axis, here, start, end, opts, notes, index,
+                                     resampled=resampled)
             if gradient is not None:
                 events.append(gradient)
                 paths.extend(event.path for event in here)
@@ -542,4 +556,4 @@ def legalize_blocks(  # noqa: C901, PLR0912
         for category, entries in sorted(notes.items())
         if entries
     )
-    return LegalizationResult(ready_blocks, frozen_notes)
+    return LegalizationResult(ready_blocks, frozen_notes, tuple(resampled))
