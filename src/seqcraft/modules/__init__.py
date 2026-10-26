@@ -30,6 +30,7 @@ The folders, and what each one means
       readout/     cartesian_line.py   CartesianLine
                    epi_2d.py           EPI2D
                    radial_readout.py   RadialReadout
+                   rosette_readout.py  RosetteReadout
                    spiral_readout.py   SpiralReadout
       kernel/      diffusion_se.py     DiffusionSEPrep
                    bssfp_2d_tr.py      bSSFP2DTR    composes leaves; one repeating unit
@@ -110,6 +111,7 @@ from .preparation.t2_prep import T2Prep
 from .readout.cartesian_line import CartesianLine
 from .readout.epi_2d import EPI2D
 from .readout.radial_readout import RadialReadout
+from .readout.rosette_readout import RosetteReadout
 from .readout.spiral_readout import SpiralReadout
 from .rf.excitation import Excitation
 from .rf.refocusing import Refocusing
@@ -122,6 +124,7 @@ __all__ = [
     'GRE3DTR', 'IRPrep',
     'PhaseEncode',
     'VelocityEncode',
-    'RadialReadout', 'Refocusing', 'SaturationPrep', 'SpiralReadout', 'T2Prep', 'TSEShot',
+    'RadialReadout', 'Refocusing', 'RosetteReadout', 'SaturationPrep', 'SpiralReadout', 'T2Prep',
+    'TSEShot',
     'spoiler',
 ]
