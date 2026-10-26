@@ -139,10 +139,6 @@ def _six_digit_bound(epi, lines) -> np.ndarray:
     return SIX_DIGITS * (np.abs(start) + swing) + 1e-9 * DK
 
 
-def _lines_of(table, per_echo: int) -> np.ndarray:
-    return np.repeat(np.asarray(table), per_echo)
-
-
 # ----------------------------------------------------------------- the window and the samples
 def test_one_adc_event_spans_exactly_the_train(cepi_opts, tmp_path) -> None:
     """
@@ -638,11 +634,16 @@ def test_the_limit_refusal_offers_fixes_that_build(cepi_opts) -> None:
 
     longest = int(message.split('a table of at most ')[1].split()[0])
     _compiled(epi(lines=range(longest)), epi.opts)
+    for longer in (longest + 1, longest + 2):       # by the divisor, then by the limit
+        with pytest.raises(sc.ConfigurationError):
+            epi(lines=range(longer))
     offered = message.split('oversampling=1 gives ')[1]
-    per_echo, fits = int(offered.split()[0]), int(offered.split('so ')[1].split()[0])
+    per_echo = int(offered.split()[0])
+    builds = int(offered.split('a table of up to ')[1].split()[0])
     lower = _build(_scanner(adc_samples_limit=4000), oversampling=1.0)
-    assert (lower.samples_per_echo, 4000 // lower.samples_per_echo) == (per_echo, fits)
-    _compiled(lower(lines=range(fits - fits % 2)), lower.opts)
+    assert lower.samples_per_echo == per_echo
+    assert builds > longest
+    _compiled(lower(lines=range(builds)), lower.opts)
 
 
 def test_no_configured_limit_is_refused_at_construction() -> None:
@@ -778,4 +779,3 @@ def test_an_interleaved_table_steps_ky_by_its_blip(cepi_opts) -> None:
     k = epi.k_per_m(table)
     mid = k[1][[n * epi.samples_per_echo + epi.samples_per_echo // 2 for n in range(len(table))]]
     assert np.diff(mid) == pytest.approx([2 * DK] * (len(table) - 1), abs=1e-9 * DK)
-    assert _lines_of(table, epi.samples_per_echo)[epi.samples_per_echo] == table[1]

@@ -30,11 +30,11 @@ flat-top samples of every lobe sit on their line; the samples within ``blip_dura
 seam are the ones between lines.  Sample ``j`` belongs to lobe ``j // samples_per_echo``, which
 acquired ``lines[j // samples_per_echo]`` with :meth:`polarity` of that lobe.
 
-**The window's size is the scanner's limit.**  One train is one ADC event of ``len(lines) *
-samples_per_echo`` samples.  It has to fit ``opts.adc_samples_limit``, the per-event limit the
-interpreter accepts, and be a multiple of ``opts.adc_samples_divisor``.  A table above the limit
-is refused; the window is never split into several events, and an ``Opts`` with no limit set is
-refused at construction.
+**One event, within the configured limit.**  One train is one ADC event of ``len(lines) *
+samples_per_echo`` samples.  It has to fit ``opts.adc_samples_limit``, the per-event sample limit
+configured for the interpreter that will play the file, and be a multiple of
+``opts.adc_samples_divisor``.  A table above the limit is refused; the window is never split into
+several events, and an ``Opts`` with no limit set is refused at construction.
 
 Out of scope: navigator echoes, readout partial echo, a readout field-of-view offset, ``REF`` and
 ``IMA`` labels, segmentation of the window inside the interpreter, and reconstruction.
@@ -600,8 +600,13 @@ class ContinuousEPI2D(Module):
     def _refuse_limit(self, lines: int, count: int) -> None:
         """Refuse a train whose one ADC event is above ``opts.adc_samples_limit``."""
         per_echo, limit = self.samples_per_echo, self._limit
-        fits = limit // per_echo
-        longest = next((n for n in range(fits, 0, -1) if (n * per_echo) % self._divisor == 0), 0)
+
+        def longest_table(samples: int) -> int:
+            """The most lines whose one event fits the limit and the divisor divides."""
+            return next((n for n in range(limit // samples, 0, -1)
+                         if (n * samples) % self._divisor == 0), 0)
+
+        fits, longest = limit // per_echo, longest_table(per_echo)
         if longest == fits:
             first = f'a table of at most {fits} lines fits one event at this design'
         elif longest:
@@ -618,10 +623,11 @@ class ContinuousEPI2D(Module):
         ]
         if self.oversampling > 1:
             lowest = self._solve(to_ticks(self.dwell_s), 1.0)[0] // to_ticks(self.dwell_s)
-            if lowest < per_echo:
+            if longest_table(lowest) > longest:
                 hints.append(
-                    f'oversampling=1 gives {lowest} samples per echo, so {limit // lowest} '
-                    f'lines fit -- the flat-top sample spacing then reaches dk_read_per_m',
+                    f'oversampling=1 gives {lowest} samples per echo, so a table of up to '
+                    f'{longest_table(lowest)} lines builds -- the flat-top sample spacing then '
+                    f'reaches dk_read_per_m',
                 )
         hints += [
             'EPI2D samples the same train with one ADC event per echo',
