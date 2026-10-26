@@ -38,8 +38,9 @@ knows the other exists.
 :func:`check_epi_table`, :func:`shot_spacings` and :func:`design_blip` are the rules every
 echo-planar readout here must answer identically: which line tables a train can acquire, when an
 echo spacing divides into interleaved shots on the block raster, and the one blip a train scales
-per step.  They came out of :class:`~seqcraft.modules.EPI2D`.  What differs between trains --
-the lobe, the receiver, where ``k = 0`` falls and how echoes are reported -- stays in each class.
+per step.  They came out of :class:`~seqcraft.modules.EPI2D` and are shared with
+:class:`~seqcraft.modules.ContinuousEPI2D`.  What differs between the two -- the lobe, the
+receiver, where ``k = 0`` falls and how echoes are reported -- stays in each class.
 """
 
 from __future__ import annotations
