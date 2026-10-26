@@ -422,6 +422,7 @@ def legalize_blocks(  # noqa: C901, PLR0912
     """
     notes: dict[str, list[str]] = {}
     blocks: list[PulseqReadyBlock] = []
+    resampled: set[int] = set()
 
     grads: dict[str, list[PlacedEvent]] = {}
     for event in placed:
@@ -495,7 +496,10 @@ def legalize_blocks(  # noqa: C901, PLR0912
                     ],
                 )
                 raise CompileError(msg)
+            before = len(notes.get('resample', ()))
             gradient = axis_gradient(axis, here, start, end, opts, notes, index)
+            if len(notes.get('resample', ())) > before:
+                resampled.add(index)
             if gradient is not None:
                 events.append(gradient)
                 paths.extend(event.path for event in here)
@@ -542,4 +546,4 @@ def legalize_blocks(  # noqa: C901, PLR0912
         for category, entries in sorted(notes.items())
         if entries
     )
-    return LegalizationResult(ready_blocks, frozen_notes)
+    return LegalizationResult(ready_blocks, frozen_notes, frozenset(resampled))

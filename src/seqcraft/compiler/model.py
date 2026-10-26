@@ -168,6 +168,9 @@ class LegalizationResult:
 
     blocks: tuple[PulseqReadyBlock, ...]
     notes: tuple[tuple[str, tuple[str, ...]], ...]
+    #: Indices of the blocks whose gradient was resampled onto the raster.  The verifier compares
+    #: a run of them as one interval: a resample keeps m0 and m1 over the run, not per block.
+    resampled: frozenset[int] = frozenset()
 
 
 __all__ = [

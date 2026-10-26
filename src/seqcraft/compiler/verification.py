@@ -455,6 +455,234 @@ def _traversed_area(times: np.ndarray, amps: np.ndarray) -> float:
     return float(np.sum(out))
 
 
+# ------------------------------------------------- m0 and m1 about each block's own start (trial)
+#: PyPulseq's compress_shape rounds each peak-normalised sample to the nearest 1e-7.
+_QUANTUM = 1e-7
+#: PyPulseq keys every library entry by its values printed with '%.6g'; two events sharing a key
+#: share the first one's stored values, which differ by less than 1e-5 relative.
+_KEY_SHARING = 1e-5
+#: Float, on both sides, and in PyPulseq's cumulative-sum decompression.
+_FLOAT = 1e-12
+#: axis_gradient sets a superposed block edge below this fraction of max_grad to exactly 0.
+_SNAP = 1e-6
+_ROUNDOFF = 2.0 ** -53
+_TPS = 1e12
+
+
+def _ticks(times: Any) -> np.ndarray:
+    return np.rint(np.asarray(times, dtype=float) * _TPS).astype(np.int64)
+
+
+def ready_gradients(blocks: Sequence[PulseqReadyBlock]) -> tuple[np.ndarray, list]:
+    """Block edges in ticks, and each ready block's gradients as absolute-tick knots."""
+    edges = [int(round(blocks[0].start * _TPS))] if blocks else [0]
+    pieces = []
+    for block in blocks:
+        start = int(round(block.start * _TPS))
+        edges.append(int(round(block.end * _TPS)))
+        for event in block.events:
+            if getattr(event, 'type', None) in GRADIENT_KINDS:
+                rel, amps = knots_of(event, 0.0)
+                pieces.append((event.channel, start + _ticks(rel), np.asarray(amps, float)))
+    return np.asarray(edges, np.int64), pieces
+
+
+def _registered_gradients(seq: Any) -> tuple[np.ndarray, list]:
+    """The same for the built sequence: edges from its cumulative durations, summed in ticks."""
+    ids = sorted(seq.block_events)
+    durations = [int(round(float(seq.block_durations[i]) * _TPS)) for i in ids]
+    edges = np.concatenate([[0], np.cumsum(durations)]).astype(np.int64)
+    pieces = []
+    for k, i in enumerate(ids):
+        block = seq.get_block(i)
+        for axis in AXES:
+            grad = getattr(block, f'g{axis}', None)
+            if grad is not None:
+                rel, amps = knots_of(grad, 0.0)
+                pieces.append((axis, edges[k] + _ticks(rel), np.asarray(amps, float)))
+    return edges, pieces
+
+
+def _tree_gradients(placed: Sequence[PlacedEvent]) -> list:
+    out = []
+    for p in placed:
+        if p.kind in GRADIENT_KINDS:
+            rel, amps = knots_of(p.event, 0.0)
+            out.append((p.event.channel, int(round(p.node_t * _TPS)) + _ticks(rel),
+                        np.asarray(amps, float)))
+    return out
+
+
+def _segments(t: np.ndarray, g: np.ndarray, edges: np.ndarray) -> tuple[np.ndarray, ...]:
+    """Split one piece at the partition edges strictly inside it, exactly (it is linear)."""
+    i0 = int(np.searchsorted(edges, t[0], side='right'))
+    i1 = int(np.searchsorted(edges, t[-1], side='left'))
+    if i1 > i0:
+        tt = np.union1d(t, edges[i0:i1])
+        gg = np.interp(tt.astype(float), t.astype(float), g)
+    else:
+        tt, gg = t, g
+    return np.searchsorted(edges, tt[:-1], side='right') - 1, tt[:-1], tt[1:], gg[:-1], gg[1:]
+
+
+def _interval_moments(pieces: list, edges: np.ndarray) -> tuple[dict, dict]:
+    """
+    Per axis and interval [a, b): m0, m1 about a, and the tolerance ingredients.
+
+    T0 and T1 integrate |g| (weighted by t - a for T1), S0 and S1 the support, P the summed peak
+    and slope the summed peak slope.  Content outside the partition is returned separately.
+    """
+    n = edges.size - 1
+    out: dict = {}
+    outside: dict = {}
+    for axis, t, g in pieces:
+        if t.size < 2:
+            continue
+        idx, t0, t1, g0, g1 = _segments(t, g, edges)
+        inside = (idx >= 0) & (idx < n)
+        if not inside.all():
+            outside[axis] = outside.get(axis, 0.0) + float(np.sum(
+                0.5 * (t1[~inside] - t0[~inside]) / _TPS * np.abs(g0[~inside] + g1[~inside])))
+        idx, t0, t1, g0, g1 = idx[inside], t0[inside], t1[inside], g0[inside], g1[inside]
+        if idx.size == 0:
+            continue
+        a = edges[idx]
+        h = (t1 - t0) / _TPS
+        u0, u1 = (t0 - a) / _TPS, (t1 - a) / _TPS
+        b0, b1 = np.abs(g0), np.abs(g1)
+        support = ((g0 != 0) | (g1 != 0)).astype(float)
+        values = {
+            'm0': 0.5 * h * (g0 + g1),
+            'm1': h * (g0 * (2 * u0 + u1) + g1 * (u0 + 2 * u1)) / 6.0,
+            'T0': 0.5 * h * (b0 + b1),
+            'T1': h * (b0 * (2 * u0 + u1) + b1 * (u0 + 2 * u1)) / 6.0,
+            'S0': h * support,
+            'S1': 0.5 * h * (u0 + u1) * support,
+        }
+        starts = np.flatnonzero(np.r_[True, idx[1:] != idx[:-1]])
+        keys = idx[starts]
+        acc = out.setdefault(axis, {f: np.zeros(n) for f in (*values, 'P', 'slope')})
+        for field, v in values.items():
+            acc[field][keys] += np.add.reduceat(v, starts)
+        acc['P'][keys] += np.maximum.reduceat(np.maximum(b0, b1), starts)
+        acc['slope'][keys] += np.maximum.reduceat(np.abs(g1 - g0) / h, starts)
+    return out, outside
+
+
+def _merge_resampled(edges: np.ndarray, resampled: frozenset[int]) -> np.ndarray:
+    """Drop the edge between two consecutive resampled blocks: a resample keeps the run's moments."""
+    keep = [0] + [k for k in range(1, edges.size - 1)
+                  if not (k - 1 in resampled and k in resampled)] + [edges.size - 1]
+    return edges[keep]
+
+
+def _snap_bounds(pieces: list, blocks: np.ndarray, edges: np.ndarray, max_grad: float) -> dict:
+    """
+    What the endpoint snap can change, from the tree: at each inner block edge where the tree's
+    summed value v is under the threshold but not zero, a triangle of height |v| reaching the
+    nearest knot on each side.
+    """
+    n = edges.size - 1
+    length = np.diff(edges) / _TPS
+    out: dict = {}
+    for e in blocks[1:-1]:
+        for left in (True, False):
+            value: dict = {}
+            reach: dict = {}
+            for axis, t, g in pieces:
+                if not (t[0] < e <= t[-1] if left else t[0] <= e < t[-1]):
+                    continue
+                value[axis] = value.get(axis, 0.0) + float(np.interp(float(e), t.astype(float), g))
+                h = int(e - t[t < e][-1]) if left else int(t[t > e][0] - e)
+                reach[axis] = min(reach.get(axis, h), h)
+            for axis, v in value.items():
+                if not 0.0 < abs(v) < _SNAP * max_grad:
+                    continue
+                lo, hi = (e - reach[axis], e) if left else (e, e + reach[axis])
+                i0 = max(int(np.searchsorted(edges, lo, side='right')) - 1, 0)
+                i1 = min(int(np.searchsorted(edges, hi, side='left')), n)
+                acc = out.setdefault(axis, (np.zeros(n), np.zeros(n)))
+                for i in range(i0, i1):
+                    overlap = (min(hi, edges[i + 1]) - max(lo, edges[i])) / _TPS
+                    if overlap > 0:
+                        acc[0][i] += abs(v) * overlap
+                        acc[1][i] += abs(v) * overlap * length[i]
+    return out
+
+
+def _local_violations(
+    placed: Sequence[PlacedEvent],
+    seq: Any,
+    ready: tuple[np.ndarray, list],
+    resampled: frozenset[int],
+    max_grad: float,
+) -> list[ContractViolation]:
+    """
+    m0 and m1 per compiled block, each about the block's own start, in two stages.
+
+    **Stage A, the compile:** the tree's events restricted exactly to each block, against the
+    ready blocks SeqCraft handed to PyPulseq.  Only float, the endpoint snap and the float of
+    interpolating at absolute times separate them.  **Stage B, registration:** the ready blocks
+    against what PyPulseq stored, within its storage precision -- compression to 1e-7 of the peak
+    and the six-digit key it deduplicates by.  Neither stage sees an absolute time, so a correct
+    waveform compares the same wherever it is placed.
+    """
+    blocks, registered = _registered_gradients(seq)
+    ready_edges, ready_pieces = ready
+    out: list[ContractViolation] = []
+    if not np.array_equal(blocks, ready_edges):
+        return [ContractViolation('block grid', 'the sequence holds different block edges from '
+                                  'the ones emission was handed')]
+    edges = _merge_resampled(blocks, resampled)
+    length = np.diff(edges) / _TPS
+    tree, tree_out = _interval_moments(_tree_gradients(placed), edges)
+    mine, mine_out = _interval_moments(ready_pieces, edges)
+    stored, stored_out = _interval_moments(registered, edges)
+    snap = _snap_bounds(_tree_gradients(placed), blocks, edges, max_grad)
+
+    for axis in sorted(set(tree_out) | set(mine_out) | set(stored_out)):
+        out.append(ContractViolation(f'axis {axis}', 'gradient lies outside the sequence'))
+
+    zero = np.zeros(edges.size - 1)
+    for axis in sorted(set(tree) | set(mine) | set(stored)):
+        t, r, s = tree.get(axis), mine.get(axis), stored.get(axis)
+        p = t['P'] if t else zero
+        s0, s1 = snap.get(axis, (zero, zero))
+        placement = 2.0 * _ROUNDOFF * (edges[1:] / _TPS) * (t['slope'] if t else zero) * length
+        tolerance_a = {
+            'm0': (_FLOAT * (t['T0'] + p * length) + s0 + placement) if t else zero,
+            'm1': (_FLOAT * (t['T0'] * length + p * length ** 2 / 2) + s1 + placement * length)
+            if t else zero,
+        }
+        rp = r['P'] if r else zero
+        tolerance_b = {
+            'm0': ((_QUANTUM / 2 + _KEY_SHARING) * rp * r['S0']
+                   + _FLOAT * (r['T0'] + rp * length)) if r else zero,
+            'm1': ((_QUANTUM / 2 + _KEY_SHARING) * rp * r['S1']
+                   + _FLOAT * (r['T0'] * length + rp * length ** 2 / 2)) if r else zero,
+        }
+        for stage, got, want, tolerances in (('compile', r, t, tolerance_a),
+                                             ('registration', s, r, tolerance_b)):
+            for moment in ('m0', 'm1'):
+                g = got[moment] if got else zero
+                w = want[moment] if want else zero
+                difference = g - w
+                bad = np.flatnonzero(np.abs(difference) > tolerances[moment])
+                if not bad.size:
+                    continue
+                k = int(bad[np.argmax(np.abs(difference[bad]) / np.maximum(tolerances[moment][bad], 1e-300))])
+                unit = '1/m' if moment == 'm0' else 's/m'
+                what = ('the tree asked for' if stage == 'compile' else 'emission handed PyPulseq')
+                out.append(ContractViolation(
+                    f'axis {axis} {moment}, block interval at {edges[k] / _TPS * 1e3:.3f} ms',
+                    f'compiled {moment} {g[k]:.6g} {unit} about the block start differs from what '
+                    f'{what}, {w[k]:.6g} {unit}, by {difference[k]:.3g}, beyond the {stage} '
+                    f'tolerance {tolerances[moment][k]:.3g}'
+                    + (f' ({bad.size} intervals)' if bad.size > 1 else ''),
+                ))
+    return out
+
+
 def verify_against_tree(
     placed: Sequence[PlacedEvent],
     targets: Mapping[int, float] | None,
@@ -463,6 +691,10 @@ def verify_against_tree(
     tree_duration_s: float,
     moments: Callable[[int], dict[str, float]],
     label_states: Callable[[], Mapping[str, Any]],
+    sequence: Any = None,
+    ready: tuple[np.ndarray, list] | None = None,
+    resampled: frozenset[int] = frozenset(),
+    max_grad: float = 0.0,
 ) -> None:
     """
     Assert the compile preserved what the tree meant.
@@ -517,6 +749,14 @@ def verify_against_tree(
                 f'{tree_duration_s * 1e6:.1f} us',
             )
         )
+
+    # Trial: with the ready blocks in hand, m0 and m1 are compared per block, about each block's
+    # start, and the global sums below are not checked at all -- they are implied.
+    if sequence is not None and ready is not None:
+        violations.extend(_local_violations(placed, sequence, ready, resampled, max_grad))
+        violations.extend(_address_violations(placed, targets, label_states))
+        require_valid_contract('against-tree', violations)
+        return
 
     want: dict[str, float] = {}
     # m0's tolerance is scaled by the area each event *traverses*, the integral of |g|, not by its

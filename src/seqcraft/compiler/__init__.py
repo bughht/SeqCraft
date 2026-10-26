@@ -114,6 +114,7 @@ from .verification import (
     check_event_sizes,
     check_label_addresses,
     check_rf_amplitude,
+    ready_gradients,
     require_valid_contract,
     verify_against_tree,
     verify_placed_events,
@@ -358,6 +359,9 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     for category, entries in legalized.notes:
         notes.setdefault(category, []).extend(entries)
     origins = [block.origin for block in legalized.blocks]
+    # Trial: what the verifier compares the tree with, per block, before PyPulseq stores it.
+    handed = ready_gradients(legalized.blocks)
+    resampled = legalized.resampled
 
     # Legalization returns a complete immutable tuple so its cross-block contract can be checked.
     # Drain a private queue during emission so events already copied into PyPulseq are not retained
@@ -421,6 +425,10 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
         tree_duration_s=total,
         moments=lambda order: _sequence_moments(seq, order),
         label_states=lambda: seq.evaluate_labels(evolution='adc'),
+        sequence=seq,
+        ready=handed,
+        resampled=resampled,
+        max_grad=float(opts.max_grad),
     )
     # Last, so that nothing warns about a compile that then failed.
     _warn(notes)
