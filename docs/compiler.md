@@ -223,58 +223,90 @@ checks them. A spiral is a narrowband gradient waveform and can sit squarely ins
 float64 resolves about 4 ns at 20 000 s, so demanding nanosecond agreement on a long acquisition
 would flag every sequence over an hour.
 
-**Per-axis m0** must equal the sum over the flattened events. This is the one that catches a split
-which lost a tail or a merge which dropped a piece — a whole class of compiler bug that no
-individual test case would have to think of. Its tolerance scales with the total area *traversed*,
-not the net: a readout and its prephaser very nearly cancel, and a relative tolerance on the net
-would demand exactness that float summation over thousands of pieces cannot deliver. Traversed area
-is the integral of `|g|` over each event. Dividing one waveform into consecutive events leaves it
-unchanged, and overlapping pieces that cancel can only raise it, so it never falls below the
-waveform's own traversed area. That is not the same as being independent of how the tree packages
-a waveform, and is not promised.
+**m0 and m1 per compiled block and axis**, each about the block's own start. m0 is what catches a
+split that lost a tail, a merge that dropped a piece, or area moved from one block into the next —
+a whole class of compiler bug that no individual test case would have to think of. m1 catches a
+gradient at the wrong moment, which m0 cannot see: m0 is exactly what a time shift preserves, and a
+piece of area `A` displaced by `dt` moves m1 by `A·dt`.
 
-The tolerance also has to cover how PyPulseq **registers** a shape in memory, which is what this
-check reads. When run-length compression engages, the peak-normalised samples are rounded to 1e-7,
-which moves the area by at most half a quantum per sample. Under that model, 1e-6 of the traversed
-area is a sufficient bound on the worst case whenever a shape's mean `|g|` is at least 5 % of its
-peak. It is not a necessary one: lower-duty shapes are not thereby refused, and measured rounding
-sits two orders below the tolerance. A long, densely sampled shape below that duty, whose constant
-section rounds the same way at every sample, does exceed it; that gap is pinned in
-`tests/compiler/test_m0_tolerance.py`.
+**Why per block.** Referenced to the start of the sequence, m1 moved with placement. Registration
+moves a stored shape's area by `δm0`, so the same legal waveform placed at `t` moved the absolute
+m1 by `t·δm0`, and a compressible shape accepted at 0 s was refused at 1 s. A tolerance wide enough
+for that at 10 s would hide a 4.5 1/m blip played one raster late. About each block's own start the
+lever arm is at most a block long, and a correct waveform compares the same wherever it sits. The
+sequence's whole moments are sums of the block ones — `M0 = Σ m0_k` and `M1 = Σ (m1_k + a_k·m0_k)`,
+with `a_k` the block start — so a whole-sequence comparison that tolerated every block's error could
+never fire, and a narrower one would bring `a_k·δm0_k` back. There is none.
 
-Registration also **deduplicates** events: PyPulseq keys each one by its parameters printed with
-`%.6g`, so an event that prints like an earlier one is stored as that one and plays its values. That
-moves the area by up to 1e-5 relative, in memory, and this tolerance does not cover it: two legal
-trapezoids at 100000.0 and 100000.4 Hz/m, in separate blocks, are refused, before the traversed-area
-change as after it. Writing the `.seq` file rounds again — amplitudes to six significant digits —
-but that serialisation error is separate, and this check never sees it.
+Both are compared in **two stages**, each against its own input:
 
-**m1 is not covered for the same error far from the start.** m1 is referenced to `t = 0`, so a
-shape whose registered area moved by `δm0` at time `t` also moves m1 by `t·δm0`. m1's tolerance
-has a relative term, 1e-9 of the summed `|net area|` times the sequence's duration, so it can grow
-with duration; it does not reliably account for that translated error. For a shape whose events
-net to zero it stays far below the peak-based floor, and where it does grow it can still fall
-short: in a native reproducer, a tolerance of 4.42e-5 s/m at 10 s against an error of 2.95e-4 s/m.
-A compressible shape accepted at the start of a sequence can therefore be refused by m1 when placed
-a second or more later. No tolerance alone separates that from a mistimed lobe late in a long
-sequence. Comparing moments about a local time reference, for example each block's start, is a
-follow-up proposal: it has not been validated and is not part of this check. This is recorded as a
-known limitation, not addressed by the m0 change.
+| stage | compares | its tolerance covers |
+|---|---|---|
+| compile | the tree's placed events, restricted exactly to each block, with the ready blocks emission hands PyPulseq | SeqCraft's own arithmetic: float summation; the float of superposing pieces, which `superpose` interpolates at absolute times; the endpoint snap; and where a knot's time lands in ticks |
+| registration | the ready blocks, measured before emission, with what PyPulseq stored, read back block by block | PyPulseq's storage precision: compression rounding, and the six-digit key it deduplicates events by |
 
-m0 alone is **not** evidence of fidelity, and it is worth being precise about why. Area is exactly
-what linear resampling preserves, so when both sides were integrated the same approximate way their
-errors cancelled: a resample that rounded 2.5 % off a spiral's peak left m0 agreeing to 1e-14. Both
-sides are now integrated from exact knots, which is what makes the agreement mean something.
+A refusal names its stage, block, time, difference and tolerance, so it says whether SeqCraft or
+PyPulseq moved the waveform. Stored against tree is bounded by the two tolerances together.
 
-**Per-axis m1**, referenced to the start of the sequence. m0 is exactly the quantity that survives a
-*time shift* — a lobe playing a whole raster early leaves it untouched — so m0 alone cannot see a
-gradient at the wrong moment. m1 can: a piece of area `A` displaced by `dt` changes it by `A·dt`.
+**Resampled blocks.** Where legalization resampled a block's gradient onto the raster, it says so
+as data, not only in the warning's text. The compile stage then compares that block and axis with
+the tree resampled the same way, onto the gradient raster from the block's start. Neither of the
+alternatives is sound: a resample moves area between the blocks of a stretch, so the tree as given
+refuses it; and merging a stretch's inner seams is exact only where both its ends are flat, since a
+sloped end leaves a boundary term of about `r²·g′/8` in the stretch. The other axes of a resampled
+block are compared as usual, and registration needs no special case: what it compares is the
+resampled waveform itself.
 
-Both sides integrate the **exact piecewise-linear segments** rather than raster samples, and the
-Gauss-Legendre rule they use is exact for these polynomial integrands. `g(t)·t` is quadratic between
-two knots, so the trapezoidal rule on samples is wrong there by an amount depending on knot spacing
-— enough that a trapz-based m1 disagreed with itself by 0.1 % on nothing more than a split, which
-would have made it useless as an invariant.
+**Each tolerance, and where it holds.** Every term is a stated bound, not a constant tuned to a
+case.
+
+- *Float*, both stages. A sum of `N` segment terms is within `(N + 10)·u·Σ|term|` of exact, with
+  `u = 2⁻⁵³`, for any `N` and any summation order.
+- *Superposition*, compile. Each superposed value is within `(k + 8)·u` of the summed peaks of its
+  `k` pieces, plus `4·u·t` times their summed peak slope, because `superpose` interpolates at
+  absolute float seconds. That last term is the only one that grows with placement.
+- *Endpoint snap*, compile. `axis_gradient` sets a superposed block's first or last value to zero
+  when it is below `1e-6·max_grad`, removing a triangle of that height out to the next knot. This is
+  modelled from the tree's own value at each block edge, wherever the compile's value could fall
+  under the threshold.
+- *Time representation*, compile. The raster check puts a gradient's start within half a tick of
+  its tick, and a knot's absolute time takes a few more roundings to become ticks. So a knot can
+  land one tick (1 ps) from where the other side puts it, and further once `u·t` approaches a tick,
+  past about 1100 s. The term is that shift times each piece's variation and end values.
+- *Compression*, registration. PyPulseq stores a shape as differences of its peak-normalised
+  samples, each rounded to `1e-7`. A stored sample is within half a quantum, except when the first
+  sample lies exactly on a half quantum: rounding half away from zero then carries one more quantum
+  into every later sample. The bound is the edge case, `1.5e-7` of the peak, over the shape's whole
+  span. It needs no condition on duty, which is what closed the low-duty gap of the earlier
+  traversed-area tolerance.
+- *Deduplication*, registration only. Every PyPulseq library keys an entry by its values printed
+  with `%.6g`, and stores an event that prints like an earlier one as that one. A value then moves
+  by under `1e-5` of itself; a shape difference of at least a tenth of the peak, which prints more
+  coarsely than a quantum, moves by under `1e-5` of itself, and that carries into every later sample.
+  Two legal trapezoids at 100000.0 and 100000.4 Hz/m are therefore accepted — and the second still
+  plays 100000.0. This allowance never enters the compile stage.
+- *Domain.* Event time parameters and shape lengths below `1e6` gradient rasters, which `%.6g`
+  prints exactly. Gradient time pieces inside the sequence, and each block's gradient inside its
+  block; content outside either is reported in its own right.
+
+**What these checks cannot detect.** m0 and m1 are two linear functionals per block. They are not
+waveform fidelity.
+
+- A change that keeps every block's area and centroid: a distortion orthogonal to `1` and `t − a`,
+  a zero-net piece moved inside its block, or two equal pieces swapped.
+- Anything below its tolerance. In the registration stage that includes any change within
+  PyPulseq's six-digit precision, about `1e-5` of a block's `|g|` integral.
+- A resample the compiler reported: it is accepted as the raster interpolant of the tree, which is
+  what the `resample` warning states.
+- RF and ADC timing, amplitude and slew limits, and seam continuity. Those are checked elsewhere.
+- The written file. Serialisation rounds again, to six significant digits, and nothing here reads
+  it back.
+
+Both sides integrate **exact piecewise-linear segments** in closed form, on integer ticks, rather
+than raster samples. The trapezoidal rule on samples is exact for m0 and only for m0: a trapz-based
+m1 disagreed with itself by 0.1 % on nothing more than a split. And integrating both sides the same
+approximate way makes their errors cancel: a resample that rounded 2.5 % off a spiral's peak left a
+sampled m0 agreeing to 1e-14.
 
 **Label addresses** must equal the fold of the tree's labels. The duplicate-address check in
 `check()` only fires when two addresses *collide*; an addressing shifted by one readout but still
@@ -313,7 +345,7 @@ unread, and the failure mode is a `.seq` where the problem surfaces when someone
 | `CompileError` | Two RF or ADC events overlap; an absolute start is negative; a gradient starts off the gradient raster; no boundary can be cut in the gap between two exclusive events; a boundary would fall inside a gradient an ADC is sampling; two imaging ADCs write the same k-space address; `check_timing` fails on anything but the `TotalDuration` float-equality artifact, which pypulseq emits even on pulseq's own approved files. |
 | `HardwareLimitError` | The **summed** waveform exceeds `max_grad` or `max_slew` on an axis, or one ADC or RF event carries more samples than the interpreter accepts. |
 | `DefinitionConflict` | `name=` and `definitions['Name']` disagree. |
-| `CompilerContractError` | An IR contract broke, or the compiled sequence does not match the tree in duration, m0, m1 or a label address. A compiler bug; report it with the tree. |
+| `CompilerContractError` | An IR contract broke, or the compiled sequence does not match the tree in duration, a block's m0 or m1, or a label address. A compiler bug — or PyPulseq storing a gradient beyond its own precision, which the message names as registration; report it with the tree. |
 
 Every message names the event, its **provenance path** and the time, and offers two concrete
 remedies with the numbers filled in:

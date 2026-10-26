@@ -106,15 +106,16 @@ from .boundaries import (
 )
 from .emission import emit_blocks
 from .errors import CompileError, DefinitionConflict
-from .legalization import legalize_blocks
+from .legalization import _NEGLIGIBLE_EDGE, legalize_blocks
 from .placement import place_events
 from .verification import (
     ContractViolation,
-    _sequence_moments,
     check_event_sizes,
     check_label_addresses,
     check_rf_amplitude,
+    handed_gradients,
     require_valid_contract,
+    stored_gradients,
     verify_against_tree,
     verify_placed_events,
 )
@@ -358,6 +359,10 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
     for category, entries in legalized.notes:
         notes.setdefault(category, []).extend(entries)
     origins = [block.origin for block in legalized.blocks]
+    # What emission hands PyPulseq, measured now: registration can change how an event is held, so
+    # the against-tree check compares the tree with this and this with what PyPulseq stored.
+    handed = handed_gradients(legalized.blocks)
+    resampled = legalized.resampled
 
     # Legalization returns a complete immutable tuple so its cross-block contract can be checked.
     # Drain a private queue during emission so events already copied into PyPulseq are not retained
@@ -419,7 +424,11 @@ def compile_sequence(  # noqa: C901, PLR0912, PLR0915
         targets,
         duration_s=float(seq.duration()[0]),
         tree_duration_s=total,
-        moments=lambda order: _sequence_moments(seq, order),
+        handed=handed,
+        stored=lambda: stored_gradients(seq),
+        resampled=resampled,
+        grad_raster=float(opts.grad_raster_time),
+        snap=_NEGLIGIBLE_EDGE * float(opts.max_grad),
         label_states=lambda: seq.evaluate_labels(evolution='adc'),
     )
     # Last, so that nothing warns about a compile that then failed.

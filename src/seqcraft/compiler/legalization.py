@@ -74,6 +74,10 @@ __all__ = [
     'superpose',
 ]
 
+#: A superposed block's edge value below this fraction of ``max_grad`` is set to exactly zero (see
+#: :func:`axis_gradient`).  The against-tree check models the change that makes.
+_NEGLIGIBLE_EDGE = 1e-6
+
 
 def superpose(
     pieces: Sequence[PlacedEvent],
@@ -159,6 +163,8 @@ def axis_gradient(
     opts: Opts,
     notes: dict[str, list[str]],
     block_index: int,
+    *,
+    resampled: list[tuple[int, str]] | None = None,
 ) -> SimpleNamespace | None:
     """
     Return the single gradient event for `axis` over the interval ``[a, b)``, or ``None``.
@@ -171,7 +177,8 @@ def axis_gradient(
     whichever pulseq representation can hold those knots without moving them: an extended
     trapezoid when they are all on the gradient raster, an arbitrary gradient when they are the
     raster-centre pattern.  Only a waveform needing *both* -- a trapezoid summed with a spiral --
-    can be held by neither, and that one is resampled and reported rather than done quietly.
+    can be held by neither, and that one is resampled and reported rather than done quietly:
+    in the warning notes, and as ``(block_index, axis)`` in `resampled` when one is given.
     """
     if not pieces:
         return None
@@ -194,7 +201,7 @@ def axis_gradient(
     # the amplifier's range rather than 0.0, and pypulseq tests ``first != 0`` *exactly* before
     # demanding the previous block continue it -- so without this a rounding artifact becomes a
     # continuity error hundreds of blocks away from anything that looks wrong.
-    negligible = 1e-6 * float(opts.max_grad)
+    negligible = _NEGLIGIBLE_EDGE * float(opts.max_grad)
     for edge in (0, -1):
         if abs(amps[edge]) < negligible:
             amps[edge] = 0.0
@@ -234,6 +241,8 @@ def axis_gradient(
         )
         return cast('SimpleNamespace', grad)
 
+    if resampled is not None:
+        resampled.append((block_index, axis))
     return _resampled(axis, rel_ps, amps, opts, notes, block_index, pieces, a)
 
 
@@ -422,6 +431,7 @@ def legalize_blocks(  # noqa: C901, PLR0912
     """
     notes: dict[str, list[str]] = {}
     blocks: list[PulseqReadyBlock] = []
+    resampled: list[tuple[int, str]] = []
 
     grads: dict[str, list[PlacedEvent]] = {}
     for event in placed:
@@ -495,7 +505,8 @@ def legalize_blocks(  # noqa: C901, PLR0912
                     ],
                 )
                 raise CompileError(msg)
-            gradient = axis_gradient(axis, here, start, end, opts, notes, index)
+            gradient = axis_gradient(axis, here, start, end, opts, notes, index,
+                                     resampled=resampled)
             if gradient is not None:
                 events.append(gradient)
                 paths.extend(event.path for event in here)
@@ -542,4 +553,4 @@ def legalize_blocks(  # noqa: C901, PLR0912
         for category, entries in sorted(notes.items())
         if entries
     )
-    return LegalizationResult(ready_blocks, frozen_notes)
+    return LegalizationResult(ready_blocks, frozen_notes, tuple(resampled))

@@ -1806,9 +1806,12 @@ Properties: `kinds`, and `summary()`.
 class LegalizationResult:
     blocks: tuple[PulseqReadyBlock, ...]
     notes: tuple[tuple[str, tuple[str, ...]], ...]
+    resampled: tuple[tuple[int, str], ...] = ()
 ```
 
 `notes` is explicit immutable stage output: emission neither discovers nor mutates warnings.
+`resampled` names each `(block index, axis)` whose gradient was resampled onto the raster, as data,
+because the against-tree check compares those with the tree resampled the same way.
 
 | Name | What it is |
 |---|---|
@@ -1847,7 +1850,7 @@ address.
 | Function | Does |
 |---|---|
 | `superpose(pieces, a, b) -> (rel_ticks, amps)` | The exact PWL superposition over `[a, b]`, in integer ticks |
-| `axis_gradient(axis, pieces, a, b, opts, notes, block_index)` | The single gradient event for one axis over one interval, or `None` |
+| `axis_gradient(axis, pieces, a, b, opts, notes, block_index, *, resampled=None)` | The single gradient event for one axis over one interval, or `None`; a resample is appended to `resampled` |
 | `check_limits(events, opts, block_index, origin, notes, *, start=0.0) -> None` | Raise `HardwareLimitError` on a per-axis violation; append norm findings to `notes` |
 | `required_duration(events, opts) -> float` | The shortest block that can hold `events`, by PyPulseq's rules |
 | `common_path(paths) -> tuple[str, ...]` | The longest tag path common to everything in a block |
@@ -1879,29 +1882,42 @@ access to placed events, boundaries, label targets, the scanner limits, or trans
 | `check_rf_amplitude(seq, opts, origins=()) -> None` | Raise `HardwareLimitError` if any RF event's peak exceeds `opts.max_b1` |
 | `check_label_addresses(seq) -> None` | Raise `CompileError` if two imaging ADCs write the same k-space address |
 | `expected_addresses(placed, targets) -> list[dict[str, int]]` | Fold the tree's labels the way the interpreter will |
-| `verify_against_tree(placed, targets, *, duration_s, tree_duration_s, moments, label_states) -> None` | The four semantic invariants |
+| `handed_gradients(blocks) -> HandedGradients` | m0 and m1 of the ready blocks per block and axis, about each block's start, measured before emission, with PyPulseq's storage allowance |
+| `stored_gradients(seq) -> BlockMoments` | The same for what PyPulseq stored, read back block by block |
+| `verify_against_tree(placed, targets, *, duration_s, tree_duration_s, handed, stored, resampled, grad_raster, snap, label_states) -> None` | The four semantic invariants |
 
 **The self-check** asserts four invariants after emission, each catching a class of compiler bug no
 individual test case would:
 
 1. **Total duration** matches the tree's — guards a boundary merge that dropped time.
-2. **m0 per axis** matches the sum over flattened events — a split that lost a tail changes it.
-3. **m1 per axis**, referenced to the sequence start — m0 survives a *time shift*, so it cannot see a
-   gradient that plays at the wrong moment; m1 can, because area `A` displaced by `dt` changes it by
-   `A·dt`.
+2. **m0 per compiled block and axis**, about the block's own start — a split that lost a tail, a
+   merge that dropped a piece, or area moved from one block to the next changes it.
+3. **m1 per compiled block and axis**, about the block's own start — m0 survives a *time shift*, so
+   it cannot see a gradient that plays at the wrong moment; m1 can, because area `A` displaced by
+   `dt` changes it by `A·dt`. With the block as reference, the lever arm is at most a block long, so
+   a correct waveform compares the same wherever it sits.
 4. **Label addresses** match the fold of the tree's labels — a duplicate-address check only fires on
    a *collision*, but an addressing shifted by one and still unique passes it.
 
-All four are measured before anything is raised, because one mistimed stage usually breaks several
-axes and the pattern is the diagnosis.
+m0 and m1 are compared in two stages, each against its own input. **Compile**: the tree's events,
+restricted exactly to each block, against the ready blocks emission hands PyPulseq, within
+SeqCraft's own float and endpoint snap; a block-axis legalization resampled is compared with the
+tree resampled onto the raster. **Registration**: those ready blocks against what PyPulseq stored,
+within its storage precision — compression rounding, and the six-digit key it deduplicates events
+by. The sequence's whole m0 and m1 are sums of the per-block ones, so they need no check of their
+own. All four invariants are measured before anything is raised, because one mistimed stage
+usually breaks several axes and the pattern is the diagnosis.
 
-Tolerances scale with the total, because they must: float64 resolves about 4 ns at 20 000 s, and the
-moment tolerance is scaled by total area *traversed* rather than the net, since a readout and its
-prephaser nearly cancel.
+m0 and m1 are not waveform fidelity: two numbers per block cannot see a change that keeps every
+block's area and centroid, nor anything below the tolerance. [`compiler.md`](compiler.md) states
+each tolerance's domain.
 
-`_sequence_moments(seq, order)` is the compiled-side integrator. It is private and deliberately
-**not** shared with `analysis.moments`, which walks the tree: a self-check that calls the same code
-as the thing it checks compares a number with itself.
+`BlockMoments(edges, m0, m1, error0, error1, overrun)` holds one side's per-block moments and the
+float error bound of each; `HandedGradients` adds `storage0` and `storage1`, the registration
+allowance. `_sequence_moments(seq, order)` integrates the whole built sequence at absolute times;
+the check no longer uses it, and the baseline tool does. It is private and deliberately **not**
+shared with `analysis.moments`, which walks the tree: a self-check that calls the same code as the
+thing it checks compares a number with itself.
 
 `ContractViolation(location, message)` is the finding type; `CompilerContractError(name, violations)`
 is the exception.
@@ -1953,6 +1969,7 @@ at import.
 | `ADDRESS_KEYS` | `design.events` | constant |
 | `AXES` | `design.events` | constant |
 | `BARRIER` | `design.logic` | constant |
+| `BlockMoments` | `compiler.verification` | class |
 | `CartesianLine` | `modules` | class |
 | `CompileError` | `compiler.errors` | exception |
 | `CompilerContractError` | `compiler.verification` | exception |
@@ -1973,6 +1990,7 @@ at import.
 | `GRE3DTR` | `modules` | class |
 | `IRPrep` | `modules` | class |
 | `HANDLED_KINDS` | `design.events` | constant |
+| `HandedGradients` | `compiler.verification` | class |
 | `HardwareLimitError` | `compiler.errors` | exception |
 | `INDIVISIBLE_KINDS` | `compiler.model` | constant |
 | `Item` | `design.logic` | type alias |
@@ -2033,6 +2051,7 @@ at import.
 | `format_error` | `errors` | function |
 | `from_scanner` | `scanner.opts` | function |
 | `from_ticks` | `design.timing` | function |
+| `handed_gradients` | `compiler.verification` | function |
 | `in_block_delay` | `compiler.model` | function |
 | `interval_duration` | `compiler.model` | function |
 | `knots_of` | `design.events` | function |
@@ -2054,6 +2073,7 @@ at import.
 | `sample` | `analysis` | function |
 | `spoiler` | `modules` | function |
 | `span` | `design.logic` | function |
+| `stored_gradients` | `compiler.verification` | function |
 | `superpose` | `compiler.legalization` | function |
 | `synthetic_hardware` | `scanner.hardware` | function |
 | `time_at_or_before` | `compiler.model` | function |
