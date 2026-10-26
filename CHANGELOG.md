@@ -20,8 +20,9 @@ stages:
   by.
 
 The whole-sequence m0 and m1 refusals are retired. The sequence's moments are sums of the block
-ones, so they add nothing a block-wise check misses. A refusal names its stage, block, start time,
-difference and tolerance. Duration and label addresses are checked as before. The comparison
+ones, so they add nothing a block-wise check misses
+([ADR-007](docs/adr/007-against-tree-moments-per-block.md)). A refusal names its stage, block, start
+time, difference and tolerance. Duration and label addresses are checked as before. The comparison
 changes no emitted waveform; the endpoint-snap correction below does, at seam values under
 `1e-6·max_grad`.
 

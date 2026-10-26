@@ -236,7 +236,8 @@ for that at 10 s would hide a 4.5 1/m blip played one raster late. About each bl
 lever arm is at most a block long, and a correct waveform compares the same wherever it sits. The
 sequence's whole moments are sums of the block ones — `M0 = Σ m0_k` and `M1 = Σ (m1_k + a_k·m0_k)`,
 with `a_k` the block start — so a whole-sequence comparison that tolerated every block's error could
-never fire, and a narrower one would bring `a_k·δm0_k` back. There is none.
+never fire, and a narrower one would bring `a_k·δm0_k` back. There is none. The decision is
+[ADR-007](adr/007-against-tree-moments-per-block.md).
 
 Both are compared in **two stages**, each against its own input:
 
