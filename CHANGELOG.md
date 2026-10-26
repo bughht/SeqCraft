@@ -13,8 +13,8 @@ m0 and m1 are now compared per compiled block and axis, each about the block's o
 stages:
 
 - **compile** — the tree's placed events, restricted exactly to each block, against the ready
-  blocks emission hands PyPulseq, within SeqCraft's own float, its endpoint snap, and where a
-  knot's time lands in ticks;
+  blocks emission hands PyPulseq, within SeqCraft's own float, and a tick where a knot's time can
+  land one off;
 - **registration** — those ready blocks, measured before emission, against what PyPulseq stored,
   within its storage precision: compression rounding, and the six-digit key it deduplicates events
   by.

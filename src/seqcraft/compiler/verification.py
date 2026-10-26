@@ -463,10 +463,9 @@ _KEY = 1e-5
 #: share a key while differing there.  Smaller differences print every quantum.
 _KEY_COARSE = 0.1
 #: Absolute times reach the compiler as float seconds.  The raster check puts a gradient's start
-#: within half a tick of its tick, and turning a knot's time into ticks takes a few more roundings
-#: of about u * t each: adding the knot's offset to the start, converting, and a block edge's own
-#: round trip through seconds.  So a knot can land a tick off on either side, and further once
-#: u * t approaches a tick, past about 1100 s.
+#: within half a tick of its tick, and superposing turns each knot's absolute time into ticks with
+#: a few more roundings of about u * t: adding the knot's offset to the start, and converting.  A
+#: block edge makes its own round trip through seconds.  This many such roundings are allowed for.
 _TIME_OPERATIONS = 4
 
 
@@ -719,13 +718,20 @@ def _tree_side(
     """
     n = edges.size - 1
     pieces: list[tuple[int, np.ndarray, np.ndarray]] = []
+    near_half: list[bool] = []
     for p in placed:
         if p.kind in GRADIENT_KINDS:
             ticks, amps = _knots(p.event)
             if ticks.size >= 2:
                 # Anchored at the start the compiler checked onto the gradient raster.
-                offset = to_ticks(p.start) - to_ticks(float(getattr(p.event, 'delay', 0.0) or 0.0))
+                first = to_ticks(p.start)
+                offset = first - to_ticks(float(getattr(p.event, 'delay', 0.0) or 0.0))
                 pieces.append((AXES.index(p.event.channel), offset + ticks, amps))
+                # Whether superposing could round a knot of this piece the other way: only if the
+                # start's own offset from its tick and those roundings can reach half a tick.
+                late = max(abs(p.start), abs(p.end))
+                near_half.append(abs(p.start * _TPS - first)
+                                 + _TIME_OPERATIONS * _U * late * _TPS >= 0.5)
     piece, t0, t1, g0, g1 = _segments([(times, amps) for _, times, amps in pieces])
     owner, left, right, gl, gr = _split(t0, t1, g0, g1, edges)
     piece = piece[owner]
@@ -743,11 +749,15 @@ def _tree_side(
     piece, axis, block = piece[inside], axis[inside], block[inside]
     left, right, gl, gr = left[inside], right[inside], gl[inside], gr[inside]
     bracket = bracket[inside]
+    # Pieces a knot of which may land a tick from where the other side puts it: those near half a
+    # tick, and every piece in a block whose own edges no longer round-trip through seconds.
+    unsure = (np.array(near_half, dtype=bool)[piece]
+              | (_TIME_OPERATIONS * _U * edges[1:] >= 0.5)[block])
     sums = _sums(axis, block, left, right, gl, gr, edges)
 
-    # Per block and axis, summed over the pieces there: their peak |g|, the largest end value of a
-    # segment they are interpolated from, and their peak slope; and how many there are.  These bound
-    # the float of superposing them.
+    # Per block and axis, summed over the pieces there: the largest end value of a segment they are
+    # interpolated from, and their peak slope; and how many there are.  These bound the float of
+    # superposing them.
     flat = 3 * n
     key = block * 3 + axis
     length = right - left
@@ -755,16 +765,18 @@ def _tree_side(
     def per_bin(where: np.ndarray, weights: np.ndarray | None = None) -> np.ndarray:
         return np.bincount(where, weights=weights, minlength=flat).reshape(n, 3).astype(float)
 
-    peak = ends = steep = count = np.zeros((n, 3))
+    ends = steep = count = unsure_peak = np.zeros((n, 3))
     if key.size:
         start = np.flatnonzero(np.r_[True, (piece[1:] != piece[:-1]) | (block[1:] != block[:-1])])
         with np.errstate(divide='ignore', invalid='ignore'):
             slope = np.where(length > 0, np.abs(gr - gl) / (length / _TPS), 0.0)
-        peak = per_bin(key[start], np.maximum.reduceat(np.maximum(np.abs(gl), np.abs(gr)), start))
+        group_peak = np.maximum.reduceat(np.maximum(np.abs(gl), np.abs(gr)), start)
+        unsure_peak = per_bin(key[start][unsure[start]], group_peak[unsure[start]])
         ends = per_bin(key[start], np.maximum.reduceat(bracket, start))
         steep = per_bin(key[start], np.maximum.reduceat(slope, start))
         count = per_bin(key[start])
-    variation = per_bin(key, np.abs(gr - gl))
+    unsure_variation = per_bin(key[unsure], np.abs(gr - gl)[unsure])
+    unsure_area = per_bin(key[unsure], (0.5 * length / _TPS * (np.abs(gl) + np.abs(gr)))[unsure])
 
     span = (np.diff(edges) / _TPS)[:, None]
     modelled = np.zeros((n, 3), dtype=bool)
@@ -778,17 +790,17 @@ def _tree_side(
     lever = 4.0 * _U * span * steep                           # the resample, in seconds from the start
     noise = value + lever
 
-    # A knot, on either side, or a block edge can land `shift` from where the other side puts it
-    # (_TIME_OPERATIONS).  Moving every knot of a piece by that changes its area by at most `shift`
-    # times its variation and its two end values, and its m1 by that times the lever arm, plus the
-    # area times the shift.
+    # A knot of an unsure piece can land `shift` from where the other side puts it.  Moving every
+    # knot of a piece by that changes its area by at most `shift` times its variation and its two
+    # end values, and its m1 by that times the lever arm, plus the area times the shift.  For any
+    # other piece the two sides compute the same ticks, and this is zero.
     shift = (np.ceil(0.5 + _TIME_OPERATIONS * _U * edges[1:]) / _TPS)[:, None]
-    moved = shift * (variation + 2.0 * peak)
+    moved = shift * (unsure_variation + 2.0 * unsure_peak)
 
     interpolated = 4.0 * _U * ends                            # this side's own interpolated values
     tolerance0 = _float_error(sums, 0) + (interpolated + noise) * span + moved
     tolerance1 = (_float_error(sums, 1) + (interpolated + noise) * span**2 / 2.0
-                  + moved * span + shift * sums['T0'])
+                  + moved * span + shift * unsure_area)
     return sums['m0'], sums['m1'], tolerance0, tolerance1, outside, modelled
 
 

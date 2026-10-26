@@ -272,9 +272,11 @@ case.
   cancel at a seam leave no residue there. That moves the waveform by less than the superposition
   term already allows, so it needs no term of its own. A genuine value is kept however small.
 - *Time representation*, compile. The raster check puts a gradient's start within half a tick of
-  its tick, and a knot's absolute time takes a few more roundings to become ticks. So a knot can
-  land one tick (1 ps) from where the other side puts it, and further once `u·t` approaches a tick,
-  past about 1100 s. The term is that shift times each piece's variation and end values.
+  its tick, and superposing turns each knot's absolute float time into ticks with a few more
+  roundings of about `u·t`. A knot can therefore land a tick (1 ps) from where the other side puts
+  it only when its piece's start lies within those roundings of half a tick, or, for every piece in
+  a block, once `u·t` itself approaches a tick, past about 1100 s. The term is that shift times
+  each such piece's variation and end values, and zero for every other piece.
 - *Compression*, registration. PyPulseq stores a shape as differences of its peak-normalised
   samples, each rounded to `1e-7`. A stored sample is within half a quantum, except when the first
   sample lies exactly on a half quantum: rounding half away from zero then carries one more quantum

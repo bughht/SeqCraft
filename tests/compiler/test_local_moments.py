@@ -260,6 +260,31 @@ def test_a_long_segment_cut_far_from_its_knots_compiles(t0: float) -> None:
     assert len(seen['handed'].edges) > 100
 
 
+@pytest.mark.parametrize(('t0', 'off'), [(100.0, 0.4999), (300.0, 0.49), (4000.0, 0.3)])
+def test_a_start_near_half_a_tick_off_compiles(t0: float, off: float) -> None:
+    """
+    The raster check accepts a gradient start within half a picosecond tick of its tick.
+
+    Superposing turns each knot's absolute float time into ticks itself, and for a start that close
+    to half a tick it can round a knot the other way; far into a sequence a block edge can too.  The
+    compile tolerance allows a tick for exactly those pieces, and without it each of these legal
+    trees was refused.
+    """
+    opts = _suite()
+    t = (round(t0 * 1e12) + off) / 1e12
+    s = np.linspace(0.0, 1.0, 400)
+    curve = np.sin(np.pi * s) * np.cos(2.0 * np.pi * s) * 0.3 * opts.max_grad
+    trap = pp.make_trapezoid('x', area=-35.0, duration=900e-6, system=opts)
+    tree = (sc.LogicBlock('near').add(t, pp.make_arbitrary_grad('x', waveform=curve, first=0.0,
+                                                                 last=0.0, system=opts))
+            .add(t + 1e-3, pp.make_trapezoid('x', area=20.0, duration=600e-6, system=opts))
+            .add(t + 0.7e-3, sc.barrier()).add(t + 1.3e-3, sc.barrier())
+            .add(t + 5e-3, trap).add(t + 5.3e-3, trap).add(t + 5.5e-3, sc.barrier()))
+    for k in range(int(t0 // 50)):                  # PyPulseq refuses a block of 150 s
+        tree.add(k * 50.0, sc.barrier())
+    _compile_warned(tree, opts, 'resampled')
+
+
 # ------------------------------------------------------------------------ same-axis superposition
 @pytest.mark.parametrize('t0', [0.0, 10.0])
 def test_superposed_pieces_compile_and_a_late_one_is_refused(t0: float) -> None:
