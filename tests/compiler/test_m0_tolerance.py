@@ -1,28 +1,19 @@
 """
-The m0 tolerance scales with the area each event traverses, not with each event's net.
+Registration rounding of a compressible shape is accepted; area actually lost is not.
 
-A gradient event that changes sign and nets zero -- a closed trajectory's axis, or a bipolar pair
-held in one shape -- used to collapse the tolerance to its absolute floor of 1e-6 1/m, because the
-scale summed each event's |net area|.  PyPulseq's registration rounds a compressible shape's
-peak-normalised samples to 1e-7, which moves an ordinary waveform's area by a few 1e-6 to a few
-1e-5 1/m.  So legal input was refused whenever compression engaged and the shape had no symmetry
-to cancel the rounding.
+PyPulseq rounds a compressible shape's peak-normalised samples to 1e-7 when it registers them,
+which moves an ordinary waveform's area by a few 1e-6 to a few 1e-5 1/m.  The check once compared
+the whole sequence's m0 against a tolerance scaled by each event's ``|net area|``.  That collapsed
+to 1e-6 1/m for a gradient that changes sign and nets zero, so legal input was refused -- and which
+of two identical sequences was refused depended on how the tree packaged the waveform.
 
-Which of two identical sequences was refused also depended on packaging.  The same waveform held
-as two overlapping events, whose nets do not vanish one by one, compiled to the identical emitted
-shape with the identical rounding, and passed.
-
-Traversed area is additive over a division of one waveform in time, and overlapping pieces that
-cancel can only raise it, so the scale never falls below the waveform's own traversed area.  That
-is enough for the four packagings tested below to agree; it is not a promise that every
-decomposition gets the same tolerance.  The check still refuses area that is actually lost, and m1
--- deliberately unchanged -- still refuses a lobe played one raster late, early in a sequence or
-ten seconds into it.  One gap is pinned at the bottom of this file.
-
-Another is not pinned, because it is not this change's: m1 is referenced to the start of the
-sequence, so the same registration error placed at time t moves m1 by t times its area error.  A
-compressible shape accepted at the start can be refused by m1 when placed a second or more later,
-on main as here.
+m0 and m1 are now compared per compiled block, in two stages (``test_local_moments.py``).
+Registration is compared with what emission handed PyPulseq, within PyPulseq's storage precision:
+at most 1.5 quanta of the peak per stored sample over the shape's span, plus its six-digit key.
+That bound has no duty condition, so the dense low-duty shape at the bottom of this file, which
+exceeded the earlier traversed-area tolerance, compiles as well.  The compile stage still refuses
+area that is actually lost, and a piece played one raster late, at the start of a sequence or
+ten seconds into it.
 
 Nothing here builds a module.
 """
@@ -35,12 +26,11 @@ import numpy as np
 import pypulseq as pp
 import pytest
 from pypulseq.compress_shape import compress_shape
+from recheck import compile_capturing, recheck
 
 import seqcraft as sc
-import seqcraft.compiler as compiler_package
-from seqcraft.compiler.boundaries import label_targets
 from seqcraft.compiler.placement import place_events
-from seqcraft.compiler.verification import _sequence_moments, _traversed_area, verify_against_tree
+from seqcraft.compiler.verification import _sequence_moments
 from seqcraft.design.events import knots_of, pwl_moment
 
 #: PyPulseq's quantum for a peak-normalised shape, applied when run-length compression engages.
@@ -106,23 +96,12 @@ def _two_events(opts: pp.Opts) -> sc.LogicBlock:
             .add(float(t[cut]), _extended(t[cut:] - t[cut], amps[cut:], opts)))
 
 
-def _compile_unchecked(tree: sc.LogicBlock, opts: pp.Opts):
-    """Compile with the against-tree check switched off, to measure what it measures."""
-    original = compiler_package.verify_against_tree
-    compiler_package.verify_against_tree = lambda *a, **k: None       # the check is under test
-    try:
-        return sc.compile(tree, opts, name='m0')
-    finally:
-        compiler_package.verify_against_tree = original
-
-
-def _recheck(seq, placed) -> None:
-    """Re-run the invariants on a compiled sequence against a (possibly tampered) tree."""
-    duration = float(seq.duration()[0])
-    verify_against_tree(placed, label_targets(placed), duration_s=duration,
-                        tree_duration_s=duration,
-                        moments=lambda order: _sequence_moments(seq, order),
-                        label_states=lambda: seq.evaluate_labels(evolution='adc'))
+def _late(placed, first: float, dt: float) -> list:
+    """The placed events with the gradient that starts at `first` moved `dt` later."""
+    return [dataclasses.replace(p, node_t=p.node_t + dt, start=p.start + dt, end=p.end + dt,
+                                res_start=p.res_start + dt, res_end=p.res_end + dt)
+            if p.kind in ('trap', 'grad') and p.node_t == first else p
+            for p in placed]
 
 
 # ------------------------------------------------------------------------------------ regression
@@ -140,12 +119,12 @@ def test_a_legal_zero_net_compressible_gradient_compiles(seed: int, n_smooth: in
 
 def test_the_area_that_moved_is_the_rounding_of_the_stored_shape() -> None:
     """
-    What the tolerance has to cover, measured rather than assumed.
+    What the registration tolerance has to cover, measured rather than assumed.
 
-    The compiled area is the area of the peak-normalised samples rounded half away from zero to
+    The stored area is the area of the peak-normalised samples rounded half away from zero to
     1e-7 -- reproduced here independently of PyPulseq's code.  It exceeds the old floor, which is
     why these were refused.  It is a few percent of the worst case, half a quantum per sample, as
-    independent rounding errors should be.  And it is two orders below the new tolerance.
+    independent rounding errors should be, and inside the registration tolerance by two orders.
     """
     opts = _opts()
     grad = _gradient(_zero_net_section(1, 2500), 0.9, opts)
@@ -154,7 +133,7 @@ def test_the_area_that_moved_is_the_rounding_of_the_stored_shape() -> None:
     scaled = amps / peak / QUANTUM
     rounded = np.sign(scaled) * np.floor(np.abs(scaled) + 0.5) * QUANTUM * peak
 
-    seq = _compile_unchecked(sc.LogicBlock('m').add(0.0, grad), opts)
+    seq, seen = compile_capturing(sc.LogicBlock('m').add(0.0, grad), opts, check=False)
     moved = _sequence_moments(seq, 0)['y'] - pwl_moment(times, amps, 0)
 
     # Each side sums ~1e4 1/m of partial areas, so float alone is a few 1e-12; 1e-10 is five
@@ -164,18 +143,10 @@ def test_the_area_that_moved_is_the_rounding_of_the_stored_shape() -> None:
     assert abs(moved) > 1e-6, 'it must exceed the old floor, or this is not the regression'
     worst = 0.5 * QUANTUM * peak * float(times[-1] - times[0])
     assert abs(moved) < 0.1 * worst
-    assert abs(moved) < 1e-2 * 1e-6 * _traversed_area(times, amps)
+    assert abs(moved) < 1e-2 * float(seen['handed'].storage0[0, 1])
 
 
 # ------------------------------------------------------------------------------------- packaging
-def test_traversed_area_is_exact_through_a_zero_and_additive_at_knots() -> None:
-    times, amps = np.array([0.0, 1.0, 3.0]), np.array([2.0, -2.0, 4.0])
-    # 0..1 crosses zero at 0.5: two triangles of 0.5 each.  1..3 crosses at 1 + 2/3: 2/3 + 8/3.
-    assert _traversed_area(times, amps) == pytest.approx(1.0 + 10.0 / 3.0, rel=1e-15)
-    assert (_traversed_area(times[:2], amps[:2]) + _traversed_area(times[1:], amps[1:])
-            == pytest.approx(_traversed_area(times, amps), rel=1e-15))
-
-
 @pytest.mark.parametrize('seed', [1, 4])
 def test_four_divisions_of_one_waveform_get_one_verdict(seed: int) -> None:
     """
@@ -214,47 +185,44 @@ def test_four_divisions_of_one_waveform_get_one_verdict(seed: int) -> None:
 # ----------------------------------------------------------------------------- negative controls
 def test_area_actually_lost_on_a_sign_changing_axis_is_still_refused() -> None:
     """
-    The wider tolerance must not hide what m0 exists to catch.
+    Accepting registration rounding must not hide what m0 exists to catch.
 
     The compiled sequence is checked against a tree asking for more than it emitted: a whole lobe
-    more, and then only a sliver -- 0.05 1/m, one percent of a k-space step at 200 mm, and still
-    a few times this axis's tolerance.  The message reports the difference and the tolerance, and
-    leaves the cause to the reader rather than guessing a split or a merge.
+    more, and then only a sliver -- 0.05 1/m, one percent of a k-space step at 200 mm.  The
+    message reports the stage, the difference and the tolerance, and leaves the cause to the
+    reader rather than guessing a split or a merge.
     """
     opts = _opts()
     tree = _two_events(opts)
-    seq = sc.compile(tree, opts, name='clean')                # clean to begin with
-    placed = place_events(tree, opts)
+    _, seen = compile_capturing(tree, opts, name='clean')     # clean to begin with
+    placed = seen['placed']
 
     lobe = min((p for p in placed if p.kind in ('trap', 'grad')), key=lambda p: p.node_t)
     with pytest.raises(sc.CompilerContractError) as err:
-        _recheck(seq, [*placed, lobe])
+        recheck(seen, placed=[*placed, lobe])
     text = str(err.value)
-    assert 'compiled m0' in text and 'beyond the tolerance' in text and 'traverses' in text
+    assert 'compiled m0' in text and 'beyond the compile tolerance' in text
     assert 'split or a merge' not in text
 
     sliver = pp.make_trapezoid('y', area=0.05, duration=200e-6, system=opts)
     with pytest.raises(sc.CompilerContractError, match='compiled m0'):
-        _recheck(seq, place_events(tree.add(0.0, sliver), opts))
+        recheck(seen, placed=place_events(tree.add(0.0, sliver), opts))
 
 
 def test_m1_still_refuses_a_piece_played_one_raster_late() -> None:
-    """m1 is unchanged by this fix, and on the waveforms it concerns it still sees a time shift."""
+    """
+    Accepting registration rounding must not hide a time shift either.
+
+    The lobe ends where a block does, so one raster late also carries some of its ramp into the
+    next block, which m0 may report too; m1 is the moment that sees the shift itself.
+    """
     opts = _opts()
     tree = _two_events(opts)
-    seq = sc.compile(tree, opts, name='clean')
-    placed = place_events(tree, opts)
-    first = min(p.node_t for p in placed if p.kind in ('trap', 'grad'))
-    dt = float(opts.grad_raster_time)
-    shifted = [dataclasses.replace(p, node_t=p.node_t + dt, start=p.start + dt, end=p.end + dt,
-                                   res_start=p.res_start + dt, res_end=p.res_end + dt)
-               if p.kind in ('trap', 'grad') and p.node_t == first else p
-               for p in placed]
+    _, seen = compile_capturing(tree, opts, name='clean')
+    first = min(p.node_t for p in seen['placed'] if p.kind in ('trap', 'grad'))
 
-    with pytest.raises(sc.CompilerContractError) as err:
-        _recheck(seq, shifted)
-    assert 'compiled m1' in str(err.value)
-    assert 'compiled m0' not in str(err.value), 'a time shift preserves area exactly'
+    with pytest.raises(sc.CompilerContractError, match='compiled m1'):
+        recheck(seen, placed=_late(seen['placed'], first, float(opts.grad_raster_time)))
 
 
 # ------------------------------------------------- the same controls, far from the sequence start
@@ -274,13 +242,12 @@ def _two_lobes_at(t0: float, opts: pp.Opts) -> sc.LogicBlock:
 @pytest.mark.parametrize('t0', [0.0, 1.0, 10.0])
 def test_lost_area_is_refused_wherever_the_axis_sits(t0: float) -> None:
     opts = _opts()
-    tree = _two_lobes_at(t0, opts)
-    seq = sc.compile(tree, opts, name='clean')
-    placed = place_events(tree, opts)
+    _, seen = compile_capturing(_two_lobes_at(t0, opts), opts, name='clean')
+    placed = seen['placed']
     lobe = min((p for p in placed if p.kind in ('trap', 'grad')), key=lambda p: p.node_t)
 
     with pytest.raises(sc.CompilerContractError, match='compiled m0'):
-        _recheck(seq, [*placed, lobe])
+        recheck(seen, placed=[*placed, lobe])
 
 
 @pytest.mark.parametrize('t0', [0.0, 1.0, 10.0])
@@ -288,38 +255,26 @@ def test_a_lobe_one_raster_late_is_refused_wherever_the_axis_sits(t0: float) -> 
     """
     Only one side of the comparison moves, and the piece that moves has area.
 
-    The 500 1/m lobe played one raster late changes m1 by 500 1/m * 10 us however far into the
-    sequence it sits, and leaves m0 exactly as it was.
+    The 500 1/m lobe played one raster late changes its block's m1 by about 500 1/m * 10 us,
+    however far into the sequence it sits.
     """
     opts = _opts()
-    tree = _two_lobes_at(t0, opts)
-    seq = sc.compile(tree, opts, name='clean')
-    placed = place_events(tree, opts)
-    first = min(p.node_t for p in placed if p.kind in ('trap', 'grad'))
-    dt = float(opts.grad_raster_time)
-    shifted = [dataclasses.replace(p, node_t=p.node_t + dt, start=p.start + dt, end=p.end + dt,
-                                   res_start=p.res_start + dt, res_end=p.res_end + dt)
-               if p.kind in ('trap', 'grad') and p.node_t == first else p
-               for p in placed]
+    _, seen = compile_capturing(_two_lobes_at(t0, opts), opts, name='clean')
+    first = min(p.node_t for p in seen['placed'] if p.kind in ('trap', 'grad'))
 
-    with pytest.raises(sc.CompilerContractError) as err:
-        _recheck(seq, shifted)
-    assert 'compiled m1' in str(err.value)
-    assert 'compiled m0' not in str(err.value)
+    with pytest.raises(sc.CompilerContractError, match='compiled m1'):
+        recheck(seen, placed=_late(seen['placed'], first, float(opts.grad_raster_time)))
 
 
-# ------------------------------------------------------------------------------- the gap left open
-@pytest.mark.xfail(strict=True, raises=sc.CompilerContractError, reason=(
-    'Known: 1e-6 of the traversed area is a sufficient bound on worst-case storage rounding when '
-    "a shape's mean |g| is at least 5 % of its peak.  Below that it need not hold, and for this "
-    'shape it does not: a long constant section rounds the same way at every sample.  Remove '
-    'this mark when a storage-quantum floor covers it.'))
-def test_a_dense_low_duty_shape_with_systematic_rounding() -> None:
+# ------------------------------------------------------------------------- low duty, now covered
+def test_a_dense_low_duty_shape_with_systematic_rounding_compiles() -> None:
     """
     A 0.5 ms spike cancelled by a long weak constant tail, in one densely sampled shape.
 
     Mean |g| is 2 % of the peak.  The tail's level is chosen so its samples round almost half a
-    quantum each way the same way, so the stored area moves by nearly the worst case.
+    quantum each way the same way, so the stored area moves by nearly the worst case.  1e-6 of
+    the traversed area did not cover that; a bound per stored sample over the shape's span does,
+    at any duty.
     """
     opts = _opts()
     n = max(range(3000, 3040), key=lambda m: abs(30.0 / m / QUANTUM - round(30.0 / m / QUANTUM)))

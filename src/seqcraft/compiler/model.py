@@ -168,6 +168,10 @@ class LegalizationResult:
 
     blocks: tuple[PulseqReadyBlock, ...]
     notes: tuple[tuple[str, tuple[str, ...]], ...]
+    #: The ``(block index, axis)`` pairs whose gradient was replaced by its interpolant on the
+    #: gradient raster from the block's start.  Data rather than warning text: the against-tree
+    #: check compares each of them with the tree resampled the same way.
+    resampled: tuple[tuple[int, str], ...] = ()
 
 
 __all__ = [

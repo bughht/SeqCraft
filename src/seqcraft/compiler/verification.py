@@ -9,11 +9,13 @@ and one ADC.  A failure is a compiler bug by definition, so it raises
 :class:`CompilerContractError` rather than becoming a report.
 
 **Semantics** (:func:`verify_against_tree`) asks the harder question: did the compile preserve
-what the *tree* meant?  Duration, zeroth and first gradient moment per axis, and the label
-address each ADC ends up with, all compared against the placed events the compile started from.
-A failure here is a compiler bug too -- the tree was legal, since every legality check has already
-passed -- so it raises :class:`CompilerContractError` as well.  All four invariants are measured
-before anything is raised, because seeing every affected axis at once beats stopping at the first.
+what the *tree* meant?  Duration, the zeroth and first gradient moments of every compiled block
+about its own start, and the label address each ADC ends up with, all compared against the placed
+events the compile started from.  The moments are compared in two stages: the tree against the
+ready blocks emission hands PyPulseq, and those against what PyPulseq stored.  A failure here is a
+compiler bug too -- the tree was legal, since every legality check has already passed -- so it
+raises :class:`CompilerContractError` as well.  All four invariants are measured before anything is
+raised, because seeing every affected axis at once beats stopping at the first.
 
 **Finished-sequence checks** (:func:`check_event_sizes`, :func:`check_rf_amplitude`,
 :func:`check_label_addresses`) ask what only a built :class:`pypulseq.Sequence` can answer: does
@@ -48,7 +50,7 @@ from ..design.events import (
     knots_of,
     pwl_moment,
 )
-from ..design.timing import EPS
+from ..design.timing import EPS, TICKS_PER_SECOND, to_ticks
 from ..errors import format_error
 from .errors import CompileError, HardwareLimitError
 from .model import (
@@ -156,10 +158,10 @@ def _sequence_moments(seq: Any, order: int = 0) -> dict[str, float]:
     """
     Return the whole-sequence gradient moment per axis, integrated from the compiled blocks.
 
-    The compiled side of :func:`verify_against_tree`.  Deliberately *not* shared with
-    :func:`seqcraft.analysis.moments`, which walks the tree: these are different iterations over
-    different structures, and having the self-check call the same code as the thing it checks
-    would make it compare a number with itself.
+    At absolute times, so its float grows with placement.  :func:`verify_against_tree` compares
+    block by block instead (:func:`stored_gradients`); this remains for the compiler baseline, which
+    digests these numbers.  Deliberately *not* shared with :func:`seqcraft.analysis.moments`, which
+    walks the tree: these are different iterations over different structures.
 
     Parameters
     ----------
@@ -438,21 +440,472 @@ def _address_violations(
     return out
 
 
-def _traversed_area(times: np.ndarray, amps: np.ndarray) -> float:
-    """
-    Return the integral of ``|g|`` over piecewise-linear knots, in 1/m.
+# ----------------------------------------------- m0 and m1 per compiled block, about its own start
+#: The unit roundoff of float64.
+_U = 2.0**-53
+_TPS = float(TICKS_PER_SECOND)
+#: At most this many roundings enter one segment's term before it is summed.  A sum of N such terms,
+#: in any order, is then within (N + _TERM) * u * sum|term| of the exact one.
+_TERM = 10
+#: PyPulseq's ``compress_shape`` stores the differences of a peak-normalised shape, each rounded to
+#: this quantum.
+_QUANTUM = 1e-7
+#: What that leaves in a stored sample, as a fraction of the peak.  Half a quantum from rounding --
+#: plus one more quantum in every sample after the first when the first lies exactly on a half
+#: quantum, because rounding half away from zero then carries an offset into the cumulative sum.
+#: Ordinary shapes see the half quantum; the bound has to be the edge case.
+_COMPRESSION = 1.5 * _QUANTUM
+#: PyPulseq keys every library entry by its values printed with ``'%.6g'``, and stores an event that
+#: prints like an earlier one as that one.  Two numbers with one such key differ by less than a unit
+#: in their sixth significant digit: under 1e-5 of the larger.
+_KEY = 1e-5
+#: A normalised shape difference this large prints more coarsely than one quantum, so two shapes can
+#: share a key while differing there.  Smaller differences print every quantum.
+_KEY_COARSE = 0.1
+#: Absolute times reach the compiler as float seconds.  The raster check puts a gradient's start
+#: within half a tick of its tick, and superposing turns each knot's absolute time into ticks with
+#: a few more roundings of about u * t: adding the knot's offset to the start, and converting.  A
+#: block edge makes its own round trip through seconds.  This many such roundings are allowed for.
+_TIME_OPERATIONS = 4
 
-    Exact: a segment whose ends have opposite signs is split at its zero crossing, where a
-    trapezoidal rule on ``|amps|`` would overstate it.  Additive over a partition at knots, so
-    dividing one waveform into consecutive events leaves the total unchanged.
+
+@dataclass(frozen=True)
+class BlockMoments:
     """
-    a, b, dt = amps[:-1], amps[1:], np.diff(times)
-    out = 0.5 * np.abs(a + b) * dt
-    crossing = a * b < 0
-    if np.any(crossing):
-        ac, bc, dc = a[crossing], b[crossing], dt[crossing]
-        out[crossing] = dc * (ac * ac + bc * bc) / (2.0 * (np.abs(ac) + np.abs(bc)))
-    return float(np.sum(out))
+    One side's gradients per compiled block, as m0 and m1 about each block's own start.
+
+    Rows are blocks and columns the axes ``x, y, z``.  ``edges`` are the block boundaries in ticks,
+    the cumulative block durations from zero, so no lever arm involves an absolute float time.
+    ``error0`` and ``error1`` bound the float error of ``m0`` and ``m1`` as computed here.
+    ``overrun`` names each ``(block, axis)`` whose gradient reaches outside its own block.
+    """
+
+    edges: np.ndarray
+    m0: np.ndarray
+    m1: np.ndarray
+    error0: np.ndarray
+    error1: np.ndarray
+    overrun: tuple[tuple[int, str], ...]
+
+
+@dataclass(frozen=True)
+class HandedGradients(BlockMoments):
+    """
+    The ready blocks as emission hands them to PyPulseq, measured before registration.
+
+    ``storage0`` and ``storage1`` bound how far PyPulseq's storage precision may move ``m0`` and
+    ``m1``: compression rounding, and the six-digit key it deduplicates events by.
+    """
+
+    storage0: np.ndarray
+    storage1: np.ndarray
+
+
+def _knots(event: Any) -> tuple[np.ndarray, np.ndarray]:
+    """Return a gradient event's knots in ticks from its own reference, and their amplitudes."""
+    times, amps = knots_of(event, 0.0)
+    return np.rint(np.asarray(times) * _TPS).astype(np.int64), np.asarray(amps, dtype=float)
+
+
+def _segments(
+    pieces: Sequence[tuple[np.ndarray, np.ndarray]],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return every piece's consecutive knots as segments: ``piece, t0, t1, g0, g1``."""
+    if not pieces:
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty, empty, np.zeros(0), np.zeros(0)
+    sizes = np.array([times.size for times, _ in pieces])
+    times = np.concatenate([times for times, _ in pieces])
+    amps = np.concatenate([amps for _, amps in pieces])
+    opens = np.ones(times.size, dtype=bool)
+    opens[np.cumsum(sizes) - 1] = False            # a piece's last knot opens no segment
+    i = np.flatnonzero(opens)
+    piece = np.repeat(np.arange(len(pieces)), sizes)[i]
+    return piece, times[i], times[i + 1], amps[i], amps[i + 1]
+
+
+def _sums(
+    axis: np.ndarray,
+    block: np.ndarray,
+    t0: np.ndarray,
+    t1: np.ndarray,
+    g0: np.ndarray,
+    g1: np.ndarray,
+    edges: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """
+    Per block and axis: m0 and m1 about the block start, the ``|g|`` integrals that bound their
+    float error (``T0``, and ``T1`` weighted by ``t - a``), and the number of segments summed.
+
+    Exact per linear segment; every lever arm is a difference of ticks.
+    """
+    n = edges.size - 1
+    a = edges[block]
+    h = (t1 - t0) / _TPS
+    u0 = (t0 - a) / _TPS
+    u1 = (t1 - a) / _TPS
+    b0, b1 = np.abs(g0), np.abs(g1)
+    key = block * 3 + axis
+
+    def total(weights: np.ndarray | None = None) -> np.ndarray:
+        return np.bincount(key, weights=weights, minlength=3 * n).reshape(n, 3).astype(float)
+
+    return {
+        'm0': total(0.5 * h * (g0 + g1)),
+        'm1': total(h * (g0 * (2 * u0 + u1) + g1 * (u0 + 2 * u1)) / 6.0),
+        'T0': total(0.5 * h * (b0 + b1)),
+        'T1': total(h * (b0 * (2 * u0 + u1) + b1 * (u0 + 2 * u1)) / 6.0),
+        'N': total(),
+    }
+
+
+def _float_error(sums: Mapping[str, np.ndarray], order: int) -> np.ndarray:
+    """Bound the float error of one side's m0 (order 0) or m1 (order 1), as :func:`_sums` sums it."""
+    return np.asarray((sums['N'] + _TERM) * _U * sums[f'T{order}'], dtype=float)
+
+
+def _block_side(
+    pieces: Sequence[tuple[int, int, np.ndarray, np.ndarray]],
+    edges: np.ndarray,
+) -> tuple[dict[str, np.ndarray], tuple[tuple[int, str], ...]]:
+    """Sum pieces that each belong to one block, ``(block, axis, ticks, amps)``, per block and axis."""
+    piece, t0, t1, g0, g1 = _segments([(times, amps) for _, _, times, amps in pieces])
+    block = np.array([k for k, _, _, _ in pieces], dtype=np.int64)[piece]
+    axis = np.array([a for _, a, _, _ in pieces], dtype=np.int64)[piece]
+    late = (t0 < edges[block]) | (t1 > edges[block + 1])
+    overrun = tuple(sorted({(int(k), AXES[int(a)]) for k, a in zip(block[late], axis[late])}))
+    return _sums(axis, block, t0, t1, g0, g1, edges), overrun
+
+
+def handed_gradients(blocks: Sequence[PulseqReadyBlock]) -> HandedGradients:
+    """
+    Measure the ready blocks' gradients as emission hands them to PyPulseq.
+
+    Run before emission, while legalization's tuple still holds every block, so nothing PyPulseq
+    does when it registers them can change what is measured.  Only numbers are kept, six per block
+    and axis -- 144 bytes per block -- rather than the events.
+    """
+    durations = [to_ticks(block.duration) for block in blocks]
+    edges = np.concatenate([[0], np.cumsum(durations, dtype=np.int64)]).astype(np.int64)
+    pieces: list[tuple[int, int, np.ndarray, np.ndarray]] = []
+    shapes: list[tuple[int, int, float, float, float, float]] = []
+    for k, block in enumerate(blocks):
+        for event in block.events:
+            if getattr(event, 'type', None) not in GRADIENT_KINDS:
+                continue
+            ticks, amps = _knots(event)
+            if ticks.size < 2:
+                continue
+            axis = AXES.index(event.channel)
+            pieces.append((k, axis, edges[k] + ticks, amps))
+            shapes.append((k, axis, *_storage_terms(event, ticks, amps)))
+    sums, overrun = _block_side(pieces, edges)
+
+    # PyPulseq's storage precision.  Compression moves every stored sample of a shape by at most
+    # _COMPRESSION of its peak, anywhere in the shape's span; PyPulseq's own float, decompressing by
+    # a cumulative sum, adds a roundoff per sample.  A shared six-digit key moves each value by
+    # under _KEY of itself -- pointwise, so the |g| integrals bound it -- and each coarse shape
+    # difference by under _KEY of that difference, carried into every later sample.
+    n = edges.size - 1
+    compression = np.zeros((2, n, 3))
+    coarse = np.zeros((2, n, 3))
+    for k, axis, quantum, steps, length, lever in shapes:
+        compression[:, k, axis] += (quantum * length, quantum * lever)
+        coarse[:, k, axis] += (steps * length, steps * lever)
+    key = _KEY * (1.0 + _KEY)
+    return HandedGradients(
+        edges=edges,
+        m0=sums['m0'],
+        m1=sums['m1'],
+        error0=_float_error(sums, 0),
+        error1=_float_error(sums, 1),
+        overrun=overrun,
+        storage0=compression[0] + key * (sums['T0'] + coarse[0]),
+        storage1=compression[1] + key * (sums['T1'] + coarse[1]),
+    )
+
+
+def _storage_terms(
+    event: Any, ticks: np.ndarray, amps: np.ndarray,
+) -> tuple[float, float, float, float]:
+    """
+    One ready gradient's storage-precision ingredients: the compression bound per sample in Hz/m,
+    the sum of its coarse shape differences in Hz/m, and its span's length and first moment about
+    the block start.
+
+    A trapezoid is stored as its parameters, so only the key can move it.  A shape is stored
+    normalised by its peak sample, which is what the coarse differences are measured against.
+    """
+    length = (ticks[-1] - ticks[0]) / _TPS
+    lever = length * 0.5 * (ticks[0] + ticks[-1]) / _TPS
+    if getattr(event, 'type', None) != 'grad':
+        return 0.0, 0.0, length, lever
+    samples = np.asarray(event.waveform, dtype=float)
+    peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+    steps = np.abs(np.diff(samples, prepend=0.0))
+    coarse = float(np.sum(steps[steps >= (_KEY_COARSE - 2.0 * _QUANTUM) * peak])) if peak else 0.0
+    quantum = (_COMPRESSION + (samples.size + _TERM) * _U) * float(np.max(np.abs(amps)))
+    return quantum, coarse, length, lever
+
+
+def stored_gradients(seq: Any) -> BlockMoments:
+    """
+    Measure what PyPulseq stored, block by block, as :func:`handed_gradients` measures the blocks
+    it was handed.  The edges are the stored block durations, summed in ticks.
+    """
+    ids = sorted(seq.block_events)
+    durations = [to_ticks(float(seq.block_durations[i])) for i in ids]
+    edges = np.concatenate([[0], np.cumsum(durations, dtype=np.int64)]).astype(np.int64)
+    pieces: list[tuple[int, int, np.ndarray, np.ndarray]] = []
+    for k, index in enumerate(ids):
+        block = seq.get_block(index)
+        for axis_index, axis in enumerate(AXES):
+            grad = getattr(block, f'g{axis}', None)
+            if grad is None:
+                continue
+            ticks, amps = _knots(grad)
+            if ticks.size >= 2:
+                pieces.append((k, axis_index, edges[k] + ticks, amps))
+    sums, overrun = _block_side(pieces, edges)
+    return BlockMoments(edges, sums['m0'], sums['m1'], _float_error(sums, 0), _float_error(sums, 1),
+                        overrun)
+
+
+def _split(
+    t0: np.ndarray, t1: np.ndarray, g0: np.ndarray, g1: np.ndarray, edges: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Cut every segment at the block edges strictly inside it.
+
+    Exact apart from the interpolated value at each cut, since a segment is linear; the order of
+    the segments is kept.  Returns each part's original segment, its ends and its end values.
+    """
+    lo = np.searchsorted(edges, t0, side='right')
+    cuts = np.maximum(np.searchsorted(edges, t1, side='left') - lo, 0)
+    if not cuts.any():
+        return np.arange(t0.size), t0, t1, g0, g1
+    parts = cuts + 1
+    owner = np.repeat(np.arange(t0.size), parts)
+    q = np.arange(owner.size) - np.repeat(np.cumsum(parts) - parts, parts)
+    first, last = q == 0, q == cuts[owner]
+    top = edges.size - 1
+    left = np.where(first, t0[owner], edges[np.clip(lo[owner] + q - 1, 0, top)])
+    right = np.where(last, t1[owner], edges[np.clip(lo[owner] + q, 0, top)])
+    a, ga, gb = t0[owner], g0[owner], g1[owner]
+    with np.errstate(divide='ignore', invalid='ignore'):
+        slope = (gb - ga) / (t1[owner] - a)
+    return (owner, left, right, np.where(first, ga, ga + slope * (left - a)),
+            np.where(last, gb, ga + slope * (right - a)))
+
+
+def _tree_side(
+    placed: Sequence[PlacedEvent],
+    edges: np.ndarray,
+    resampled: Sequence[tuple[int, str]],
+    raster: int,
+    snap: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float], np.ndarray]:
+    """
+    What the tree asked for per block and axis, and how far the compile may move it.
+
+    Every placed gradient is its start in ticks plus its own knots, restricted exactly to each block
+    it overlaps.  A block-axis legalization reports as resampled is replaced by the tree
+    resampled the same way, onto the gradient raster from the block's start.
+
+    Returns m0, m1, and the two tolerances: this side's float error plus what the compile itself
+    may change -- the float of superposing the pieces, and the endpoint snap of ``axis_gradient``,
+    modelled from the tree.  Also the area lying outside the sequence, per axis, and which
+    block-axes were modelled as resampled.
+    """
+    n = edges.size - 1
+    pieces: list[tuple[int, np.ndarray, np.ndarray]] = []
+    near_half: list[bool] = []
+    for p in placed:
+        if p.kind in GRADIENT_KINDS:
+            ticks, amps = _knots(p.event)
+            if ticks.size >= 2:
+                # Anchored at the start the compiler checked onto the gradient raster.
+                first = to_ticks(p.start)
+                offset = first - to_ticks(float(getattr(p.event, 'delay', 0.0) or 0.0))
+                pieces.append((AXES.index(p.event.channel), offset + ticks, amps))
+                # Whether superposing could round a knot of this piece the other way: only if the
+                # start's own offset from its tick and those roundings can reach half a tick.
+                late = max(abs(p.start), abs(p.end))
+                near_half.append(abs(p.start * _TPS - first)
+                                 + _TIME_OPERATIONS * _U * late * _TPS >= 0.5)
+    piece, t0, t1, g0, g1 = _segments([(times, amps) for _, times, amps in pieces])
+    owner, left, right, gl, gr = _split(t0, t1, g0, g1, edges)
+    piece = piece[owner]
+    # A value at a cut is interpolated from the whole segment it lies on, whose other end may lie
+    # outside the block and be larger than anything in it: its float error scales with those ends.
+    bracket = np.maximum(np.abs(g0[owner]), np.abs(g1[owner]))
+    axis = np.array([a for a, _, _ in pieces], dtype=np.int64)[piece]
+    block = np.searchsorted(edges, left, side='right') - 1
+    inside = (block >= 0) & (block < n)
+    outside: dict[str, float] = {}
+    for a in np.unique(axis[~inside]):
+        out = ~inside & (axis == a)
+        outside[AXES[int(a)]] = float(np.sum(0.5 * (right[out] - left[out]) / _TPS
+                                              * np.abs(gl[out] + gr[out])))
+    piece, axis, block = piece[inside], axis[inside], block[inside]
+    left, right, gl, gr = left[inside], right[inside], gl[inside], gr[inside]
+    bracket = bracket[inside]
+    # Pieces a knot of which may land a tick from where the other side puts it: those near half a
+    # tick, and every piece in a block whose own edges no longer round-trip through seconds.
+    unsure = (np.array(near_half, dtype=bool)[piece]
+              | (_TIME_OPERATIONS * _U * edges[1:] >= 0.5)[block])
+    sums = _sums(axis, block, left, right, gl, gr, edges)
+
+    # Per block and axis, summed over the pieces there: the largest end value of a segment they are
+    # interpolated from, and their peak slope; and how many there are.  These bound the float of
+    # superposing them.
+    flat = 3 * n
+    key = block * 3 + axis
+    length = right - left
+
+    def per_bin(where: np.ndarray, weights: np.ndarray | None = None) -> np.ndarray:
+        return np.bincount(where, weights=weights, minlength=flat).reshape(n, 3).astype(float)
+
+    ends = steep = count = unsure_peak = np.zeros((n, 3))
+    if key.size:
+        start = np.flatnonzero(np.r_[True, (piece[1:] != piece[:-1]) | (block[1:] != block[:-1])])
+        with np.errstate(divide='ignore', invalid='ignore'):
+            slope = np.where(length > 0, np.abs(gr - gl) / (length / _TPS), 0.0)
+        group_peak = np.maximum.reduceat(np.maximum(np.abs(gl), np.abs(gr)), start)
+        unsure_peak = per_bin(key[start][unsure[start]], group_peak[unsure[start]])
+        ends = per_bin(key[start], np.maximum.reduceat(bracket, start))
+        steep = per_bin(key[start], np.maximum.reduceat(slope, start))
+        count = per_bin(key[start])
+    unsure_variation = per_bin(key[unsure], np.abs(gr - gl)[unsure])
+    unsure_area = per_bin(key[unsure], (0.5 * length / _TPS * (np.abs(gl) + np.abs(gr)))[unsure])
+
+    # The endpoint snap.  axis_gradient sets a superposed block's first or last value to exactly 0
+    # when it is below `snap`.  That removes a triangle of height |v| reaching the next knot, so it
+    # moves m0 by |v| h / 2 and m1 by at most that times the block's length.  Modelled from the
+    # tree's own value at each block edge, wherever the compile's value could be under `snap`.
+    values = {}
+    reach = {}
+    for side, at in (('start', left == edges[block]), ('end', right == edges[block + 1])):
+        at &= length > 0
+        h = np.full(flat, np.iinfo(np.int64).max, dtype=np.int64)
+        np.minimum.at(h, key[at], length[at])
+        values[side] = per_bin(key[at], (gl if side == 'start' else gr)[at])
+        reach[side] = h.reshape(n, 3)
+
+    span = (np.diff(edges) / _TPS)[:, None]
+    modelled = np.zeros((n, 3), dtype=bool)
+    if resampled:
+        modelled, model = _resampled_tree(pieces, edges, resampled, raster)
+        sums = {name: np.where(modelled, model[name], given) for name, given in sums.items()}
+
+    value = (count + 8.0) * _U * ends                         # per value: k pieces and their sum
+    lever = 4.0 * _U * span * steep                           # the resample, in seconds from the start
+    noise = value + lever
+    shift = (np.ceil(0.5 + _TIME_OPERATIONS * _U * edges[1:]) / _TPS)[:, None]
+    snap0 = np.zeros((n, 3))
+    snap1 = np.zeros((n, 3))
+    for side in ('start', 'end'):
+        v = np.abs(values[side])
+        engaged = (v > 0.0) & (v < snap + noise + shift * steep)
+        # A resampled block interpolates the snapped triangle at the raster, one raster further.
+        h = np.minimum(reach[side].astype(float) / _TPS + np.where(modelled, raster / _TPS, 0.0),
+                       span)
+        snap0 += np.where(engaged, v * h / 2.0, 0.0)
+        snap1 += np.where(engaged, v * h / 2.0 * span, 0.0)
+
+    # A knot of an unsure piece can land `shift` from where the other side puts it.  Moving every
+    # knot of a piece by that changes its area by at most `shift` times its variation and its two
+    # end values, and its m1 by that times the lever arm, plus the area times the shift.  For any
+    # other piece the two sides compute the same ticks, and this is zero.
+    moved = shift * (unsure_variation + 2.0 * unsure_peak)
+
+    interpolated = 4.0 * _U * ends                            # this side's own interpolated values
+    tolerance0 = _float_error(sums, 0) + (interpolated + noise) * span + snap0 + moved
+    tolerance1 = (_float_error(sums, 1) + (interpolated + noise) * span**2 / 2.0 + snap1
+                  + moved * span + shift * unsure_area)
+    return sums['m0'], sums['m1'], tolerance0, tolerance1, outside, modelled
+
+
+def _resampled_tree(
+    pieces: Sequence[tuple[int, np.ndarray, np.ndarray]],
+    edges: np.ndarray,
+    resampled: Sequence[tuple[int, str]],
+    raster: int,
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """
+    The tree interpolated onto the gradient raster from each reported block's start, as
+    ``_resampled`` does to the superposed waveform, summed per block and axis like :func:`_sums`.
+
+    Pieces count when they overlap the open block, which is what legalization superposes there.
+    One sweep per axis over pieces sorted by start, so the cost is linear in pieces and blocks.
+    Returns which block-axes it covers, and the sums.
+    """
+    modelled = np.zeros((edges.size - 1, 3), dtype=bool)
+    wanted: dict[int, list[int]] = {}
+    for k, name in sorted(set(resampled)):
+        wanted.setdefault(AXES.index(name), []).append(k)
+    seg_axis, seg_block, seg_t0, seg_t1, seg_g0, seg_g1 = [], [], [], [], [], []
+    for axis, blocks in wanted.items():
+        order = sorted((i for i, (a, _, _) in enumerate(pieces) if a == axis),
+                       key=lambda i: int(pieces[i][1][0]))
+        cursor = 0
+        active: list[int] = []
+        as_float: dict[int, np.ndarray] = {}
+        for k in blocks:
+            a, b = int(edges[k]), int(edges[k + 1])
+            while cursor < len(order) and int(pieces[order[cursor]][1][0]) < b:
+                active.append(order[cursor])
+                cursor += 1
+            active = [i for i in active if int(pieces[i][1][-1]) > a]
+            grid = a + raster * np.arange((b - a) // raster + 1, dtype=np.int64)
+            x = grid.astype(float)
+            value = np.zeros(grid.size)
+            for i in active:
+                if i not in as_float:
+                    as_float[i] = pieces[i][1].astype(float)
+                value += np.interp(x, as_float[i], pieces[i][2], left=0.0, right=0.0)
+            modelled[k, axis] = True
+            seg_axis.append(np.full(grid.size - 1, axis))
+            seg_block.append(np.full(grid.size - 1, k))
+            seg_t0.append(grid[:-1])
+            seg_t1.append(grid[1:])
+            seg_g0.append(value[:-1])
+            seg_g1.append(value[1:])
+    return modelled, _sums(np.concatenate(seg_axis), np.concatenate(seg_block),
+                           np.concatenate(seg_t0), np.concatenate(seg_t1),
+                           np.concatenate(seg_g0), np.concatenate(seg_g1), edges)
+
+
+def _moment_violations(
+    stage: str,
+    got: tuple[np.ndarray, np.ndarray],
+    want: tuple[np.ndarray, np.ndarray],
+    tolerance: tuple[np.ndarray, np.ndarray],
+    edges: np.ndarray,
+    measured: str,
+    expected: str,
+) -> list[ContractViolation]:
+    """One violation per axis and moment: the block furthest beyond its tolerance, and a count."""
+    out: list[ContractViolation] = []
+    for order, unit in ((0, '1/m'), (1, 's/m')):
+        difference = got[order] - want[order]
+        bad = (np.abs(difference) > tolerance[order]) | ~np.isfinite(difference)
+        for axis_index, axis in enumerate(AXES):
+            rows = np.flatnonzero(bad[:, axis_index])
+            if not rows.size:
+                continue
+            with np.errstate(divide='ignore', invalid='ignore'):
+                ratio = np.abs(difference[rows, axis_index]) / tolerance[order][rows, axis_index]
+            k = int(rows[int(np.argmax(np.nan_to_num(ratio, nan=np.inf)))])
+            more = f'; {rows.size} blocks differ on this axis' if rows.size > 1 else ''
+            out.append(ContractViolation(
+                f'axis {axis} m{order}, PyPulseq block {k + 1} at {edges[k] / _TPS * 1e3:.3f} ms',
+                f'{measured} m{order} {got[order][k, axis_index]:.6g} {unit} about the block start '
+                f'differs from {expected}, {want[order][k, axis_index]:.6g} {unit}, by '
+                f'{difference[k, axis_index]:.3g}, beyond the {stage} tolerance '
+                f'{tolerance[order][k, axis_index]:.3g}{more}',
+            ))
+    return out
 
 
 def verify_against_tree(
@@ -461,40 +914,66 @@ def verify_against_tree(
     *,
     duration_s: float,
     tree_duration_s: float,
-    moments: Callable[[int], dict[str, float]],
+    handed: HandedGradients,
+    stored: Callable[[], BlockMoments],
+    resampled: Sequence[tuple[int, str]],
+    grad_raster: float,
+    snap: float,
     label_states: Callable[[], Mapping[str, Any]],
 ) -> None:
     """
     Assert the compile preserved what the tree meant.
 
-    Four invariants, all cheap, each catching a class of compiler bug no individual test case
-    would:
+    Four invariants, each catching a class of compiler bug no individual test case would:
 
     **Total duration** must match the tree's.  Guards a boundary merge that dropped time
     rather than dropping a cut.
 
-    **Zeroth moment (m0)** per axis must match the sum over the flattened events.  A split
-    that lost a tail, or a merge that dropped a piece, changes it.
+    **m0 and m1 per compiled block and axis, about each block's own start.**  m0 catches a split
+    that lost a tail or a merge that dropped a piece.  m1 catches a gradient that plays at the
+    wrong moment, which m0 cannot see: a piece of area ``A`` displaced by ``dt`` moves m1 by
+    ``A * dt``.  Each block is its own reference, so a lever arm is at most a block long and a
+    correct waveform compares the same wherever it sits in the sequence.  The sequence's whole m0
+    and m1 are sums of these, ``M0 = sum m0_k`` and ``M1 = sum (m1_k + a_k m0_k)``, so they add
+    nothing a block-wise check misses.  Compared in two stages, each against its own input:
 
-    **First moment (m1)** per axis, referenced to the start of the sequence.  m0 is exactly
-    the quantity that survives a *time shift* -- an event moved by a whole raster leaves it
-    untouched -- so m0 alone cannot see a gradient that plays at the wrong moment.  m1 can,
-    because a piece of area ``A`` displaced by ``dt`` changes it by ``A * dt``.
+    - **compile** -- the tree's placed events, restricted exactly to each block, against the ready
+      blocks emission hands to PyPulseq (`handed`).  The tolerance is SeqCraft's own arithmetic:
+      float, the endpoint snap, and a knot landing a tick off.  A block-axis legalization reports
+      as resampled is compared with the tree resampled onto the raster.
+    - **registration** -- the ready blocks against what PyPulseq stored (`stored`).  The tolerance
+      is PyPulseq's storage precision: compression rounding, and its six-digit deduplication key.
+
+    So a refusal names which of the two moved the waveform, and stored against tree is bounded by
+    the two tolerances together.
 
     **Label addresses** must match the fold of the tree's labels.  A duplicate-address check
     only fires when two addresses *collide*; an addressing shifted by one but still unique
     passes it, which is exactly how mis-retimed labels used to escape.  Skipped when a label has
     no ADC after it, since its placement is then reported as a warning rather than defined.
 
+    m0 and m1 are two linear functionals per block, **not waveform fidelity**.  They cannot see a
+    change that keeps every block's area and centroid -- a distortion orthogonal to ``1`` and
+    ``t - a``, a zero-net piece moved inside its block, two equal pieces swapped -- nor anything
+    below the tolerance.  RF and ADC timing, limits and seam continuity are checked elsewhere, and
+    the written file is never seen.
+
     Parameters
     ----------
     placed, targets
         The compiler's own IR: the placed events, and the label-assignment times chosen for them.
+        `placed` is the expected side, never read from the output.
     duration_s, tree_duration_s
         What the compiled sequence measures, and what the tree asked for.
-    moments
-        ``order -> {axis: moment}`` over the *compiled* blocks.  A callable rather than two
-        dicts, so a tree with no gradients pays for neither.
+    handed
+        :func:`handed_gradients` of the ready blocks, measured before emission.
+    stored
+        :func:`stored_gradients` of the built sequence, deferred so a tree with no gradients pays
+        nothing.
+    resampled
+        The ``(block, axis)`` pairs legalization resampled onto the raster.
+    grad_raster, snap
+        The gradient raster in seconds, and the endpoint-snap threshold in Hz/m.
     label_states
         ``Sequence.evaluate_labels(evolution='adc')``, deferred for the same reason.
 
@@ -518,125 +997,58 @@ def verify_against_tree(
             )
         )
 
-    want: dict[str, float] = {}
-    # m0's tolerance is scaled by the area each event *traverses*, the integral of |g|, not by its
-    # net.  A readout and its prephaser very nearly cancel, so a relative tolerance on the net
-    # would demand exactness that float summation over thousands of pieces cannot deliver -- while
-    # a tolerance on the total still catches a whole lost lobe, which is what this is for.
-    #
-    # Traversed area is additive over a division of one waveform in time, so cutting it into
-    # consecutive events leaves the scale unchanged; overlapping pieces that cancel can only raise
-    # it, because the sum of their integrals of |g| is at least the integral of |their sum|.  It is
-    # therefore never below the waveform's own traversed area -- which is not the same as being
-    # independent of how events are packaged.  Summing each event's |net| collapsed to the 1.0
-    # floor for any one event that changes sign and nets zero, such as a closed trajectory's axis.
-    # At that floor PyPulseq's registration was refused: it rounds a compressible shape's
-    # peak-normalised samples to 1e-7, moving the area by at most 5e-8 * peak * duration, and in
-    # practice by a few percent of that.  Under that model 1e-6 of the traversed area is
-    # sufficient to cover the worst case whenever a shape's mean |g| is at least 5 % of its peak;
-    # it is not necessary, and lower-duty shapes are not thereby refused.  Registration also keys
-    # every event by its parameters printed with '%.6g', so an event that prints like an earlier
-    # one plays the earlier one's values: up to 1e-5 relative, in memory, and not covered here.
-    # Two legal trapezoids at 100000.0 and 100000.4 Hz/m in separate blocks are refused, before
-    # this change as after it.  Writing the file rounds again, separately, and this check never
-    # sees that.
-    traversed: dict[str, float] = {}
-    # Each event's |net area|, summed: m1's relative term, unchanged -- see the m1 check below.
-    magnitude: dict[str, float] = {}
-    # Peak |g| per axis.  m1's floor tracks this and nothing else -- see the m1 check below.
-    peak: dict[str, float] = {}
-    # m1 referenced to the start of the sequence, computed **exactly** on both sides.
-    #
-    # Both are sums of per-piece moments, which is legitimate because a moment is linear in
-    # the waveform: the moment of a sum is the sum of the moments, whether the pieces overlap
-    # (the tree, where they superpose) or abut (the compiled blocks, where they concatenate).
-    # No union of knots needs building.
-    want_m1: dict[str, float] = {}
-    for p in placed:
-        if p.kind in GRADIENT_KINDS:
-            channel = p.event.channel
-            knots = knots_of(p.event, p.node_t)
-            area = pwl_moment(*knots, 0)
-            want[channel] = want.get(channel, 0.0) + area
-            traversed[channel] = traversed.get(channel, 0.0) + _traversed_area(*knots)
-            magnitude[channel] = magnitude.get(channel, 0.0) + abs(area)
-            peak[channel] = max(peak.get(channel, 0.0), float(np.max(np.abs(knots[1]))))
-            want_m1[channel] = want_m1.get(channel, 0.0) + pwl_moment(*knots, 1)
+    if (any(p.kind in GRADIENT_KINDS for p in placed) or bool(np.any(handed.error0))
+            or handed.overrun):
+        edges = handed.edges
+        tree0, tree1, tolerance0, tolerance1, outside, modelled = _tree_side(
+            placed, edges, resampled, to_ticks(grad_raster), snap)
+        for axis, area in sorted(outside.items()):
+            violations.append(ContractViolation(
+                f'axis {axis}', f'the tree puts {area:.3g} 1/m of gradient outside the sequence'))
+        for k, axis in handed.overrun:
+            violations.append(ContractViolation(
+                f'ready block {k}', f'its gradient on axis {axis} reaches outside the block'))
+        expected = 'what the tree asked for'
+        if modelled.any():
+            expected += ' (resampled onto the raster where legalization did)'
+        violations.extend(_moment_violations(
+            'compile', (handed.m0, handed.m1), (tree0, tree1),
+            (handed.error0 + tolerance0, handed.error1 + tolerance1), edges,
+            'compiled', expected))
 
-    if want:
-        actual = moments(0)
-        actual_m1 = moments(1)
-        for axis, expected in want.items():
-            difference = actual.get(axis, 0.0) - expected
-            m0_tolerance = 1e-6 * max(traversed[axis], 1.0)
-            if abs(difference) > m0_tolerance:
-                violations.append(
-                    ContractViolation(
-                        f'axis {axis} m0',
-                        f'compiled m0 {actual.get(axis, 0.0):.6g} 1/m differs from the tree '
-                        f'sum {expected:.6g} 1/m by {difference:.3g}, beyond the tolerance '
-                        f'{m0_tolerance:.3g} (1e-6 of the {traversed[axis]:.6g} 1/m the axis '
-                        f'traverses) -- the emitted blocks do not carry the area the tree asked for',
-                    )
-                )
-            # Both sides are exact closed forms, so the only error is float summation over the
-            # pieces.  Scaled by each event's |net area|, summed, times the horizon: a readout
-            # and its prephaser nearly cancel, so a tolerance on the total net would demand more
-            # than float64 can carry.  Deliberately left on |net| when m0 moved to traversed
-            # area -- m1 has its own floor for representation noise below, and a wider relative
-            # term would only loosen the time-shift check this exists for.  A lobe displaced by
-            # one raster changes m1 by area * 10 us, comfortably above this.
-            #
-            # **Not covered: registration error far from the sequence start.**  m1 is referenced
-            # to t = 0, so a shape whose stored area moved by delta_m0 at time t moves m1 by
-            # t * delta_m0 as well.  The relative term below grows with the tree's duration, but
-            # it does not reliably account for that: for a shape whose events net to zero it
-            # stays far below the peak floor, and where it does grow it can still fall short.  A
-            # compressible shape that compiles at the start of a sequence can therefore be refused
-            # here when the same shape is placed a second or more later -- on main before the m0
-            # change as after it.  No tolerance alone separates that from a mistimed lobe late in
-            # a long sequence.  Comparing moments about a local time reference, such as each
-            # block's start, is a follow-up proposal and has not been validated.
-            #
-            # **Plus a floor proportional to peak |g|**, because the relative term alone sits
-            # inside the noise for a whole class of legal input.  An arbitrary gradient that the
-            # compiler has to split and rebuild does not round-trip exactly, and the residual is
-            # ``~8.4e-14 * peak`` -- measured constant across knot count, amplitude and
-            # ``max_grad``, in ``tests/compiler/test_m1_floor.py``.  The relative term scales as
-            # traversed x horizon, which grows faster than that, so the two cross: short or weak
-            # waveforms were refused while long strong ones passed, *for the same physics*.  Six
-            # of ten legal sign-changing gradients were refused before this floor existed, and
-            # which six was not predictable from the sequence.
-            #
-            # 1e-11 clears the measured floor by ~120 and stays three to four orders of magnitude
-            # below the signal: one raster of displacement moves m1 by ``traversed * raster``,
-            # which is 1e-2 .. 1e0 s/m on the same waveforms.  Both bounds are properties of the
-            # representation and of the failure being caught, not of any one module.
-            scale = max(magnitude[axis], 1.0)
-            m1_scale = max(scale * max(tree_duration_s, 1e-3), 1.0)
-            m1_tolerance = max(1e-9 * m1_scale, 1e-11 * peak.get(axis, 0.0))
-            if abs(actual_m1.get(axis, 0.0) - want_m1.get(axis, 0.0)) > m1_tolerance:
-                violations.append(
-                    ContractViolation(
-                        f'axis {axis} m1',
-                        f'compiled m1 {actual_m1.get(axis, 0.0):.6g} s/m differs from the '
-                        f'tree sum {want_m1.get(axis, 0.0):.6g} s/m -- a gradient plays at '
-                        f'the wrong time, which m0 cannot see',
-                    )
-                )
+        registered = stored()
+        if registered.edges.shape != edges.shape or np.any(registered.edges != edges):
+            violations.append(ContractViolation(
+                'block grid', f'PyPulseq holds {registered.edges.size - 1} blocks lasting '
+                f'{registered.edges[-1] / _TPS * 1e6:.1f} us, but emission handed it '
+                f'{edges.size - 1} lasting {edges[-1] / _TPS * 1e6:.1f} us'))
+        else:
+            for k, axis in registered.overrun:
+                violations.append(ContractViolation(
+                    f'PyPulseq block {k + 1}', f'its gradient on axis {axis} reaches outside the '
+                    f'block'))
+            violations.extend(_moment_violations(
+                'registration', (registered.m0, registered.m1), (handed.m0, handed.m1),
+                (handed.storage0 + handed.error0 + registered.error0,
+                 handed.storage1 + handed.error1 + registered.error1), edges,
+                'registered', 'what emission handed PyPulseq'))
 
     violations.extend(_address_violations(placed, targets, label_states))
     require_valid_contract('against-tree', violations)
 
 
 __all__ = [
+    'BlockMoments',
     'CompilerContractError',
     'ContractViolation',
+    'HandedGradients',
     'check_event_sizes',
     'check_label_addresses',
     'check_rf_amplitude',
     'expected_addresses',
+    'handed_gradients',
     'require_valid_contract',
+    'stored_gradients',
     'verify_against_tree',
     'verify_placed_events',
     'verify_ready_blocks',

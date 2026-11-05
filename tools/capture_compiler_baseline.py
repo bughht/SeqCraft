@@ -116,9 +116,9 @@ def stable_summary(compiled: _pp.Sequence) -> dict[str, Any]:
         'emitted_content_sha256': content.hexdigest(),
         'event_counts': dict(sorted(counts.items())),
         'moments': {
-            # The compiler's own compiled-side integrator, imported rather than reimplemented:
-            # the digest has to stay identical across the refactor, so the arithmetic must be
-            # literally the same code the compile ran.
+            # The whole-sequence integrator in compiler.verification, imported rather than
+            # reimplemented: the digest has to stay identical across the refactor, so the
+            # arithmetic must stay literally the code that produced the frozen numbers.
             f'm{order}': {
                 axis: float(f'{value:.12g}')
                 for axis, value in sorted(_sequence_moments(compiled, order).items())

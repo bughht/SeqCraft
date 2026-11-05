@@ -4,7 +4,8 @@ The invariants that run on every compile -- and proof that each one can fail.
 `verify_against_tree` is the last line of defence: it runs for every user, on every sequence,
 including the ones no test thought of.  So each check gets two tests: it passes on a good compile,
 and it *fires* on a deliberately broken one.  A check that cannot fail is worse than no check,
-because it reads like coverage.
+because it reads like coverage.  Every broken case here is checked by the same function, on the
+same inputs, that ``sc.compile`` used (``recheck.py``).
 """
 
 from __future__ import annotations
@@ -14,11 +15,9 @@ import dataclasses
 import numpy as np
 import pypulseq as pp
 import pytest
+from recheck import compile_capturing, recheck
 
 import seqcraft as sc
-from seqcraft.compiler.boundaries import label_targets
-from seqcraft.compiler.placement import place_events
-from seqcraft.compiler.verification import _sequence_moments, verify_against_tree
 from seqcraft.design.events import knots_of as _grad_knots
 from seqcraft.design.events import pwl_moment, trapz
 
@@ -107,49 +106,32 @@ def test_grad_knots_does_not_duplicate_an_extended_trapezoids_edges(opts) -> Non
 
 
 # ------------------------------------------------------------------------ the checks can fail
-def _recheck(seq, placed, targets, *, tree_duration_s: float | None = None) -> None:
-    """
-    Re-run the invariants against a (possibly tampered) tree.
-
-    Returns nothing: the invariants raise now, so ``sc.compile`` having returned at all is the
-    "clean to begin with" assertion each test below used to make explicitly.
-
-    `tree_duration_s` defaults to what the sequence measures, which is what a clean compile
-    asserted -- pass a different value to tamper with the duration invariant specifically.
-    """
-    duration_s = float(seq.duration()[0])
-    verify_against_tree(
-        placed,
-        targets,
-        duration_s=duration_s,
-        tree_duration_s=duration_s if tree_duration_s is None else tree_duration_s,
-        moments=lambda order: _sequence_moments(seq, order),
-        label_states=lambda: seq.evaluate_labels(evolution='adc'),
-    )
+def _late(placed, axis: str, dt: float) -> list:
+    """The placed events with every gradient on `axis` moved `dt` later: a mistimed expectation."""
+    return [
+        dataclasses.replace(p, node_t=p.node_t + dt, start=p.start + dt, end=p.end + dt,
+                            res_start=p.res_start + dt, res_end=p.res_end + dt)
+        if p.kind in ('trap', 'grad') and p.event.channel == axis else p
+        for p in placed
+    ]
 
 
 def test_m1_catches_a_gradient_that_plays_at_the_wrong_time(opts) -> None:
     """
     The failure m0 is blind to.
 
-    Area is exactly the quantity a time shift preserves, so a lobe playing a raster early leaves
-    m0 untouched.  Here the *tree* is moved after compiling, which is the same discrepancy a
-    compiler that mis-placed the event would produce.
+    Area is exactly the quantity a time shift preserves, so a lobe playing a raster late leaves
+    m0 untouched -- as long as no area crosses a block edge, which a slow y gradient spanning the
+    whole block guarantees here.  The *tree* is moved after compiling, which is the same
+    discrepancy a compiler that mis-placed the event would produce.
     """
     g = pp.make_trapezoid('x', area=500.0, duration=1e-3, system=opts)
-    tree = sc.LogicBlock('t').add(0.0, g).add(3e-3, pp.make_delay(1e-3))
-    out = sc.compile(tree, opts)              # clean to begin with, or this would have raised
+    hold = pp.make_trapezoid('y', area=20.0, duration=4e-3, system=opts)
+    tree = sc.LogicBlock('t').add(1e-3, g).add(0.0, hold)
+    _, seen = compile_capturing(tree, opts)        # clean to begin with, or this would have raised
 
-    placed = place_events(tree, opts)
-    shifted = [
-        dataclasses.replace(p, node_t=p.node_t + 10e-6, start=p.start + 10e-6,
-                            end=p.end + 10e-6, res_start=p.res_start + 10e-6,
-                            res_end=p.res_end + 10e-6)
-        if p.kind == 'trap' else p
-        for p in placed
-    ]
     with pytest.raises(sc.CompilerContractError) as err:
-        _recheck(out, shifted, label_targets(shifted))
+        recheck(seen, placed=_late(seen['placed'], 'x', 10e-6))
     text = str(err.value)
     assert 'compiled m1' in text, f'm1 must notice a 10 us displacement; got {text}'
     assert 'compiled m0' not in text, (
@@ -162,12 +144,32 @@ def test_m0_still_catches_a_lost_lobe(opts) -> None:
     """The original invariant must keep working: dropping area is what it is for."""
     g = pp.make_trapezoid('x', area=500.0, duration=1e-3, system=opts)
     tree = sc.LogicBlock('t').add(0.0, g)
-    out = sc.compile(tree, opts)
+    _, seen = compile_capturing(tree, opts)
 
-    placed = place_events(tree, opts)
-    doubled = [*placed, *[p for p in placed if p.kind == 'trap']]
+    doubled = [*seen['placed'], *[p for p in seen['placed'] if p.kind == 'trap']]
     with pytest.raises(sc.CompilerContractError, match='compiled m0'):
-        _recheck(out, doubled, label_targets(doubled))
+        recheck(seen, placed=doubled)
+
+
+def test_registration_catches_a_waveform_pypulseq_stores_wrong(opts) -> None:
+    """
+    The second stage: what PyPulseq stored, against what emission handed it.
+
+    The stored trapezoid's amplitude is changed after the compile, 1e-3 relative -- a hundred
+    times what PyPulseq's six-digit key can do.  The refusal names registration, not the compile.
+    """
+    g = pp.make_trapezoid('x', area=500.0, duration=1e-3, system=opts)
+    seq, seen = compile_capturing(sc.LogicBlock('t').add(0.0, g), opts)
+
+    grad_id = int(seq.block_events[1][2])
+    amplitude, *rest = seq.grad_library.data[grad_id]
+    seq.grad_library.data[grad_id] = (amplitude * (1.0 + 1e-3), *rest)
+    seq.block_cache.clear()
+    with pytest.raises(sc.CompilerContractError) as err:
+        recheck(seen)
+    text = str(err.value)
+    assert 'registered m0' in text and 'registration tolerance' in text
+    assert 'compiled m' not in text, 'the compile handed PyPulseq the right waveform'
 
 
 def test_the_address_check_catches_a_label_on_the_wrong_readout(opts) -> None:
@@ -184,9 +186,9 @@ def test_the_address_check_catches_a_label_on_the_wrong_readout(opts) -> None:
         .add(2000e-6, pp.make_label('LIN', 'SET', 7))
         .add(5000e-6, adc)
     )
-    out = sc.compile(tree, opts)              # clean to begin with, or this would have raised
+    _, seen = compile_capturing(tree, opts)    # clean to begin with, or this would have raised
 
-    placed = place_events(tree, opts)
+    placed = seen['placed']
     adc_starts = sorted(p.res_start for p in placed if p.kind == 'adc')
     wrong = {
         i: adc_starts[0]                       # claim the label belongs to the first readout
@@ -194,7 +196,7 @@ def test_the_address_check_catches_a_label_on_the_wrong_readout(opts) -> None:
         if p.kind in ('labelset', 'labelinc')
     }
     with pytest.raises(sc.CompilerContractError) as err:
-        _recheck(out, placed, wrong)
+        recheck(seen, targets=wrong)
     text = str(err.value)
     assert 'wrong readout' in text, (
         f'the address check must notice a label attributed to the wrong readout; got {text}'
@@ -224,11 +226,6 @@ def test_the_duplicate_address_check_would_not_have_caught_it(opts) -> None:
 def test_duration_is_still_checked(opts) -> None:
     """The oldest invariant, and the one that fences boundary merging (W6)."""
     tree = sc.LogicBlock('t').add(0.0, pp.make_trapezoid('x', area=100.0, system=opts))
-    seq = sc.compile(tree, opts)
+    seq, seen = compile_capturing(tree, opts)
     with pytest.raises(sc.CompilerContractError, match='differs from the tree total'):
-        _recheck(
-            seq,
-            place_events(tree, opts),
-            {},
-            tree_duration_s=float(seq.duration()[0]) + 1e-3,
-        )
+        recheck(seen, tree_duration_s=float(seq.duration()[0]) + 1e-3)
