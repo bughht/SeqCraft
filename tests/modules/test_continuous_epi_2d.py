@@ -8,7 +8,7 @@ step.  A written file stores each gradient amplitude to six significant digits, 
 checks use the bound that rounding allows: 5e-6 of the area each event has traversed.
 
 Two designs run through the geometric tests, because where ``k = 0`` falls depends on the parity
-of the samples per echo: 5 us at ``oversampling=1.5`` gives 118 samples per echo, and 4 us gives
+of the samples per echo: 5 us at ``min_samples_per_dk=1.5`` gives 118 samples per echo, and 4 us gives
 135.  The scanner is 32 mT/m and 130 T/m/s with a 10 us receiver dead time and an 8192-sample
 per-event limit.
 """
@@ -27,8 +27,8 @@ import seqcraft as sc
 FOV_MM = 220.0
 MATRIX = (64, 64)
 DK = 1e3 / FOV_MM
-EVEN = {'dwell_s': 5e-6, 'oversampling': 1.5}          # 118 samples per echo
-ODD = {'dwell_s': 4e-6, 'oversampling': 1.5}           # 135 samples per echo
+EVEN = {'dwell_s': 5e-6, 'min_samples_per_dk': 1.5}          # 118 samples per echo
+ODD = {'dwell_s': 4e-6, 'min_samples_per_dk': 1.5}           # 135 samples per echo
 #: Each written gradient amplitude has six significant digits, so it is within this fraction.
 SIX_DIGITS = 5e-6 + 5e-9
 
@@ -325,17 +325,17 @@ def test_the_origin_crossing_has_ky_zero(cepi_opts) -> None:
         assert np.abs(origin).max() < 1e-9 * DK
 
 
-def test_the_largest_kx_step_is_the_oversampling_bound(cepi_opts) -> None:
+def test_the_largest_kx_step_is_the_sampling_density_bound(cepi_opts) -> None:
     """
-    Every kx step between consecutive samples is at most ``dk / oversampling``.
+    Every kx step between consecutive samples is at most ``dk / min_samples_per_dk``.
 
     The largest is on the flat top, ``G * dwell``, and the design meets the bound there.
     """
-    for oversampling in (1.0, 1.5, 2.0):
-        epi = _build(cepi_opts, oversampling=oversampling)
+    for min_samples_per_dk in (1.0, 1.5, 2.0):
+        epi = _build(cepi_opts, min_samples_per_dk=min_samples_per_dk)
         k, _ = _measured_k(_compiled(epi(lines=range(30, 34)), cepi_opts))
         steps = np.abs(np.diff(k[0]))
-        assert steps.max() <= DK / oversampling * (1 + 1e-9)
+        assert steps.max() <= DK / min_samples_per_dk * (1 + 1e-9)
         assert steps.max() == pytest.approx(epi.readout_amplitude_hz_m * epi.dwell_s, rel=1e-9)
 
 
@@ -356,7 +356,7 @@ def test_the_lobe_is_the_shortest_that_meets_every_limit(cepi_opts) -> None:
     def legal(spacing: float, ramp: float) -> bool:
         g = area / (spacing - ramp)
         return (g <= cepi_opts.max_grad and g / ramp <= cepi_opts.max_slew * (1 + 1e-9)
-                and g * epi.dwell_s <= DK / epi.oversampling * (1 + 1e-12)
+                and g * epi.dwell_s <= DK / epi.min_samples_per_dk * (1 + 1e-12)
                 and ramp >= epi.blip_duration_s / 2 - 1e-12 and 2 * ramp <= spacing + 1e-12)
 
     for steps in range(1, round(epi.echo_spacing_s / lattice)):
@@ -599,7 +599,7 @@ def test_a_train_at_the_event_limit_builds_and_one_sample_over_is_refused() -> N
     One sample less refuses at build, naming the count and the limit, and offers no split.  At
     8192 the longest table that fits builds and the next refuses.
     """
-    design = {'dwell_s': 3.5e-6, 'oversampling': 1.0}                  # 140 samples per echo
+    design = {'dwell_s': 3.5e-6, 'min_samples_per_dk': 1.0}                  # 140 samples per echo
     lines = list(range(24, 40))
     count = len(lines) * 140
 
@@ -626,8 +626,8 @@ def test_a_train_at_the_event_limit_builds_and_one_sample_over_is_refused() -> N
 
 
 def test_the_limit_refusal_offers_fixes_that_build(cepi_opts) -> None:
-    """The largest table it names builds, and so does the oversampling it names."""
-    epi = _build(_scanner(adc_samples_limit=4000), oversampling=2.0)
+    """The largest table it names builds, and so does the min_samples_per_dk it names."""
+    epi = _build(_scanner(adc_samples_limit=4000), min_samples_per_dk=2.0)
     with pytest.raises(sc.ConfigurationError) as caught:
         epi(lines=range(64))
     message = str(caught.value)
@@ -637,10 +637,10 @@ def test_the_limit_refusal_offers_fixes_that_build(cepi_opts) -> None:
     for longer in (longest + 1, longest + 2):       # by the divisor, then by the limit
         with pytest.raises(sc.ConfigurationError):
             epi(lines=range(longer))
-    offered = message.split('oversampling=1 gives ')[1]
+    offered = message.split('min_samples_per_dk=1 gives ')[1]
     per_echo = int(offered.split()[0])
     builds = int(offered.split('a table of up to ')[1].split()[0])
-    lower = _build(_scanner(adc_samples_limit=4000), oversampling=1.0)
+    lower = _build(_scanner(adc_samples_limit=4000), min_samples_per_dk=1.0)
     assert lower.samples_per_echo == per_echo
     assert builds > longest
     _compiled(lower(lines=range(builds)), lower.opts)
@@ -712,7 +712,7 @@ def test_both_epi_readouts_refuse_the_same_tables_for_the_same_reasons(cepi_opts
 
 @pytest.mark.parametrize(('kwargs', 'match'), [
     ({'dwell_s': 4.05e-6}, 'not a whole number of adc_raster_time'),
-    ({'oversampling': 0.9}, 'undersamples the field of view'),
+    ({'min_samples_per_dk': 0.9}, 'undersamples the field of view'),
     ({'blip_axis': 'x'}, 'both'),
     ({'blip_lines': 0}, 'at least 1'),
     ({'shots': 0}, 'at least 1'),

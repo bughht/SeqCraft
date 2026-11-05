@@ -22,9 +22,11 @@ things: `EPI2D`'s echo is a sample, this one's is an instant.
 - **Flat-top samples sit on their line.** Each half-blip lies inside a readout ramp, so the samples
   between ky lines are exactly those within half a blip of a seam, and the centre line's midpoint
   has `ky = 0`.
-- **`oversampling` is a bound on the kx step between samples**, `dk_read_per_m / oversampling`,
-  met on the flat top. It is required, and it is not `EPI2D`'s sample-count multiplier; it bounds
-  the readout spacing only, not the 2D sampling.
+- **`min_samples_per_dk` bounds the kx step between samples** to `dk_read_per_m /
+  min_samples_per_dk`, met on the flat top: it is the minimum number of samples per readout k-space
+  step, dimensionless and at least 1. It is required. It is not called `oversampling` because it
+  sets no sample count — `EPI2D`'s integer `oversampling` does, and here the samples per echo are an
+  output. It bounds the readout spacing only, not the 2D sampling.
 - **One event, within the configured limit.** `len(lines) * samples_per_echo` has to fit
   `opts.adc_samples_limit` and be a multiple of `opts.adc_samples_divisor`. A limit of `0`,
   PyPulseq's "no limit" and its default, is refused at construction. A table above the limit, or
@@ -49,6 +51,15 @@ trajectory to below 1e-9 of a k-space step, and a written file within its six-di
 rounding. [`examples/gre_epi_2d/03`](examples/gre_epi_2d/03_continuous_readout.ipynb) builds one
 complete single-shot acquisition, writes it and reads it back. No image has been simulated or
 reconstructed from this readout, and no interpreter or scanner has played one of its windows.
+
+**Validation layers.** Layer 1 (the invariants above) and Layer 2 (the `03` acquisition, written
+and read back) are complete. **Layer 3 — simulate and reconstruct — is deferred, by decision.**
+What this readout claims is where each sample lands and when, and Layers 1 and 2 establish that
+against the compiled gradients and the written file. It claims no image: how the ramp samples and
+the samples between ky lines are gridded is the caller's reconstruction, and an image would test
+that choice and a simulator's reading of one long ADC event rather than the readout. Layer 3 is
+owed by the first reconstruction that grids from `k_per_m`, and by any claim about images or
+interpreters made on this readout's behalf.
 
 Out of scope: navigator echoes, readout partial echo, a readout field-of-view offset, `REF` and
 `IMA` labels, segmentation of a long window inside the interpreter, and reconstruction.

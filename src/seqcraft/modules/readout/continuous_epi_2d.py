@@ -99,18 +99,20 @@ class ContinuousEPI2D(Module):
         ``(nx, ny)`` -- readout then blip axis.  Each lobe traverses ``nx * dk_read_per_m``.
     dwell_s
         The receiver dwell, a whole number of ``opts.adc_raster_time``.  Never rounded.
-    oversampling
-        A bound on the readout sampling density, at least ``1``: every kx step between
-        consecutive samples is at most ``dk_read_per_m / oversampling``.  The largest step is
-        on the flat top, so the lobe is designed to satisfy::
+    min_samples_per_dk
+        The minimum readout sampling density, in samples per readout k-space step
+        ``dk_read_per_m`` -- a dimensionless number, at least ``1``.  Every kx step between
+        consecutive samples is at most ``dk_read_per_m / min_samples_per_dk``.  The largest step
+        is on the flat top, so the lobe is designed to satisfy::
 
-            readout_amplitude_hz_m * dwell_s <= dk_read_per_m / oversampling
+            readout_amplitude_hz_m * dwell_s <= dk_read_per_m / min_samples_per_dk
 
-        ``1`` samples the flat top at the field of view, ``2`` at least twice as densely.  It is
-        not :class:`~seqcraft.modules.EPI2D`'s sample-count multiplier: the samples per echo
-        are an output here.  It bounds the spacing along kx only, and says nothing about whether
-        the 2D sampling -- the ky lines, and the samples taken during the blips -- is adequate
-        for a given reconstruction.
+        ``1`` samples the flat top at the field of view, ``2`` at least twice as densely.  It is a
+        lower bound: the lobe lies on the gradient raster, so the flat top can be sampled more
+        densely than asked.  It sets no sample count, unlike :class:`~seqcraft.modules.EPI2D`'s
+        integer ``oversampling``; the samples per echo are an output here.  It bounds the spacing
+        along kx only, and says nothing about whether the 2D sampling -- the ky lines, and the
+        samples taken during the blips -- is adequate for a given reconstruction.
     blip_lines
         The largest ``|delta ky|``, in lines, that any table this instance builds steps between
         consecutive echoes.  It sets the blip, which every step scales and none lengthens.
@@ -154,7 +156,7 @@ class ContinuousEPI2D(Module):
     ...          rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6,
     ...          adc_samples_limit=8192)
     >>> epi = ContinuousEPI2D(opts=o, fov_mm=220.0, matrix=(64, 64), dwell_s=5e-6,
-    ...                       oversampling=1.5)
+    ...                       min_samples_per_dk=1.5)
     >>> epi.samples_per_echo, round(epi.echo_spacing_s * 1e6)
     (118, 590)
     >>> epi.samples_per_echo * epi.dwell_s == epi.echo_spacing_s
@@ -185,7 +187,7 @@ class ContinuousEPI2D(Module):
     `shots` block rasters -- for which a trapezoid of duration ``T`` and ramp ``r`` on the
     gradient raster, with amplitude ``G = A / (T - r)``, meets all of::
 
-        G <= max_grad      G / r <= max_slew      G * dwell_s <= dk_read_per_m / oversampling
+        G <= max_grad      G / r <= max_slew      G * dwell_s <= dk_read_per_m / min_samples_per_dk
         r >= blip_duration_s / 2
 
     The ramp is the shortest that meets them, which gives the lowest amplitude at that ``T``.
@@ -198,7 +200,7 @@ class ContinuousEPI2D(Module):
         fov_mm: float | tuple[float, float],
         matrix: tuple[int, int],
         dwell_s: float,
-        oversampling: float,
+        min_samples_per_dk: float,
         blip_lines: int = 1,
         shots: int = 1,
         blip_duration_s: float | None = None,
@@ -218,7 +220,7 @@ class ContinuousEPI2D(Module):
         self.blip_axis = require_axis(blip_axis, 'blip_axis')
         self.prephase = bool(prephase)
         self.dwell_s = self._require_dwell(dwell_s)
-        self.oversampling = self._require_oversampling(oversampling)
+        self.min_samples_per_dk = self._require_min_samples_per_dk(min_samples_per_dk)
         self.blip_lines = require_count(
             blip_lines, 'blip_lines', hint='1 is single-shot and blocked multi-shot',
         )
@@ -234,7 +236,7 @@ class ContinuousEPI2D(Module):
             blip_lines=self.blip_lines, requested_s=blip_duration_s,
         )
 
-        spacing, ramp, amplitude = self._solve(to_ticks(self.dwell_s), self.oversampling)
+        spacing, ramp, amplitude = self._solve(to_ticks(self.dwell_s), self.min_samples_per_dk)
         self.gx = pp.make_trapezoid(
             channel=self.axis, amplitude=amplitude, rise_time=from_ticks(ramp),
             flat_time=from_ticks(spacing - 2 * ramp), fall_time=from_ticks(ramp), system=opts,
@@ -493,7 +495,7 @@ class ContinuousEPI2D(Module):
         return self._prephase_s + self._lead_s
 
     # -------------------------------------------------------------------------- design
-    def _solve(self, dwell_ticks: int, oversampling: float) -> tuple[int, int, float]:
+    def _solve(self, dwell_ticks: int, min_samples_per_dk: float) -> tuple[int, int, float]:
         """
         Return ``(spacing, ramp, amplitude)`` of the shortest lobe, the two times in ticks.
 
@@ -506,8 +508,9 @@ class ContinuousEPI2D(Module):
         area = self.matrix[0] * self.dk_read_per_m
         block_s = float(self.opts.block_duration_raster)
         shortest_ramp = max(raster, to_ticks(self.blip_duration_s) // 2)
-        # The sampling bound, G * dwell <= dk / oversampling, is T - r >= nx * oversampling * dwell.
-        sampled = Fraction(self.matrix[0]) * Fraction(oversampling) * dwell_ticks
+        # The sampling bound, G * dwell <= dk / min_samples_per_dk, is
+        # T - r >= nx * min_samples_per_dk * dwell.
+        sampled = Fraction(self.matrix[0]) * Fraction(min_samples_per_dk) * dwell_ticks
         first = max(1, math.ceil((sampled + shortest_ramp) / lattice))
         for k in range(first, first + _MAX_SPACING_STEPS):
             spacing = k * lattice
@@ -522,8 +525,8 @@ class ContinuousEPI2D(Module):
         longest = (first + _MAX_SPACING_STEPS - 1) * lattice
         msg = format_error(
             f'no echo spacing up to {from_ticks(longest) * 1e3:.1f} ms lets a lobe traverse '
-            f'{area:.1f} 1/m within the gradient limits and the oversampling bound.',
-            {'dwell_s': from_ticks(dwell_ticks), 'oversampling': oversampling,
+            f'{area:.1f} 1/m within the gradient limits and the sampling-density bound.',
+            {'dwell_s': from_ticks(dwell_ticks), 'min_samples_per_dk': min_samples_per_dk,
              'matrix': self.matrix, 'fov_mm': self.fov_mm, 'shots': self.shots},
             ['widen fov_mm or lower matrix[0], which lowers the area a lobe traverses'],
         )
@@ -621,11 +624,11 @@ class ContinuousEPI2D(Module):
             'with blip_lines) acquire the rest in other excitations, and a partial-ky table '
             'leaves lines unacquired for a partial-Fourier reconstruction to fill',
         ]
-        if self.oversampling > 1:
+        if self.min_samples_per_dk > 1:
             lowest = self._solve(to_ticks(self.dwell_s), 1.0)[0] // to_ticks(self.dwell_s)
             if longest_table(lowest) > longest:
                 hints.append(
-                    f'oversampling=1 gives {lowest} samples per echo, so a table of up to '
+                    f'min_samples_per_dk=1 gives {lowest} samples per echo, so a table of up to '
                     f'{longest_table(lowest)} lines builds -- the flat-top sample spacing then '
                     f'reaches dk_read_per_m',
                 )
@@ -638,7 +641,7 @@ class ContinuousEPI2D(Module):
             f'{count} ADC samples in this train\'s one ADC event ({lines} lines x {per_echo} '
             f'per echo), above the {limit} that opts.adc_samples_limit allows.',
             {'lines': lines, 'samples_per_echo': per_echo, 'adc_samples_limit': limit,
-             'dwell_s': self.dwell_s, 'oversampling': self.oversampling},
+             'dwell_s': self.dwell_s, 'min_samples_per_dk': self.min_samples_per_dk},
             hints,
         )
         raise ConfigurationError(msg)
@@ -691,7 +694,7 @@ class ContinuousEPI2D(Module):
             for dwell in (here + k * raster, here - k * raster):
                 if dwell <= 0:
                     continue
-                spacing = self._solve(dwell, self.oversampling)[0]
+                spacing = self._solve(dwell, self.min_samples_per_dk)[0]
                 samples = spacing // dwell
                 if samples % self._divisor == 0 and lines * samples <= self._limit:
                     return from_ticks(dwell), samples, from_ticks(spacing)
@@ -756,17 +759,17 @@ class ContinuousEPI2D(Module):
             raise ConfigurationError(msg)
         return from_ticks(ticks)
 
-    def _require_oversampling(self, oversampling: float) -> float:
-        """Return `oversampling` as a float, refusing a bound below the field of view."""
-        value = float(oversampling)
+    def _require_min_samples_per_dk(self, min_samples_per_dk: float) -> float:
+        """Return `min_samples_per_dk` as a float, refusing a bound below the field of view."""
+        value = float(min_samples_per_dk)
         if not np.isfinite(value) or value < 1.0:
             msg = format_error(
-                f'oversampling = {value:g} would step more than dk_read_per_m between samples on '
-                f'the flat top, which undersamples the field of view.',
-                {'oversampling': value},
+                f'min_samples_per_dk = {value:g} would step more than dk_read_per_m between '
+                f'samples on the flat top, which undersamples the field of view.',
+                {'min_samples_per_dk': value},
                 [
-                    'oversampling=1 samples the flat top at the field of view',
-                    'oversampling=2 samples it at least twice as densely',
+                    'min_samples_per_dk=1 samples the flat top at the field of view',
+                    'min_samples_per_dk=2 samples it at least twice as densely',
                 ],
             )
             raise ConfigurationError(msg)

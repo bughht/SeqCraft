@@ -1533,7 +1533,7 @@ window_opts = pp.Opts(max_grad=32, grad_unit='mT/m', max_slew=130, slew_unit='T/
                       rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=10e-6,
                       adc_samples_limit=8192)
 cepi = sc.modules.ContinuousEPI2D(opts=window_opts, fov_mm=220.0, matrix=(64, 64),
-                                  dwell_s=5e-6, oversampling=1.5)
+                                  dwell_s=5e-6, min_samples_per_dk=1.5)
 cepi_train = cepi(lines=range(64))                # one ADC event of 64 x 118 samples
 
 assert cepi.samples_per_echo * cepi.dwell_s == cepi.echo_spacing_s
@@ -1546,7 +1546,7 @@ cepi_te_end = cepi.time_to_center_line(range(64)) # the midpoint of the centre l
 |---|---|
 | **the lobe is the window** | no guard: `echo_spacing_s = samples_per_echo × dwell_s` exactly, on the gradient raster. The echo spacing moves in steps of `lcm(dwell_s, grad_raster_time)`, and the samples per echo are an output |
 | **`k = 0` is an instant** | the readout prephaser is half a lobe's area, so `kx = 0` is each lobe's midpoint. That is on a sample only when `samples_per_echo` is odd, so there is no `echo_sample` |
-| **`oversampling` is a bound** | every kx step between consecutive samples is at most `dk_read_per_m / oversampling`, met on the flat top, where it is `readout_amplitude_hz_m × dwell_s`. It is not `EPI2D`'s sample-count multiplier, and it bounds the spacing along kx only — not the 2D sampling of ky lines and blip samples |
+| **`min_samples_per_dk` is a density bound** | the minimum number of samples per readout k-space step `dk_read_per_m`, dimensionless and at least 1: every kx step between consecutive samples is at most `dk_read_per_m / min_samples_per_dk`, met on the flat top, where it is `readout_amplitude_hz_m × dwell_s`. It sets no sample count, unlike `EPI2D`'s integer `oversampling`, and it bounds the spacing along kx only — not the 2D sampling of ky lines and blip samples |
 | **each half-blip lies in a ramp** | flat-top samples sit on their ky line, the samples within `blip_duration_s / 2` of a seam lie between lines, and the centre line's midpoint has `ky = 0` |
 | **one size limit** | `len(lines) × samples_per_echo` has to fit `opts.adc_samples_limit` and be a multiple of `opts.adc_samples_divisor`. A limit of `0` is refused at construction, and a table above the limit is refused rather than split into several events |
 
