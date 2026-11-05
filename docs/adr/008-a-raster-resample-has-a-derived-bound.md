@@ -1,6 +1,6 @@
 # ADR-008: A raster resample has a derived bound, and is refused beyond it
 
-- Status: Proposed (2026-11-05)
+- Status: Accepted (proposed 2026-11-05, accepted with the merge of PR #61 on 2026-11-05)
 - Date: 2026-11-05
 - Amends: the resampled-block clause of
   [ADR-007](007-against-tree-moments-per-block.md). ADR-007's per-block, two-stage comparison is
