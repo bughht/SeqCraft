@@ -48,8 +48,10 @@ inside the stretch.
   time, difference and tolerance.
 - Area moved across a block boundary is refused, which the whole-sequence m0 could not see.
 - What stays global is exact: the registered block grid must equal the handed one in ticks, and
-  duration and label addresses are checked as before. With the grid exact, the block moments fix
-  the whole-sequence ones, so nothing is lost by not comparing those.
+  duration and label addresses are checked as before. With the grid exact, the whole-sequence
+  moments are the sums in the decision above, so comparing them again would only re-test the block
+  moments, within either the sum of their tolerances or a narrower one that brings back
+  `a_k·δm0_k`.
 - A storage fault is refused at the stage where it happens. A centre-sampled gradient of four
   samples or fewer, which PyPulseq stores without its last half raster, is refused at
   registration.
