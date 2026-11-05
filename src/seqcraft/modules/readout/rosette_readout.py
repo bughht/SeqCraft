@@ -51,7 +51,11 @@ physical limit.
 
 The gradient and slew limits are applied to the in-plane **vector**, so every rotation is legal
 on every axis.  The analytic peaks are :math:`k_{max}\max(\omega_1, \omega_2)` and
-:math:`k_{max}(\omega_1^2 + \omega_2^2)`; the sampled core never exceeds either.
+:math:`k_{max}(\omega_1^2 + \omega_2^2)`; the sampled core never exceeds either.  What is played
+is piecewise linear between the raster-edge knots, so the slew it demands on each raster is a
+secant of the analytic gradient, :math:`|\Delta g|/\Delta t`, which is at most the analytic peak:
+the limits hold for the played waveform with no tolerance.  The ramps and the correction are
+designed on their secants directly.  :meth:`~RosetteReadout.limits` reports the played peaks.
 
 What it reports, and from what
 ------------------------------

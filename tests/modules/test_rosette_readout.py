@@ -519,6 +519,12 @@ def test_every_in_plane_rotation_is_legal() -> None:
     The exact bound at every rotation is read off the angle-0 vectors (C6): |g| at the knots,
     where a piecewise-linear |g| peaks, and |dg/dt| on each segment.  ``limits()`` is that
     measurement, and the worst angles compile.
+
+    The slew the hardware is asked for is the emitted waveform's: a secant |delta g| / dt on each
+    raster.  On the core a secant is at most the analytic peak ``k_max (w1^2 + w2^2)``, which the
+    design keeps within ``max_slew``, so the limit holds with no tolerance.  The case presses that
+    limit -- one raster shorter, the analytic peak would exceed it -- and the emitted peak falls
+    short of the analytic one by no more than ``cos^2(w1 dt / 2)`` and the midpoint error.
     """
     opts = scanner()
     ro = rosette(opts, petals=5)
@@ -528,7 +534,12 @@ def test_every_in_plane_rotation_is_legal() -> None:
     assert peak <= float(opts.max_grad)
     assert steepest <= float(opts.max_slew)
     assert ro.limits() == pytest.approx((peak, steepest), rel=1e-12)
-    assert steepest > 0.99 * float(opts.max_slew)
+
+    oracle = Analytic(ro, opts)
+    shorter = math.pi / (ro.petal_duration_s - oracle.dt)
+    assert oracle.k_max * shorter**2 * (1 + ro.omega_ratio**2) > float(opts.max_slew)
+    top = oracle.k_max * (oracle.w1**2 + oracle.w2**2)
+    assert steepest >= top * math.cos(oracle.w1 * oracle.dt / 2) ** 2 - oracle.dt**2 / 24 * oracle.m(4)
 
     worst = [-float(np.angle(knots.values[np.argmax(np.abs(knots.values))])),
              -float(np.angle(slew[np.argmax(np.abs(slew))]))]
