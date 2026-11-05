@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased — a raster resample is bounded, refused beyond its bound, and reported in moments
+
+Legalization resamples a block-axis onto the gradient raster when no pulseq gradient can hold its
+knots, typically a trapezoid summed with a gradient sampled at raster centres. ADR-007 compares the
+emitted block with the tree resampled the same way. That checks the emission but not the
+approximation, whose only contract was a warning giving the largest amplitude change as a fraction
+of `max_grad` ([ADR-008](docs/adr/008-a-raster-resample-has-a-derived-bound.md)).
+
+- **Bounded.** Over a stretch of raster-centre samples, the resample's area changes telescope to
+  the two ends: `(r/8)·(D_end − D_start)`. Within the slew limit it therefore moves k by at most
+  `r²·max_slew/4` at every instant, whatever the stretch's duration: 0.160 1/m at a 10 µs raster
+  and 150 T/m/s. m1 follows from k by parts, `|Δm1| ≤ 2·L·sup|Δk|` for a block of length `L`.
+- **Refused beyond it.** A resample whose measured running k exceeds `r²·max_slew/4` per non-edge
+  piece raises `CompileError`.
+  - Raster-centre input within the slew limit never does.
+  - A gradient sampled every half raster (`oversampling=True`) and summed with a trapezoid moved k
+    by 31.7 1/m in one block, under a warning of 1.87 % of `max_grad`. It is now refused, while a
+    smooth one still compiles.
+  - The check is on the running k, not on the block's m0, which can cancel while k and m1 move.
+- **Reported in moments.** Each `resample` entry keeps its amplitude figure and adds how far k moved
+  against the bound, and the block's m0 and m1. A new `resample_total` warning, for an axis
+  resampled in more than one block, gives the net m0 and the summed magnitudes of the k and m1
+  changes. Cancellation can hide those magnitudes in the net.
+- **Held exactly where it can be.** A raster-centre run that starts at a raster edge inside its
+  block, or ends before its block does, with zero beyond, is emitted as an arbitrary gradient with a
+  delay instead of being resampled. That applies only to runs of five samples or more: PyPulseq
+  stores four or fewer 5 µs short, and registration would refuse them, so those stay a bounded
+  resample.
+
+**Unchanged:** every emitted sequence of the 25 build notebooks (111 compiles, 109 emitted) and of
+the long radial, spiral, rosette, `EPI2D` and `ContinuousEPI2D` trains is byte-identical, and no
+verdict changed. ADR-007's per-block, two-stage comparison is unchanged.
+
 ## Unreleased — m0 and m1 are compared per compiled block, about each block's own start
 
 The against-tree check compared each axis's m0 and m1 over the whole sequence, with m1 referenced

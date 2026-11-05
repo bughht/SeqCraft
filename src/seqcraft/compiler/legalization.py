@@ -25,6 +25,12 @@ spiral -- fits neither, and that one is resampled by :func:`_resampled`, which m
 error it introduced and reports it rather than moving the waveform quietly.  A silent 2.5 %
 amplitude loss on a spiral is exactly how that requirement was discovered.
 
+A resample is also bounded (ADR-008).  For gradients sampled at raster centres or on raster edges
+within the slew limit, it moves k by at most ``r**2 * max_slew / 4`` per raster-centre stretch,
+at every instant, whatever the stretch's duration; m1 then moves by at most twice the block's
+length times that.  A resample that measures more is refused, which is what a gradient sampled
+every half raster can do.
+
 Limits are measured here too (:func:`check_limits`), on the summed waveform, because that is the
 only place the truth is visible: two individually legal gradients on one axis can sum to an
 illegal one, and no module can see that in isolation.  A per-axis violation **raises**: there is
@@ -77,6 +83,15 @@ __all__ = [
 #: A superposed block's edge value below this fraction of ``max_grad`` is set to exactly zero (see
 #: :func:`axis_gradient`).  The against-tree check models the change that makes.
 _NEGLIGIBLE_EDGE = 1e-6
+
+#: PyPulseq stores a raster-centre shape of four samples or fewer without its last half raster, and
+#: registration refuses that (ADR-007).  A delayed or zero-padded run that short is resampled
+#: instead of being emitted as an arbitrary gradient it would then be refused for.
+_SHORTEST_STORED_RUN = 5
+
+#: Relative float allowance on the resample bound: the measured k change is a sum of products of
+#: float times and amplitudes, and a waveform built exactly at the slew limit reaches the bound.
+_BOUND_ROUNDING = 1e-9
 
 
 def superpose(
@@ -133,12 +148,12 @@ def _as_arbitrary(
     rel_ps: np.ndarray,
     amps: np.ndarray,
     raster_ps: int,
-) -> tuple[np.ndarray, float, float] | None:
+) -> tuple[np.ndarray, float, float, int] | None:
     """
-    Return ``(waveform, first, last)`` if these knots are exactly an arbitrary gradient's.
+    Return ``(waveform, first, last, delay_ps)`` if these knots are exactly an arbitrary gradient's.
 
-    A gradient sampled at raster centres has knots at ``0, r/2, 3r/2, ..., (n - 1/2) r, n r`` --
-    the two edges carrying ``first`` and ``last``, the interior points being the samples.  Those
+    A gradient sampled at raster centres has knots at ``d, d + r/2, ..., d + (n - 1/2) r, d + n r``
+    -- the two edges carrying ``first`` and ``last``, the interior points being the samples.  Those
     times are **not** on the gradient raster, so :func:`pypulseq.make_extended_trapezoid` rejects
     them; recognising the pattern is what lets a split spiral stay a spiral instead of being
     resampled onto raster edges.
@@ -146,16 +161,40 @@ def _as_arbitrary(
     Splitting works because a block boundary is on the raster: cutting there leaves each piece's
     samples at the centres of *its own* raster intervals, with the seam amplitude becoming one
     piece's ``last`` and the other's ``first``.
+
+    The run normally starts at the block's start (``d = 0``).  It may also start later, at a raster
+    edge where it and everything before it are zero, which is a raster-centre gradient that begins
+    inside its block and is then cut.  It may end before the block's end, where it and everything
+    after are zero.  Both are the same event with a delay, so they are held exactly instead of
+    resampled.  A padded run of four samples or fewer is left to the resample, since PyPulseq
+    would store it without its last half raster.
     """
-    n = len(rel_ps) - 2
-    if n < 1 or raster_ps % 2:
+    if raster_ps % 2:
         return None
-    if int(rel_ps[0]) != 0 or int(rel_ps[-1]) != n * raster_ps:
+    half = raster_ps // 2
+    centres = np.flatnonzero(rel_ps % raster_ps == half)
+    n = centres.size
+    if n < 1 or centres[-1] - centres[0] + 1 != n:
         return None
-    want = (np.arange(n, dtype=np.int64) * 2 + 1) * (raster_ps // 2)
-    if not np.array_equal(rel_ps[1:-1], want):
+    lo, hi = int(centres[0]), int(centres[-1])
+    start = int(rel_ps[lo]) - half
+    want = start + (np.arange(n, dtype=np.int64) * 2 + 1) * half
+    if not np.array_equal(rel_ps[lo:hi + 1], want):
         return None
-    return amps[1:-1], float(amps[0]), float(amps[-1])
+    end = start + n * raster_ps
+    lead, trail = rel_ps[:lo], rel_ps[hi + 1:]
+    if start == 0:
+        if lead.size != 1:
+            return None
+    elif lead.size != 2 or int(lead[1]) != start or amps[0] != 0.0 or amps[1] != 0.0:
+        return None
+    if trail.size == 0 or int(trail[0]) != end:
+        return None
+    if trail.size > 2 or (trail.size == 2 and (amps[hi + 1] != 0.0 or amps[hi + 2] != 0.0)):
+        return None
+    if (start > 0 or trail.size == 2) and n < _SHORTEST_STORED_RUN:
+        return None
+    return amps[lo:hi + 1], float(amps[lo - 1]), float(amps[hi + 1]), start
 
 
 def axis_gradient(
@@ -168,6 +207,7 @@ def axis_gradient(
     block_index: int,
     *,
     resampled: list[tuple[int, str]] | None = None,
+    moved: list[tuple[str, float, float, float]] | None = None,
 ) -> SimpleNamespace | None:
     """
     Return the single gradient event for `axis` over the interval ``[a, b)``, or ``None``.
@@ -179,9 +219,11 @@ def axis_gradient(
     Otherwise the pieces are superposed exactly (:func:`superpose`) and the result is emitted in
     whichever pulseq representation can hold those knots without moving them: an extended
     trapezoid when they are all on the gradient raster, an arbitrary gradient when they are the
-    raster-centre pattern.  Only a waveform needing *both* -- a trapezoid summed with a spiral --
-    can be held by neither, and that one is resampled and reported rather than done quietly:
-    in the warning notes, and as ``(block_index, axis)`` in `resampled` when one is given.
+    raster-centre pattern, delayed or zero-padded within the block.  Only a waveform needing
+    *both* -- a trapezoid summed with a spiral -- can be held by neither, and that one is resampled
+    within a bound and reported rather than done quietly: in the warning notes, as
+    ``(block_index, axis)`` in `resampled`, and as ``(axis, sup |Δk|, Δm0, Δm1)`` in `moved`, when
+    those are given.
     """
     if not pieces:
         return None
@@ -228,7 +270,7 @@ def axis_gradient(
 
     centre = _as_arbitrary(rel_ps, amps, raster_ps)
     if centre is not None:
-        waveform, first, last = centre
+        waveform, first, last, delay_ps = centre
         # Limits are measured on the finished block by check_limits.  Letting make_arbitrary_grad
         # raise here would report the violation before the waveform is complete, on a piece rather
         # than on the sum -- which is the one place the truth is visible.
@@ -237,7 +279,7 @@ def axis_gradient(
             waveform=waveform,
             first=first,
             last=last,
-            delay=0.0,
+            delay=delay_ps / TICKS_PER_SECOND,
             max_grad=math.inf,
             max_slew=math.inf,
             system=opts,
@@ -246,7 +288,7 @@ def axis_gradient(
 
     if resampled is not None:
         resampled.append((block_index, axis))
-    return _resampled(axis, rel_ps, amps, opts, notes, block_index, pieces, a)
+    return _resampled(axis, rel_ps, amps, opts, notes, block_index, pieces, a, moved)
 
 
 def _resampled(
@@ -258,17 +300,28 @@ def _resampled(
     block_index: int,
     pieces: Sequence[PlacedEvent],
     at: float,
+    moved: list[tuple[str, float, float, float]] | None = None,
 ) -> SimpleNamespace:
     """
-    Force knots onto the gradient raster, and say by how much the waveform moved.
+    Force knots onto the gradient raster, refuse it beyond the bound, and say what moved.
 
     The one case pulseq cannot represent exactly: a trapezoid's corners are on raster edges, an
     arbitrary gradient's samples are at raster centres, and their sum bends at both.  Neither
     event type has room for that, so something has to give -- but silently giving is how a 2.5 %
     amplitude error reaches a scanner, so the error is measured and reported.
 
-    The bound is exact rather than estimated: two PWL functions differ most at a knot of one of
-    them, so comparing at the union of both knot sets *is* the supremum.
+    The amplitude bound is exact rather than estimated: two PWL functions differ most at a knot of
+    one of them, so comparing at the union of both knot sets *is* the supremum.
+
+    **The moment bound (ADR-008).**  Keeping only the raster-edge values replaces, in each raster
+    interval, a raster-centre sample's tent by its chord.  Over a stretch of samples ``c_i`` the
+    area changes telescope to ``(r/8)·(D_end - D_start)``, ``D`` being the sample step across each
+    end, so a stretch within the slew limit moves the running k by at most ``r²·max_slew/4`` at
+    every instant, whatever its duration.  Edge knots are kept exactly and add nothing.  m1 needs
+    no bound of its own: by parts, ``Δm1 = L·Δk(L) - ∫Δk dt``, so ``|Δm1| <= 2·L·sup|Δk|`` for a
+    block of length ``L``.  The bound is therefore on the running k, not on the block's m0, which
+    can cancel while k strays.  Half-raster input has no telescoping, so its resample is
+    measured against the same bound, never assumed to meet it.
     """
     raster_ps = to_ticks(float(opts.grad_raster_time))
     n = int(rel_ps[-1] // raster_ps)
@@ -279,9 +332,40 @@ def _resampled(
     before = np.interp(union, rel_ps / TICKS_PER_SECOND, amps)
     after = np.interp(union, grid_ps / TICKS_PER_SECOND, grid_amps)
     error = float(np.max(np.abs(before - after)))
+    k_moved, dm0, dm1 = _resample_moments(union, after - before)
+
+    sites = '+'.join(sorted({p.where for p in pieces}))
+    r = float(opts.grad_raster_time)
+    stretches = sum(1 for p in pieces if not _on_raster_edges(p, raster_ps))
+    bound = stretches * r * r * float(opts.max_slew) / 4.0
+    if k_moved > bound * (1.0 + _BOUND_ROUNDING):
+        msg = format_error(
+            f'block {block_index} cannot be resampled onto the raster on axis {axis} within the '
+            f'resample bound: it would move k by {k_moved:.4g} 1/m.',
+            {
+                'from': sites,
+                'at': f'{at * 1e3:.3f} ms',
+                'k moved by': f'{k_moved:.4g} 1/m',
+                'bound': f'{bound:.4g} 1/m = {stretches} x raster^2 x max_slew / 4',
+                'block m0 / m1 change': f'{dm0:+.4g} 1/m / {dm1:+.4g} s/m',
+            },
+            [
+                'the bound holds for gradients sampled at raster centres or on raster edges within '
+                'the slew limit; a gradient sampled every half raster (oversampling=True) has '
+                'none, so give it no same-axis overlap, or a barrier at each end so it keeps its '
+                'own block',
+                'a piece built past the slew limit has no bound either: build it against the '
+                'system limits',
+            ],
+        )
+        raise CompileError(msg)
+    if moved is not None:
+        moved.append((axis, k_moved, dm0, dm1))
     notes.setdefault('resample', []).append(
-        f'{"+".join(sorted({p.where for p in pieces}))} (axis {axis}) at {at * 1e3:.3f} ms, '
-        f'by at most {error / float(opts.max_grad) * 100:.2f} % of max_grad'
+        f'{sites} (axis {axis}) at {at * 1e3:.3f} ms, '
+        f'by at most {error / float(opts.max_grad) * 100:.2f} % of max_grad, '
+        f'k by up to {k_moved:.3g} 1/m of a {bound:.3g} 1/m bound, '
+        f'block m0 {dm0:+.3g} 1/m and m1 {dm1:+.3g} s/m'
     )
     grad = pp.make_extended_trapezoid(
         channel=axis,
@@ -294,6 +378,30 @@ def _resampled(
     )
     grad.delay = 0.0
     return cast('SimpleNamespace', grad)
+
+
+def _resample_moments(t: np.ndarray, d: np.ndarray) -> tuple[float, float, float]:
+    """
+    A resample's change as ``(sup |Δk|, Δm0, Δm1)``, about the block's start.
+
+    `d` is the resampled waveform minus the exact one at `t`, the knots of both, so it is linear
+    between them and the running integral is exact there.  Inside a segment the running integral
+    peaks only where `d` crosses zero, so those points are checked as well.
+    """
+    h = np.diff(t)
+    k = np.concatenate(([0.0], np.cumsum(h * (d[:-1] + d[1:]) / 2.0)))
+    peak = float(np.max(np.abs(k)))
+    cross = np.flatnonzero(d[:-1] * d[1:] < 0.0)
+    if cross.size:
+        reach = h[cross] * d[cross] / (d[cross] - d[cross + 1])
+        peak = max(peak, float(np.max(np.abs(k[cross] + reach * d[cross] / 2.0))))
+    return peak, float(k[-1]), ev.pwl_moment(t, d, 1)
+
+
+def _on_raster_edges(piece: PlacedEvent, raster_ps: int) -> bool:
+    """Whether every knot of `piece` is on a raster edge, so that a resample keeps it exactly."""
+    times, _ = ev.knots_of(piece.event, piece.node_t)
+    return all(to_ticks(float(t)) % raster_ps == 0 for t in times)
 
 
 def check_limits(
@@ -435,6 +543,7 @@ def legalize_blocks(  # noqa: C901, PLR0912
     notes: dict[str, list[str]] = {}
     blocks: list[PulseqReadyBlock] = []
     resampled: list[tuple[int, str]] = []
+    moved: list[tuple[str, float, float, float]] = []
 
     grads: dict[str, list[PlacedEvent]] = {}
     for event in placed:
@@ -509,7 +618,7 @@ def legalize_blocks(  # noqa: C901, PLR0912
                 )
                 raise CompileError(msg)
             gradient = axis_gradient(axis, here, start, end, opts, notes, index,
-                                     resampled=resampled)
+                                     resampled=resampled, moved=moved)
             if gradient is not None:
                 events.append(gradient)
                 paths.extend(event.path for event in here)
@@ -542,6 +651,19 @@ def legalize_blocks(  # noqa: C901, PLR0912
                 )
                 raise CompileError(msg)
         blocks.append(ready)
+
+    # Each resample is bounded on its own; several on one axis add up.  The net m0 is what a
+    # balanced design sees, and the summed magnitudes are what cancellation would hide.  m1 has no
+    # signed total: block m1 values share no origin, and about t = 0 the total would bring back the
+    # absolute-time lever arm ADR-007 retired.
+    for axis in sorted({axis for axis, _, _, _ in moved}):
+        rows = [row for row in moved if row[0] == axis]
+        if len(rows) > 1:
+            notes.setdefault('resample_total', []).append(
+                f'axis {axis} over {len(rows)} blocks: m0 {sum(r[2] for r in rows):+.3g} 1/m net; '
+                f'k {sum(r[1] for r in rows):.3g} 1/m and m1 {sum(abs(r[3]) for r in rows):.3g} '
+                f's/m summed in magnitude'
+            )
 
     ready_blocks = tuple(blocks)
     require_valid_contract(
