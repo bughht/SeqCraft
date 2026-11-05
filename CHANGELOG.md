@@ -59,6 +59,166 @@ controls a block's area moved by up to 1.5e-10 1/m at 100 s and 1.2e-9 at 1000 s
 at 0 s. The same block now superposes to the same knots, bit for bit, wherever it sits, and the
 compile stage's tolerance loses its only term that grew with placement.
 
+## Unreleased — a rosette readout
+
+`sc.modules.RosetteReadout` plays whole petals of the analytic rosette
+`k(t) = k_max sin(ω1 t) e^{iω2 t}` on the gradient raster: the analytic gradient sampled on raster
+edges, one extended trapezoid per in-plane axis, and one ADC event. Parameters: `fov_mm`, `matrix`,
+`petals`, `omega_ratio` (finite, at least zero), `dwell_s`, and an optional `petal_duration_s`.
+
+**One realisation of the ends, with no option.** A zero-area lead-in along `g(0)`; after the
+core, a lead-out along the core's last gradient that cancels the core's end point along it, and a
+perpendicular triangle that cancels the rest. Each ramp takes the fewest rasters the slew limit
+allows. So the readout starts and ends at rest and leaves no net in-plane moment. The
+cancellation is part of the construction, so it does not depend on the ratio closing the curve;
+it is tested at six ratios.
+
+**The domain.** The gradient and slew limits apply to the in-plane vector, so every rotation is
+legal per axis. **What the slew limit bounds** is the played waveform's: it is piecewise linear
+between raster-edge knots, so on each raster it asks for the secant `|Δg|/Δt`. On the core a secant
+is at most the analytic peak `k_max (ω1² + ω2²)`, which the design keeps within `max_slew`; the
+ramps and the correction are designed on their secants directly. The limit therefore holds for
+what is played with no tolerance, and `limits()` reports the played peaks. The tests assert that
+directly, and measure the played core peak against the analytic one from both sides: at most the
+peak, and at least `S cos²(ω1 Δt/2) − Δt² M4/24`. The secant cannot be centred on the peak when the
+raster count per petal is even, so `((ω1 + ω2) Δt)²/24` is not a bound. A fixed budget of 0.05 Δk applies to the closed-form bound `B` on the core's largest
+vector departure from the analytic curve. That bound is conservative, so a refusal marks the
+supported domain, not a physical limit. The default petal is the shortest whole raster count
+meeting all three; the dwell does not enter it, and a dwell moving `k` more than `Δk` per sample is
+refused. `opts.adc_samples_limit` must be positive, and a readout needing more samples than one
+event allows is refused rather than split.
+
+**Three stages, three allowances.** The designed knots are within `B`, a theorem rather than a
+sampled check. The compiled sequence may add registration rounding: a compressible shape's samples
+are rounded to 1e-7 of its peak. The written file adds serialisation: amplitudes to six
+significant digits, normalised shapes to nine. Each stage is tested against `B` plus its own
+allowances, and `B` is never widened. `departure_per_m` is an error-controlled upper bound on the
+designed departure, not a grid maximum.
+
+**The window is checked, not assumed.** One dwell of padding each side, the delay floored onto
+`rf_raster_time` and the count rounded up to `adc_samples_divisor`. The delay is then read back
+from the built ADC, and the samples must cover every ideal crossing and every closest approach. At
+a 200 ns dwell the padded window misses the last closest approach, and it grows by one divisor of
+samples. The crossing report keeps ideal instants, closest approaches with their residuals, and
+nearest samples apart, with ties going to the earlier sample. The block lasts until both the
+gradient and the ADC's trailing dead time have ended, with or without the ADC, so a dummy shot
+keeps its span. The trailing interval is explicit, not compiler padding.
+
+**Evidence, by source.**
+
+- **Design, over 360 protocols.** The module reproduces a candidate-free probe of the same
+  realisation: petals, lead-in, lead-out and correction lengths, and sample counts are identical,
+  and departures agree to 5e-8 Δk.
+- **Compiled and read back, 13 protocols.**
+  - Every stage is within its allowance.
+  - The design reaches at most 0.97 of `B`.
+  - The read-back file reaches up to 1.28 `B`, at a 10 ms petal whose departure is as small as
+    six-digit rounding. That case is within `B` plus both allowances.
+- **A small composed acquisition, read back.** Eight shots and a dummy, with excitation, spoiler,
+  TR and RF spoiling. Samples lie within 7.3e-5 1/m of the report, and closest approaches within
+  4 ps of it.
+
+**Validation layers.** Layer 1 is the contract above, on designed, compiled and read-back
+sequences. Layer 2 is [`examples/gre_rosette_2d/01`](examples/gre_rosette_2d/01_build.ipynb): a
+spoiled gradient echo of sixteen rotated shots, with dummies sized from the approach to steady
+state, written and read back. The file's trajectory matches the report to 3e-5 Δk, and its sample
+times to 2e-15 s. The largest hole in the sampled disk is 0.64 Δk, inside the 0.71 Δk of a
+Nyquist Cartesian grid. **Layer 3 — simulate and reconstruct — is deferred, by decision.** The
+readout claims a trajectory, its crossings and their timing, and Layers 1 and 2 establish those
+against the played gradients and the file. It claims no image. A rosette samples points other
+than the origin more than once, so density compensation is a reconstruction design question of
+its own, and an image would test that rather than the readout. Layer 3 is owed by the first
+reconstruction that grids from `k_per_m`, and by any image or spectral-selectivity claim made for
+this readout.
+
+**Not validated, and not claimed.** No image, no simulation and no scanner. Oblique prescriptions, where a slice rephaser
+overlaps the readout, are the composing kernel's. Neither a minimum-time traversal nor ADC
+segmentation is offered.
+
+## Unreleased — an echo-planar train sampled by one ADC window
+
+`sc.modules.ContinuousEPI2D` is a sibling of `EPI2D` whose receiver opens once for the whole
+train: one ADC event runs from the first readout lobe's start to the last lobe's end, so ramps,
+turnarounds and blips are all sampled. The gradients are `EPI2D`'s kind — alternating trapezoids,
+blips centred on the zero crossings, a blip designed once at `blip_lines` and scaled per step — and
+the line table, interleaved shots, `segment`, `phase_deg` and dummy shots mean what they mean
+there. It is a separate class rather than a mode of `EPI2D` because the two report different
+things: `EPI2D`'s echo is a sample, this one's is an instant.
+
+- **The lobe is the window.** `echo_spacing_s == samples_per_echo * dwell_s` exactly, on the
+  gradient raster, and the window opens on the first lobe's edge, so a forward lobe and the reverse
+  lobe after it sample one kx grid. The echo spacing is the shortest on `lcm(dwell_s,
+  grad_raster_time)` — divisible into `shots` block rasters when interleaved — for which a lobe
+  meets the amplitude and slew limits, the sampling bound below, and holds half a blip in each
+  ramp.
+- **`k = 0` at each lobe's midpoint.** The readout prephaser is exactly half a lobe's area, so
+  `time_to_echo` and `time_to_center_line` report instants exactly one echo spacing apart. There is
+  no echo sample: at an even sample count `kx = 0` falls halfway between two samples.
+- **Flat-top samples sit on their line.** Each half-blip lies inside a readout ramp, so the samples
+  between ky lines are exactly those within half a blip of a seam, and the centre line's midpoint
+  has `ky = 0`.
+- **`min_samples_per_dk` bounds the kx step between samples** to `dk_read_per_m /
+  min_samples_per_dk`, met on the flat top: it is the minimum number of samples per readout k-space
+  step, dimensionless and at least 1. It is required. It is not called `oversampling` because it
+  sets no sample count — `EPI2D`'s integer `oversampling` does, and here the samples per echo are an
+  output. It bounds the readout spacing only, not the 2D sampling.
+- **One event, within the configured limit.** `len(lines) * samples_per_echo` has to fit
+  `opts.adc_samples_limit` and be a multiple of `opts.adc_samples_divisor`. A limit of `0`,
+  PyPulseq's "no limit" and its default, is refused at construction. A table above the limit, or
+  one the divisor does not divide, is refused at build, before the compiler would refuse it. Each
+  remedy says what it changes about the acquisition, and every number a remedy offers is built and
+  compiled in the tests. The window is never split into several events.
+- **`k_per_m` and `sample_times_s`** report every sample, integrated from the emitted lobes and
+  blips and read off the ADC event. With `prephase=False` the trajectory is a nominal reference —
+  a train starting at `kx = -area_to_echo_per_m`, `ky = k_blip_per_m(lines[0])` — and a composition
+  is checked on the assembled sequence.
+
+`EPI2D`'s table refusals, its interleaved-shot divisibility check and its blip design moved into
+three private functions in `modules/_support.py` — `check_epi_table`, `shot_spacings` and
+`design_blip` — which both readouts call; `EPI2D` keeps `_check`, `_check_shots` and `_design_blip`
+as thin delegates. Its recorded digest baseline — the written file and the event tree of 18
+configurations, and the full text of nine refusals — is identical before and after.
+
+**What is checked, and what is not.** `tests/modules/test_continuous_epi_2d.py` measures every
+claim above on compiled sequences, against an integration of the compiled gradients that shares no
+code with the module and against `calculate_kspacePP`; in memory they agree with the reported
+trajectory to below 1e-9 of a k-space step, and a written file within its six-digit amplitude
+rounding. [`examples/gre_epi_2d/03`](examples/gre_epi_2d/03_continuous_readout.ipynb) builds one
+complete single-shot acquisition, writes it and reads it back. No image has been simulated or
+reconstructed from this readout, and no interpreter or scanner has played one of its windows.
+
+**Validation layers.** Layer 1 (the invariants above) and Layer 2 (the `03` acquisition, written
+and read back) are complete. **Layer 3 — simulate and reconstruct — is deferred, by decision.**
+What this readout claims is where each sample lands and when, and Layers 1 and 2 establish that
+against the compiled gradients and the written file. It claims no image: how the ramp samples and
+the samples between ky lines are gridded is the caller's reconstruction, and an image would test
+that choice and a simulator's reading of one long ADC event rather than the readout. Layer 3 is
+owed by the first reconstruction that grids from `k_per_m`, and by any claim about images or
+interpreters made on this readout's behalf.
+
+Out of scope: navigator echoes, readout partial echo, a readout field-of-view offset, `REF` and
+`IMA` labels, segmentation of a long window inside the interpreter, and reconstruction.
+
+## Unreleased — EPI2D refuses a sample count the ADC divisor does not divide
+
+`EPI2D` with `oversampling=1` and a readout matrix of 66 or 70 built a train of 66- or 70-sample
+ADC events. PyPulseq's timing check requires every ADC event's sample count to be a multiple of
+`opts.adc_samples_divisor`, 4 by default, so `sc.compile` then refused the train with a message
+that called it a compiler bug. `EPI2D` now refuses such a configuration at construction, naming the
+sample count and the divisor.
+
+- **Nothing is rounded to fit.** The sample count, field of view, k-space coverage and echo timing
+  are never changed on the caller's behalf. The refusal offers two remedies, each saying what it
+  changes: the smallest `oversampling` whose count divides (with `bandwidth_hz_px` held the sampling
+  window stays as it is; with `dwell_s` held it grows, and the echo spacing with it), and the nearest
+  even readout matrices whose counts divide (a different readout resolution at the same field of
+  view). Both are tested by building and compiling them.
+- **Every configuration that compiled before is unchanged.** The EPI2D digest baseline -- the
+  written file and the event tree of 18 configurations, and the text of nine refusals -- is
+  identical before and after.
+- The divisor is read from `opts`: with `adc_samples_divisor=2` the 66-sample train builds and
+  compiles.
+
 ## Unreleased — m0's tolerance scales with the area traversed, as documented
 
 The m0 against-tree check scaled its tolerance by the sum of each gradient event's `|net area|`,

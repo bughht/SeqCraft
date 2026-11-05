@@ -8,12 +8,13 @@
 | [`mp2rage_2d/`](mp2rage_2d/) | One inversion, two trains, and the `SET` label that separates them — plus the ratio that cancels the receive field. Defines `MP2RAGE2D` in its own notebook. |
 | [`se_2d/`](se_2d/) | A spin echo, and the one rule that makes it one: between refocusing centres, area before the echo equals area after it. Introduces `Refocusing` and `CartesianLine(prephase=False)`; defines `SE2D` in its own notebook. |
 | [`fse_2d/`](fse_2d/) | The same composition at 1, 16 and 72 echoes — TSE and HASTE — and what an echo train costs in blurring, ghosting and signal. Defines `FSE2D` in its own notebook. |
-| [`gre_epi_2d/`](gre_epi_2d/) | The whole of k-space in one shot: the centred sampling window, the blip on the zero crossing, ramp sampling and the operator that undoes it, off-resonance and the N/2 ghost, and GRAPPA. Introduces `EPI2D`; defines `GREEPI2D` in its own notebook. |
+| [`gre_epi_2d/`](gre_epi_2d/) | The whole of k-space in one shot: the centred sampling window, the blip on the zero crossing, ramp sampling and the operator that undoes it, off-resonance and the N/2 ghost, and GRAPPA. Then the same train with the receiver open throughout. Introduces `EPI2D` and `ContinuousEPI2D`; defines `GREEPI2D` in its own notebook. |
 | [`se_epi_2d/`](se_epi_2d/) | The same readout after a refocusing pulse — and the measurement that a spin echo **does not** fix EPI distortion. Defines `SEEPI2D` in its own notebook. |
 | [`megre_2d/`](megre_2d/) | Eight echoes off one excitation, monopolar and bipolar, fitted for T2\* and ΔB0 against a phantom that carries the ground truth for both — the one directory here whose output is a *map* rather than an image. Plus what it takes to flow compensate every echo of a train, and why the two readouts pay very differently for it. |
 | [`gre_radial_2d/`](gre_radial_2d/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. Its `02` is the introduction to non-Cartesian reconstruction. |
 | [`fat_sat/`](fat_sat/) | A spectrally selective saturation and the spoiler that destroys what it made — the chemical-shift sign traced from ppm to the emitted `freq_offset`, and the same protocol across four field strengths. Introduces `SaturationPrep`. |
 | [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. Then what a 21.7 ms readout pays in off-resonance. |
+| [`gre_rosette_2d/`](gre_rosette_2d/) | A spoiled gradient echo on a rosette: thirteen petals that return to the centre of k-space again and again, sixteen rotated shots, the dummies that reach steady state first, and why the shot angles decide how densely k-space is covered. |
 | [`se_spiral_2d/`](se_spiral_2d/) | A spin echo in front of a spiral, and the alignment it needs: the trajectory's origin crossing has to land on the physical echo. Three placements that all compile and only one of which is right, and then what refocusing is actually worth. |
 | [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | Diffusion-weighted imaging: a Stejskal–Tanner gradient pair around a 180°, a single-shot EPI readout, and an ADC map recovered from a phantom whose diffusion coefficient is known. Introduces `DiffusionSEPrep` and `sc.b_value`. |
 | [`t2prep_gre_2d/`](t2prep_gre_2d/) | A T2 preparation in front of a spoiled gradient echo: adding controlled T2 weighting before a readout that would otherwise follow T2\*, and the measurement that the weighting really is T2 rather than T2\*. Introduces `T2Prep`. |
@@ -133,18 +134,20 @@ notebooks, asserts k at every echo of every train length, and pins `FSE2D(echoes
 |---|---|
 | [`gre_epi_2d/01_build.ipynb`](gre_epi_2d/01_build.ipynb) | The two rules an EPI is: the sampling window **exactly centred** in its lobe, and the blip **centred on the seam** with `sc.barrier()` forced there. Both are built the wrong way as well as the right way, because both failures compile, pass every k-space check and simulate correctly. Then what ramp sampling, partial echo, oversampling and `blip_lines` each cost, `GREEPI2D`, and parallel imaging — including why the calibration data is a **Cartesian reference** rather than more EPI shots, and what a *segmented* EPI needs that a single-shot one does not — with **one echo time, one flip and one TR across every imaging file**, checked and printed, so `02`'s pictures compare acquisitions rather than contrasts. Nine `.seq` files. **Needs nothing but `seqcraft`.** |
 | [`gre_epi_2d/02_simulate_and_reconstruct.ipynb`](gre_epi_2d/02_simulate_and_reconstruct.ipynb) | The regridding operator and, before it, the **sampling** question no interpolator can answer; the two reconstruction failures; off-resonance measured against a `B0 = 0` control; the navigator correction and its Fourier dual that does nothing; interleaved against blocked at the same lines and the same shots; a brain under the phantom's own field map; GRAPPA at R = 3 and 4, with the separately acquired calibration band priced against a self-calibration no scan can have; and the transient a four-shot EPI is acquired on, decomposed over three files that differ only in the magnetisation each shot sees — as first built it put a 9.6× replica at `Ny/4` that looks exactly like an under-sampling artefact. **Needs `seqcraft[sim,recon]`** and `pygrappa`. |
+| [`gre_epi_2d/03_continuous_readout.ipynb`](gre_epi_2d/03_continuous_readout.ipynb) | The same echo-planar train with **one sampling window** from the first lobe to the last, so ramps, turnarounds and blips are all sampled: `sc.modules.ContinuousEPI2D`. Why the lobe is then a whole number of dwells, where `k = 0` falls (an instant, between two samples here), and the samples between `ky` lines — exactly those taken during a blip. One complete single-shot acquisition with its echo time placed through `time_to_center_line`, written, read back and compared with what the readout reports; then the per-event sample limit and the ADC sample divisor, and interleaving as the way to fit a taller field of view. One `.seq` file. **Needs nothing but `seqcraft`.** |
 | [`se_epi_2d/01_build.ipynb`](se_epi_2d/01_build.ipynb) | `EPI2D` unchanged, after a refocusing pulse: `prephase=False` and both dephasers **before** the 180, with the sign the conjugation will flip. TE as **two numbers** — the gradient echo on the ADC raster, the spin echo on the gradient raster — and why the pulse is placed with `Raster.nearest`. Four `.seq` files, **all four at one echo time**, checked and printed: a single shot, a partial echo, and the same 128 lines in two and in four interleaved shots. **Needs nothing but `seqcraft`.** |
 | [`se_epi_2d/02_simulate_and_reconstruct.ipynb`](se_epi_2d/02_simulate_and_reconstruct.ipynb) | That it is a **T2** echo, and then the section the notebook exists for: **a spin echo does not fix EPI distortion.** Same shift, same prediction, same ghost as the gradient echo — the pulse refocuses at one instant and the distortion accumulates *between* echoes. What it does fix, measured against a flat-envelope floor rather than assumed. Then partial echo with POCS, and **segmentation**: the same lines in one, two and four interleaved shots, where the train falls 89.6 → 46.1 → 23.7 ms and the residual against the shimmed image falls 0.127 → 0.073 → 0.047 with it — the same short train an `R = 4` acceleration buys, with no calibration band, no kernel and no unfolding residual. **Needs `seqcraft[sim,recon]`.** |
 
-`EPI2D` is the one module that ships out of this pair; `GREEPI2D` and `SEEPI2D` are **defined in
-those notebooks and do not ship**, one consumer each.
+`EPI2D` and `ContinuousEPI2D` are the modules that ship out of this pair; `GREEPI2D` and
+`SEEPI2D` are **defined in those notebooks and do not ship**, one consumer each. `gre_epi_2d/03`
+defines no class: its acquisition is an excitation, the train and a spoiler, placed in the notebook.
 [`tests/modules/test_epi_notebooks.py`](../tests/modules/test_epi_notebooks.py) runs both build
 notebooks and asserts the things whose failure is silent: every readout gradient still a `trap`,
 signed `k` at the `k = 0` sample of every echo, the reverse echoes landing on the forward grid, and
 the spin echo where the kernel says it is.
 
-Both `01`s are in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); the `02`s are
-not, for the reason the other simulation notebooks are not.
+Both `01`s and `gre_epi_2d/03` are in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py);
+the `02`s are not, for the reason the other simulation notebooks are not.
 
 ## `megre_2d/`
 
@@ -266,6 +269,16 @@ because a four-point phase screen aliases 2.17 cycles of phase, which is the wro
 would otherwise draw from a real measurement.
 
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
+
+## `gre_rosette_2d/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](gre_rosette_2d/01_build.ipynb) | `sc.modules.RosetteReadout` in a complete acquisition: `Excitation` + one rosette + a spoiler and TR fill, RF spoiling, dummies sized from the approach to steady state, and sixteen shots at equal rotations. The fourteen origin crossings reported three ways, the file read back and compared with the report, and the largest hole in the sampled k-space disk against a Nyquist-Cartesian benchmark — including the thirteen-shot schedule whose rotations coincide with the petal-tip directions. One `.seq`. **Needs nothing but `seqcraft`.** |
+
+There is no `02`: a rosette samples points other than the origin more than once, so its density
+compensation is a reconstruction question in its own right, and no image is formed here. `01` is in
+[`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
 
 ## `se_spiral_2d/`
 

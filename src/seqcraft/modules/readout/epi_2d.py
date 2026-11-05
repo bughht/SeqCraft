@@ -133,6 +133,8 @@ from ...errors import ConfigurationError, format_error
 from .._support import (
     area_until,
     ceil_raster,
+    check_epi_table,
+    design_blip,
     dwell_quantum,
     halve_onto,
     require_axis,
@@ -140,6 +142,7 @@ from .._support import (
     require_pair,
     require_positive,
     require_range,
+    shot_spacings,
 )
 from ..encoding.phase_encoding import PhaseEncode
 
@@ -187,7 +190,9 @@ class EPI2D(Module):
         divides :attr:`dwell_s`, so the sampling duration -- and therefore the lobe, the guard,
         the peak gradient and :attr:`bandwidth_hz_px` -- does not move.  ``2`` is the default
         because ``1`` leaves the ramp-sampled flat top under-sampled against the grid it is
-        reconstructed onto; see the module docstring.
+        reconstructed onto; see the module docstring.  :attr:`num_samples` has to be a multiple
+        of ``opts.adc_samples_divisor``, which PyPulseq's timing check requires of every ADC
+        event, so at ``1`` a readout matrix of 66 or 70 is refused under the default divisor of 4.
     ramp_sampling
         Open the ADC during the ramps.  ``True`` is the shorter echo spacing and a non-uniform
         :attr:`k_read_per_m`; ``False`` samples the flat top only and leaves ``k`` uniform.
@@ -378,6 +383,7 @@ class EPI2D(Module):
         # The sample count comes *before* the dwell, because it is what the dwell is quantised
         # against -- see `_resolve_dwell`.
         self.num_samples, self.pre_echo_samples = self._resolve_samples()
+        self._check_divisor()
         self.dwell_s = self._resolve_dwell(bandwidth_hz_px, dwell_s)
         #: Nominal receive bandwidth per *reconstructed* pixel, Hz.  Reads back the snapped dwell.
         self.bandwidth_hz_px = 1.0 / (self.dwell_s * self.matrix[0] * self.oversampling)
@@ -800,8 +806,7 @@ class EPI2D(Module):
         Both numbers scale with `oversampling`, because both count *ADC samples* while the
         arithmetic above them counts reconstructed pixels.
         """
-        wanted = self.partial_fourier * self.matrix[0]
-        count = self.oversampling * max(2, 2 * int(round(wanted / 2)))
+        count = self._count_for(self.matrix[0])
         pre_echo = count - self.oversampling * (self.matrix[0] - self.matrix[0] // 2)
         if pre_echo < 0:
             msg = format_error(
@@ -814,6 +819,61 @@ class EPI2D(Module):
             raise ConfigurationError(msg)
         return count, pre_echo
 
+    def _count_for(self, nx: int) -> int:
+        """Return the sample count a readout matrix of `nx` gets at this echo and oversampling."""
+        wanted = self.partial_fourier * nx
+        return self.oversampling * max(2, 2 * int(round(wanted / 2)))
+
+    def _check_divisor(self) -> None:
+        """
+        Refuse a sample count that ``opts.adc_samples_divisor`` does not divide.
+
+        PyPulseq's timing check requires every ADC event's sample count to be a multiple of it, so
+        such a train would build here and then be refused when compiled.  The count is
+        `oversampling` times an even number, so it is reached at ``oversampling=1`` -- a readout
+        matrix of 66 or 70 gives 66 or 70 samples, which the default divisor of 4 does not divide.
+
+        Nothing is rounded to fit: every remedy changes the acquisition, and each one says how.
+        """
+        divisor = int(getattr(self.opts, 'adc_samples_divisor', 1) or 1)
+        if self.num_samples % divisor == 0:
+            return
+        per_pixel = self.num_samples // self.oversampling
+        step = divisor // math.gcd(per_pixel, divisor)
+        oversampling = -(-self.oversampling // step) * step
+        hints = [
+            f'oversampling={oversampling}: {oversampling * per_pixel} samples per echo, a multiple '
+            f'of {divisor}.  At a fixed bandwidth_hz_px the dwell shrinks by the same factor and '
+            f'the sampling window stays as it is; at a fixed dwell_s the window grows by that '
+            f'factor, and the echo spacing with it',
+        ]
+        nx = self.matrix[0]
+
+        def divides(n: int) -> bool:
+            # Even matrices only: an odd one is sampled at the even count beside it.
+            count = self._count_for(n)
+            return n % 2 == 0 and count % divisor == 0 and count >= self.oversampling * (n - n // 2)
+
+        sizes = [str(n) for n in (next((n for n in range(nx - 1, 1, -1) if divides(n)), None),
+                                  next((n for n in range(nx + 1, nx + 4 * divisor) if divides(n)),
+                                       None)) if n is not None]
+        if sizes:
+            hints.append(
+                f'or matrix[0] = {" or ".join(sizes)}, whose sample counts divide -- a different '
+                f'readout matrix is a different readout resolution at this fov_mm, or a different '
+                f'field of view at the same resolution',
+            )
+        msg = format_error(
+            f'{self.num_samples} ADC samples per echo is not a multiple of '
+            f'opts.adc_samples_divisor = {divisor}, which PyPulseq\'s timing check requires of '
+            f'every ADC event.',
+            {'num_samples': self.num_samples, 'adc_samples_divisor': divisor,
+             'matrix': self.matrix, 'partial_fourier': self.partial_fourier,
+             'oversampling': self.oversampling},
+            hints,
+        )
+        raise ConfigurationError(msg)
+
     def _design_blip(self, requested_s: float | None) -> Event:
         """
         Return the blip at the largest step, on an **even** number of gradient rasters.
@@ -821,29 +881,13 @@ class EPI2D(Module):
         Even because it is centred on the seam: it starts at ``seam - blip/2``, the seam is on the
         gradient raster, and :func:`~seqcraft.compile` refuses a gradient that starts off it.  An
         odd raster count is the one way to make this design fail at compile time rather than in
-        the image -- the good kind of failure, but still worth not having.
+        the image -- the good kind of failure, but still worth not having.  The design is
+        :func:`~seqcraft.modules._support.design_blip`, shared with
+        :class:`~seqcraft.modules.ContinuousEPI2D`.
         """
-        area = self.blip_lines * self.dk_blip_per_m
-        floor_s = float(pp.calc_duration(
-            pp.make_trapezoid(channel=self.blip_axis, area=area, system=self.opts)))
-        wanted = floor_s
-        if requested_s is not None:
-            wanted = require_positive(requested_s, 'blip_duration_s')
-            if wanted < floor_s - EPS:
-                msg = format_error(
-                    f'blip_duration_s = {wanted * 1e6:.1f} us is shorter than the minimum a '
-                    f'{self.blip_lines}-line step needs.',
-                    {'blip_duration_s': wanted, 'min_blip_duration_s': floor_s,
-                     'blip_lines': self.blip_lines, 'blip_area_per_m': area},
-                    [
-                        f'pass blip_duration_s >= {floor_s:.6g}',
-                        'or blip_duration_s=None for the shortest legal blip',
-                    ],
-                )
-                raise ConfigurationError(msg)
-        duration = 2 * ceil_raster(wanted / 2, self.opts.grad_raster_time)
-        return pp.make_trapezoid(
-            channel=self.blip_axis, area=area, duration=duration, system=self.opts,
+        return design_blip(
+            opts=self.opts, axis=self.blip_axis, area_per_m=self.blip_lines * self.dk_blip_per_m,
+            blip_lines=self.blip_lines, requested_s=requested_s,
         )
 
     def _design_lobe(self) -> tuple[Event, Event, float]:
@@ -1127,59 +1171,11 @@ class EPI2D(Module):
     # -------------------------------------------------------------------- the refusals
     def _check(self, lines: Iterable[int]) -> tuple[int, ...]:
         """Return `lines` as a tuple, refusing what this train cannot acquire."""
-        table = tuple(int(line) for line in lines)
-        ny = self.matrix[1]
-        if not table:
-            msg = format_error(
-                'lines is empty, so there is nothing to acquire.',
-                {'matrix': self.matrix},
-                [f'lines=range({ny}) is a fully sampled single shot'],
-            )
-            raise ConfigurationError(msg)
-
-        outside = sorted({line for line in table if not 0 <= line < ny})
-        if outside:
-            msg = format_error(
-                f'{len(outside)} line(s) fall outside 0 ... {ny - 1}.',
-                {'offending': outside[:8], 'matrix': self.matrix},
-                [
-                    'lines are zero-based blip-axis indices, not k-space positions',
-                    f'the centre of k-space is line {self.center_line}',
-                ],
-            )
-            raise ConfigurationError(msg)
-
-        repeated = sorted({line for line in table if table.count(line) > 1})
-        if repeated:
-            msg = format_error(
-                f'{len(repeated)} line(s) are acquired more than once in this shot.',
-                {'repeated': repeated[:8]},
-                [
-                    'two readouts writing one k-space address is what the compiler rejects '
-                    'downstream, with less to say about it than here',
-                    'averaging is a separate acquisition and a separate label',
-                ],
-            )
-            raise ConfigurationError(msg)
-
-        steps = [b - a for a, b in zip(table, table[1:])]
-        too_far = sorted({step for step in steps if abs(step) > self.blip_lines})
-        if too_far:
-            msg = format_error(
-                f'{len(too_far)} step(s) of this table exceed the {self.blip_lines}-line blip '
-                f'this instance was designed for.',
-                {'offending_steps': too_far[:8], 'blip_lines': self.blip_lines,
-                 'blip_duration_s': self.blip_duration_s},
-                [
-                    f'pass blip_lines={max(abs(step) for step in too_far)} to design for this '
-                    f'table -- it lengthens the blip, the guard and the echo spacing with it',
-                    'or reorder the shot so that consecutive echoes are closer in ky',
-                    'a blip is scaled per step and never lengthened per step, because an echo '
-                    'spacing that varied with the table would move every echo after it',
-                ],
-            )
-            raise ConfigurationError(msg)
-        return table
+        return check_epi_table(
+            lines, matrix=self.matrix, center_line=self.center_line,
+            blip_lines=self.blip_lines, blip_duration_s=self.blip_duration_s,
+            step_consequence='it lengthens the blip, the guard and the echo spacing with it',
+        )
 
     def _check_echo(self, echo: int) -> int:
         """Return `echo` as an offset from the first imaging echo, refusing one before the train."""
@@ -1208,17 +1204,16 @@ class EPI2D(Module):
         ``ky``, which is the *same artefact at a smaller amplitude* -- a ghost that survives the
         fix meant to remove it, and one no image would attribute to a rounding rule. So the
         protocol is refused with the two echo spacings that do divide, since the caller can reach
-        either one and this module cannot choose between them.
+        either one and this module cannot choose between them.  The divisibility rule is
+        :func:`~seqcraft.modules._support.shot_spacings`, shared with
+        :class:`~seqcraft.modules.ContinuousEPI2D`.
         """
-        if self.shots == 1:
-            return
         raster_s = float(self.opts.block_duration_raster)
-        step = self.shots * to_ticks(raster_s)
-        ticks = to_ticks(self.echo_spacing_s)
-        if ticks % step == 0:
+        spacings = shot_spacings(self.echo_spacing_s, self.shots, raster_s)
+        if spacings is None:
             return
 
-        below_s, above_s = from_ticks((ticks // step) * step), from_ticks(-(-ticks // step) * step)
+        below_s, above_s = spacings
         hints = [
             f'the nearest echo spacings that divide {self.shots} ways are '
             f'{below_s * 1e6:.1f} us and {above_s * 1e6:.1f} us, against '
@@ -1231,8 +1226,9 @@ class EPI2D(Module):
         # dead time is what sets the guard and lengthening the blip would do nothing at all.
         if self.blip_duration_s / 2 >= float(self.opts.adc_dead_time):
             quantum = 2 * to_ticks(self.opts.grad_raster_time)
+            ticks = to_ticks(self.echo_spacing_s)
             for k in range(1, 2 * self.shots + 1):
-                if (ticks + k * quantum) % step == 0:
+                if shot_spacings(from_ticks(ticks + k * quantum), self.shots, raster_s) is None:
                     grown_s = self.blip_duration_s + from_ticks(k * quantum)
                     hints.append(
                         f'pass blip_duration_s={grown_s:.6g} to reach '

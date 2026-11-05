@@ -28,8 +28,10 @@ The folders, and what each one means
       encoding/    phase_encoding.py   PhaseEncode
                    velocity_encode.py  VelocityEncode
       readout/     cartesian_line.py   CartesianLine
+                   continuous_epi_2d.py  ContinuousEPI2D
                    epi_2d.py           EPI2D
                    radial_readout.py   RadialReadout
+                   rosette_readout.py  RosetteReadout
                    spiral_readout.py   SpiralReadout
       kernel/      diffusion_se.py     DiffusionSEPrep
                    bssfp_2d_tr.py      bSSFP2DTR    composes leaves; one repeating unit
@@ -108,20 +110,24 @@ from .preparation.ir_prep import IRPrep
 from .preparation.saturation_prep import SaturationPrep
 from .preparation.t2_prep import T2Prep
 from .readout.cartesian_line import CartesianLine
+from .readout.continuous_epi_2d import ContinuousEPI2D
 from .readout.epi_2d import EPI2D
 from .readout.radial_readout import RadialReadout
+from .readout.rosette_readout import RosetteReadout
 from .readout.spiral_readout import SpiralReadout
 from .rf.excitation import Excitation
 from .rf.refocusing import Refocusing
 from .spoiler import spoiler
 
 __all__ = [
-    'CartesianLine', 'DiffusionSEPrep', 'EPI2D', 'Excitation', 'FSE2D', 'GRE2D', 'GRE2DTR',
+    'CartesianLine', 'ContinuousEPI2D', 'DiffusionSEPrep', 'EPI2D', 'Excitation', 'FSE2D',
+    'GRE2D', 'GRE2DTR',
     'bSSFP2DTR',
     'bSSFP3DTR',
     'GRE3DTR', 'IRPrep',
     'PhaseEncode',
     'VelocityEncode',
-    'RadialReadout', 'Refocusing', 'SaturationPrep', 'SpiralReadout', 'T2Prep', 'TSEShot',
+    'RadialReadout', 'Refocusing', 'RosetteReadout', 'SaturationPrep', 'SpiralReadout', 'T2Prep',
+    'TSEShot',
     'spoiler',
 ]
