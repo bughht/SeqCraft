@@ -8,9 +8,14 @@ the ADC timing, the Wave gradients and their realisation under the one `Opts`, a
 corkscrew's centring requires before the readout. The line and partition, the acceleration and
 CAIPI pattern, flow compensation, reconstruction and PSF calibration stay with the caller.
 
-- **Timing.** The Wave is anchored to the ADC dwell window, `[t_a, t_a + N·dwell]`, with phase
-  zero at the ADC start and `cycles` whole periods over it. Samples follow PyPulseq's
-  `adc.delay + (n + ½)·dwell`.
+- **Timing.**
+  - The continuous Wave prescription is anchored to the ADC dwell window,
+    `[t_a, t_a + N·dwell]`, with phase zero at the ADC start and `cycles` whole periods over it.
+  - Samples follow PyPulseq's `adc.delay + (n + ½)·dwell`, and the echo is
+    `line.echo_sample(0)`.
+  - The emitted Wave is the prescription's knots at gradient-raster edges. So at a window
+    boundary between two edges it need not take the prescription's value. The ADC-sampled
+    trajectory, `k_per_m()` and the written file's, is what it plays.
 - **Independent rasters.** The ADC and the gradients keep separate rasters. Nothing requires the
   window, a dwell or a Wave period to be a whole number of gradient rasters, or a sample to fall
   on a knot.
@@ -42,7 +47,8 @@ CAIPI pattern, flow compensation, reconstruction and PSF calibration stay with t
 `EPI2D` already uses. `num_samples` and `pre_echo_samples` are multiplied by `n`, and the dwell is
 divided by it. `bandwidth_hz_px` stays per reconstructed pixel and `dk_per_m` stays the
 reconstructed pixel's step. At a given bandwidth per pixel the sampling window, the lobe and its
-amplitude therefore do not move, and `k = 0` falls on sample `n * matrix // 2` at full echo.
+amplitude therefore do not move. `k = 0` falls on `echo_sample(0)`, which at full echo is
+`n * (matrix // 2)`: sample 152 for `matrix=77` at `n = 4`.
 
 The default is 1. Every event and every designed number of 270 existing configurations, including
 72 refusals, is byte-identical before and after. They cover partial Fourier, bandwidth or dwell,
