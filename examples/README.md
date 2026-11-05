@@ -14,6 +14,7 @@
 | [`gre_radial_2d/`](gre_radial_2d/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. Its `02` is the introduction to non-Cartesian reconstruction. |
 | [`fat_sat/`](fat_sat/) | A spectrally selective saturation and the spoiler that destroys what it made — the chemical-shift sign traced from ppm to the emitted `freq_offset`, and the same protocol across four field strengths. Introduces `SaturationPrep`. |
 | [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. Then what a 21.7 ms readout pays in off-resonance. |
+| [`gre_rosette_2d/`](gre_rosette_2d/) | A spoiled gradient echo on a rosette: thirteen petals that return to the centre of k-space again and again, sixteen rotated shots, the dummies that reach steady state first, and why the shot angles decide how densely k-space is covered. |
 | [`se_spiral_2d/`](se_spiral_2d/) | A spin echo in front of a spiral, and the alignment it needs: the trajectory's origin crossing has to land on the physical echo. Three placements that all compile and only one of which is right, and then what refocusing is actually worth. |
 | [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | Diffusion-weighted imaging: a Stejskal–Tanner gradient pair around a 180°, a single-shot EPI readout, and an ADC map recovered from a phantom whose diffusion coefficient is known. Introduces `DiffusionSEPrep` and `sc.b_value`. |
 | [`t2prep_gre_2d/`](t2prep_gre_2d/) | A T2 preparation in front of a spoiled gradient echo: adding controlled T2 weighting before a readout that would otherwise follow T2\*, and the measurement that the weighting really is T2 rather than T2\*. Introduces `T2Prep`. |
@@ -268,6 +269,16 @@ because a four-point phase screen aliases 2.17 cycles of phase, which is the wro
 would otherwise draw from a real measurement.
 
 `01` is in [`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py); `02` is lab-tier.
+
+## `gre_rosette_2d/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](gre_rosette_2d/01_build.ipynb) | `sc.modules.RosetteReadout` in a complete acquisition: `Excitation` + one rosette + a spoiler and TR fill, RF spoiling, dummies sized from the approach to steady state, and sixteen shots at equal rotations. The fourteen origin crossings reported three ways, the file read back and compared with the report, and the largest hole in the sampled k-space disk against a Nyquist-Cartesian benchmark — including the thirteen-shot schedule whose rotations coincide with the petal-tip directions. One `.seq`. **Needs nothing but `seqcraft`.** |
+
+There is no `02`: a rosette samples points other than the origin more than once, so its density
+compensation is a reconstruction question in its own right, and no image is formed here. `01` is in
+[`tools/run_notebook_smoke.py`](../tools/run_notebook_smoke.py).
 
 ## `se_spiral_2d/`
 

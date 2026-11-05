@@ -15,7 +15,14 @@ cancellation is part of the construction, so it does not depend on the ratio clo
 it is tested at six ratios.
 
 **The domain.** The gradient and slew limits apply to the in-plane vector, so every rotation is
-legal per axis. A fixed budget of 0.05 Δk applies to the closed-form bound `B` on the core's largest
+legal per axis. **What the slew limit bounds** is the played waveform's: it is piecewise linear
+between raster-edge knots, so on each raster it asks for the secant `|Δg|/Δt`. On the core a secant
+is at most the analytic peak `k_max (ω1² + ω2²)`, which the design keeps within `max_slew`; the
+ramps and the correction are designed on their secants directly. The limit therefore holds for
+what is played with no tolerance, and `limits()` reports the played peaks. The tests assert that
+directly, and measure the played core peak against the analytic one from both sides: at most the
+peak, and at least `S cos²(ω1 Δt/2) − Δt² M4/24`. The secant cannot be centred on the peak when the
+raster count per petal is even, so `((ω1 + ω2) Δt)²/24` is not a bound. A fixed budget of 0.05 Δk applies to the closed-form bound `B` on the core's largest
 vector departure from the analytic curve. That bound is conservative, so a refusal marks the
 supported domain, not a physical limit. The default petal is the shortest whole raster count
 meeting all three; the dwell does not enter it, and a dwell moving `k` more than `Δk` per sample is
@@ -52,8 +59,20 @@ keeps its span. The trailing interval is explicit, not compiler padding.
   TR and RF spoiling. Samples lie within 7.3e-5 1/m of the report, and closest approaches within
   4 ps of it.
 
-**Not validated, and not claimed.** There is no example notebook, so no Layer 2, and Layer 3
-stays deferred: no image, no simulation, no scanner. Oblique prescriptions, where a slice rephaser
+**Validation layers.** Layer 1 is the contract above, on designed, compiled and read-back
+sequences. Layer 2 is [`examples/gre_rosette_2d/01`](examples/gre_rosette_2d/01_build.ipynb): a
+spoiled gradient echo of sixteen rotated shots, with dummies sized from the approach to steady
+state, written and read back. The file's trajectory matches the report to 3e-5 Δk, and its sample
+times to 2e-15 s. The largest hole in the sampled disk is 0.64 Δk, inside the 0.71 Δk of a
+Nyquist Cartesian grid. **Layer 3 — simulate and reconstruct — is deferred, by decision.** The
+readout claims a trajectory, its crossings and their timing, and Layers 1 and 2 establish those
+against the played gradients and the file. It claims no image. A rosette samples points other
+than the origin more than once, so density compensation is a reconstruction design question of
+its own, and an image would test that rather than the readout. Layer 3 is owed by the first
+reconstruction that grids from `k_per_m`, and by any image or spectral-selectivity claim made for
+this readout.
+
+**Not validated, and not claimed.** No image, no simulation and no scanner. Oblique prescriptions, where a slice rephaser
 overlaps the readout, are the composing kernel's. Neither a minimum-time traversal nor ADC
 segmentation is offered.
 
