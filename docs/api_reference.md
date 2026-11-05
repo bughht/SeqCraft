@@ -796,7 +796,8 @@ subclass, emitted through the standard `warnings` machinery.
 | Category | Meaning |
 |---|---|
 | `merge` | Two or more gradients on one axis were summed |
-| `resample` | A gradient was resampled onto the raster to join a boundary continuously |
+| `resample` | A gradient was resampled onto the raster to join a boundary continuously; the message gives how far it moved the waveform, k, m0 and m1 |
+| `resample_total` | One axis was resampled in more than one block: the net m0, and the summed magnitudes of the k and m1 changes |
 | `snap` | An RF or ADC reservation was snapped to the block raster |
 | `orphan_label` | A label has no ADC after it, so its placement is undefined |
 | `norm` | The vector norm across simultaneous axes exceeds the per-axis limit — normal for multi-axis gradients, and legal on real amplifiers |
@@ -1953,7 +1954,7 @@ address.
 | Function | Does |
 |---|---|
 | `superpose(pieces, a, b) -> (rel_ticks, amps)` | The exact PWL superposition over `[a, b]`, in integer ticks |
-| `axis_gradient(axis, pieces, a, b, opts, notes, block_index, *, resampled=None)` | The single gradient event for one axis over one interval, or `None`; a resample is appended to `resampled` |
+| `axis_gradient(axis, pieces, a, b, opts, notes, block_index, *, resampled=None, moved=None)` | The single gradient event for one axis over one interval, or `None`; a resample is appended to `resampled` as `(block_index, axis)` and to `moved` as `(axis, sup \|Δk\|, Δm0, Δm1)`, and raises `CompileError` beyond the resample bound |
 | `check_limits(events, opts, block_index, origin, notes, *, start=0.0) -> None` | Raise `HardwareLimitError` on a per-axis violation; append norm findings to `notes` |
 | `required_duration(events, opts) -> float` | The shortest block that can hold `events`, by PyPulseq's rules |
 | `common_path(paths) -> tuple[str, ...]` | The longest tag path common to everything in a block |
@@ -1962,8 +1963,9 @@ address.
 The sum of PWL functions is PWL with knots at the union of theirs, so both operations — split at a
 boundary, sum on an axis — are exact. `axis_gradient` picks whichever pulseq representation holds the
 knots untouched (extended trapezoid for on-raster knots, arbitrary gradient for the raster-centre
-pattern). Only a waveform bending both on and off the raster fits neither, and that one is resampled
-with a **measured** bound on how far it moved.
+pattern, delayed or zero-padded within the block). Only a waveform bending both on and off the
+raster fits neither, and that one is resampled with a **measured** bound on how far it moved, and
+refused when it would move k by more than `r²·max_slew/4` per raster-centre piece (ADR-008).
 
 ## 7.5 `compiler/emission.py`
 

@@ -2,6 +2,8 @@
 
 - Status: Accepted (proposed 2026-10-26, accepted with its merge on 2026-11-05)
 - Date: 2026-10-26
+- Amended by: [ADR-008](008-a-raster-resample-has-a-derived-bound.md), which bounds the
+  resample a resampled block is compared with.
 - Amends: the m0 and m1 invariants of the always-on verification reviewed in
   [`refactor/phase6_verification_time_audit.md`](../refactor/phase6_verification_time_audit.md).
   The duration and label-address invariants are unchanged, and verification stays always on.

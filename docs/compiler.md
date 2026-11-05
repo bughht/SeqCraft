@@ -258,6 +258,21 @@ sloped end leaves a boundary term of about `r²·g′/8` in the stretch. The oth
 block are compared as usual, and registration needs no special case: what it compares is the
 resampled waveform itself.
 
+**The resample itself is bounded** ([ADR-008](adr/008-a-raster-resample-has-a-derived-bound.md)).
+Keeping only the raster-edge values replaces each raster interval's centre-sample tent by its
+chord, and over a stretch of samples those changes telescope to the stretch's two ends:
+`Δm0 = (r/8)·(D_end − D_start)`, with `D` the sample step across each end. Within the slew limit a
+stretch therefore moves the running k by at most `r²·max_slew/4` at every instant, whatever its
+duration, and edge knots add nothing. m1 follows: `Δm1 = L·Δk(L) − ∫Δk dt`, so
+`|Δm1| ≤ 2·L·sup|Δk|` for a block of length `L`. Legalization measures each resample's running k
+exactly and refuses one beyond `r²·max_slew/4` per non-edge piece in the block. That never refuses
+raster-centre input within the slew limit, and refuses a half-raster gradient (`oversampling=True`)
+whose resample would move k further. The block's m0 alone would not do: it can cancel while k
+strays, and m1 with it.
+A raster-centre run that starts or ends inside its block with zero beyond it is not resampled at
+all: it is emitted as an arbitrary gradient with a delay, unless it has four samples or fewer, which
+PyPulseq would store short.
+
 **Each tolerance, and where it holds.** Every term is a stated bound, not a constant tuned to a
 case.
 
@@ -303,8 +318,9 @@ waveform fidelity.
   a zero-net piece moved inside its block, or two equal pieces swapped.
 - Anything below its tolerance. In the registration stage that includes any change within
   PyPulseq's six-digit precision, about `1e-5` of a block's `|g|` integral.
-- A resample the compiler reported: it is accepted as the raster interpolant of the tree, which is
-  what the `resample` warning states.
+- A resample within its bound: it is accepted as the raster interpolant of the tree, and the
+  `resample` warning states how far it moved k, m0 and m1. One beyond the bound is refused
+  during legalization, before these checks run.
 - RF and ADC timing, amplitude and slew limits, and seam continuity. Those are checked elsewhere.
 - The written file. Serialisation rounds again, to six significant digits, and nothing here reads
   it back.
@@ -378,7 +394,8 @@ standard `warnings` machinery.
 | Category | Means |
 |---|---|
 | `merge` | Two or more gradients shared an axis in one block and were summed. Names every source. The sum itself is exact. |
-| `resample` | A trapezoid was summed with a raster-centre waveform. Their sum bends both on and off the gradient raster and no pulseq gradient event can hold that, so it was resampled. The message carries a **bound on how far the waveform moved**, measured rather than estimated. This is the only place the compiler is knowingly inexact. |
+| `resample` | A trapezoid was summed with a raster-centre waveform. Their sum bends both on and off the gradient raster and no pulseq gradient event can hold that, so it was resampled. The message carries a **bound on how far the waveform moved**, measured rather than estimated, then how far it moved k, against the derived bound `r²·max_slew/4` per raster-centre piece, and the block's m0 and m1. This is the only place the compiler is knowingly inexact, and it is refused beyond that bound. |
+| `resample_total` | One axis was resampled in more than one block. Gives the net m0 the resamples add up to, and the summed magnitudes of their k and m1 changes, which cancellation in the net would hide. |
 | `snap` | An RF or ADC reservation had to move onto the block raster. |
 | `orphan_label` | A label has no ADC after it, so its placement is undefined. |
 | `norm` | The vector norm across axes exceeds the per-axis limit. Normal for multi-axis gradients, and legal on real amplifiers — which is why it is not an error. |

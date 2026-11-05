@@ -147,6 +147,8 @@ _WARNING_TEXT = {
              'blocks over the vector-norm limit (legal on real amplifiers)'),
     'orphan_label': ('label with no ADC after it', 'labels with no ADC after them'),
     'resample': ('gradient resampled onto the raster', 'gradients resampled onto the raster'),
+    'resample_total': ('axis resampled in more than one block',
+                       'axes resampled in more than one block'),
     'snap': ('reservation snapped to the block raster',
              'reservations snapped to the block raster'),
 }
