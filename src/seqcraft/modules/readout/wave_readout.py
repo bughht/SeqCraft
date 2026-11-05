@@ -11,17 +11,19 @@ PSF calibration all belong to the caller.
 
 The timing convention
 ---------------------
-The Wave is anchored to the **ADC dwell window**, ``[t_a, t_a + N * dwell]``, where ``t_a`` is the
-ADC start (the readout lobe's start plus ``adc.delay``) and ``N`` is the raw, oversampled sample
-count::
+The continuous Wave **prescription** is anchored to the **ADC dwell window**,
+``[t_a, t_a + N * dwell]``, where ``t_a`` is the ADC start (the readout lobe's start plus
+``adc.delay``) and ``N`` is the raw, oversampled sample count::
 
     omega = 2 * pi * cycles / (N * dwell)
     G_sine(t)   = G0 * sin(omega * (t - t_a))        on the window, 0 outside
     G_cosine(t) = G0 * cos(omega * (t - t_a))        on the window, with ramps outside
 
-Sample ``n`` is at ``t_a + (n + 1/2) * dwell`` (pypulseq's convention), and the echo is sample
-``N // 2``.  `cycles` is therefore an integer number of periods over the acquisition, and the
-sample phases repeat exactly every ``N / cycles`` samples.
+It completes exactly `cycles` periods over the window.  Sample ``n`` is at
+``t_a + (n + 1/2) * dwell`` (pypulseq's convention), so the Wave's phase advances by
+``2 * pi * cycles / N`` per sample, and the sample phases repeat every ``N / gcd(N, cycles)``
+samples.  The echo is sample ``line.echo_sample(0)``.  That is ``N // 2`` in the usual
+symmetric, even-sample readout, and not for an odd matrix.
 
 The ADC and the gradients live on **independent rasters**.  The dwell is on the ADC raster, the ADC
 delay on the RF raster, and the Wave's knots on gradient-raster edges.  Nothing requires the
@@ -38,6 +40,16 @@ window closes.  The emitted gradient is the piecewise-linear interpolant of the 
 its peak is at most ``G0`` and its slope at most the prescription's.  An amplitude whose
 prescription is within `opts` is therefore emitted within `opts`, wherever the window falls on the
 raster.
+
+**The prescription is exact at the window's boundaries; the emitted Wave need not be.**
+- **Why.** The emitted gradient takes the prescription's values at raster edges only, and is
+  linear between them. When a boundary falls between two edges, the emitted value there is the
+  chord between their values. At an off-raster ``t_a`` that is neither ``0`` on the sine nor
+  ``G0`` on the cosine.
+- **What is authoritative.** The phase anchor belongs to the prescription. What is played is the
+  emitted waveform. So the sample-domain truth is :meth:`~WaveReadout.k_per_m` and the written
+  file's trajectory at the actual sample times. An analytic formula in ``t_a`` does not
+  substitute for them when a boundary is off the raster.
 
 Every trajectory number below is integrated from the emitted knots and evaluated at the actual
 sample times, so it describes what is played, not the analytic prescription.
@@ -144,10 +156,15 @@ class WaveReadout(Module):
 
     Notes
     -----
-    **The trajectory is reported on the ADC samples.**  :meth:`sample_times_s` is the sample time
-    vector and :meth:`k_per_m` the ``(3, N)`` positions, relative to the encoding target, on that
-    vector -- one row per logical axis, the readout's included.  Both assume the stated moment is
-    in place, so they are the same for either `prephase`.
+    **The trajectory is reported on the ADC samples.**
+    - :meth:`sample_times_s` is the sample time vector, and :meth:`k_per_m` the ``(3, N)``
+      positions on it, relative to the encoding target, one row per logical axis including the
+      readout's.
+    - Both assume the stated moment is in place, so they are the same for either `prephase`.
+    - Under ``prephase=False``, :meth:`k_per_m` is therefore the **nominal contract trajectory**:
+      what the readout plays once the caller has delivered :meth:`prephaser_area_per_m` on every
+      axis. It is not the trajectory of the bare block compiled from ``k = 0``, which differs from
+      it by exactly that moment.
 
     **Single echo, full echo.**  Partial Fourier, readout trains and flow compensation are not
     parameters.  Flow compensation belongs to the repetition, which sees the Wave as a fixed
@@ -278,7 +295,12 @@ class WaveReadout(Module):
         Relative to the encoding target the caller puts on each axis, with the stated moment
         (:meth:`prephaser_area_per_m`) in place; an axis this module leaves idle is a row of
         zeros.  Integrated exactly from the emitted knots of :meth:`build` and evaluated at
-        :meth:`sample_times_s`.  The readout row is ``(n - echo) * dk_per_m / oversampling``.
+        :meth:`sample_times_s`.  The readout row is ``(n - echo) * dk_per_m / oversampling``,
+        where ``echo`` is ``line.echo_sample(0)``.
+
+        Under ``prephase=False`` this is the **nominal contract trajectory**: the caller is
+        assumed to have delivered :meth:`prephaser_area_per_m`.  Compiling the bare block alone
+        from ``k = 0`` gives this minus that moment, axis by axis.
         """
         out = np.zeros((3, self.line.num_samples))
         for start, event, _ in flatten(self.build()):

@@ -141,8 +141,8 @@ def test_centering_never_changes_an_active_sample(scanner, prephase) -> None:
 def test_the_wave_is_anchored_to_the_adc_dwell_window(scanner, matrix, oversampling, dwell_s,
                                                       cycles) -> None:
     """
-    Every emitted knot inside the window is the prescription itself, with phase zero at the ADC
-    start and exactly `cycles` periods over ``num_samples * dwell_s``.
+    Every emitted knot inside the window is the continuous prescription sampled there: phase
+    anchored at the ADC start, and exactly `cycles` periods over ``num_samples * dwell_s``.
     """
     wave = wave_readout(scanner, matrix=matrix, oversampling=oversampling, dwell_s=dwell_s,
                         cycles=cycles, amplitude_mT_m='max')
@@ -239,6 +239,57 @@ def test_the_sampled_corkscrew_is_the_prescribed_one_to_within_the_raster(reques
     for row, axis in ((1, 'y'), (0, 'x')):
         oracle = analytic[axis] - analytic[axis][echo]
         assert np.max(np.abs(k[row] - oracle)) < 1.2 * attenuation * 2 * g0 / omega
+
+
+@pytest.mark.parametrize('prephase', [True, False])
+def test_an_off_raster_adc_start_anchors_the_prescription_not_the_emitted_value(
+        late_adc, tmp_path, prephase) -> None:
+    """
+    With the ADC opening between gradient-raster edges, the analytic phase anchor is still the ADC
+    start: every emitted knot inside the window is ``G0 * sin|cos(omega * (t - t_a))``.  The emitted
+    waveform is that prescription's interpolant between raster edges, so **at** ``t_a`` it takes the
+    chord between the two surrounding edges.  Where the waveform before the window is the module's
+    own fixed one (``prephase=False``), that chord is measurably neither the sine's ``0`` nor the
+    cosine's ``G0``.  The contract is met by the trajectory at the actual ADC samples, which is what
+    the compiled and the written-and-read-back sequence play.
+    """
+    wave = wave_readout(late_adc, matrix=64, oversampling=4, dwell_s=5e-6, cycles=5, fov_mm=300.0,
+                        amplitude_mT_m='max', prephase=prephase)
+    raster = float(late_adc.grad_raster_time)
+    t_a = adc_start(wave)
+    assert 1e-3 < (t_a / raster) % 1.0 < 1 - 1e-3                    # between two edges
+    edges = np.array([np.floor(t_a / raster), np.ceil(t_a / raster)]) * raster
+    g0 = wave.amplitude_mT_m * 1e-3 * float(late_adc.gamma)
+    omega = wave.angular_frequency_rad_s
+
+    for axis, shape, endpoint in (('y', np.sin, 0.0), ('x', np.cos, g0)):
+        t, g = wave_event(wave, axis)
+        inside = (t > t_a) & (t < t_a + wave.window_s)
+        np.testing.assert_allclose(g[inside], g0 * shape(omega * (t[inside] - t_a)),
+                                   atol=1e-9 * g0)                      # anchored at t_a
+        emitted = np.interp(t_a, t, g)
+        chord = np.interp(t_a, edges, np.interp(edges, t, g))
+        assert emitted == pytest.approx(chord, abs=1e-9 * g0)          # rasterised: the chord
+        if not prephase:
+            assert abs(emitted - endpoint) > 1e-2 * g0                 # not the analytic value
+
+    t_adc, k = compiled_k(wave, late_adc)
+    dk = wave.line.dk_per_m
+    assert np.max(np.abs(k[:, wave.line.echo_sample(0)])) < 1e-6 * dk
+    np.testing.assert_allclose(k, wave.k_per_m(), atol=1e-5 * dk)
+    np.testing.assert_allclose(t_adc, wave.sample_times_s(), atol=1e-12)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        seq = sc.compile(sc.LogicBlock('probe').add(0.0, wave()), late_adc)
+        seq.write(str(tmp_path / 'late.seq'))
+        back = pp.Sequence(system=late_adc)
+        back.read(str(tmp_path / 'late.seq'))
+        k_back = np.asarray(back.calculate_kspacePP()[0]).copy()
+    if not prephase:
+        k_back += np.array([wave.prephaser_area_per_m(a) for a in 'xyz'])[:, None]
+    module = wave.k_per_m()
+    np.testing.assert_allclose(k_back, module, atol=1e-5 * np.max(np.abs(module)))
 
 
 # -------------------------------------------------------------- transitions and prephase

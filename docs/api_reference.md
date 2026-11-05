@@ -1296,7 +1296,7 @@ the questions a tree of events cannot:
 | `RosetteReadout.origin_crossing_ideal_s` | the formula's `P + 1` crossing instants, on the gradient raster. Beside them, `origin_crossing_closest_s` and `origin_crossing_residual_per_m` are where and how near the designed trajectory comes to `k = 0`, and `origin_crossing_samples` the nearest samples. Never merged into one number, and no scalar TE |
 | `RosetteReadout.k_per_m(angle_rad=…)` / `core_samples` | every sample's position, padding included, integrated from the designed knots; `core_samples` is the slice taken on the analytic core |
 | `RosetteReadout.departure_per_m` / `limits()` | the core's largest vector departure from the analytic curve, as an upper bound, and the peak vector gradient and slew. Measured on the designed knots |
-| `WaveReadout.sample_times_s()` / `k_per_m()` | the ADC sample times, `adc.delay + (n + ½)·dwell` on the block clock, and the `(3, N)` positions on them, relative to the encoding target — integrated from the **emitted** knots, the same for either `prephase` |
+| `WaveReadout.sample_times_s()` / `k_per_m()` | the ADC sample times, `adc.delay + (n + ½)·dwell` on the block clock, and the `(3, N)` positions on them, relative to the encoding target — integrated from the **emitted** knots, the same for either `prephase`. Under `prephase=False` this is the nominal contract trajectory, with the caller's `prephaser_area_per_m` assumed delivered, not the bare block compiled from `k = 0` |
 | `WaveReadout.prephaser_area_per_m(axis)` / `echo_offset_per_m(axis)` | the moment the centring needs in place before the block, stated whatever `prephase` is, and what a `PhysicalDesignScope` adds to `k_at_echo` (non-zero only on the sine axis under `'sinctr'`) |
 | `WaveReadout.area_after_echo_per_m(axis)` | what the block plays after the echo sample, for the rewinder or spoiler that follows |
 | `IRPrep.time_to_center()` | to the inversion's effective centre — 5.1 ms into a 10 ms hyperbolic secant, and what an inversion time is measured from |
@@ -1684,9 +1684,14 @@ dummy shots, TR and contrast. There is no minimum-time traversal and no ADC segm
 ## A Wave readout, and who plays its centring moment
 
 `WaveReadout` contains a `CartesianLine` and adds a sine on `sine_axis` and a cosine on
-`cosine_axis`, anchored to the ADC dwell window: `cycles` whole periods over
-`num_samples * dwell_s`, phase zero at the ADC start. The ADC and the Wave keep their own rasters,
-and the Wave's knots are the prescription at every gradient-raster edge.
+`cosine_axis`.
+- **The prescription.** Its continuous Wave is anchored to the ADC dwell window: `cycles` whole
+  periods over `num_samples * dwell_s`, phase zero at the ADC start.
+- **The rasters.** The ADC and the Wave keep their own rasters, and the emitted Wave's knots are
+  the prescription at every gradient-raster edge.
+- **Off-raster boundaries.** At a window boundary between two edges the emitted Wave need not take
+  the prescription's value. The ADC-sampled trajectory, `k_per_m()` and the written file's, is what
+  it plays.
 
 The corkscrew's centring is a moment that must be in place before the readout, and the module
 always states it. `prephase=True` plays it in the block, merging the cosine's share with its
