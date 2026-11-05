@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — `CartesianLine` takes readout oversampling
+
+`CartesianLine(oversampling=n)` takes `n` ADC samples per reconstructed pixel, the convention
+`EPI2D` already uses. `num_samples` and `pre_echo_samples` are multiplied by `n`, and the dwell is
+divided by it. `bandwidth_hz_px` stays per reconstructed pixel and `dk_per_m` stays the
+reconstructed pixel's step. At a given bandwidth per pixel the sampling window, the lobe and its
+amplitude therefore do not move, and `k = 0` falls on sample `n * matrix // 2` at full echo.
+
+The default is 1. Every event and every designed number of 270 existing configurations, including
+72 refusals, is byte-identical before and after. They cover partial Fourier, bandwidth or dwell,
+monopolar and bipolar trains, `prephase=False`, the velocity-compensated prephaser and two
+scanners.
+
+A sample count the receiver cannot take is still refused, and the suggestions now count
+reconstructed pixels, because each one costs `n` samples.
+
 ## Unreleased — `sc.sequence_kspace`: the exact trajectory of a compiled or read-back sequence
 
 A reconstruction has the written `.seq` file rather than the tree, so it needs the nominal
