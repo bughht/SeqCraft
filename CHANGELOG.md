@@ -35,6 +35,8 @@ What changes in verdicts, on the controls in `tests/compiler/test_local_moments.
 - **Refused now, missed before:** area moved across a block boundary, which leaves the whole m0
   unchanged.
 - **Still refused:** lost area, and a piece one raster late, at every placement from 0 to 100 s.
+  So is a centre-sampled gradient of four samples or fewer, which PyPulseq stores without its last
+  half raster; it is now refused at registration, the stage where the area is lost.
 
 **Resampled blocks** are reported by legalization as data. The compile stage compares each one
 with the tree resampled onto the raster the same way, on its own axis, including stretches whose

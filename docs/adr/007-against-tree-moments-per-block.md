@@ -1,6 +1,6 @@
 # ADR-007: The against-tree moments are compared per compiled block, in two stages
 
-- Status: Proposed
+- Status: Accepted (proposed 2026-10-26, accepted with its merge on 2026-11-05)
 - Date: 2026-10-26
 - Amends: the m0 and m1 invariants of the always-on verification reviewed in
   [`refactor/phase6_verification_time_audit.md`](../refactor/phase6_verification_time_audit.md).
@@ -47,6 +47,12 @@ inside the stretch.
 - A correct waveform compares the same wherever it sits. A refusal names its stage, block, start
   time, difference and tolerance.
 - Area moved across a block boundary is refused, which the whole-sequence m0 could not see.
+- What stays global is exact: the registered block grid must equal the handed one in ticks, and
+  duration and label addresses are checked as before. With the grid exact, the block moments fix
+  the whole-sequence ones, so nothing is lost by not comparing those.
+- A storage fault is refused at the stage where it happens. A centre-sampled gradient of four
+  samples or fewer, which PyPulseq stores without its last half raster, is refused at
+  registration.
 - PyPulseq's six-digit deduplication is accepted as its precision. An event that shares a key with
   an earlier one still plays the earlier one's values.
 - m0 and m1 remain two linear functionals per block, not waveform fidelity.

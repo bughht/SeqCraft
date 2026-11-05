@@ -500,6 +500,29 @@ def test_the_compression_edge_case_is_inside_the_registration_tolerance() -> Non
     assert moved < float(handed.storage0[0, 0])
 
 
+@pytest.mark.parametrize('t0', [0.0, 1.0])
+@pytest.mark.parametrize('samples', [2, 3, 4])
+def test_a_short_centre_sampled_gradient_stored_short_is_refused_at_registration(
+        samples: int, t0: float) -> None:
+    """
+    PyPulseq stores a short centre-sampled gradient without its last half raster.
+
+    Not a tampered control: ``compress_shape`` leaves four samples or fewer uncompressed, so
+    registration keeps an explicit time shape and decodes the gradient as ending on its last
+    sample.  The half raster out to ``last`` is gone from what is stored -- 0.025 1/m here.  The
+    registration stage sees the stored block differ from the one emission handed over, wherever it
+    sits; five samples are stored whole.
+    """
+    opts = _opts()
+    grad = pp.make_arbitrary_grad('x', np.full(samples, 1e4), first=0.0, last=0.0, system=opts)
+    with pytest.raises(sc.CompilerContractError,
+                       match=r'axis x m0, PyPulseq block \d+ at .* registered m0 .* by -0\.025'):
+        sc.compile(sc.LogicBlock('short').add(t0, grad), opts, name='short')
+
+    whole = pp.make_arbitrary_grad('x', np.full(5, 1e4), first=0.0, last=0.0, system=opts)
+    sc.compile(sc.LogicBlock('whole').add(t0, whole), opts, name='whole')
+
+
 # ----------------------------------------------------------------------------- the refusal itself
 def test_a_refusal_names_the_stage_block_time_difference_and_tolerance() -> None:
     opts = _opts()
