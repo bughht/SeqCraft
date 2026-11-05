@@ -1068,6 +1068,7 @@ Re-exported **flat**, so no import path names a folder:
 | `RadialReadout` | one radial spoke: prephaser, readout gradient and ADC, already oriented, with the trajectory geometry a caller would otherwise reverse-engineer |
 | `SpiralReadout` | one reversible spiral arm and the four ways to traverse it — `out`, `in`, `in-out`, `out-in`. The arm is at rest at both ends, which is what makes them one family |
 | `RosetteReadout` | whole petals of the analytic rosette `k_max sin(ω1 t) e^{iω2 t}`, played on the gradient raster and at rest at both ends, with a crossing report that keeps ideal instants, closest approaches and nearest samples apart |
+| `WaveReadout` | a `CartesianLine` plus a sine and a cosine on the other two axes while the ADC samples: the Wave-CAIPI corkscrew. Integer `cycles` over the ADC dwell window, `amplitude_mT_m` a prescription or `'max'`, `centering='sinzero'` or `'sinctr'`. The line, the CAIPI pattern, flow compensation and reconstruction are the caller's |
 | `EPI2D` | the whole echo-planar train: prephasers, alternating lobes, blips on the zero crossings, one ADC per echo, and the labels a reconstruction reads back |
 | `ContinuousEPI2D` | the same train sampled by **one** ADC window, from the first lobe's start to the last lobe's end — ramps, turnarounds and blips included — with every sample's k and time reported. The window has to fit the configured `opts.adc_samples_limit`, and is never split |
 | `spoiler` | a gradient winding *n* turns of phase across a voxel — a **function**, not a class |
@@ -1306,6 +1307,9 @@ the questions a tree of events cannot:
 | `RosetteReadout.origin_crossing_ideal_s` | the formula's `P + 1` crossing instants, on the gradient raster. Beside them, `origin_crossing_closest_s` and `origin_crossing_residual_per_m` are where and how near the designed trajectory comes to `k = 0`, and `origin_crossing_samples` the nearest samples. Never merged into one number, and no scalar TE |
 | `RosetteReadout.k_per_m(angle_rad=…)` / `core_samples` | every sample's position, padding included, integrated from the designed knots; `core_samples` is the slice taken on the analytic core |
 | `RosetteReadout.departure_per_m` / `limits()` | the core's largest vector departure from the analytic curve, as an upper bound, and the peak vector gradient and slew. Measured on the designed knots |
+| `WaveReadout.sample_times_s()` / `k_per_m()` | the ADC sample times, `adc.delay + (n + ½)·dwell` on the block clock, and the `(3, N)` positions on them, relative to the encoding target — integrated from the **emitted** knots, the same for either `prephase` |
+| `WaveReadout.prephaser_area_per_m(axis)` / `echo_offset_per_m(axis)` | the moment the centring needs in place before the block, stated whatever `prephase` is, and what a `PhysicalDesignScope` adds to `k_at_echo` (non-zero only on the sine axis under `'sinctr'`) |
+| `WaveReadout.area_after_echo_per_m(axis)` | what the block plays after the echo sample, for the rewinder or spoiler that follows |
 | `IRPrep.time_to_center()` | to the inversion's effective centre — 5.1 ms into a 10 ms hyperbolic secant, and what an inversion time is measured from |
 | `SaturationPrep.time_to_center()` | the same question, the same origin, so a timeline can add them |
 | `SaturationPrep.offset_hz` | the chemical shift converted once: `shift_ppm × 1e-6 × B0 × γ`. Negative is below water. A test traces it as far as the compiled sequence, because a sign error here is legal Pulseq that saturates the wrong tissue |
@@ -1687,6 +1691,37 @@ the ADC, so `acquire=False` gives a dummy shot of the same length.
 What stays with the caller: the excitation, the shot angles, RF spoiling through `phase_deg`,
 dummy shots, TR and contrast. There is no minimum-time traversal and no ADC segmentation.
 
+
+## A Wave readout, and who plays its centring moment
+
+`WaveReadout` contains a `CartesianLine` and adds a sine on `sine_axis` and a cosine on
+`cosine_axis`, anchored to the ADC dwell window: `cycles` whole periods over
+`num_samples * dwell_s`, phase zero at the ADC start. The ADC and the Wave keep their own rasters,
+and the Wave's knots are the prescription at every gradient-raster edge.
+
+The corkscrew's centring is a moment that must be in place before the readout, and the module
+always states it. `prephase=True` plays it in the block, merging the cosine's share with its
+entrance ramp. `prephase=False` leaves it to the composition, and the cosine's ramps stay in the
+block either way:
+
+```python
+wave_opts = pp.Opts(max_grad=80, grad_unit='mT/m', max_slew=200, slew_unit='T/m/s', B0=3.0,
+                    rf_dead_time=100e-6, rf_ringdown_time=30e-6, adc_dead_time=20e-6)
+wave = sc.modules.WaveReadout(opts=wave_opts, fov_mm=200.0, matrix=64, dwell_s=7.8e-6,
+                              cycles=7, axis='z', sine_axis='y', cosine_axis='x',
+                              centering='sinctr', prephase=False)
+exc = sc.modules.Excitation(opts=wave_opts, flip_deg=15.0, thickness_mm=150.0, axis='x',
+                            duration_s=1e-3)
+dk = {'x': 1e3 / 150.0, 'y': 1e3 / 220.0, 'z': 0.0}
+scope = sc.PhysicalDesignScope(
+    origin_s=exc.time_to_center(), before=exc(rephase=False), after=wave(),
+    echo_in_after_s=wave.time_to_echo(), axes=('x', 'y', 'z'), states=((3, -2), (0, 0)),
+    k_at_echo=lambda line, axis: ({'y': line[0], 'x': line[1]}.get(axis, 0) * dk[axis]
+                                  + wave.echo_offset_per_m(axis)))
+design = scope.design(opts=wave_opts, flow_comp=sc.FlowCompensation(axis=('x', 'y', 'z')))
+k = sc.kspace(design.build((3, -2)), wave_opts)['k_adc']
+assert abs(k[1].mean() - 3 * dk['y']) < 1e-6       # the sine corkscrew is centred on its line
+```
 
 ## A 3D repetition, and the one axis that is not a 2D one
 
@@ -2135,6 +2170,7 @@ at import. Which pypulseq is pinned, and why, is in [`pypulseq_dependency.md`](p
 | `SaturationPrep` | `modules` | class |
 | `T2Prep` | `modules` | class |
 | `SpiralReadout` | `modules` | class |
+| `WaveReadout` | `modules` | class |
 | `TSEShot` | `modules` | class |
 | `SeqCraftError` | `errors` | exception |
 | `SeqCraftWarning` | `errors` | warning |
