@@ -35,6 +35,7 @@ _NOTEBOOKS = (
     Path('gre_radial_2d/01_build.ipynb'),
     Path('fat_sat/01_build.ipynb'),
     Path('gre_spiral_2d/01_build.ipynb'),
+    Path('gre_rosette_2d/01_build.ipynb'),
     Path('se_spiral_2d/01_build.ipynb'),
     Path('dwi_se_epi_2d/01_build.ipynb'),
     Path('t2prep_gre_2d/01_build.ipynb'),

@@ -1,5 +1,81 @@
 # Changelog
 
+## Unreleased — a rosette readout
+
+`sc.modules.RosetteReadout` plays whole petals of the analytic rosette
+`k(t) = k_max sin(ω1 t) e^{iω2 t}` on the gradient raster: the analytic gradient sampled on raster
+edges, one extended trapezoid per in-plane axis, and one ADC event. Parameters: `fov_mm`, `matrix`,
+`petals`, `omega_ratio` (finite, at least zero), `dwell_s`, and an optional `petal_duration_s`.
+
+**One realisation of the ends, with no option.** A zero-area lead-in along `g(0)`; after the
+core, a lead-out along the core's last gradient that cancels the core's end point along it, and a
+perpendicular triangle that cancels the rest. Each ramp takes the fewest rasters the slew limit
+allows. So the readout starts and ends at rest and leaves no net in-plane moment. The
+cancellation is part of the construction, so it does not depend on the ratio closing the curve;
+it is tested at six ratios.
+
+**The domain.** The gradient and slew limits apply to the in-plane vector, so every rotation is
+legal per axis. **What the slew limit bounds** is the played waveform's: it is piecewise linear
+between raster-edge knots, so on each raster it asks for the secant `|Δg|/Δt`. On the core a secant
+is at most the analytic peak `k_max (ω1² + ω2²)`, which the design keeps within `max_slew`; the
+ramps and the correction are designed on their secants directly. The limit therefore holds for
+what is played with no tolerance, and `limits()` reports the played peaks. The tests assert that
+directly, and measure the played core peak against the analytic one from both sides: at most the
+peak, and at least `S cos²(ω1 Δt/2) − Δt² M4/24`. The secant cannot be centred on the peak when the
+raster count per petal is even, so `((ω1 + ω2) Δt)²/24` is not a bound. A fixed budget of 0.05 Δk applies to the closed-form bound `B` on the core's largest
+vector departure from the analytic curve. That bound is conservative, so a refusal marks the
+supported domain, not a physical limit. The default petal is the shortest whole raster count
+meeting all three; the dwell does not enter it, and a dwell moving `k` more than `Δk` per sample is
+refused. `opts.adc_samples_limit` must be positive, and a readout needing more samples than one
+event allows is refused rather than split.
+
+**Three stages, three allowances.** The designed knots are within `B`, a theorem rather than a
+sampled check. The compiled sequence may add registration rounding: a compressible shape's samples
+are rounded to 1e-7 of its peak. The written file adds serialisation: amplitudes to six
+significant digits, normalised shapes to nine. Each stage is tested against `B` plus its own
+allowances, and `B` is never widened. `departure_per_m` is an error-controlled upper bound on the
+designed departure, not a grid maximum.
+
+**The window is checked, not assumed.** One dwell of padding each side, the delay floored onto
+`rf_raster_time` and the count rounded up to `adc_samples_divisor`. The delay is then read back
+from the built ADC, and the samples must cover every ideal crossing and every closest approach. At
+a 200 ns dwell the padded window misses the last closest approach, and it grows by one divisor of
+samples. The crossing report keeps ideal instants, closest approaches with their residuals, and
+nearest samples apart, with ties going to the earlier sample. The block lasts until both the
+gradient and the ADC's trailing dead time have ended, with or without the ADC, so a dummy shot
+keeps its span. The trailing interval is explicit, not compiler padding.
+
+**Evidence, by source.**
+
+- **Design, over 360 protocols.** The module reproduces a candidate-free probe of the same
+  realisation: petals, lead-in, lead-out and correction lengths, and sample counts are identical,
+  and departures agree to 5e-8 Δk.
+- **Compiled and read back, 13 protocols.**
+  - Every stage is within its allowance.
+  - The design reaches at most 0.97 of `B`.
+  - The read-back file reaches up to 1.28 `B`, at a 10 ms petal whose departure is as small as
+    six-digit rounding. That case is within `B` plus both allowances.
+- **A small composed acquisition, read back.** Eight shots and a dummy, with excitation, spoiler,
+  TR and RF spoiling. Samples lie within 7.3e-5 1/m of the report, and closest approaches within
+  4 ps of it.
+
+**Validation layers.** Layer 1 is the contract above, on designed, compiled and read-back
+sequences. Layer 2 is [`examples/gre_rosette_2d/01`](examples/gre_rosette_2d/01_build.ipynb): a
+spoiled gradient echo of sixteen rotated shots, with dummies sized from the approach to steady
+state, written and read back. The file's trajectory matches the report to 3e-5 Δk, and its sample
+times to 2e-15 s. The largest hole in the sampled disk is 0.64 Δk, inside the 0.71 Δk of a
+Nyquist Cartesian grid. **Layer 3 — simulate and reconstruct — is deferred, by decision.** The
+readout claims a trajectory, its crossings and their timing, and Layers 1 and 2 establish those
+against the played gradients and the file. It claims no image. A rosette samples points other
+than the origin more than once, so density compensation is a reconstruction design question of
+its own, and an image would test that rather than the readout. Layer 3 is owed by the first
+reconstruction that grids from `k_per_m`, and by any image or spectral-selectivity claim made for
+this readout.
+
+**Not validated, and not claimed.** No image, no simulation and no scanner. Oblique prescriptions, where a slice rephaser
+overlaps the readout, are the composing kernel's. Neither a minimum-time traversal nor ADC
+segmentation is offered.
+
 ## Unreleased — an echo-planar train sampled by one ADC window
 
 `sc.modules.ContinuousEPI2D` is a sibling of `EPI2D` whose receiver opens once for the whole
