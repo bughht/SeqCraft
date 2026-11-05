@@ -28,6 +28,7 @@ The folders, and what each one means
       encoding/    phase_encoding.py   PhaseEncode
                    velocity_encode.py  VelocityEncode
       readout/     cartesian_line.py   CartesianLine
+                   continuous_epi_2d.py  ContinuousEPI2D
                    epi_2d.py           EPI2D
                    radial_readout.py   RadialReadout
                    rosette_readout.py  RosetteReadout
@@ -109,6 +110,7 @@ from .preparation.ir_prep import IRPrep
 from .preparation.saturation_prep import SaturationPrep
 from .preparation.t2_prep import T2Prep
 from .readout.cartesian_line import CartesianLine
+from .readout.continuous_epi_2d import ContinuousEPI2D
 from .readout.epi_2d import EPI2D
 from .readout.radial_readout import RadialReadout
 from .readout.rosette_readout import RosetteReadout
@@ -118,7 +120,8 @@ from .rf.refocusing import Refocusing
 from .spoiler import spoiler
 
 __all__ = [
-    'CartesianLine', 'DiffusionSEPrep', 'EPI2D', 'Excitation', 'FSE2D', 'GRE2D', 'GRE2DTR',
+    'CartesianLine', 'ContinuousEPI2D', 'DiffusionSEPrep', 'EPI2D', 'Excitation', 'FSE2D',
+    'GRE2D', 'GRE2DTR',
     'bSSFP2DTR',
     'bSSFP3DTR',
     'GRE3DTR', 'IRPrep',
