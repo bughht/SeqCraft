@@ -31,6 +31,10 @@ CAIPI pattern, flow compensation, reconstruction and PSF calibration stay with t
 - **Trajectory.** `sample_times_s()` and `k_per_m()` report the samples and their positions,
   integrated from the emitted knots. Tests check them against `sc.kspace` of the compiled block
   and against the written-and-read-back file.
+- **Example.** `examples/wave_caipi_gre_3d/` composes it into a flow-compensated 3D Wave-CAIPI
+  GRE with a no-Wave twin, writes the files and checks them (`01`, in the notebook smoke run). It
+  then simulates the written files, reconstructs them with the Wave PSF taken from the file, and
+  compares R = 2 x 2 noise amplification with and without the Wave (`02`).
 
 ## Unreleased — `CartesianLine` takes readout oversampling
 
