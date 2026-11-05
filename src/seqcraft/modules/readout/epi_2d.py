@@ -187,7 +187,9 @@ class EPI2D(Module):
         divides :attr:`dwell_s`, so the sampling duration -- and therefore the lobe, the guard,
         the peak gradient and :attr:`bandwidth_hz_px` -- does not move.  ``2`` is the default
         because ``1`` leaves the ramp-sampled flat top under-sampled against the grid it is
-        reconstructed onto; see the module docstring.
+        reconstructed onto; see the module docstring.  :attr:`num_samples` has to be a multiple
+        of ``opts.adc_samples_divisor``, which PyPulseq's timing check requires of every ADC
+        event, so at ``1`` a readout matrix of 66 or 70 is refused under the default divisor of 4.
     ramp_sampling
         Open the ADC during the ramps.  ``True`` is the shorter echo spacing and a non-uniform
         :attr:`k_read_per_m`; ``False`` samples the flat top only and leaves ``k`` uniform.
@@ -378,6 +380,7 @@ class EPI2D(Module):
         # The sample count comes *before* the dwell, because it is what the dwell is quantised
         # against -- see `_resolve_dwell`.
         self.num_samples, self.pre_echo_samples = self._resolve_samples()
+        self._check_divisor()
         self.dwell_s = self._resolve_dwell(bandwidth_hz_px, dwell_s)
         #: Nominal receive bandwidth per *reconstructed* pixel, Hz.  Reads back the snapped dwell.
         self.bandwidth_hz_px = 1.0 / (self.dwell_s * self.matrix[0] * self.oversampling)
@@ -800,8 +803,7 @@ class EPI2D(Module):
         Both numbers scale with `oversampling`, because both count *ADC samples* while the
         arithmetic above them counts reconstructed pixels.
         """
-        wanted = self.partial_fourier * self.matrix[0]
-        count = self.oversampling * max(2, 2 * int(round(wanted / 2)))
+        count = self._count_for(self.matrix[0])
         pre_echo = count - self.oversampling * (self.matrix[0] - self.matrix[0] // 2)
         if pre_echo < 0:
             msg = format_error(
@@ -813,6 +815,61 @@ class EPI2D(Module):
             )
             raise ConfigurationError(msg)
         return count, pre_echo
+
+    def _count_for(self, nx: int) -> int:
+        """Return the sample count a readout matrix of `nx` gets at this echo and oversampling."""
+        wanted = self.partial_fourier * nx
+        return self.oversampling * max(2, 2 * int(round(wanted / 2)))
+
+    def _check_divisor(self) -> None:
+        """
+        Refuse a sample count that ``opts.adc_samples_divisor`` does not divide.
+
+        PyPulseq's timing check requires every ADC event's sample count to be a multiple of it, so
+        such a train would build here and then be refused when compiled.  The count is
+        `oversampling` times an even number, so it is reached at ``oversampling=1`` -- a readout
+        matrix of 66 or 70 gives 66 or 70 samples, which the default divisor of 4 does not divide.
+
+        Nothing is rounded to fit: every remedy changes the acquisition, and each one says how.
+        """
+        divisor = int(getattr(self.opts, 'adc_samples_divisor', 1) or 1)
+        if self.num_samples % divisor == 0:
+            return
+        per_pixel = self.num_samples // self.oversampling
+        step = divisor // math.gcd(per_pixel, divisor)
+        oversampling = -(-self.oversampling // step) * step
+        hints = [
+            f'oversampling={oversampling}: {oversampling * per_pixel} samples per echo, a multiple '
+            f'of {divisor}.  At a fixed bandwidth_hz_px the dwell shrinks by the same factor and '
+            f'the sampling window stays as it is; at a fixed dwell_s the window grows by that '
+            f'factor, and the echo spacing with it',
+        ]
+        nx = self.matrix[0]
+
+        def divides(n: int) -> bool:
+            # Even matrices only: an odd one is sampled at the even count beside it.
+            count = self._count_for(n)
+            return n % 2 == 0 and count % divisor == 0 and count >= self.oversampling * (n - n // 2)
+
+        sizes = [str(n) for n in (next((n for n in range(nx - 1, 1, -1) if divides(n)), None),
+                                  next((n for n in range(nx + 1, nx + 4 * divisor) if divides(n)),
+                                       None)) if n is not None]
+        if sizes:
+            hints.append(
+                f'or matrix[0] = {" or ".join(sizes)}, whose sample counts divide -- a different '
+                f'readout matrix is a different readout resolution at this fov_mm, or a different '
+                f'field of view at the same resolution',
+            )
+        msg = format_error(
+            f'{self.num_samples} ADC samples per echo is not a multiple of '
+            f'opts.adc_samples_divisor = {divisor}, which PyPulseq\'s timing check requires of '
+            f'every ADC event.',
+            {'num_samples': self.num_samples, 'adc_samples_divisor': divisor,
+             'matrix': self.matrix, 'partial_fourier': self.partial_fourier,
+             'oversampling': self.oversampling},
+            hints,
+        )
+        raise ConfigurationError(msg)
 
     def _design_blip(self, requested_s: float | None) -> Event:
         """

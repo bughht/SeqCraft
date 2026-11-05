@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — EPI2D refuses a sample count the ADC divisor does not divide
+
+`EPI2D` with `oversampling=1` and a readout matrix of 66 or 70 built a train of 66- or 70-sample
+ADC events. PyPulseq's timing check requires every ADC event's sample count to be a multiple of
+`opts.adc_samples_divisor`, 4 by default, so `sc.compile` then refused the train with a message
+that called it a compiler bug. `EPI2D` now refuses such a configuration at construction, naming the
+sample count and the divisor.
+
+- **Nothing is rounded to fit.** The sample count, field of view, k-space coverage and echo timing
+  are never changed on the caller's behalf. The refusal offers two remedies, each saying what it
+  changes: the smallest `oversampling` whose count divides (with `bandwidth_hz_px` held the sampling
+  window stays as it is; with `dwell_s` held it grows, and the echo spacing with it), and the nearest
+  even readout matrices whose counts divide (a different readout resolution at the same field of
+  view). Both are tested by building and compiling them.
+- **Every configuration that compiled before is unchanged.** The EPI2D digest baseline -- the
+  written file and the event tree of 18 configurations, and the text of nine refusals -- is
+  identical before and after.
+- The divisor is read from `opts`: with `adc_samples_divisor=2` the 66-sample train builds and
+  compiles.
+
 ## Unreleased — m0's tolerance scales with the area traversed, as documented
 
 The m0 against-tree check scaled its tolerance by the sum of each gradient event's `|net area|`,
