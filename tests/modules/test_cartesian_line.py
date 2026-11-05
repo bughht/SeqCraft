@@ -1201,3 +1201,86 @@ def test_a_scanner_without_a_divisor_constrains_nothing(opts) -> None:
                    adc_dead_time=10e-6, adc_samples_divisor=1)
     assert sc.modules.CartesianLine(opts=relaxed, fov_mm=250.0, matrix=65,
                                     bandwidth_hz_px=200.0).num_samples == 65
+
+
+# ---------------------------------------------------------------------------- oversampling
+def test_oversampling_samples_the_same_lobe_more_finely(opts) -> None:
+    """
+    At one bandwidth per pixel, four times the samples at a quarter of the dwell: the sampling
+    window, and therefore the lobe and its amplitude, do not move.  The bandwidth is chosen so
+    that both dwells sit on the ADC raster, which keeps the comparison exact.
+    """
+    plain = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=64, bandwidth_hz_px=312.5)
+    over = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=64, bandwidth_hz_px=312.5,
+                                    oversampling=4)
+
+    assert (over.num_samples, over.pre_echo_samples) == (4 * 64, 4 * 32)
+    assert over.dwell_s == pytest.approx(plain.dwell_s / 4, rel=1e-12)
+    assert over.bandwidth_hz_px == pytest.approx(plain.bandwidth_hz_px, rel=1e-12)
+    assert over.dk_per_m == plain.dk_per_m                  # the reconstructed pixel's dk
+    for field in ('rise_time', 'flat_time', 'fall_time'):
+        assert getattr(over.gx, field) == pytest.approx(getattr(plain.gx, field), abs=1e-12)
+    assert over.gx.amplitude == pytest.approx(plain.gx.amplitude, rel=1e-12)
+
+
+@pytest.mark.parametrize('oversampling', [2, 3, 4])
+def test_an_oversampled_line_puts_k_zero_on_its_echo_sample_and_steps_a_fraction_of_dk(
+        opts, oversampling) -> None:
+    """Measured on the compiled sequence: sample i sits at ``(i - echo) * dk / oversampling``."""
+    line = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=64, dwell_s=7.3e-6,
+                                    oversampling=oversampling)
+
+    k = _k_at_samples(line, opts)
+
+    expected = (np.arange(line.num_samples) - line.pre_echo_samples) * line.dk_per_m / oversampling
+    assert np.max(np.abs(k - expected)) < 1e-6 * line.dk_per_m
+    assert line.pre_echo_samples == line.num_samples // 2
+
+
+def test_an_oversampled_line_is_the_wider_line_it_replaces(opts) -> None:
+    """
+    ``oversampling=k`` emits what ``k`` times the FOV and the matrix at the same ADC dwell emits.
+    That equivalence is how oversampling was emulated before this argument existed.
+    """
+    over = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=100, dwell_s=5e-6,
+                                    oversampling=4)
+    wide = sc.modules.CartesianLine(opts=opts, fov_mm=1000.0, matrix=400, dwell_s=5e-6)
+
+    assert (over.num_samples, over.pre_echo_samples) == (wide.num_samples, wide.pre_echo_samples)
+    assert over.time_to_echo() == pytest.approx(wide.time_to_echo(), abs=1e-12)
+    assert over.gx.amplitude == pytest.approx(wide.gx.amplitude, rel=1e-12)
+    assert over.prephaser_area_per_m == pytest.approx(wide.prephaser_area_per_m, rel=1e-12)
+
+
+def test_oversampling_scales_both_partial_fourier_counts(opts) -> None:
+    """The pre-echo count is in ADC samples too, so the echo stays at the same k."""
+    line = sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=128, bandwidth_hz_px=250.0,
+                                    partial_fourier=0.75, oversampling=2)
+    assert (line.num_samples, line.pre_echo_samples) == (2 * 96, 2 * 32)
+
+
+def test_an_oversampled_count_the_receiver_cannot_take_suggests_counts_that_work() -> None:
+    """65 pixels at 2x is 130 samples, not divisible by 4; 64 or 66 pixels are."""
+    divisible = Opts(max_grad=40, grad_unit='mT/m', max_slew=150, slew_unit='T/m/s',
+                     adc_dead_time=10e-6, adc_samples_divisor=4)
+    with pytest.raises(sc.ConfigurationError) as raised:
+        sc.modules.CartesianLine(opts=divisible, fov_mm=250.0, matrix=65,
+                                 bandwidth_hz_px=200.0, oversampling=2)
+    message = str(raised.value)
+    assert '130 ADC samples' in message
+    assert 'gives 128 samples at matrix=65' in message
+    assert 'matrix=66 at partial_fourier=1.0 gives 132 samples' in message
+
+
+@pytest.mark.parametrize('value', [0, -1])
+def test_oversampling_below_one_raises(opts, value) -> None:
+    with pytest.raises(sc.ConfigurationError):
+        sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=64, bandwidth_hz_px=250.0,
+                                 oversampling=value)
+
+
+def test_an_oversampled_line_is_pure_and_compiles_alone(opts, component_checks) -> None:
+    component_checks.all(
+        sc.modules.CartesianLine(opts=opts, fov_mm=250.0, matrix=64, bandwidth_hz_px=250.0,
+                                 oversampling=4),
+    )

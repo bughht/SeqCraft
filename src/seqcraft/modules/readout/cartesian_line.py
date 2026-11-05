@@ -112,7 +112,7 @@ map is exactly the kind of wrong no image inspection finds.
 
 from __future__ import annotations
 
-from math import pi
+from math import gcd, pi
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -170,17 +170,26 @@ class CartesianLine(Module):
     fov_mm
         Field of view along `axis`.  Sets the k-space step, ``dk = 1000 / fov_mm`` in 1/m.
     matrix
-        Samples across the **full** k-space extent.  With `partial_fourier` below 1 the ADC takes
-        fewer than this; the extent one sample spans is unchanged, which is what keeps the image
-        resolution attached to `matrix` rather than to how much of k-space was sampled.
+        Reconstructed pixels across the **full** k-space extent.  With `partial_fourier` below 1
+        the ADC takes fewer than this; the extent one sample spans is unchanged, which is what
+        keeps the image resolution attached to `matrix` rather than to how much of k-space was
+        sampled.
     bandwidth_hz_px, dwell_s
         The sampling rate, either way round.  **Exactly one is required**; both or neither raises.
-        ``dwell = 1 / (bandwidth_hz_px * matrix)``, then snapped onto the ADC raster -- or, under
-        ``polarity='bipolar'``, up onto the coarser quantum that keeps the guard on the RF raster
-        -- so the achieved values are readable back as :attr:`dwell_s` and :attr:`bandwidth_hz_px`.
+        ``dwell = 1 / (bandwidth_hz_px * matrix * oversampling)``, then snapped onto the ADC
+        raster -- or, under ``polarity='bipolar'``, up onto the coarser quantum that keeps the
+        guard on the RF raster -- so the achieved values are readable back as :attr:`dwell_s` and
+        :attr:`bandwidth_hz_px`.  `dwell_s` is the ADC's own dwell; `bandwidth_hz_px` is per
+        *reconstructed* pixel, so `oversampling` does not move it.
     partial_fourier
         Fraction of the full k-space extent that is sampled, with the missing part taken off the
         **pre-echo** side.  ``1.0`` is a symmetric full echo.  ``0 < partial_fourier <= 1``.
+    oversampling
+        ADC samples per reconstructed pixel along the readout, the convention
+        :class:`~seqcraft.modules.EPI2D` uses.  It multiplies :attr:`num_samples` and
+        :attr:`pre_echo_samples` and divides the dwell, so at a given `bandwidth_hz_px` the
+        sampling window, the lobe and its amplitude do not move.  ``1`` (the default) is the
+        readout this module has always emitted.
     echoes
         How many times the line is read after one excitation.  ``1`` is a single-echo readout and
         is byte-identical to this module before the train existed.  ``>= 1``.
@@ -297,8 +306,9 @@ class CartesianLine(Module):
 
     **There is deliberately no `k_read_per_m` array.**  :class:`~seqcraft.modules.EPI2D` exposes
     one because ramp sampling makes the trajectory underivable; here the ADC never opens on a
-    ramp, so sample *i* of echo *e* is at ``(i - echo_sample(e)) * dk_per_m * polarity_of(e)`` and
-    an array would be a second copy of two methods that already exist.
+    ramp, so sample *i* of echo *e* is at
+    ``(i - echo_sample(e)) * dk_per_m / oversampling * polarity_of(e)`` and an array would be a
+    second copy of two methods that already exist.
 
     **`phase_deg` is the receiver phase, and it is not optional in a spoiled sequence.**  The
     receiver is phase-locked to the transmitter: whatever carrier phase the excitation was given,
@@ -328,6 +338,7 @@ class CartesianLine(Module):
         bandwidth_hz_px: float | None = None,
         dwell_s: float | None = None,
         partial_fourier: float = 1.0,
+        oversampling: int = 1,
         echoes: int = 1,
         polarity: str | None = None,
         echo_spacing_s: float | None = None,
@@ -347,6 +358,8 @@ class CartesianLine(Module):
             msg = format_error(f'matrix must be at least 1, got {self.matrix}.',
                                {'matrix': self.matrix})
             raise ConfigurationError(msg)
+        #: ADC samples per reconstructed pixel along the readout.
+        self.oversampling = require_count(oversampling, 'oversampling', hint='1 turns it off')
 
         #: How many times the line is read after one excitation.
         self.echoes = require_count(echoes, 'echoes', hint='1 is a single-echo readout')
@@ -354,15 +367,16 @@ class CartesianLine(Module):
         self.polarity = self._resolve_polarity(polarity)
         self._refuse_bipolar_spin_echo()
 
-        #: k-space step between adjacent samples, 1/m.
+        #: k-space step between adjacent *reconstructed* samples, 1/m.  With `oversampling` the
+        #: ADC samples are that much closer together than this.
         self.dk_per_m = 1e3 / self.fov_mm
         # The sample count comes *before* the dwell, because under 'bipolar' it is what the dwell
         # is quantised against -- see `_resolve_dwell`.  It does not depend on the dwell either
         # way round, so the order costs the single-echo path nothing.
         self.num_samples, self.pre_echo_samples = self._resolve_samples()
         self.dwell_s = self._resolve_dwell(bandwidth_hz_px, dwell_s)
-        #: Achieved receive bandwidth per pixel, Hz.  Reads back the snapped dwell.
-        self.bandwidth_hz_px = 1.0 / (self.dwell_s * self.matrix)
+        #: Achieved receive bandwidth per *reconstructed* pixel, Hz.  Reads back the snapped dwell.
+        self.bandwidth_hz_px = 1.0 / (self.dwell_s * self.matrix * self.oversampling)
 
         self._min_period_s: float | None = None
         self._period_s: float | None = None
@@ -767,11 +781,15 @@ class CartesianLine(Module):
         two polarities then sample grids that are not the same grid.  At ``matrix=128`` and
         ``partial_fourier`` of 1.0 or 0.75 the count already is even -- the forcing is for the odd
         cases, and it is one ``max(2, 2*round(n/2))``.
+
+        Both numbers are then multiplied by `oversampling`, because both count *ADC samples* while
+        the arithmetic above them counts reconstructed pixels.
         """
         count = max(1, int(round(self.partial_fourier * self.matrix)))
         if self.polarity == 'bipolar':
             count = max(2, 2 * int(round(count / 2)))
-        pre_echo = count - (self.matrix - self.matrix // 2)
+        pre_echo = self.oversampling * (count - (self.matrix - self.matrix // 2))
+        count *= self.oversampling
         if pre_echo < 0:
             msg = format_error(
                 f'partial_fourier = {self.partial_fourier:g} leaves no pre-echo samples at '
@@ -804,16 +822,23 @@ class CartesianLine(Module):
         if divisor <= 1 or count % divisor == 0:
             return count
 
-        below, above = (count // divisor) * divisor, (count // divisor + 1) * divisor
+        # The suggestions count reconstructed pixels, each of which the ADC samples
+        # `oversampling` times, so the step that fixes the count can be finer than the divisor.
+        step = divisor // gcd(divisor, self.oversampling)
+        pixels = count // self.oversampling
+        below, above = (pixels // step) * step, (pixels // step + 1) * step
         # A suggestion has to be one this module would itself accept: at or below a full readout,
         # and leaving the post-echo half intact.  Offering `partial_fourier=1.05` would send the
         # caller into the next refusal.
         floor = self.matrix - self.matrix // 2
         fixes = [
-            f'partial_fourier={n / self.matrix:.6g} gives {n} samples at matrix={self.matrix}'
+            f'partial_fourier={n / self.matrix:.6g} gives {n * self.oversampling} samples at '
+            f'matrix={self.matrix}'
             for n in (below, above) if floor <= n <= self.matrix
         ]
-        fixes.append(f'matrix={above} at partial_fourier=1.0 gives {above} samples')
+        fixes.append(
+            f'matrix={above} at partial_fourier=1.0 gives {above * self.oversampling} samples',
+        )
         msg = format_error(
             f'the requested geometry produces {count} ADC samples, but this scanner requires a '
             f'count divisible by {divisor}.',
@@ -853,7 +878,8 @@ class CartesianLine(Module):
             raise ConfigurationError(msg)
         wanted = (
             float(dwell_s) if dwell_s is not None
-            else 1.0 / (require_positive(bandwidth_hz_px, 'bandwidth_hz_px') * self.matrix)
+            else 1.0 / (require_positive(bandwidth_hz_px, 'bandwidth_hz_px')
+                        * self.matrix * self.oversampling)
         )
         if self.polarity == 'bipolar':
             quantum = to_ticks(dwell_quantum(self.num_samples, opts=self.opts))
@@ -873,14 +899,14 @@ class CartesianLine(Module):
 
     def _readout_amplitude(self) -> float:
         """
-        Return ``dk / dwell``, having checked the amplifier can reach it.
+        Return ``dk / (dwell * oversampling)``, having checked the amplifier can reach it.
 
         **No amplitude re-solve, in either lobe design.**  :class:`~seqcraft.modules.EPI2D`
         measures its amplitude into place because ramp sampling makes the window's traversal not
         ``G*N*tau``; here the window is entirely on the flat top, so ``dk / dwell`` is exact.
         Saying so is the point of this docstring, or the next reader adds the solve back.
         """
-        amplitude = self.dk_per_m / self.dwell_s
+        amplitude = self.dk_per_m / (self.dwell_s * self.oversampling)
         if abs(amplitude) > self.opts.max_grad:
             need = self.dk_per_m / self.opts.max_grad
             msg = format_error(
