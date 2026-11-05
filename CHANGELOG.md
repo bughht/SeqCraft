@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased — `WaveReadout`: a Cartesian readout with Wave gradients
+
+`sc.modules.WaveReadout` is a Cartesian readout (a contained `CartesianLine`) plus a sine and a
+cosine on the other two axes while the ADC samples: the Wave-CAIPI corkscrew. It owns the readout,
+the ADC timing, the Wave gradients and their realisation under the one `Opts`, and the moment the
+corkscrew's centring requires before the readout. The line and partition, the acceleration and
+CAIPI pattern, flow compensation, reconstruction and PSF calibration stay with the caller.
+
+- **Timing.** The Wave is anchored to the ADC dwell window, `[t_a, t_a + N·dwell]`, with phase
+  zero at the ADC start and `cycles` whole periods over it. Samples follow PyPulseq's
+  `adc.delay + (n + ½)·dwell`.
+- **Independent rasters.** The ADC and the gradients keep separate rasters. Nothing requires the
+  window, a dwell or a Wave period to be a whole number of gradient rasters, or a sample to fall
+  on a knot.
+- **Realisation.** Each Wave axis is one extended trapezoid: the continuous prescription evaluated
+  at every gradient-raster edge. Its piecewise-linear interpolation scales the oscillation by
+  `1 − (ωΔ)²/12` to leading order, and the tests bound the sampled trajectory by that.
+- **The cosine's ramps.** The cosine gets the shortest legal entrance and exit ramps. The exit
+  starts as soon as the window closes, and both ramps are emitted under either `prephase`.
+- **Centring.** `centering='sinzero'` (default) puts k at the echo sample on target on both Wave
+  axes. `'sinctr'` centres the sine corkscrew on the line and keeps the cosine's echo sample on
+  target. The active Wave is identical under both, for any positive integer `cycles`, odd or even.
+- **`prephase`.** It decides who plays the centring moment. The moment is always stated, as
+  `prephaser_area_per_m(axis)` and `echo_offset_per_m(axis)`. `True` plays it in the block, with
+  the cosine's share merged into its entrance ramp. `False` leaves it to the caller or to a
+  `PhysicalDesignScope`.
+- **Amplitude.** A number is a prescription, refused if `G0 > max_grad` or `G0·ω > max_slew` and
+  never reduced. `'max'` is `min(max_grad, max_slew/ω)`. No PNS property is claimed.
+- **Trajectory.** `sample_times_s()` and `k_per_m()` report the samples and their positions,
+  integrated from the emitted knots. Tests check them against `sc.kspace` of the compiled block
+  and against the written-and-read-back file.
+
 ## Unreleased — `CartesianLine` takes readout oversampling
 
 `CartesianLine(oversampling=n)` takes `n` ADC samples per reconstructed pixel, the convention
