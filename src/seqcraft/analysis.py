@@ -4,7 +4,8 @@ Measuring a tree: one entry shape, five answers.
 **Give it a tree, get numbers back.**  You should not have to know that PNS prediction needs a
 compiled sequence while a moment does not, so none of these ask for one: they take the tree you
 built and the scanner you built it against, and compile internally where compiling is what the
-question requires.
+question requires.  The one exception is :func:`sequence_kspace`, for a sequence that already
+exists: compiled, or read back from a ``.seq`` file, which is what a reconstruction has.
 
 This module sits *above* the compiler in the layering -- :func:`kspace` and :func:`pns` import it --
 and below :mod:`seqcraft.display`, which draws what :func:`sample` returns.
@@ -13,15 +14,16 @@ Which of these is exact, and which is not
 -----------------------------------------
 The single most important thing to get right here.
 
-=============  =====================================================  =========================
-Function       Basis                                                  Exact?
-=============  =====================================================  =========================
-``sample``     uniform raster grid, **interpolated**                   **no**
-``moments``    ``knots_of`` + ``pwl_moment`` over ``flatten(tree)``    **yes**
-``kspace``     compiled, then ``calculate_kspacePP()``                 yes, at true ADC times
-``pns``        compiled, then ``calculate_pns()``                      model-based prediction
-``b_value``    running integral of ``sample``'s raster grid            **no**, numerical
-=============  =====================================================  =========================
+===================  =====================================================  ======================
+Function             Basis                                                  Exact?
+===================  =====================================================  ======================
+``sample``           uniform raster grid, **interpolated**                   **no**
+``moments``          ``knots_of`` + ``pwl_moment`` over ``flatten(tree)``    **yes**
+``kspace``           compiled, then ``sequence_kspace``                      yes, at true ADC times
+``sequence_kspace``  the sequence's gradients, ``calculate_kspacePP()``      yes, at true ADC times
+``pns``              compiled, then ``calculate_pns()``                      model-based prediction
+``b_value``          running integral of ``sample``'s raster grid            **no**, numerical
+===================  =====================================================  ======================
 
 :func:`b_value` inherits :func:`sample`'s grid, so it is a numerical integration rather than a
 closed form.  How close it comes depends on the waveform: long flat lobes integrate well, short
@@ -53,7 +55,7 @@ if TYPE_CHECKING:
 
     from .design.logic import LogicBlock
 
-__all__ = ['b_value', 'kspace', 'moments', 'pns', 'sample']
+__all__ = ['b_value', 'kspace', 'moments', 'pns', 'sample', 'sequence_kspace']
 
 
 def sample(
@@ -314,8 +316,26 @@ def kspace(tree: LogicBlock, opts: Opts) -> dict[str, np.ndarray]:
     """
     Return the k-space trajectory of `tree`, in 1/m.
 
-    Compiles internally, then uses pypulseq's own calculation, so the sample times are the **true
-    ADC sample times** rather than a raster approximation.
+    Compiles internally, then measures the compiled sequence with :func:`sequence_kspace`, so the
+    sample times are the **true ADC sample times** rather than a raster approximation.
+
+    Returns
+    -------
+    dict
+        ``k_adc`` (3 x n_samples, at the ADC sample times), ``t_adc``, ``k`` (dense), ``t_k``,
+        ``t_excitation``, ``t_refocusing``.
+    """
+    return sequence_kspace(compile_sequence(tree, opts))
+
+
+def sequence_kspace(seq: pp.Sequence) -> dict[str, np.ndarray]:
+    """
+    Return the nominal k-space trajectory of a compiled or read-back `seq`, in 1/m.
+
+    The exact integral of the sequence's own gradients, from each excitation's RF effective centre,
+    conjugated at each refocusing pulse's, evaluated at the **true ADC sample times**.  For a
+    written ``.seq`` file, read it back and pass the result: this is the nominal trajectory a
+    reconstruction of that file uses.  :func:`kspace` is this function applied to a compiled tree.
 
     Returns
     -------
@@ -325,12 +345,17 @@ def kspace(tree: LogicBlock, opts: Opts) -> dict[str, np.ndarray]:
 
     Notes
     -----
-    This exists rather than a direct call because ``calculate_kspacePP`` returns its tuple in a
-    **different order** from ``calculate_kspace``, and getting that wrong silently swaps the
-    trajectory for its timebase -- a wrong answer with no error.  The named return makes that
-    unmistakable.
+    Use this rather than ``seq.calculate_kspace()``.  In the pinned PyPulseq that method samples
+    the gradients on the raster and sums rectangles, which biases k by about half a raster of
+    gradient (``docs/pypulseq_dependency.md``).
+
+    The return is named because ``calculate_kspacePP`` returns its tuple in a **different order**
+    from ``calculate_kspace``, and getting that wrong silently swaps the trajectory for its
+    timebase -- a wrong answer with no error.
     """
-    seq = compile_sequence(tree, opts)
+    # The pinned fork's exact piecewise-polynomial integration.  Official PyPulseq's
+    # calculate_kspace() is that integration, and its calculate_kspacePP() is a deprecated alias in
+    # the other order; a move to it changes this call, not the contract above.
     k_adc, t_adc, k, t_k, t_exc, t_refoc = seq.calculate_kspacePP()[:6]
     return {
         'k_adc': np.asarray(k_adc),

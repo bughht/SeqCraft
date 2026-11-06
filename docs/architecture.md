@@ -234,15 +234,17 @@ definitions from the same fields is what stops the file disagreeing with what it
 
 ### `analysis` — measuring a tree
 
-Four functions, **one entry shape: give it a tree, get numbers back.** You should not have to know
-that PNS prediction needs a compiled sequence while a moment does not, so none of them asks for
-one; `kspace` and `pns` compile internally.
+**One entry shape: give it a tree, get numbers back.** You should not have to know that PNS
+prediction needs a compiled sequence while a moment does not, so these functions take the tree;
+`kspace` and `pns` compile internally. The exception is `sequence_kspace`, which measures a
+sequence that already exists, such as one read back from a `.seq` file for reconstruction.
 
 | Function | Basis | Exact? |
 |---|---|---|
 | `sample(tree, opts)` | uniform raster grid, **interpolated** | **No** — for looking, and for approximate numeric work |
 | `moments(tree, order=0)` | `knots_of` + `pwl_moment` over `flatten(tree)` | **Yes** — never routed through `sample` |
-| `kspace(tree, opts)` | compiled, then `calculate_kspacePP()` | Yes, at true ADC sample times |
+| `kspace(tree, opts)` | compiled, then `sequence_kspace` | Yes, at true ADC sample times |
+| `sequence_kspace(seq)` | the sequence's own gradients, through `calculate_kspacePP()` | Yes, at true ADC sample times |
 | `pns(tree, opts, hw)` | compiled, then `calculate_pns()` | **Not an exactness question** — a model-based prediction, via pypulseq's SAFE implementation |
 
 `moments` looks like it could be built on `sample` now that they sit in one file. It must not be,
