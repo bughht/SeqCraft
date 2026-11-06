@@ -33,6 +33,7 @@ The folders, and what each one means
                    radial_readout.py   RadialReadout
                    rosette_readout.py  RosetteReadout
                    spiral_readout.py   SpiralReadout
+                   wave_readout.py     WaveReadout
       kernel/      diffusion_se.py     DiffusionSEPrep
                    bssfp_2d_tr.py      bSSFP2DTR    composes leaves; one repeating unit
                    bssfp_3d_tr.py      bSSFP3DTR    the 3D sibling; z also encodes kz
@@ -115,6 +116,7 @@ from .readout.epi_2d import EPI2D
 from .readout.radial_readout import RadialReadout
 from .readout.rosette_readout import RosetteReadout
 from .readout.spiral_readout import SpiralReadout
+from .readout.wave_readout import WaveReadout
 from .rf.excitation import Excitation
 from .rf.refocusing import Refocusing
 from .spoiler import spoiler
@@ -128,6 +130,6 @@ __all__ = [
     'PhaseEncode',
     'VelocityEncode',
     'RadialReadout', 'Refocusing', 'RosetteReadout', 'SaturationPrep', 'SpiralReadout', 'T2Prep',
-    'TSEShot',
+    'TSEShot', 'WaveReadout',
     'spoiler',
 ]

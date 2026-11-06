@@ -14,6 +14,7 @@
 | [`gre_radial_2d/`](gre_radial_2d/) | One spoke and an angle schedule you write yourself — equal increments and a golden angle out of the same `RadialReadout`. Its `02` is the introduction to non-Cartesian reconstruction. |
 | [`fat_sat/`](fat_sat/) | A spectrally selective saturation and the spoiler that destroys what it made — the chemical-shift sign traced from ppm to the emitted `freq_offset`, and the same protocol across four field strengths. Introduces `SaturationPrep`. |
 | [`gre_spiral_2d/`](gre_spiral_2d/) | A spoiled gradient echo on a spiral: one arm, eight interleaves, and the **TE that this layer owns** — measured from the excitation's effective centre to the crossing the readout reports. Then what a 21.7 ms readout pays in off-resonance. |
+| [`gre_wave_caipi_3d/`](gre_wave_caipi_3d/) | Wave-CAIPI: a sine and a cosine on the phase-encoding axes while the ADC samples, so every voxel spreads along the readout and the coil array can separate the CAIPI-aliased copies. A flow-compensated 3D GRE composed from public pieces, then reconstructed with the nominal Wave PSF: checked on a matched model, simulated with MRzero, and compared with the same acquisition without the Wave, fully sampled and at R = 2 x 2. Introduces `WaveReadout`. |
 | [`gre_rosette_2d/`](gre_rosette_2d/) | A spoiled gradient echo on a rosette: thirteen petals that return to the centre of k-space again and again, sixteen rotated shots, the dummies that reach steady state first, and why the shot angles decide how densely k-space is covered. |
 | [`se_spiral_2d/`](se_spiral_2d/) | A spin echo in front of a spiral, and the alignment it needs: the trajectory's origin crossing has to land on the physical echo. Three placements that all compile and only one of which is right, and then what refocusing is actually worth. |
 | [`dwi_se_epi_2d/`](dwi_se_epi_2d/) | Diffusion-weighted imaging: a Stejskal–Tanner gradient pair around a 180°, a single-shot EPI readout, and an ADC map recovered from a phantom whose diffusion coefficient is known. Introduces `DiffusionSEPrep` and `sc.b_value`. |
@@ -76,6 +77,17 @@ sequence variants:
 Both files in the second pair are slab-selective, and `gre_3d_slab_combined.seq` is the same
 physics as `01`'s `gre_3d_slab.seq` — the production combined-z path. It is written separately
 only so the comparison has both halves at one common TR.
+
+## `gre_wave_caipi_3d/`
+
+| | |
+|---|---|
+| [`01_build.ipynb`](gre_wave_caipi_3d/01_build.ipynb) | `sc.modules.WaveReadout(prephase=False)` in a complete acquisition: a slab-selective `Excitation(rephase=False)`, one `PhysicalDesignScope` window that merges the slab rephaser, the LIN/PAR encode, the readout's stated centring moment and first-moment nulling on x, y and z, then rewinders from the readout's stated after-echo moment, RF spoiling, labels and 200 dummies. Four files: Wave and a no-Wave twin, each fully sampled and R = 2 x 2 CAIPI. Checked on the compiled and the read-back files: k at every echo sample on target, `k_per_m()` against every sample of every repetition, the first moment at the echo nulled, the labels, and the CAIPI files replaying the full files' repetitions. **Needs nothing but `seqcraft`.** |
+| [`02_simulate_and_reconstruct.ipynb`](gre_wave_caipi_3d/02_simulate_and_reconstruct.ipynb) | The nominal Wave PSF, from three independent routes to the one nominal trajectory: `k_per_m()`, the written file through `calculate_kspacePP`, and MRzero's reader. A matched-model check, with the object on the reconstruction grid, where the Wave reconstruction is exact. An MRzero simulation of the four files with eight coils, reconstructed fully sampled and by CG-SENSE at R = 4, compared by pseudo-replica g-factor with and without the Wave. Optionally, what a phantom finer than the reconstruction grid leaves under the voxel-centre PSF model. **Needs `seqcraft[sim]` and the phantom**; runs in about three minutes. |
+
+The PSF in `02` is the nominal one. On a scanner, a measured correction for gradient delays and
+eddy currents is added to that nominal trajectory before the PSF is built. That calibration belongs
+to the reconstruction, not to SeqCraft, and nothing here models it.
 
 ## `bssfp_2d/`
 
