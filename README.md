@@ -481,7 +481,8 @@ Documentation: [`api_reference.md`](docs/api_reference.md) (every public name, e
 [`compiler.md`](docs/compiler.md) (how boundaries are chosen, what every warning means),
 [`writing_a_module.md`](docs/writing_a_module.md) (the `Module` contract in full, and what a
 public docstring documents), [`writing_examples.md`](docs/writing_examples.md) (how the notebooks
-under `examples/` are written).
+under `examples/` are written), [`pypulseq_dependency.md`](docs/pypulseq_dependency.md) (which
+PyPulseq SeqCraft is pinned to, why, and what to check before moving it).
 
 Tests: `pytest tests --doctest-modules src/seqcraft`.
 

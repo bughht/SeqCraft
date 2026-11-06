@@ -563,18 +563,18 @@ function, in [`salvage/bvalue.py`](../salvage/bvalue.py).)
 
 Two more that are worth writing for any module with a refocusing pulse:
 
-- **Where does k end up at the echo?** `out.kspace()['k_adc'][:, 0]` should be zero on every axis you
-  meant to refocus. This is what catches a missing slice rewinder: a spin-echo spiral starts at k=0
-  in x and y, which makes it tempting to think nothing needs rephasing on z — but the excitation's
-  slice-select gradient leaves through-slice dephasing equal to its own tail, and the refocusing
-  pulse does *not* undo it. Without the rewinder `k_z` is −525 1/m, which is 2.1 cycles across a 4 mm
-  slice and about 95 % of the signal, and nothing else in the sequence looks wrong.
+- **Where does k end up at the echo?** `sc.kspace(tree, opts)['k_adc'][:, 0]` should be zero on
+  every axis you meant to refocus. This is what catches a missing slice rewinder: a spin-echo spiral
+  starts at k=0 in x and y, which makes it tempting to think nothing needs rephasing on z — but the
+  excitation's slice-select gradient leaves through-slice dephasing equal to its own tail, and the
+  refocusing pulse does *not* undo it. Without the rewinder `k_z` is −525 1/m, which is 2.1 cycles
+  across a 4 mm slice and about 95 % of the signal, and nothing else in the sequence looks wrong.
 - **Does the scan take as long as it should?** TR is the time between exciting the *same* slice, so
   every slice belongs inside one TR period. Getting that wrong does not produce a wrong image — it
   produces a correct one that takes `n_slices` times longer.
 
-Use `calculate_kspacePP` as the oracle for the first, rather than writing your own integrator: it
-handles the refocusing conjugation itself.
+Use `sc.kspace` (or `sc.sequence_kspace` on a read-back file) as the oracle for the first, rather
+than writing your own integrator: it handles the refocusing conjugation itself.
 
 **And ask it two-sided, once there is more than one refocusing pulse.** That advice was written for
 a spiral, where "is k zero at the echo?" is the whole question. In an echo train it is necessary and

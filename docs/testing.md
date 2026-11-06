@@ -7,6 +7,8 @@ not made red by a new lint rule, type-checker release, or incompatible PyPulseq 
 SeqCraft currently requires Pulseq 1.5.1 behavior from the compatibility fork pinned in
 `pyproject.toml` and `ci/constraints.txt`.  Its package metadata is the same `1.5.0.post1` used by
 the incompatible PyPI wheel, so the immutable source URL is part of the dependency contract.
+[`pypulseq_dependency.md`](pypulseq_dependency.md) records what the pin is, why it is not official
+PyPulseq, and the checklist to run before it moves.
 
 ## Pull-request CI
 
