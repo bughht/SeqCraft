@@ -285,7 +285,7 @@ def test_an_off_raster_adc_start_anchors_the_prescription_not_the_emitted_value(
         seq.write(str(tmp_path / 'late.seq'))
         back = pp.Sequence(system=late_adc)
         back.read(str(tmp_path / 'late.seq'))
-        k_back = np.asarray(back.calculate_kspacePP()[0]).copy()
+        k_back = sc.sequence_kspace(back)['k_adc'].copy()
     if not prephase:
         k_back += np.array([wave.prephaser_area_per_m(a) for a in 'xyz'])[:, None]
     module = wave.k_per_m()
@@ -458,7 +458,8 @@ def test_the_written_file_plays_the_reported_trajectory(scanner, tmp_path, cycle
         seq.write(str(path))
         back = pp.Sequence(system=scanner)
         back.read(str(path))
-        k_pp, t_adc = back.calculate_kspacePP()[:2]
+        trajectory = sc.sequence_kspace(back)
+        k_file, t_adc = trajectory['k_adc'], trajectory['t_adc']
 
     starts, clock = {}, 0.0
     for block in back.block_events:
@@ -470,11 +471,11 @@ def test_the_written_file_plays_the_reported_trajectory(scanner, tmp_path, cycle
             event = getattr(back.get_block(block), f'g{axis}', None)
             if event is not None:
                 k[row] += _integral_at(np.asarray(t_adc), *knots_of(event, starts[block]))
-    k_pp = np.asarray(k_pp).copy()
+    k_file = k_file.copy()
     if not prephase:
         stated = np.array([wave.prephaser_area_per_m(axis) for axis in 'xyz'])[:, None]
         k += stated
-        k_pp += stated
+        k_file += stated
 
     # Writing rounds every amplitude to six significant digits, up to 5e-6 of each event, so the
     # file's trajectory is held to twice that fraction of the largest excursion.
@@ -482,7 +483,7 @@ def test_the_written_file_plays_the_reported_trajectory(scanner, tmp_path, cycle
     rounding = 1e-5 * np.max(np.abs(module))
     np.testing.assert_allclose(np.asarray(t_adc), wave.sample_times_s(), atol=1e-9)
     np.testing.assert_allclose(k, module, atol=rounding)
-    np.testing.assert_allclose(k_pp, module, atol=rounding)
+    np.testing.assert_allclose(k_file, module, atol=rounding)
 
 
 def test_it_compiles_late_in_a_sequence(scanner) -> None:
