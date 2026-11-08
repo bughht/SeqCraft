@@ -72,7 +72,7 @@ Named for what each layer answers, in the order a sequence passes through them::
     design/      what you build            the tree, events, timing, units
     modules/     what you build with       the MR building blocks, each one extracted
     compiler/    the transform             boundaries, legalization, emission, verification
-    analysis     measuring a tree          sample, moments, kspace, b_value, pns
+    analysis     measuring a tree          sample, moments, kspace, b_value, pns, sequence_kspace
     display      looking at a tree         plot_block
 
 and :mod:`~seqcraft.errors` beside them, which everything may raise.
@@ -99,7 +99,7 @@ import importlib
 
 from . import _compat, modules
 from ._version import __version__
-from .analysis import b_value, kspace, moments, pns, sample
+from .analysis import b_value, kspace, moments, pns, sample, sequence_kspace
 from .augmentation import FlowCompensation, VelocityEncoding
 from .compiler import compile_sequence as compile  # noqa: A001, A004
 from .compiler.errors import CompileError, DefinitionConflict, HardwareLimitError
@@ -196,6 +196,7 @@ __all__ = [
     'pns',
     'sample',
     'scanner',
+    'sequence_kspace',
     'span',
     'timing',
     'units',

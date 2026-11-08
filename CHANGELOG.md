@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased — `sc.sequence_kspace`: the exact trajectory of a compiled or read-back sequence
+
+A reconstruction has the written `.seq` file rather than the tree, so it needs the nominal
+trajectory of a `pypulseq.Sequence`. The method within reach, `seq.calculate_kspace()`, is biased in
+the pinned PyPulseq. It samples the gradient at raster edges and sums rectangles, so it reports k
+off by half a raster of gradient, plus an interpolation term and a constant from any gradient
+through the RF centre: up to 4 1/m on the axis of a 5 mm slice. `sc.kspace()`, the written file
+and MRzero agree on the exact value.
+
+- **`sc.sequence_kspace(seq)`** returns, for a compiled or read-back sequence, the named fields
+  `sc.kspace` returns: `k_adc` and `t_adc` at the true ADC sample times, the dense `k` and `t_k`,
+  `t_excitation` and `t_refocusing`. `sc.kspace(tree, opts)` is now
+  `sc.sequence_kspace(sc.compile(tree, opts))`, with unchanged behaviour. The backend is the pinned
+  package's exact `calculate_kspacePP()`. A move to official PyPulseq would switch it to official
+  `calculate_kspace()` without changing what it returns.
+- **Tests.** `tests/analysis/test_sequence_kspace.py` checks it against an independent integration
+  of the block events: ramps, trapezoids after a slice-selective excitation, arbitrary gradients,
+  Wave readouts with odd and even cycle counts and a spin echo. Each is sampled on raster edges,
+  half a raster off them and at an incommensurate dwell, in memory and read back. A SeqCraft tree
+  and its written file report one trajectory. One test asserts that the pinned
+  `calculate_kspace()` is still biased, so a change of pin is noticed.
+- **`examples/bssfp_2d`** reads its trajectory with `sc.sequence_kspace` and no longer explains a
+  0.224-step `kx` at the echo as half a dwell of sampling: `kx` there is 8.1e-11 1/m. The half dwell
+  is `symmetry_residual_s`, a timing quantity. `examples/bssfp_3d` drops the same claim from a
+  comment.
+- **[`docs/pypulseq_dependency.md`](docs/pypulseq_dependency.md)** records the pin, what official
+  PyPulseq does not yet reproduce, this defect, and the checklist to run before the pin moves.
+- The dependency pin is unchanged.
+
 ## Unreleased — a raster resample is bounded, refused beyond its bound, and reported in moments
 
 Legalization resamples a block-axis onto the gradient raster when no pulseq gradient can hold its

@@ -49,7 +49,7 @@ assert round(m['x']) == 258      # 256 of flat area, plus what the two ramps con
 | **design** | `logic` `module` `events` `timing` `units` | say what you mean |
 | **scanner** | `opts` `hardware` | say what the machine can do |
 | **compiler** | `compile()` | turn meaning into legal pulseq blocks |
-| **analysis** | `sample` `moments` `kspace` `pns` `b_value` | measure a tree |
+| **analysis** | `sample` `moments` `kspace` `sequence_kspace` `pns` `b_value` | measure a tree |
 | **display** | `plot_block` | look at a tree |
 
 **The central contract.** `sc.compile(tree, opts)` returns a `pypulseq.Sequence` and nothing else.
@@ -70,7 +70,7 @@ Everything reachable as `sc.<name>`. This is the whole of what `__init__.py` re-
 | `timing`, `Raster` | module, class | [1.5](#15-designtiming--exact-time-arithmetic) |
 | `units`, `convert` | module, function | [1.6](#16-designunits--one-conversion-function) |
 | `scanner`, `opts`, `hardware` | module | [2](#2-scanner--what-you-build-against) |
-| `analysis`, `sample`, `moments`, `kspace`, `pns`, `b_value` | module, function | [4](#4-analysis--measuring-a-tree) |
+| `analysis`, `sample`, `moments`, `kspace`, `sequence_kspace`, `pns`, `b_value` | module, function | [4](#4-analysis--measuring-a-tree) |
 | `display`, `plot_block` | module, function | [5](#5-display--looking-at-a-tree) |
 | `SeqCraftError`, `ConfigurationError`, `MissingExtraError` | exception | [6](#6-errors--the-exception-hierarchy) |
 | `CompileError`, `HardwareLimitError`, `DefinitionConflict` | exception | [6](#6-errors--the-exception-hierarchy) |
@@ -842,8 +842,9 @@ negative.
 
 # 4. `analysis` — measuring a tree
 
-Four functions, one entry shape: **give it a tree, get numbers back.** You should not have to know
-that PNS needs a compiled sequence while moments do not.
+One entry shape: **give it a tree, get numbers back.** You should not have to know that PNS needs a
+compiled sequence while moments do not. The one exception is `sequence_kspace`, for a sequence that
+already exists: compiled, or read back from a `.seq` file, which is what a reconstruction has.
 
 ## 4.1 `sample(tree, opts) -> (grid, grads, marks)`
 
@@ -907,29 +908,38 @@ off_raster = sc.LogicBlock('t').add(5e-6, gx)               # 5 us is off the gr
 assert round(sc.moments(off_raster)['x']) == 258            # still measurable
 ```
 
-## 4.3 `kspace(tree, opts) -> dict[str, np.ndarray]`
+## 4.3 `kspace(tree, opts)` and `sequence_kspace(seq)` -> `dict[str, np.ndarray]`
 
-The k-space trajectory, in 1/m. Compiles internally, then uses pypulseq's own calculation, so the
-sample times are the **true ADC sample times** rather than a raster approximation.
+The nominal k-space trajectory, in 1/m: the exact integral of the gradients from each excitation's
+RF effective centre, conjugated at each refocusing pulse's, at the **true ADC sample times** rather
+than on a raster. `kspace` takes a tree and compiles it. `sequence_kspace` takes a
+`pypulseq.Sequence` that already exists, such as one read back from a `.seq` file;
+`kspace(tree, opts)` is `sequence_kspace(compile(tree, opts))`.
 
 ```python
 k = sc.kspace(tr, opts)
 assert set(k) == {'k_adc', 't_adc', 'k', 't_k', 't_excitation', 't_refocusing'}
 assert k['k_adc'].shape[0] == 3                             # (3, n_samples)
 assert k['k_adc'].shape[1] == k['t_adc'].size
+
+k_seq = sc.sequence_kspace(sc.compile(tr, opts))            # or a Sequence read back from a file
+assert np.allclose(k_seq['k_adc'], k['k_adc'], atol=1e-9)
 ```
 
 | Key | Meaning |
 |---|---|
 | `k_adc` | `(3, n_samples)` at the ADC sample times |
 | `t_adc` | their times |
-| `k`, `t_k` | the dense trajectory and its timebase |
+| `k`, `t_k` | the dense trajectory and its timebase, with NaN just before each excitation |
 | `t_excitation`, `t_refocusing` | RF centre times |
 
-> **Why this exists rather than calling pypulseq directly:** `calculate_kspacePP` returns its tuple
-> in a **different order** from `calculate_kspace`, and getting that wrong silently swaps the
-> trajectory for its timebase — a wrong answer with no error. The named return makes that
-> unmistakable.
+> **Use `sequence_kspace`, not `seq.calculate_kspace()`.** In the pinned PyPulseq that method
+> samples the gradients on the raster and sums rectangles, which biases k by about half a raster
+> of gradient. [`pypulseq_dependency.md`](pypulseq_dependency.md) has the detail.
+>
+> **Why the return is named:** the backend, `calculate_kspacePP`, returns its tuple in a
+> **different order** from `calculate_kspace`, and getting that wrong silently swaps the
+> trajectory for its timebase — a wrong answer with no error.
 
 ## 4.4 `pns(tree, opts, hardware) -> dict[str, Any]`
 
@@ -1006,7 +1016,8 @@ The single most important thing to get right in this module:
 |---|---|:--:|
 | `sample` | uniform raster grid, **interpolated** | **No** — for looking, and for approximate numeric work |
 | `moments` | `knots_of` + `pwl_moment` over `flatten(tree)` | **Yes** — never routed through `sample` |
-| `kspace` | compiled, then `calculate_kspacePP()` | **Yes**, at true ADC sample times |
+| `kspace` | compiled, then `sequence_kspace` | **Yes**, at true ADC sample times |
+| `sequence_kspace` | the sequence's own gradients, through `calculate_kspacePP()` | **Yes**, at true ADC sample times |
 | `pns` | compiled, then `calculate_pns()` | **Not an exactness question** — a model-based prediction, via pypulseq's SAFE implementation |
 | `b_value` | `sample`, then the running integral on its raster grid | **No** — numerical integration; how close depends on the waveform |
 
@@ -2032,7 +2043,7 @@ is the exception.
 `require()` probes the pinned pypulseq fork for the functions seqcraft needs and fails once with a
 complete list, rather than letting the first caller that needs a missing one fail with an opaque
 `AttributeError` halfway through a build. `PYPULSEQ_VERSION` is the expected version string. It runs
-at import.
+at import. Which pypulseq is pinned, and why, is in [`pypulseq_dependency.md`](pypulseq_dependency.md).
 
 ---
 
@@ -2178,6 +2189,7 @@ at import.
 | `require_valid_contract` | `compiler.verification` | function |
 | `required_duration` | `compiler.legalization` | function |
 | `sample` | `analysis` | function |
+| `sequence_kspace` | `analysis` | function |
 | `spoiler` | `modules` | function |
 | `span` | `design.logic` | function |
 | `stored_gradients` | `compiler.verification` | function |
